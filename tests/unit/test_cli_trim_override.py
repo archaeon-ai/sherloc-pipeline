@@ -1,6 +1,5 @@
 """Tests for --trim-pct CLI override."""
 
-import click
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -34,11 +33,11 @@ class TestApplyTrimPctOverride:
         assert get_config().preprocessing['trim_mean_baseline_pct'] == 0.0
 
     def test_negative_rejected(self):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _apply_trim_pct_override(-1.0)
 
     def test_over_50_rejected(self):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _apply_trim_pct_override(51.0)
 
     def test_boundary_50_accepted(self):
