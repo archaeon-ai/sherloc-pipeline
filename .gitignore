@@ -1,0 +1,248 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+!src/sherloc_pipeline/web/frontend/src/lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+results/
+data/
+.mplconfig/
+.tmp/
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.tiff
+*.tif
+
+# BUT allow test fixtures (override the above)
+!tests/fixtures/**/*.csv
+!tests/fixtures/**/*.png
+!tests/fixtures/**/*.CSV
+!tests/fixtures/**/*.PNG
+
+# Package-data shipped inside the wheel (issue #13 — background CSVs).
+# The `data/` and `*.csv` rules above are scoped to the SHERLOC data-lake
+# layout; package-resource directories under src/sherloc_pipeline/ are
+# product code, not data-lake artifacts. Narrowly carve out the directory
+# entry + __init__.py + concrete asset types (no blanket `**`, which
+# would re-include __pycache__).
+!src/sherloc_pipeline/data/
+!src/sherloc_pipeline/data/**/__init__.py
+!src/sherloc_pipeline/data/**/*.csv
+
+# Ignore generated metadata JSON in pipeline outputs (timestamps cause spurious diffs)
+tests/fixtures/pipeline_outputs/**/*.json
+
+# preprocessing.py auto-emits a diagnostic plot next to the background CSV
+# whenever the background subtraction step runs. Under SHERLOC_BACKGROUND_DIR
+# this lands inside tests/fixtures/background/ — diagnostic-only, not a
+# fixture, so keep it out of git.
+tests/fixtures/background/*.png
+config/local.yaml
+
+# Logs
+logs/
+
+# Release artifacts
+.tmp-release/
+.tmp-release/**
+.mplconfig-release/
+.mplconfig-release/**
+.mplconfig-diagnostic/
+.mplconfig-diff/
+.mplconfig-temp/
+.venv-release/
+
+# Test data archives
+*.tar.gz
+
+# Batch pipeline logs (JSON logs and lockfile)
+experiments/batch_logs/*.json
+experiments/batch_logs/.batch_lock
+
+# bv (beads viewer) local config and caches
+.bv/
+
+# cctx (code context) index
+.cctx/
+
+# Pipeline outputs (generated, large)
+outputs/
+
+# Frontend build artifacts
+node_modules/
+src/sherloc_pipeline/web/frontend/node_modules/
+src/sherloc_pipeline/web/frontend/dist/
+
+# AI-assistant tooling state (operator-local, not part of the package)
+.ralph/
+.beads/
+.claude/
+.mcp.json
+.ntm/
+.cctx/
+.bv/
+CLAUDE.md
+CLAUDE.local.md
+
+# Operator-local documentation (sprint coordination, internal review threads, in-progress audits)
+docs/_internal/
+
+# Operator-local research scripts and one-off experiments. Anything in this
+# directory is considered private dev tooling, not part of the public release.
+experiments/
+
+# Local-only databases and runtime data
+phase.db
+phase_pds.db
+phase.db-shm
+phase.db-wal
+
+# Operator-local scratch / session notes (per repo hygiene: one-off content
+# stays local; promote to scripts/ or docs/ if it becomes broadly useful)
+_scratch/
+
+# Codex CLI local sentinel (operator-local marker, kept on disk but untracked)
+.codex
+
+# uv lockfile — project resolver of record is pip (see Dockerfile). Any
+# uv.lock present is local-experiment drift; adopting uv would require a
+# deliberate Dockerfile/CI change.
+uv.lock

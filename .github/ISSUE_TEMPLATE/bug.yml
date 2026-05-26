@@ -1,0 +1,45 @@
+name: Bug report
+description: Something is broken or behaving incorrectly.
+title: "[bug] "
+labels: [bug]
+body:
+  - type: input
+    id: scan
+    attributes:
+      label: Scan / spot identifier (optional)
+      description: e.g. `0921_Amherst_Point_detail_1` or `sol 921 / Amherst Point / point 21`
+      placeholder: "0921_Amherst_Point_detail_1"
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include error messages, screenshots, or log excerpts if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact CLI command, web URL, or notebook cell that triggers the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: |
+        Output of `sherloc --version` (or `pip show sherloc-pipeline`), Python
+        version, OS, deployment mode (local CLI / web UI / public-mode).
+      placeholder: |
+        sherloc 4.0.0
+        Python 3.12
+        Ubuntu 22.04
+        local CLI
+    validations:
+      required: true

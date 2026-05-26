@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: forbidden-strings
+        name: Block operator-local infrastructure strings
+        entry: scripts/check-forbidden-strings.sh --staged
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

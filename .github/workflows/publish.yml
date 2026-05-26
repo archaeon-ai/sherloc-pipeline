@@ -1,0 +1,116 @@
+# Tag-triggered GHCR publish for sherloc-pipeline.
+#
+# Track B5 deliverable for the m2020-phase v1.0-beta deploy chain
+# (ARCHITECTURE_LOCKED §14 D3.2). Fires on `v*` tag pushes on any
+# branch, builds the runtime stage of the multi-stage Dockerfile,
+# and pushes `ghcr.io/archaeon-ai/sherloc-pipeline:<tag>`.
+#
+# Image visibility: private for v1.0-beta. The VPS pulls with a PAT
+# scoped to packages:read. The v1.0.1 visibility flip will re-evaluate.
+#
+# Follow-up (v1.0.1 sunset deliverable on the new public
+# `archaeon-ai/sherloc-pipeline` repo): port the supply-chain extras
+# pattern from `ubs/.github/workflows/oci.yml` — cosign keyless
+# signing, SPDX SBOM attestation, SLSA v1 provenance.
+name: Publish image to GHCR
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/archaeon-ai/sherloc-pipeline
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Enforce the contract gate documented in DEPLOYMENT_CONTRACT.md §10:
+      # the pushed tag MUST equal `v<project.version>`. This protects
+      # against a mistagged push (e.g. `v4.1.14` while pyproject still
+      # carries 4.1.11) sneaking past the separate ci.yml workflow.
+      # Failing here aborts before the image is built or pushed.
+      #
+      # The `workflow_dispatch` trigger lets an operator re-run a tag
+      # publish after a transient infra failure; manual runs MUST select
+      # a `v*` tag ref. Running from a branch dispatch would push an
+      # image tagged with the branch name (`github.ref_name`) which the
+      # contract surface treats as malformed; the gate detects and
+      # rejects that case explicitly.
+      - name: Verify pyproject version matches pushed tag
+        run: |
+          set -euo pipefail
+          REF_TYPE="${GITHUB_REF_TYPE}"
+          REF="${GITHUB_REF_NAME}"
+          if [ "${REF_TYPE}" != "tag" ]; then
+              echo "::error::publish.yml must run from a v* tag ref (got ref_type=${REF_TYPE}, ref_name=${REF}). For manual re-runs, dispatch this workflow with the v<version> tag selected; do not run from a branch." >&2
+              exit 1
+          fi
+          PROJ_VERSION=$(python3 - <<'PY'
+          import tomllib
+          with open("pyproject.toml", "rb") as f:
+              print(tomllib.load(f)["project"]["version"])
+          PY
+          )
+          EXPECTED="v${PROJ_VERSION}"
+          if [ "${REF}" != "${EXPECTED}" ]; then
+              echo "::error::tag ${REF} disagrees with pyproject.toml::project.version ${PROJ_VERSION} (expected tag ${EXPECTED}). Bump pyproject before tagging." >&2
+              exit 1
+          fi
+          echo "tag/version coherence OK: ${REF}"
+
+      # Register QEMU + binfmt handlers so `docker buildx` can run the
+      # linux/arm64 leg under emulation on the linux/amd64 ubuntu-latest
+      # runner. Required prereq for the multi-arch platforms list below.
+      # If we later move arm64 onto a native runner this step becomes
+      # unnecessary, but for v4.1.16 the cheapest path is emulation.
+      - name: Set up QEMU for cross-platform builds
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push runtime image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summarize published image
+        run: |
+          echo "Pushed: ${IMAGE_NAME}:${GITHUB_REF_NAME}"
+          echo "Digest: ${{ steps.build.outputs.digest }}"
+          {
+            echo "### Published image"
+            echo ""
+            echo "- Tag: \`${IMAGE_NAME}:${GITHUB_REF_NAME}\`"
+            echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- Platforms: linux/amd64,linux/arm64"
+            echo "- Visibility: private (set on package after first publish)"
+          } >> "$GITHUB_STEP_SUMMARY"

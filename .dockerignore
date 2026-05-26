@@ -1,0 +1,76 @@
+# Build artefacts and caches
+.venv/
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+build/
+dist/
+*.egg
+
+# Frontend caches and build outputs (rebuilt inside the container)
+src/sherloc_pipeline/web/frontend/node_modules/
+src/sherloc_pipeline/web/frontend/dist/
+
+# Data and outputs (none of this belongs in the image)
+data/
+pds/
+outputs/
+models/
+phase.db
+phase_pds.db
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+
+# tests/ is intentionally NOT excluded: the `test` stage of the
+# Dockerfile copies it to enable the §18.3 / G18.2-inside-container
+# regression gate (`docker build --target test`). The `runtime` stage
+# does not COPY tests/ so they never reach production images. Test
+# infrastructure caches and coverage artefacts ARE excluded.
+.coverage
+htmlcov/
+
+# Local-only and scratch
+_scratch/
+experiments/
+notebooks/
+.beads/
+.cctx/
+.claude/
+.ralph/
+
+# VCS metadata (not needed at runtime; reproducibility comes from the lockfile)
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Editor / OS noise
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Documentation (image needs none of it)
+docs/
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+QUICKSTART.md
+NOTICE
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Compose files are read by `docker compose`, not the build daemon
+docker-compose*.yml

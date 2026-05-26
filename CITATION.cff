@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software in published work, please cite it
+  alongside the underlying mission and data sources. Mars 2020
+  Perseverance and the SHERLOC instrument are NASA / JPL-Caltech
+  efforts; the raw data this pipeline analyzes are publicly
+  released through the Planetary Data System (PDS) Geosciences
+  Node. Acknowledge those upstream sources in addition to this
+  software.
+title: SHERLOC Pipeline
+authors:
+  - family-names: Williford
+    given-names: Ken
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/archaeon-ai/sherloc-pipeline"
+keywords:
+  - mars-2020
+  - perseverance
+  - sherloc
+  - raman-spectroscopy
+  - fluorescence-spectroscopy
+  - planetary-science
+references:
+  - type: article
+    authors:
+      - family-names: Bhartia
+        given-names: Rohit
+    title: >-
+      Perseverance's Scanning Habitable Environments with Raman
+      and Luminescence for Organics and Chemicals (SHERLOC)
+      Investigation
+    journal: Space Science Reviews
+    volume: 217
+    year: 2021
+    doi: 10.1007/s11214-021-00812-z

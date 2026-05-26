@@ -1,0 +1,42 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # fetch-depth: 0 pulls full history + tags so
+        # tests/contract/test_image_identity.py::test_pr_mode_version_not_behind_latest_tag
+        # can resolve the latest v* tag instead of silently skipping
+        # (actions/checkout@v4 default is a shallow no-tags fetch).
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # All extras are needed at test time: [web] brings fastapi/uvicorn/
+      # boto3 (so tests/unit/web/ + the new R2 resolver imports resolve);
+      # [pds] brings httpx for the PDS download client tests; [dev]
+      # carries pytest + moto[s3]. Without all three, pytest collection
+      # fails on `ModuleNotFoundError: fastapi` at the first web test.
+      - run: pip install -e '.[dev,web,pds]'
+      - run: ruff check .
+      - name: Public-repo discipline (forbidden infrastructure strings)
+        run: scripts/check-forbidden-strings.sh --tree
+      # The contract smoke (tests/contract/test_container_smoke.py) is
+      # double-marked `docker` + `slow`; the dedicated contract-smoke.yml
+      # workflow opts it in. Filter on `not docker` defensively so the
+      # smoke is excluded even if `slow` is dropped on a future test.
+      - run: pytest -m "not slow and not docker"
+      - name: Guard against tests reading absolute local paths
+        run: |
+          # Catch hardcoded operator-local paths in test IDs / parametrize values.
+          # Filter out pytest's own header lines (rootdir, cachedir, plugins,
+          # etc.) which legitimately resolve to /home/runner/... on GitHub
+          # runners and would produce false positives.
+          if pytest --collect-only -q 2>&1 \
+              | grep -vE '^(rootdir|cachedir|plugins|configfile|asyncio|platform|collected) ?:' \
+              | grep -E '/(home|data|nas)/' ; then
+            echo "FAIL: tests reference absolute local paths"
+            exit 1
+          fi

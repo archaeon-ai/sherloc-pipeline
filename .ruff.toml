@@ -1,0 +1,28 @@
+target-version = "py311"
+line-length = 100
+extend-exclude = ["docs/_internal", ".ralph", ".beads", ".claude", "src/sherloc_pipeline/web/frontend"]
+
+[lint]
+# Pragmatic baseline for first public release: enforce correctness-critical
+# pyflakes rules + a small set of bugbear checks. Stylistic categories
+# (whitespace, import sort, PEP 585 type-hint upgrades, simplification hints)
+# are deferred. Ratchet upward when broader cleanup is scheduled.
+select = [
+    "E9",   # pycodestyle syntax errors
+    "F63",  # invalid comparisons
+    "F7",   # syntax violations
+    "F811", # redefined unused
+    "B006", # mutable default argument
+]
+# F821 (undefined-name) excluded: this codebase uses quoted forward-refs for type
+# annotations (e.g. "np.ndarray") with deferred lazy imports inside function
+# bodies, plus SQLAlchemy relationship strings — all of which ruff statically
+# flags as undefined. Caught by pytest at runtime instead.
+ignore = ["E501"]  # line length handled by formatter
+
+[lint.per-file-ignores]
+"tests/**" = ["F811"]
+"experiments/**" = ["F811"]
+
+[format]
+quote-style = "double"

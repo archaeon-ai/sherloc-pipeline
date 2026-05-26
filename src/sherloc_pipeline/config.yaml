@@ -1,0 +1,279 @@
+# SHERLOC Pipeline Configuration
+# This file contains all configuration parameters for the pipeline
+# Portions of the calibration constants below are derived from Loupe V5.1.5a
+# (Apache License 2.0, © 2022 California Institute of Technology / JPL).
+
+# Wavelength calibration (Loupe-compatible)
+wavelength:
+  raman_coefficients: [-7.85000e-06, 6.52400e-02, 2.46690e+02]
+  fluorescence_coefficients: [-5.65724e-06, 6.33627e-02, 2.47474e+02]
+  cutoff_channel: 500
+  laser_wavelength: 248.5794
+  n_channels: 2148
+
+# Image calibration
+image:
+  pixel_scale: 10.1
+  dimensions: [1648, 1200]
+  default_upscale_factor: 3
+
+# Spectral region definitions
+spectral_regions:
+  r1_wavelength_min: 250.0
+  r1_wavelength_max: 282.0
+  r2_wavelength_min: 282.0
+  r2_wavelength_max: 337.8
+  r3_wavelength_min: 337.8
+  r3_wavelength_max: 357.4
+
+# Preprocessing parameters
+preprocessing:
+  baseline_method: "aspls"
+  cosmic_ray_method: "avg"
+  trim_mean_baseline_pct: 0.02   # per-tail proportion for scipy.stats.trim_mean
+  regions: ["R1", "R2", "R3", "R123"]
+  despike:
+    window_size: 7
+    zscore_threshold: 6.0
+    max_iterations: 1
+    interpolation_method: "linear"
+    run_length_max: 2
+    laser_window: [600.0, 700.0]
+    sulfate_center_window: [1014.0, 1020.0]
+    sulfate_guard_enable: true
+    sulfate_guard_search: [990.0, 1050.0]
+    sulfate_guard_min_prominence: 100.0
+    sulfate_guard_min_halfwidth: 15.0
+    sulfate_guard_max_halfwidth: 25.0
+  baseline:
+    lam: 1000000.0
+    asymmetric_coef: 0.01
+    iters: 10
+    diff_order: 2
+    tol: 0.001
+    keep_windows:
+      - [600.0, 1130.0]
+      - [1300.0, 1720.0]
+      - [3000.0, 3800.0]
+    keep_weight: 0.01
+  background_subtraction:
+    default_file: "./data/background/Arm_Stowed_post-anomaly_900ppp_trimmed_mean_1266.csv"
+    pulses_per_point: 900
+    laser_scale:
+      enabled: true
+      roi: [600.0, 700.0]
+      clip: [0.1, 5.0]
+    scale_bounds: [0.1, 5.0]  # warn if calculated scale is outside this range
+    # Configurable background spectra for 'sherloc plot' command
+    # Keep "as" and "fs" varieties hard-coded; file paths are configurable
+    backgrounds:
+      as:
+        file: "Arm_Stowed_post-anomaly_900ppp_trimmed_mean_1266.csv"
+        ppp: 900
+        columns:
+          raman_shift: "raman_shift"
+          intensity: "intensity"
+      fs:
+        file: "Fused_Silica_Corning7980_Air_Subtracted-Bandwidth-35_SB-Pitt.csv"
+        ppp: 900
+        columns:
+          raman_shift: "Raman shift (cm-1)"
+          intensity: "Intensity"
+
+# Fitting parameters
+fitting:
+  r1_fit_range: [700, 1200]           # default R1 fit ROI (cm^-1)
+  r1_plot_range: [700, 1300]          # default R1 plot ROI (cm^-1)
+  fit_fwhm_min_initial_cm1: 22        # allow optimizer to explore >=22 to avoid hard edge artifacts
+  reviewable_fwhm_min_cm1: 25.0       # FWHM gate for reviewable / persist eligibility (cm^-1)
+  filter_fwhm_min_cm1: 30             # post-fit filter threshold
+  fwhm_max_cm1: 90                    # minerals upper bound; organics/hydration override below
+  slit_width_cm1_default: 34.1        # preferred slit-centered width
+  slit_pref_weight: 0.2               # soft bias toward slit width in objective/sorting
+  low_fwhm_edge_penalty: 0.1          # penalty term weight for FWHM near lower bound
+  max_peaks: 5
+  min_snr: 3.0
+  min_seed_snr: 2.0                 # do not seed peaks below this SNR
+  min_display_snr: 2.0              # do not plot/report components below this SNR
+  r_squared_min: 0.25
+  
+  # Noise estimation for SNR calculation
+  noise_estimation:
+    window: [2000.0, 2100.0]          # Raman shift range (cm^-1) for noise std calculation
+                                      # This region should be featureless (no Raman peaks)
+  peak_separation_cm1: 25             # minimum separation between initial seeds
+  library_path: null                  # optional: external YAML/CSV of mineral rules (unused if mineral_rules present)
+  mineral_rules:
+    - {label: olivine,   lo: 810.0,  hi: 860.0}
+    - {label: phosphate, lo: 945.0,  hi: 980.0}
+    - {label: pyroxene,  lo: 980.0,  hi: 1008.0}
+    - {label: sulf1_v1,  lo: 1008.0, hi: 1020.0}
+    - {label: sulf2_v1,  lo: 1020.0, hi: 1045.0}
+    - {label: "1050",    lo: 1045.0, hi: 1055.0}
+    - {label: lo-carb,   lo: 1055.0, hi: 1075.0}
+    - {label: hi-carb,   lo: 1075.0, hi: 1105.0}
+    - {label: sulf_v3,   lo: 1120.0, hi: 1160.0}
+  min_amp_sigma_multiplier: 0.3       # amplitude threshold factor (lower to allow broad/low peaks)
+
+  # Model parsimony — peak count selection
+  parsimony:
+    model_selection: "aicc"          # "ftest" (sequential F-test) or "aicc" (information criterion)
+    ftest_alpha: 0.01                 # F-test significance level (0.01 = 99% confidence each peak is real)
+    use_aicc: false                   # deprecated — use model_selection instead
+    aicc_min_peaks: 1
+    aicc_max_peaks: 5                 # capped by max_peaks and seeds
+    aicc_improve_threshold: 0.0       # require ΔAICc < threshold relative to best (0 keeps strict min)
+
+  # Per-scan slit estimation from laser line (600–700 cm^-1)
+  dynamic_slit:
+    enabled: true
+    roi: [600, 700]
+    min_snr: 10.0                     # require strong laser line
+    fwhm_bounds: [20, 80]
+    min_points: 5                     # require at least N valid points in scan to adopt estimate
+    aggregation: median               # median across accepted points
+
+  # Post-hoc quality filters (applied during persistence, not fitting)
+  posthoc_filters:
+    r2_min: 0.0                          # reject fits with R² ≤ 0 (all domains)
+    sharpness_max: 3.0                   # reject peaks where data_at_center / amplitude > this (cosmic ray filter)
+    organics_fwhm:
+      D_band: 50.0                       # cm-1 minimum (removes cosmic rays)
+      G_band: 40.0                       # cm-1 minimum (== fitting floor; sharpness filter handles cosmic rays)
+      unidentified: 40.0                 # cm-1 minimum (== fitting floor; sharpness filter handles cosmic rays)
+    hydration_center_range: [3000.0, 3900.0]  # cm-1 (allows serpentine OH ~3700)
+
+  # Hydration-focused fitting (Phua et al. 2024)
+  hydration_fit_range: [2800, 3900]   # O-H stretch search window (Phua et al. 2024)
+  hydration_plot_range: [2600, 4000]
+  hydration_max_peaks: 2              # typical decomposition into 1–2 Gaussians
+  hydration_min_snr: 3.0              # pre-fit gate only; F-test governs multi-peak
+  hydration_fwhm_min_cm1: 50.0        # Phua et al. lower bound (real OH never narrower)
+  hydration_fwhm_max_cm1: 300.0       # Phua et al. upper bound
+  hydration_r2_min: 0.25              # quality gate (matches mineral standard)
+  hydration_ftest_alpha: 0.01         # F-test for hydration model selection
+  hydration_use_prebaseline: true     # use R1_normalized.csv, not _baselined
+  hydration_center_range: [3000.0, 3900.0]  # peak center bounds (allows serpentine)
+
+  # Organics (D/G bands) fitting (preview)
+  organics_fit_range: [1250, 1850]    # D (~1350) and G (~1580–1600) bands
+  organics_plot_range: [1250, 1850]
+  organics_max_peaks: 2               # up to two components (D and G)
+  organics_fwhm_bounds: [40, 200]     # broader than mineral peaks; D can exceed 100
+  organics_min_snr: 2.0
+  organics_g_roi: [1500, 1700]        # G-band search window
+  organics_d_roi: [1250, 1500]        # D-band search window
+  organics_g_fwhm_accept: [40, 100]   # acceptance band for G detection
+  organics_d_fwhm_accept: [100, 200]  # acceptance band for D detection
+  organics_rebaseline:
+    enabled: false
+    method: poly
+    roi: [1250, 1850]
+    poly_degree: 2
+    lam: 2.0e5
+    asymmetric_coef: 0.002
+    iters: 30
+    diff_order: 2
+    downweight:
+      g_center: 1600.0
+      g_halfwidth: 50.0
+      d_center: 1350.0
+      d_halfwidth: 80.0
+      weight: 0.02
+
+  # Parallelism: number of worker processes for per-point fitting.
+  # 0 = auto (half of available CPU cores), 1 = sequential (no multiprocessing).
+  # Each worker runs fit_spectrum() + plot generation + CSV write for one point.
+  # Auto-scales: 24-core Linux → 12 workers, 8-core Mac → 4 workers, 1-core → sequential.
+  parallel_workers: 0
+
+# Fluorescence fitting parameters (R2/R3 region, nm units)
+fluorescence_fitting:
+  # Fit range and bounds
+  fit_range: [276.0, 357.0]           # nm; 276nm = 4000 cm-1 (above hydration Raman)
+  position_bounds: [270.0, 357.0]     # nm; wider than fit_range for Group 3 peaks
+  overlap_exclusion: [337.4, 338.4]   # nm; R2/R3 overlap zone (channels 1668-1689)
+
+  # Peak shape constraints
+  fwhm_range: [7.0, 35.0]            # nm, hard bounds; 35nm accommodates group3 features
+  min_peak_separation: 15.0           # nm, hard constraint; allows ~20nm Ce3+ anhydrite doublet (group1a+1b)
+  max_peaks: 4                        # group3 + Ce3+ anhydrite doublet (group1a+1b) + group2
+  snr_threshold: 10.0                 # captures 100% of G1a/G1b; median G1a SNR=33.9, min=11.0
+  min_fwhm_nm: 8.0                    # rejects cosmic ray artifacts hitting optimizer floor (7nm)
+  noise_window: [261.5, 262.3]        # nm, quiet region for noise estimation
+
+  # Preprocessing
+  despike_enabled: true               # Configurable; may need wider windows for fluorescence
+
+  # Saturation handling
+  saturation_threshold: 60000         # counts; CCD saturation level
+  saturation_channel_limit: 5         # channels at saturation before fit is skipped
+
+  # Group assignment rules (analogous to mineral_rules)
+  fluorescence_rules:
+    - {label: group3,   lo: 270.0, hi: 295.0}    # Silicate defect
+    - {label: group1a,  lo: 300.0, hi: 307.0}    # Ce3+ doublet (short)
+    - {label: group1b,  lo: 322.0, hi: 329.0}    # Ce3+ doublet (long)
+    - {label: group2,   lo: 329.0, hi: 355.0}    # Ce3+ in phosphate (~340nm; predicted ~360nm partner unresolved by SHERLOC)
+
+  # Doublet detection
+  doublet_snr_threshold: 10.0         # Both peaks must exceed (matches snr_threshold)
+  doublet_separation_range: [18, 29]  # nm, expected separation
+  doublet_ratio_range: [0.7, 1.3]      # [lo, hi] intensity ratio (amp_1a/amp_1b); 3σ from Berry Hollow agnostic fits (N=74, mean=1.01±0.10)
+
+  # Feature scan for hypothesis-driven fitting
+  feature_scan:
+    prominence_factor: 3.0            # Multiplier on noise_std for detection
+    group_windows:
+      group3:  [270.0, 295.0]
+      group1a: [295.0, 315.0]         # Wider than assignment for detection
+      group1b: [315.0, 332.0]
+      group2:  [329.0, 357.0]
+
+  # Hypothesis fitting strategy
+  strategy: "agnostic"                # "agnostic" (default) or "hypothesis"
+  agnostic_r2_threshold: 0.7          # If hypothesis R² < this, run agnostic diagnostic
+
+  # Parallelism: number of worker processes for per-point fluorescence fitting.
+  # 0 = auto (half of available CPU cores), 1 = sequential (no multiprocessing).
+  # Uses shared resolve_parallel_workers() utility (see also fitting.parallel_workers).
+  parallel_workers: 0
+
+# Spatial mapping parameters
+spatial:
+  laser_center: [809.0, 664.0]
+  pixel_scale: 10.1
+  scale_factor: 1.0
+
+# Output settings
+output:
+  results_dir: "./results"
+  create_plots: true
+  plot_format: "png"
+  plot_dpi: 300
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# PDS archive download settings
+pds:
+  base_url: "https://pds-geosciences.wustl.edu/m2020/urn-nasa-pds-mars2020_sherloc"
+  cache_dir: "./data/pds"             # Override: SHERLOC_PDS_CACHE_DIR (was ./pds)
+  timeout_seconds: 60.0
+  max_retries: 3
+  backoff_factor: 2.0
+
+# Database paths
+# Resolved by resolve_path(): env var > XDG (~/.local/share/sherloc/) > config value
+database:
+  path: "./sherloc.db"                # Override: SHERLOC_DB_PATH
+  pds_path: "./sherloc_pds.db"        # Override: SHERLOC_PDS_DB_PATH
+
+# Paths defaults for simplified commanding
+# Resolved by resolve_path(): env var > XDG (~/.local/share/sherloc/) > config value
+paths:
+  data_root: "./data"                 # Override: SHERLOC_DATA_DIR (was ./data/loupe)
+  results_root: "./results"           # Override: SHERLOC_RESULTS_DIR (was ./results)
+  background_dir: "./data/background" # Override: SHERLOC_BACKGROUND_DIR (was ./data/background)

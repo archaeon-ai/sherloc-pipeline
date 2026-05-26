@@ -1,0 +1,147 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sherloc-pipeline"
+version = "4.1.17"
+description = "Mars 2020 SHERLOC Raman/fluorescence data processing pipeline"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Ken Williford", email = "ken@bmsis.org"},
+]
+keywords = ["mars", "2020", "sherloc", "raman", "spectroscopy", "nasa"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "numpy>=1.20.0",
+    "pandas>=1.3.0",
+    "matplotlib>=3.5.0",
+    "scipy>=1.8.0",
+    "Pillow>=9.0.0",
+    "pybaselines>=1.0.0",
+    "typer[all]>=0.9.0",
+    "pydantic>=1.10.0",
+    "pyyaml>=6.0",
+    "rich>=12.0.0",
+    "scikit-image>=0.19.0",
+    # scikit-learn + plotly: hard-imported by visualization/spectrograms.py
+    # for PCA/StandardScaler and the interactive HTML spectrogram output.
+    "scikit-learn>=1.3.0",
+    "plotly>=5.18.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+]
+
+[project.optional-dependencies]
+# PDS download client (core/pds_client.py). Lazy-imported so plain
+# `pip install sherloc-pipeline` does not require httpx; only users
+# running PDS downloads need this extra. See PUBLIC_TOOLKIT_ARCHITECTURE_SPEC
+# §9.1 deviation D5 (resolved in §19.1 B.3).
+pds = [
+    "httpx>=0.24.0",
+]
+web = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.6",
+    "websockets>=12.0",
+    # §2.6.1 Auth0 validator. Single source of truth for the JWT
+    # validation contract; consumed starting v4.1 (B.0 switchover).
+    # Git URL pin until the PyPI publish; operator's existing install
+    # workflow handles git+https deps. After PyPI publish swap back to
+    # ``"phase-platform-auth>=0.1.0,<1"``.
+    "phase-platform-auth @ git+https://github.com/archaeon-ai/phase-platform-auth@v0.1.0",
+    # CF Access JWT signature validation (web/auth.py); legacy path,
+    # sunset alongside CF Access in v4.x.
+    "pyjwt[crypto]>=2.8.0",
+    # CF Access JWKS fetch (web/auth.py).
+    "httpx>=0.24.0",
+    # Cloudflare R2 (S3-compatible) reads for SHERLOC ACI bytes per
+    # m2020-phase platform spec §3.9 (v4.1.7+). The resolver in
+    # web/routes/images.py uses boto3 to GET ACI bytes from the per-
+    # tier R2 bucket (phase-team / phase-public). See §3.9.2 for the
+    # AWS_*/PHASE_TIER env contract.
+    "boto3>=1.34.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-httpx>=0.30.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.6.0",
+    # R2 (S3-compatible) test backend for the v4.1.7 ACI resolver
+    # (web/routes/images.py). Provides an in-process moto S3 mock so
+    # tests/unit/web/test_images.py can exercise the boto3 client path
+    # against an isolated bucket without touching live R2 or hand-mocking
+    # every client method.
+    "moto[s3]>=5.0.0",
+]
+# Optional ML extras for SAM-based grain segmentation. Skipped automatically
+# in tests when the deps are absent.
+ml = [
+    "torch>=2.0.0",
+    "segment-anything>=1.0",
+]
+
+[project.scripts]
+sherloc = "sherloc_pipeline.cli.app:main"
+
+[project.urls]
+"M2020 SHERLOC Homepage" = "https://science.nasa.gov/resource/mars-2020s-sherloc-instrument/"
+"M2020 SHERLOC Loupe V5.1.5" = "https://zenodo.org/records/7062998"
+Repository = "https://github.com/archaeon-ai/sherloc-pipeline"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+# config.yaml ships with the wheel (loaded at module import time by
+# core/mineral_id.py, config.py, and core/data_ingestion.py). Without
+# this entry the wheel install path silently omits the file and any
+# import of sherloc_pipeline.web.app crashes at startup. Editable
+# installs (`pip install -e .`) work without it because they resolve
+# paths against src/ directly. B.14 G18.13 retry surfaced this gap.
+#
+# data/background/*.csv ships the arm-stowed + fused-silica baselines
+# consumed by the Workbench background subtraction route
+# (`POST /api/process/background`). Tier-agnostic; resolved via
+# importlib.resources so the wheel-installed runtime image can serve
+# them without per-tier R2 keys. Without this entry the v1.0-beta VPS
+# deployment regressed to "Background file not found" (issue #13).
+[tool.setuptools.package-data]
+sherloc_pipeline = ["config.yaml", "data/background/*.csv"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "-ra",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:invalid value encountered in subtract:RuntimeWarning:scipy.optimize",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "docker: marks tests requiring a live Docker daemon (deselect with '-m \"not docker\"'; contract-smoke.yml opts in)",
+]

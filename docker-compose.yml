@@ -1,0 +1,46 @@
+# SHERLOC Pipeline Compose configuration.
+#
+# This file is the developer-facing compose definition committed in the
+# repo. Production VPS deployment uses the same file at
+# /opt/sherloc/docker-compose.yml; environment files are operator-supplied
+# and not committed (see PUBLIC_TOOLKIT_ARCHITECTURE_SPEC §15.4 / §15.5).
+#
+# Usage:
+#   docker compose build
+#   docker compose up -d sherloc-internal     # team-mode container
+#   docker compose up -d sherloc-public       # public-mode container
+#
+# Both services run the same image; they differ only in env files.
+
+services:
+  sherloc-internal:
+    build: .
+    image: sherloc-pipeline:v4.0.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - /etc/sherloc/internal.env
+    volumes:
+      - /var/lib/sherloc/internal:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  sherloc-public:
+    build: .
+    image: sherloc-pipeline:v4.0.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8767:8000"
+    env_file:
+      - /etc/sherloc/public.env
+    volumes:
+      - /var/lib/sherloc/public:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,14 @@
+name: Improvement / feature request
+description: Suggest a change, addition, or workflow improvement.
+title: "[improvement] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggestion
+      description: |
+        What should change? If relevant, describe the use case it would
+        unlock and any context that helps prioritize against other work.
+    validations:
+      required: true

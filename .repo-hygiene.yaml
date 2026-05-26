@@ -1,0 +1,24 @@
+# .repo-hygiene.yaml — sherloc-pipeline
+version: 1
+profile: science-pipeline
+
+docs:
+  specs_dir: docs/specs
+  archive_dir: docs/archive
+
+freshness: []
+
+scripts:
+  scratch_dir: _scratch
+  reusable_root: scripts
+  archive_dirs: []
+
+outputs:
+  gitignored_dirs: []
+
+runtime:
+  ignore_paths:
+    - __pycache__/
+    - "*.pyc"
+    - .cctx/
+  protected_paths: []

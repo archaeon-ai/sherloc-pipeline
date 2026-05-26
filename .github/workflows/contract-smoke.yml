@@ -1,0 +1,43 @@
+# Live-container contract smoke (Cases A-E in tests/contract/test_container_smoke.py).
+#
+# Path-filtered so it only runs when something that could affect the
+# container surface changes. Tag pushes always run it (the live
+# verification of the surface a consumer pulls). Manual dispatch is
+# available for ad-hoc verification.
+#
+# See DEPLOYMENT_CONTRACT.md §12.2.
+name: Contract smoke (live container)
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'docker-entrypoint.sh'
+      - 'deploy/**'
+      - 'src/sherloc_pipeline/web/config_check.py'
+      - 'src/sherloc_pipeline/web/app.py'
+      - 'alembic/versions/**'
+      - 'tests/contract/**'
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Test deps only — the smoke runs against the *built* image, not
+      # against the host-installed package. [web,pds] would needlessly
+      # compile native deps on the runner.
+      - run: pip install -e '.[dev]'
+      - name: Build runtime image
+        run: docker build --target runtime -t sherloc-pipeline:contract-test .
+      - name: Run contract smoke (Cases A-E)
+        run: pytest -m docker tests/contract/test_container_smoke.py -v

@@ -1,0 +1,21 @@
+Sherloc-pipeline
+Copyright 2025 Ken Williford
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+in compliance with the License. You may obtain a copy of the License at
+http://www.apache.org/licenses/LICENSE-2.0.
+
+This distribution contains, adapts, or re-implements portions of the Loupe V5.1.5a codebase
+developed by the California Institute of Technology (Caltech) and Jet Propulsion Laboratory
+(JPL), released under the Apache License, Version 2.0. Loupe source:
+https://zenodo.org/records/7062998
+
+Sherloc-pipeline modules derived from or closely following Loupe logic include, but are not
+limited to:
+  - src/sherloc_pipeline/core/normalization.py (laser photodiode normalization workflow)
+  - src/sherloc_pipeline/core/data_ingestion.py (spectral restructuring and wavelength conversion)
+  - src/sherloc_pipeline/core/spatial.py (coordinate conversion and ACI overlay helpers)
+  - src/sherloc_pipeline/config.yaml (Loupe-compatible calibration constants)
+
+Modifications made by the sherloc-pipeline authors are © 2025 Ken Williford and contributors and
+are provided under the Apache License, Version 2.0.
+

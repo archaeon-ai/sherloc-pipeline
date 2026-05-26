@@ -1,0 +1,31 @@
+name: Scientific question
+description: Question about a fit, classification, or scientific interpretation.
+title: "[science] "
+labels: [science]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for questions like "why does this fit prefer the
+        doublet model here?" or "what does the Group 2 assignment mean for
+        this spectrum?" — anything about *what the pipeline says* rather
+        than *whether the code is broken*.
+  - type: input
+    id: scan
+    attributes:
+      label: Scan / spot identifier
+      description: e.g. `0921_Amherst_Point_detail_1 / point 21`
+    validations:
+      required: true
+  - type: input
+    id: link
+    attributes:
+      label: Link to the fit / view (optional)
+      description: Web UI URL, screenshot, or output file path.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What about this result are you trying to understand?
+    validations:
+      required: true
