@@ -383,7 +383,7 @@
                 wavenumber={spectrum.wavenumber}
                 wavelength={spectrum.wavelength ?? null}
                 intensity={spectrum.intensity}
-                scanPpp={scan.shots_per_point}
+                scanPpp={scan.shots_per_point ?? 900}
                 isAverageMode={selectionMode === 'average'}
                 isSinglePoint={selectionMode === 'point'}
                 targetType={scan.target_type ?? null}
