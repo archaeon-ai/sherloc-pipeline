@@ -1,0 +1,682 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+
+<?xml-model href="https://pds.nasa.gov/pds4/pds/v1/PDS4_PDS_1B10.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<?xml-model href="https://pds.nasa.gov/pds4/cart/v1/PDS4_CART_1B10_1931.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<?xml-model href="https://pds.nasa.gov/pds4/disp/v1/PDS4_DISP_1900.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<?xml-model href="https://pds.nasa.gov/pds4/img/v1/PDS4_IMG_1B00_1610.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<?xml-model href="https://pds.nasa.gov/pds4/geom/v1/PDS4_GEOM_1B10_1700.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<?xml-model href="https://pds.nasa.gov/pds4/proc/v1/PDS4_PROC_1B00_1100.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<?xml-model href="https://pds.nasa.gov/pds4/msn/v1/PDS4_MSN_1B00_1100.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<?xml-model href="https://pds.nasa.gov/pds4/msn_surface/v1/PDS4_MSN_SURFACE_1B00_1100.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<?xml-model href="https://pds.nasa.gov/pds4/img_surface/v1/PDS4_IMG_SURFACE_1B10_1110.sch" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+
+<Product_Observational xmlns="http://pds.nasa.gov/pds4/pds/v1"
+    xmlns:cart="http://pds.nasa.gov/pds4/cart/v1"
+    xmlns:disp="http://pds.nasa.gov/pds4/disp/v1"
+    xmlns:geom="http://pds.nasa.gov/pds4/geom/v1"
+    xmlns:img="http://pds.nasa.gov/pds4/img/v1"
+    xmlns:img_surface="http://pds.nasa.gov/pds4/img_surface/v1"
+    xmlns:msn="http://pds.nasa.gov/pds4/msn/v1"
+    xmlns:msn_surface="http://pds.nasa.gov/pds4/msn_surface/v1"
+    xmlns:pds="http://pds.nasa.gov/pds4/pds/v1"
+    xmlns:proc="http://pds.nasa.gov/pds4/proc/v1"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://pds.nasa.gov/pds4/pds/v1 https://pds.nasa.gov/pds4/pds/v1/PDS4_PDS_1B10.xsd          http://pds.nasa.gov/pds4/img/v1 https://pds.nasa.gov/pds4/img/v1/PDS4_IMG_1B00_1610.xsd      http://pds.nasa.gov/pds4/proc/v1 https://pds.nasa.gov/pds4/proc/v1/PDS4_PROC_1B00_1100.xsd      http://pds.nasa.gov/pds4/msn/v1 https://pds.nasa.gov/pds4//msn/v1/PDS4_MSN_1B00_1100.xsd   http://pds.nasa.gov/pds4/msn_surface/v1 https://pds.nasa.gov/pds4/msn_surface/v1/PDS4_MSN_SURFACE_1B00_1100.xsd   http://pds.nasa.gov/pds4/img_surface/v1 https://pds.nasa.gov/pds4/img_surface/v1/PDS4_IMG_SURFACE_1B10_1110.xsd   http://pds.nasa.gov/pds4/geom/v1 https://pds.nasa.gov/pds4/geom/v1/PDS4_GEOM_1B10_1700.xsd   http://pds.nasa.gov/pds4/disp/v1 https://pds.nasa.gov/pds4/disp/v1/PDS4_DISP_1900.xsd   http://pds.nasa.gov/pds4/cart/v1 https://pds.nasa.gov/pds4/cart/v1/PDS4_CART_1B10_1931.xsd   ">
+  <Identification_Area>
+    <logical_identifier>test_id</logical_identifier>
+    <version_id>1.0</version_id>
+    <title>this is a test</title>
+    <information_model_version>1.11.1.0</information_model_version>
+    <product_class>Product_Observational</product_class>
+  </Identification_Area>
+  <File_Area_Observational>
+    <File>
+      <file_name>activeSpectra.csv</file_name>
+    </File>
+    <Table_Delimited>
+      <local_identifier>active_R1</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">31111</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>active_R2</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">995953</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>active_R3</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">2121313</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+  </File_Area_Observational>
+  <File_Area_Observational>
+    <File>
+      <file_name>darkSpectra.csv</file_name>
+    </File>
+    <Table_Delimited>
+      <local_identifier>dark_R1</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">31111</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>dark_R2</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">988959</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>dark_R3</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">2113625</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+  </File_Area_Observational>
+  <File_Area_Observational>
+    <File>
+      <file_name>darkSubSpectra.csv</file_name>
+    </File>
+    <Table_Delimited>
+      <local_identifier>darkSub_R1</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">31111</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>darkSub_R2</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">780421</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>darkSub_R3</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">1643649</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>2148</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Channels</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+  </File_Area_Observational>
+  <File_Area_Observational>
+    <File>
+      <file_name>photodiodeRaw.csv</file_name>
+    </File>
+    <Table_Delimited>
+      <local_identifier>photodiode_all</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">7891</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>0</fields>
+        <groups>1</groups>
+        <Group_Field_Delimited>
+          <repetitions>500</repetitions>
+          <fields>1</fields>
+          <groups>0</groups>
+          <Field_Delimited>
+            <name>Shots</name>
+            <data_type>ASCII_Real</data_type>
+          </Field_Delimited>
+        </Group_Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+  </File_Area_Observational>
+  <File_Area_Observational>
+    <File>
+      <file_name>spatial.csv</file_name>
+    </File>
+    <Table_Delimited>
+      <local_identifier>spatial_az_el</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">7</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>2</fields>
+        <groups>0</groups>
+        <Field_Delimited>
+          <name>Azimuth</name>
+          <data_type>ASCII_Real</data_type>
+        </Field_Delimited>
+        <Field_Delimited>
+          <name>Elevation</name>
+          <data_type>ASCII_Real</data_type>
+        </Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>spatial_x_y</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">1005</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>2</fields>
+        <groups>0</groups>
+        <Field_Delimited>
+          <name>x</name>
+          <data_type>ASCII_Real</data_type>
+        </Field_Delimited>
+        <Field_Delimited>
+          <name>y</name>
+          <data_type>ASCII_Real</data_type>
+        </Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>scanner_err</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">2320</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>2</fields>
+        <groups>0</groups>
+        <Field_Delimited>
+          <name>azimuth error</name>
+          <data_type>ASCII_Real</data_type>
+        </Field_Delimited>
+        <Field_Delimited>
+          <name>elevation error</name>
+          <data_type>ASCII_Real</data_type>
+        </Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+    <Table_Delimited>
+      <local_identifier>scanner_current</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">3034</offset>
+      <records>100</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>2</fields>
+        <groups>0</groups>
+        <Field_Delimited>
+          <name>sum current</name>
+          <data_type>ASCII_Real</data_type>
+        </Field_Delimited>
+        <Field_Delimited>
+          <name>difference current</name>
+          <data_type>ASCII_Real</data_type>
+        </Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+  </File_Area_Observational>
+  <File_Area_Observational>
+    <File>
+      <file_name>loupe.csv</file_name>
+    </File>
+    <Table_Delimited>
+      <local_identifier>LoupeTable</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">0</offset>
+      <records>68</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>2</fields>
+        <groups>0</groups>
+        <Field_Delimited>
+          <name>Parameter</name>
+          <data_type>CHARACTER</data_type>
+        </Field_Delimited>
+        <Field_Delimited>
+          <name>Value</name>
+          <data_type>CHARACTER</data_type>
+        </Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+  </File_Area_Observational>
+  <File_Area_Observational>
+    <File>
+      <file_name>img/SC3_0852_0742603923_718ECM_N0410188SRLC11376_0000LMJ01.CSV</file_name>
+    </File>
+    <Table_Delimited>
+      <local_identifier>ACIAttributes</local_identifier>
+      <parsing_standard_id>PDS DSV 1</parsing_standard_id>
+      <offset unit="byte">0</offset>
+      <records>7</records>
+      <record_delimiter>Carriage-Return Line-Feed</record_delimiter>
+      <field_delimiter>Comma</field_delimiter>
+      <Record_Delimited>
+        <fields>2</fields>
+        <groups>0</groups>
+        <Field_Delimited>
+          <name>Parameter</name>
+          <data_type>CHARACTER</data_type>
+        </Field_Delimited>
+        <Field_Delimited>
+          <name>Value</name>
+          <data_type>CHARACTER</data_type>
+        </Field_Delimited>
+      </Record_Delimited>
+    </Table_Delimited>
+  </File_Area_Observational>
+  <File_Area_Observational>
+    <File>
+      <file_name>img/SC3_0852_0742603923_718ECM_N0410188SRLC11376_0000LMJ01.PNG</file_name>
+    </File>
+    <Encoded_Image>
+      <offset unit="byte">0</offset>
+    </Encoded_Image>
+  </File_Area_Observational>
+  <Observation_Area>
+    <Time_Coordinates>
+      <start_date_time>2000-00-00T00:00:00.000Z</start_date_time>
+      <stop_date_time>2050-00-00T00:00:00.000Z</stop_date_time>
+    </Time_Coordinates>
+    <Investigation_Area>
+      <name>M2020</name>
+      <type>Mission</type>
+      <Internal_Reference>
+        <lid_reference>urn:nasa:pds:context:investigation:mission.m2020</lid_reference>
+        <reference_type>data_to_investigation</reference_type>
+        <comment>This is the PDS4 logical identifier for the M2020 mission.</comment>
+      </Internal_Reference>
+    </Investigation_Area>
+    <Observing_System>
+      <Observing_System_Component>
+        <name>M2020 Rover</name>
+        <type>Spacecraft</type>
+        <Internal_Reference>
+          <lid_reference>urn:nasa:pds:context:instrument_host:spacecraft.m2020</lid_reference>
+          <reference_type>is_instrument_host</reference_type>
+          <comment>This is the PDS4 logical identifier for the M2020 Rover spacecraft.</comment>
+        </Internal_Reference>
+      </Observing_System_Component>
+      <Observing_System_Component>
+        <name>SHERLOC</name>
+        <type>Instrument</type>
+        <Internal_Reference>
+          <lid_reference>urn:nasa:pds:context:instrument:ida.m2020</lid_reference>
+          <reference_type>is_instrument</reference_type>
+        </Internal_Reference>
+      </Observing_System_Component>
+    </Observing_System>
+    <Target_Identification>
+      <name>Mars</name>
+      <type>Planet</type>
+      <Internal_Reference>
+        <lid_reference>urn:nasa:pds:context:target:planet.mars</lid_reference>
+        <reference_type>data_to_target</reference_type>
+      </Internal_Reference>
+    </Target_Identification>
+    <Discipline_Area>
+      <soff_Spectral_Open_File_Format>
+        <soff_Dimensions>
+          <soff_Dimension>
+            <soff_class>Points</soff_class>
+            <name>Points</name>
+            <comment>Single SHERLOC Map</comment>
+            <elements>100</elements>
+            <local_identifier>Points</local_identifier>
+          </soff_Dimension>
+          <soff_Dimension>
+            <soff_class>Channels</soff_class>
+            <name>Channels</name>
+            <comment>Channel for SHERLOC SCCD</comment>
+            <elements>2148</elements>
+            <local_identifier>Channels</local_identifier>
+          </soff_Dimension>
+          <soff_Dimension>
+            <soff_class>Shots</soff_class>
+            <name>Shots</name>
+            <comment>Number of laser shots at each point</comment>
+            <elements>500</elements>
+            <local_identifier>Shots</local_identifier>
+          </soff_Dimension>
+        </soff_Dimensions>
+        <soff_Data_Tables>
+          <soff_Data_Table>
+            <name>R1 Active Table</name>
+            <description>Region 1 active spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>active_R1</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>R1 Dark Table</name>
+            <description>Region 1 dark spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>dark_R1</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>R2 Active Table</name>
+            <description>Region 2 active spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>active_R2</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>R2 Dark Table</name>
+            <description>Region 2 dark spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>dark_R2</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>R3 Active Table</name>
+            <description>Region 3 active spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>active_R3</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>R3 Dark Table</name>
+            <description>Region 3 dark spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>dark_R3</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>R1 Dark-Subtracted Table</name>
+            <description>Region 1 dark-subtracted spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>darkSub_R1</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>R2 Dark-Subtracted Table</name>
+            <description>Region 2 dark-subtracted spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>darkSub_R2</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>R3 Dark-Subtracted Table</name>
+            <description>Region 3 dark-subtracted spectra</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Channels</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>darkSub_R3</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>Photodiode All</name>
+            <description>All photodiode data</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_to>Shots</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>photodiode_all</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>Spatial Table</name>
+            <description>Scanner Azimuth/Elevation</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>spatial_az_el</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>Spatial Table XY</name>
+            <description>X/Y Table</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>spatial_x_y</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>Scanner Error</name>
+            <description>Azimuth/Elevation error</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>scanner_err</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+          <soff_Data_Table>
+            <name>Scanner Current</name>
+            <description>Sum/Diff scanner current</description>
+            <Composite_Structure>
+              <Local_ID_Reference>
+                <id_reference_to>Points</id_reference_to>
+                <id_reference_type>soff_table_to_dimension</id_reference_type>
+              </Local_ID_Reference>
+              <Local_ID_Reference>
+                <id_reference_to>scanner_current</id_reference_to>
+                <id_reference_type>soff_to_local_table</id_reference_type>
+              </Local_ID_Reference>
+            </Composite_Structure>
+          </soff_Data_Table>
+        </soff_Data_Tables>
+      </soff_Spectral_Open_File_Format>
+    </Discipline_Area>
+  </Observation_Area>
+</Product_Observational>

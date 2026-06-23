@@ -1,0 +1,31 @@
+# docker-compose.example.yml — Reference shape for SHERLOC backend deployments.
+#
+# See DEPLOYMENT_CONTRACT.md for the authoritative env-var, volume, port,
+# and healthcheck surface. This file demonstrates a valid single-service
+# compose shape; adapt to your environment (host paths, ports, env file
+# locations).
+#
+# Two-service patterns (internal + public tiers from the same image,
+# with different access modes and bucket credentials) are supported.
+# See DEPLOYMENT_CONTRACT.md §11 "Two-tier deployment pattern" for the
+# per-tier env-var delta + a paired-services snippet.
+
+services:
+  sherloc:
+    image: ghcr.io/archaeon-ai/sherloc-pipeline:vX.Y.Z   # pin to a published tag
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"                            # host:container; host port is yours to choose
+    env_file:
+      - ./sherloc.env                                    # YOUR env file path; see env-templates/sherloc.env.example
+    volumes:
+      - ./data:/data                                     # YOUR host path; uid 1000 must be able to write here
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # Resource recommendations (uncomment + tune for your environment):
+    # mem_limit: 1g
+    # cpus: 1.5

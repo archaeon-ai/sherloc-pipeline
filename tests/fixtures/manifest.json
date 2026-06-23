@@ -1,0 +1,90 @@
+{
+  "version": "1.0",
+  "description": "Test fixtures manifest for SHERLOC pipeline development",
+  "datasets": [
+    {
+      "sol": "0921",
+      "target": "Amherst_Point",
+      "scan": "detail_1",
+      "ppp": 500,
+      "n_points": 100,
+      "description": "Mineral mix (carbonate/sulfate)",
+      "path": "loupe/sol_0921/detail_1/SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
+    },
+    {
+      "sol": "0852",
+      "target": "Lake_Haiyaha",
+      "scan": "detail_1",
+      "ppp": 500,
+      "n_points": 100,
+      "description": "Pure olivine",
+      "path": "loupe/sol_0852/detail_1/SrlcSpecSpecSohRaw_0742604031-08149-1_Loupe_working"
+    },
+    {
+      "sol": "1634",
+      "target": "Stigbreen",
+      "scan": "line_1",
+      "ppp": 900,
+      "n_points": 25,
+      "description": "Olivine line scan",
+      "path": "loupe/sol_1634/line_1/SrlcSpecSpecSohRaw_0812035122-58795-1_Loupe_working"
+    }
+  ],
+  "backgrounds": {
+    "as": {
+      "path": "background/Arm_Stowed_post-anomaly_900ppp_trimmed_mean_1266.csv",
+      "description": "Arm stowed post-anomaly background",
+      "ppp": 900,
+      "columns": {
+        "raman_shift": "raman_shift",
+        "intensity": "intensity"
+      }
+    },
+    "fs": {
+      "path": "background/Fused_Silica_Corning7980_Air_Subtracted-Bandwidth-35_SB-Pitt.csv",
+      "description": "Fused silica (Corning 7980) air-subtracted background",
+      "ppp": 900,
+      "columns": {
+        "raman_shift": "Raman shift (cm-1)",
+        "intensity": "Intensity"
+      }
+    }
+  },
+  "reference": [
+    {
+      "mineral": "forsterite",
+      "path": "reference/Forsterite_sxtal_800ppp_15A_2243.39uJ_2020-11-02_Raman_spectra.csv",
+      "description": "Forsterite single crystal reference spectrum (800 PPP, 15A, 2243.39uJ)",
+      "ppp": 800,
+      "format": {
+        "header_rows": 2,
+        "raman_shift_column": 1,
+        "intensity_column": 2,
+        "notes": "First row is metadata, second row is column headers. Use column indices 1 (Raman shift) and 2 (Average Intensity)"
+      }
+    }
+  ],
+  "pipeline_outputs": {
+    "description": "Simulated pipeline output CSVs for testing point visualization (T2.1+)",
+    "datasets": [
+      {
+        "sol": "0921",
+        "target": "Amherst_Point",
+        "scan": "detail_1",
+        "n_points": 10,
+        "n_raman_shift": 32,
+        "levels": ["normalized", "normalized_baselined", "normalized_despiked_baselined"],
+        "path": "pipeline_outputs/Amherst_Point/0921_detail_1",
+        "notes": "Synthetic data with peaks at ~850 and ~1000 cm^-1"
+      }
+    ],
+    "format": {
+      "columns": {
+        "raman_shift": "First column - Raman shift values in cm^-1",
+        "points": "Columns 0, 1, 2, ... (string names) - point intensity values"
+      },
+      "naming_pattern": "<sol>_<target>_<scan>_R1_<level>.csv"
+    }
+  }
+}
+

@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: fixture-provenance
+        name: Fixture-provenance ledger check (data files)
+        entry: scripts/check-fixture-provenance.py --staged
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

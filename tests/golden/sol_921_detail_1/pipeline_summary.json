@@ -1,0 +1,40 @@
+{
+  "config_hash": "c9bde1baa37259cadf8502e80343b0208107b8352b7ac551a079f0b513ca9057",
+  "generated_at": "2026-05-01T21:16:27.796971+00:00",
+  "n_points": 100,
+  "peak_counts": {
+    "hydration": 13,
+    "minerals": 21,
+    "organics": 0
+  },
+  "raman_shift_shape": [
+    523
+  ],
+  "review_columns": [
+    "sol",
+    "target",
+    "scan",
+    "modality",
+    "point",
+    "mean",
+    "amplitude",
+    "fwhm",
+    "snr",
+    "r_squared",
+    "label_id",
+    "peak_ID",
+    "keep",
+    "user_keep",
+    "reviewed",
+    "reject_reason"
+  ],
+  "review_n_rows": 44,
+  "scan": "detail_1",
+  "sol": "0921",
+  "spectra_shape": [
+    100,
+    523
+  ],
+  "target": "Amherst_Point",
+  "total_peaks": 34
+}

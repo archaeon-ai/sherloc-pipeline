@@ -1,0 +1,138 @@
+{
+  "version": "1.0",
+  "description": [
+    "Provenance ledger for every tracked data file in this repository.",
+    "This is a public repository: tracked data files must contain only",
+    "publicly releasable values. Allowed provenance categories:",
+    "  pds-archived              - Mars 2020 instrument data within the",
+    "                              instrument's archived PDS release envelope",
+    "                              (requires 'instrument' + 'sol'; checked",
+    "                              against pds_envelope.max_sol)",
+    "  raw-images-feed           - product published on the public Mars 2020",
+    "                              raw-images site (public on receipt)",
+    "  synthetic                 - generated/simulated values; sol/target in",
+    "                              file names is nominal only",
+    "  reference-standard        - Earth-laboratory reference or calibration",
+    "                              data (not Mars data)",
+    "  operator-derived-archived - operator-produced derivation whose inputs",
+    "                              are all archived/public (sol optional;",
+    "                              envelope-checked when present)",
+    "  metadata                  - value-free structural/config files",
+    "Enforced by scripts/check-fixture-provenance.py (pre-commit --staged +",
+    "CI --tree). Directory entries end with '/' and cover all files under",
+    "them; longest matching prefix wins. When a new PDS release extends an",
+    "instrument's archive, bump that instrument's pds_envelope block (and",
+    "any dependent cutoff configs) in the same change-set before adding",
+    "fixtures from newly released sols. See CONTRIBUTING.md 'Fixture",
+    "provenance'."
+  ],
+  "pds_envelope": {
+    "sherloc": {
+      "release": "15",
+      "release_date": "2026-04-07",
+      "max_sol": 1739,
+      "source": "PDS Geosciences node, Mars 2020 SHERLOC archive (Release 15 covers sols through 1739)"
+    }
+  },
+  "entries": [
+    {
+      "path": "tests/fixtures/PROVENANCE.json",
+      "category": "metadata",
+      "description": "This ledger (self-entry, so 'every tracked data file carries a category' holds exactly)"
+    },
+    {
+      "path": "tests/fixtures/loupe/sol_0852/",
+      "category": "pds-archived",
+      "instrument": "sherloc",
+      "sol": 852,
+      "description": "Lake_Haiyaha detail_1 Loupe workspace + ACI context products (pure olivine)"
+    },
+    {
+      "path": "tests/fixtures/loupe/sol_0921/",
+      "category": "pds-archived",
+      "instrument": "sherloc",
+      "sol": 921,
+      "description": "Amherst_Point detail_1 Loupe workspace + ACI context products (carbonate/sulfate mix)"
+    },
+    {
+      "path": "tests/fixtures/loupe/sol_1634/",
+      "category": "pds-archived",
+      "instrument": "sherloc",
+      "sol": 1634,
+      "description": "Stigbreen line_1 Loupe workspace + ACI context products (olivine line scan)"
+    },
+    {
+      "path": "tests/fixtures/background/Arm_Stowed_post-anomaly_900ppp_trimmed_mean_1266.csv",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "description": "Arm-stowed post-anomaly background: trimmed-mean derivation over archived flight background spectra"
+    },
+    {
+      "path": "tests/fixtures/background/Fused_Silica_Corning7980_Air_Subtracted-Bandwidth-35_SB-Pitt.csv",
+      "category": "reference-standard",
+      "description": "Fused silica (Corning 7980) laboratory background spectrum"
+    },
+    {
+      "path": "tests/fixtures/reference/Forsterite_sxtal_800ppp_15A_2243.39uJ_2020-11-02_Raman_spectra.csv",
+      "category": "reference-standard",
+      "description": "Forsterite single-crystal laboratory reference Raman spectrum"
+    },
+    {
+      "path": "tests/fixtures/pipeline_outputs/",
+      "category": "synthetic",
+      "sol": 921,
+      "description": "Simulated pipeline-output CSVs/plots for visualization tests; sol/target naming is nominal (see tests/fixtures/manifest.json pipeline_outputs notes)"
+    },
+    {
+      "path": "tests/fixtures/manifest.json",
+      "category": "metadata",
+      "description": "Fixture manifest (paths, column maps, dataset descriptions; no measurement values)"
+    },
+    {
+      "path": "tests/golden/sol_921_detail_1/",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "sol": 921,
+      "description": "Golden regression outputs from the pipeline run over the archived sol-921 fixture dataset (legacy modz despike anchor, MLD-SYS-010)"
+    },
+    {
+      "path": "tests/golden/sol_921_detail_1_ml/",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "sol": 921,
+      "description": "Golden regression outputs over the archived sol-921 fixture dataset with the certified ML despike default (MLD-QUA-008); generated locally by 'python scripts/generate_golden_baseline.py --despike-method ml' with ONNX model v1_stageB_v13c sha256 9668a0b2ca257ce333d57e3f76598dda8cb5c1839e2fde6bd955086d959be0ba on onnxruntime 1.26.0 CPU"
+    },
+    {
+      "path": "src/sherloc_pipeline/data/background/Arm_Stowed_post-anomaly_900ppp_trimmed_mean_1266.csv",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "description": "Packaged copy of the arm-stowed trimmed-mean background (ships in the wheel)"
+    },
+    {
+      "path": "src/sherloc_pipeline/data/background/Fused_Silica_Corning7980_Air_Subtracted-Bandwidth-35_SB-Pitt.csv",
+      "category": "reference-standard",
+      "description": "Packaged copy of the fused-silica laboratory background (ships in the wheel)"
+    },
+    {
+      "path": "src/sherloc_pipeline/data/badpix_channels.csv",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "description": "Curated known-noisy detector-channel annotation table (issue #9): absolute CCD channel indices + tier + source, rebuilt 2026-06-17 on a dark-plane outlier-rate veto over the archived mission frame corpus (a defect must fire with the laser OFF; active-only Raman/fluorescence bands are excluded), cross-checked against the published mission bad-pixel table (Jakubek et al. 2025). No measurement values; ships in the wheel and is served by GET /api/spectra/badpix"
+    },
+    {
+      "path": "src/sherloc_pipeline/web/frontend/package.json",
+      "category": "metadata",
+      "description": "Frontend package manifest"
+    },
+    {
+      "path": "src/sherloc_pipeline/web/frontend/package-lock.json",
+      "category": "metadata",
+      "description": "Frontend dependency lockfile"
+    },
+    {
+      "path": "src/sherloc_pipeline/web/frontend/tsconfig.json",
+      "category": "metadata",
+      "description": "Frontend TypeScript config"
+    }
+  ]
+}
