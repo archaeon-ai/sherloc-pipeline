@@ -120,6 +120,34 @@
       "description": "Curated known-noisy detector-channel annotation table (issue #9): absolute CCD channel indices + tier + source, rebuilt 2026-06-17 on a dark-plane outlier-rate veto over the archived mission frame corpus (a defect must fire with the laser OFF; active-only Raman/fluorescence bands are excluded), cross-checked against the published mission bad-pixel table (Jakubek et al. 2025). No measurement values; ships in the wheel and is served by GET /api/spectra/badpix"
     },
     {
+      "path": "docs/img/map-mode.png",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "sol": 921,
+      "description": "README screenshot: web-UI Map Mode rendering of the archived Amherst Point (sol 921) detail_1 scan"
+    },
+    {
+      "path": "docs/img/workbench-minerals.png",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "sol": 921,
+      "description": "README screenshot: Workbench mineral-detection view over the archived Amherst Point (sol 921) detail_1 scan, point 81"
+    },
+    {
+      "path": "docs/img/workbench-hydration.png",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "sol": 921,
+      "description": "README screenshot: Workbench hydration-detection view over the archived Amherst Point (sol 921) detail_1 scan, point 81"
+    },
+    {
+      "path": "docs/img/workbench-organics-sau008.png",
+      "category": "operator-derived-archived",
+      "instrument": "sherloc",
+      "sol": 712,
+      "description": "README screenshot: Workbench organic-detection view over the archived SaU-008 meteorite external-calibration scan (sol 712)"
+    },
+    {
       "path": "src/sherloc_pipeline/web/frontend/package.json",
       "category": "metadata",
       "description": "Frontend package manifest"
