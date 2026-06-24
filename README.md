@@ -16,7 +16,7 @@ It also includes a browser-based web application — a Svelte single-page app on
 
 **Key capabilities:**
 
-- **ML cosmic-ray despiking** — a trained neural-network detector (the default since v4.2.0) that removes detector cosmic rays per `(point, region)`; masks are persisted to the database and applied at serving time
+- **ML cosmic-ray despiking** — a trained neural-network detector (the default) that removes detector cosmic rays per `(point, region)`; masks are persisted to the database and applied at serving time
 - **Raman peak fitting** across three domains: minerals, organics, and hydration bands
 - **Fluorescence fitting** using differential evolution optimization with three-tier saturation handling
 - **Multi-domain persistence** to SQLite via a unified `fitted_peaks` table with `fit_modality` discriminator
@@ -28,7 +28,7 @@ It also includes a browser-based web application — a Svelte single-page app on
 
 ## Live deployment
 
-SHERLOC Pipeline runs in production as part of the **PHASE** (Planetary Hyperspectral Analysis and Synthesis Environment) platform at **[m2020-phase.net](https://m2020-phase.net)**, serving the NASA Mars 2020 SHERLOC science team. The web application ships as a multi-architecture (amd64 + arm64) container with tag-triggered CI/CD; to run it yourself, see [Run with Docker](#run-with-docker).
+SHERLOC Pipeline runs in production as part of the **PHASE** (Planetary Hyperspectral Analysis and Synthesis Environment) platform at **[m2020-phase.net](https://m2020-phase.net)**, serving the NASA Mars 2020 science team. The web application ships as a multi-architecture (amd64 + arm64) container with tag-triggered CI/CD; to run it yourself, see [Run with Docker](#run-with-docker).
 
 ### Map Mode
 
@@ -410,7 +410,7 @@ artifacts that can mimic real mineral or organic bands — which are removed bef
 fitting. The method is selectable via `--despike-method` (CLI),
 `preprocessing.despike.method` (`config.yaml`), or the web despike toggle:
 
-- **`ml`** (default since v4.2.0) — a trained neural-network detector that classifies
+- **`ml`** (default) — a trained neural-network detector that classifies
   each detector channel as cosmic-ray or signal from the raw paired active/dark planes.
   Detection runs once at processing time, producing per-`(point, region)` channel masks
   persisted to the `cosmic_ray_masks` table; the serving host applies the stored masks

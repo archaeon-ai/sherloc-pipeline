@@ -402,12 +402,14 @@ class TestStage4Ingestion:
         _, result = service_result
         assert result.metadata["observations_ingested"] == 5
 
-    def test_1_observation_rejected(self, service_result):
-        """1 zpz-only observation rejected (no RRS/RCS)."""
+    def test_1_observation_skipped_no_spectral(self, service_result):
+        """1 zpz-only observation skipped non-fatally (no RRS/RCS)."""
         _, result = service_result
-        errors = result.metadata["errors"]
-        assert len(errors) == 1
-        assert "No RRS/RCS spectral product" in errors[0]
+        assert result.metadata["errors"] == []
+        assert result.metadata["observations_no_spectral"] == 1
+        assert any(
+            "No RRS/RCS spectral product" in w for w in result.warnings
+        )
 
     def test_exact_scan_count(self, service_result):
         """5 scans in database."""

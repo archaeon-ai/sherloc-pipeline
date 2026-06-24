@@ -4,7 +4,7 @@ SHERLOC Pipeline
 Mars 2020 SHERLOC Raman/fluorescence data processing pipeline.
 """
 
-__version__ = '5.0.0'
+__version__ = '5.0.1'
 __author__ = "Ken Williford"
 __email__ = "ken@bmsis.org"
 

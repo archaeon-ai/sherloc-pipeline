@@ -33,9 +33,13 @@ sherloc pds-ingest --sol 921
 Ingests all observations for Sol 921 from locally cached PDS data. Output shows per-observation results:
 
 ```
-Sol 921: 5 observations ingested, 0 skipped, 1 failed (zpz)
+Sol 921: 5 observations ingested, 0 skipped, 1 without spectral data (zpz)
   Points: 1498  Spectra: 4494  Context images: 5
 ```
+
+The one zpz-only observation has no RRS/RCS spectral product. This is an
+expected, non-fatal skip — it is reported as a warning and does **not** cause
+a non-zero exit code.
 
 ### Ingest a range of sols
 
@@ -167,7 +171,7 @@ Target names are resolved via a three-tier strategy:
 
 ### zpz filtering
 
-Products with "zpz" in the filename middle section are zero-point-zero calibration intermediates. They are filtered out during ingestion. If an observation has only zpz spectral products (no RRS/RCS), it is skipped with an error message.
+Products with "zpz" in the filename middle section are zero-point-zero calibration intermediates. They are filtered out during ingestion. If an observation has only zpz spectral products (no RRS/RCS), it is skipped non-fatally — reported as a warning and counted under `observations_no_spectral`, without affecting the exit code.
 
 ## Troubleshooting
 
@@ -184,7 +188,7 @@ No `sol_NNNN` directories exist in the cache. Download data first using the PDS 
 
 ### "No RRS/RCS spectral product"
 
-The observation contains only zpz-filtered products with no usable spectral data. This is expected for zpz observations and reported as a non-fatal error.
+The observation contains only zpz-filtered products with no usable spectral data. This is expected for zpz observations and reported as a non-fatal warning; it does not cause a non-zero exit code.
 
 ### Target names are NULL
 

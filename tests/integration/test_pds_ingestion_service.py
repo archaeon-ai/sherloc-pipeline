@@ -108,15 +108,19 @@ class TestIdempotency:
 
         Sol 921 has 6 observations: 5 with spectral data (RRS/RCS) and
         1 zpz-filtered observation (SCLK 748735903) that only has RLI/RLS
-        products, which correctly produces an error since RRS/RCS is required.
+        products. The zpz-only observation has no RRS/RCS spectral product,
+        which is an expected, non-fatal skip (not an error).
         """
         result = pds_service.ingest_sol(SOL_921_DIR)
 
-        # 5 observations ingested, 1 zpz-only observation fails (expected)
+        # 5 observations ingested; the 1 zpz-only observation is skipped as a
+        # non-fatal "no spectral data" case — no errors are recorded.
         assert result.metadata["observations_ingested"] == 5
-        errors = result.metadata["errors"]
-        assert len(errors) == 1
-        assert "No RRS/RCS spectral product" in errors[0]
+        assert result.metadata["errors"] == []
+        assert result.metadata["observations_no_spectral"] == 1
+        assert any(
+            "No RRS/RCS spectral product" in w for w in result.warnings
+        )
 
         stats = pds_service.get_database_stats()
         assert stats["sols"] == 1
@@ -213,9 +217,11 @@ class TestIdempotency:
 
         # Second ingestion (same version)
         result2 = pds_service.ingest_sol(SOL_921_DIR)
-        # 5 observations skipped (version matches), 0 newly ingested
-        # 1 zpz-only observation still errors (no RRS/RCS)
+        # 5 observations skipped (version matches), 0 newly ingested.
+        # The zpz-only observation is counted separately under
+        # observations_no_spectral, not observations_skipped.
         assert result2.metadata["observations_skipped"] == 5
+        assert result2.metadata["observations_no_spectral"] == 1
         assert result2.metadata["observations_ingested"] == 0
 
         # Counts unchanged
@@ -965,13 +971,19 @@ class TestSol921FullIngestion:
                     f"got '{scan.target}'"
                 )
 
-    def test_zpz_observation_rejected(self, ingested):
-        """zpz-only observation (SCLK 748735903) rejected with error."""
+    def test_zpz_observation_skipped_non_fatal(self, ingested):
+        """zpz-only observation (SCLK 748735903) skipped non-fatally.
+
+        It has no RRS/RCS spectral product, so it is counted under
+        ``observations_no_spectral`` with a warning — never as an error.
+        """
         _, result = ingested
         assert result.metadata["observations_ingested"] == 5
-        errors = result.metadata["errors"]
-        assert len(errors) == 1
-        assert "No RRS/RCS spectral product" in errors[0]
+        assert result.metadata["errors"] == []
+        assert result.metadata["observations_no_spectral"] == 1
+        assert any(
+            "No RRS/RCS spectral product" in w for w in result.warnings
+        )
 
     def test_idempotent_skip(self, ingested):
         """Re-ingestion skips all 5 observations, DB counts unchanged."""

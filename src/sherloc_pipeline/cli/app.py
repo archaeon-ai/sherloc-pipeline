@@ -1600,6 +1600,7 @@ def pds_ingest_cmd(
 
         total_obs_ingested = 0
         total_obs_skipped = 0
+        total_obs_no_spectral = 0
         total_obs_updated = 0
         total_points = 0
         total_spectra = 0
@@ -1640,6 +1641,9 @@ def pds_ingest_cmd(
                     total_obs_skipped += meta.get(
                         "observations_skipped", 0
                     )
+                    total_obs_no_spectral += meta.get(
+                        "observations_no_spectral", 0
+                    )
                     total_points += meta.get("points_ingested", 0)
                     total_spectra += meta.get("spectra_ingested", 0)
                     total_context += meta.get(
@@ -1674,6 +1678,8 @@ def pds_ingest_cmd(
             f"{total_spectra} spectra, "
             f"{total_context} context images"
         )
+        if total_obs_no_spectral:
+            summary += f", {total_obs_no_spectral} without spectral data"
         if total_obs_updated:
             summary += f", {total_obs_updated} version-updated"
 
@@ -1721,6 +1727,7 @@ def pds_ingest_cmd(
                 "sols_processed": total_sols,
                 "observations_ingested": total_obs_ingested,
                 "observations_skipped": total_obs_skipped,
+                "observations_no_spectral": total_obs_no_spectral,
                 "observations_failed": len(all_errors),
                 "spectra_created": total_spectra,
                 "points_created": total_points,
@@ -1744,6 +1751,7 @@ def pds_ingest_cmd(
                     "sols_processed": total_sols,
                     "observations_ingested": total_obs_ingested,
                     "observations_skipped": total_obs_skipped,
+                    "observations_no_spectral": total_obs_no_spectral,
                     "errors": all_errors,
                     "warnings": all_warnings,
                     "elapsed_seconds": round(elapsed, 3),
