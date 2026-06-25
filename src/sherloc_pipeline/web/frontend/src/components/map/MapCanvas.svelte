@@ -13,6 +13,7 @@
   import { OverlayRenderer } from '../../lib/renderers/OverlayRenderer';
   import type { OverlayOptions } from '../../lib/renderers/OverlayRenderer';
   import { getColormap, normalizeValue, colormapToRGBA } from '../../lib/colormaps';
+  import { selectActivePointSet } from '../../lib/activePointSet';
 
   // --- Props ---
   export let scanId: string;
@@ -135,12 +136,23 @@
   $: if (activeImage && canvasReady) applyActiveImage();
   $: if (!activeImage && canvasReady) clearActiveImage();
 
-  // Point set paired with the active image (issue #8). Mirrors the
-  // activeImage swap above: when the user toggles Colorized and a colorized
-  // point set was advertised, draw points / data rings / hit-test against the
-  // crop-shifted colorized coordinates so the overlay stays registered. Falls
-  // back to the grayscale `pointSet` when no colorized variant exists.
-  $: activePointSet = useColorized && pointSetColorized ? pointSetColorized : pointSet;
+  // Point set paired with the active image (issue #8). Gated on the SAME
+  // condition as `activeImage` above (`useColorized && colorizedAciImage`),
+  // not just `useColorized`: the colorized point set must only be drawn when
+  // the colorized image is actually the one on screen. `pointSetColorized` is
+  // assigned by MapMode before the colorized image fetch resolves (so a
+  // slow/failed fetch doesn't strand it), so keying off `useColorized` alone
+  // would draw crop-shifted coordinates over the grayscale image during the
+  // load window or on fetch failure — recreating the registration bug. Falls
+  // back to the grayscale `pointSet` until the colorized image is live. The
+  // selection rule is a pure helper (see lib/activePointSet.ts) so the
+  // image/point-set pairing is unit-testable without mounting the canvas.
+  $: activePointSet = selectActivePointSet(
+    useColorized,
+    colorizedAciImage,
+    pointSetColorized,
+    pointSet,
+  );
   // Rebuild the data layer when the active point set swaps (toggle/scan), so
   // rings re-render at the new coordinates.
   $: if (activePointSet) {

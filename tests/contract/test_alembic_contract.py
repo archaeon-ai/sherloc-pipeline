@@ -19,7 +19,7 @@ from typing import Optional, Sequence, Union
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERSIONS_DIR = REPO_ROOT / "alembic" / "versions"
 
-EXPECTED_HEAD = "077a61e1eace"  # add_cosmic_ray_masks_table
+EXPECTED_HEAD = "0c0107a1bed5"  # add_colorized_to_map_display_coords
 
 DownRevision = Union[None, str, Sequence[str]]
 

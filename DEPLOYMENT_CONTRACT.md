@@ -165,7 +165,7 @@ deliberate decision rather than silent drift. See
 
 | Element | Value |
 |---|---|
-| Current head | `077a61e1eace` (`add_cosmic_ray_masks_table`) |
+| Current head | `0c0107a1bed5` (`add_colorized_to_map_display_coords`) |
 | Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade head` → uvicorn |
 | Contract guarantee | Single head (no fork); migrations idempotent |
 

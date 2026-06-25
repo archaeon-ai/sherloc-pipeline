@@ -45,6 +45,7 @@ from sqlalchemy import (
     Index,
     UniqueConstraint,
     Enum as SQLEnum,
+    false,
     text,
 )
 from sqlalchemy.dialects.sqlite import JSON
@@ -1290,7 +1291,8 @@ class MapDisplayCoordinateORM(Base):
         Boolean,
         primary_key=True,
         nullable=False,
-        server_default=text("0"),
+        # Dialect-portable false literal (0 on SQLite, false on Postgres).
+        server_default=false(),
         default=False,
     )
     aci_x: Mapped[float] = mapped_column(Float, nullable=False)

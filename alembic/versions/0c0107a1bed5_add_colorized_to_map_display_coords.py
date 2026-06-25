@@ -49,7 +49,9 @@ def upgrade() -> None:
             "colorized",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.text("0"),
+            # Dialect-portable false literal (renders 0 on SQLite, false on
+            # Postgres) — avoids the integer-vs-boolean ambiguity of text("0").
+            server_default=sa.false(),
             primary_key=True,
         ),
         sa.Column("aci_x", sa.Float(), nullable=False),
@@ -73,5 +75,7 @@ def downgrade() -> None:
         sa.Column("aci_x", sa.Float(), nullable=False),
         sa.Column("aci_y", sa.Float(), nullable=False),
         sa.Column("transform_method", sa.String(30), nullable=False),
-        sa.Column("computed_at", sa.String(30), nullable=False),
+        # Match the ORM (DateTime) — the upgrade recreates computed_at as
+        # DateTime, so the downgrade does too to avoid schema drift.
+        sa.Column("computed_at", sa.DateTime(timezone=True), nullable=False),
     )
