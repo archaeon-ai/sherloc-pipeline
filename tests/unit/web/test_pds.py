@@ -1,5 +1,6 @@
 """PDS route tests (catalog, download, available-sols)."""
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,50 @@ def _reset_catalog_cache():
     _clear_catalog_cache()
     yield
     _clear_catalog_cache()
+
+
+@pytest.fixture(autouse=True)
+def _stub_pds_download_worker(monkeypatch):
+    """Stub the background PDS download worker so tests never do real downloads.
+
+    The download route dispatches ``_run_pds_download`` to the JobQueue's
+    single worker thread, where the real implementation makes live PDS network
+    calls. The route-level tests below only assert the 202 response and job
+    bookkeeping (status, single-flight) — not the download itself — but the
+    real worker would outlive each test, then log to an already-closed pytest
+    capture stream during teardown and intermittently crash the run with a
+    native segfault (a leaked thread doing native work as the interpreter tears
+    down).
+
+    The stub performs no real work. It blocks on a release event so the job
+    stays in the ``running`` state for the duration of the test — which is what
+    ``test_pds_download_submits_job`` (asserts ``status == "running"``) and
+    ``test_single_flight_same_sol`` (needs the first job still active when the
+    second submit arrives) rely on. At teardown the event is set, so the worker
+    returns a benign result and the thread is reaped cleanly (the JobQueue's
+    success path does no logging, so nothing writes to the closed stream).
+    """
+    release = threading.Event()
+
+    def _stub(sol, engine, config, job_state=None, force_reingest=False):
+        # Stay RUNNING (no real work) until the test finishes.
+        release.wait(timeout=30)
+        return {
+            "sol": sol,
+            "n_scans": 0,
+            "n_spectra": 0,
+            "n_aci": 0,
+            "n_downloaded": 0,
+            "n_skipped": 0,
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        "sherloc_pipeline.web.routes.pds._run_pds_download", _stub
+    )
+    yield
+    # Unblock any in-flight job so the worker thread exits before teardown.
+    release.set()
 
 
 # ---------------------------------------------------------------------------
@@ -180,11 +225,12 @@ async def test_get_job_status_404(client):
 
 @pytest.mark.asyncio
 async def test_single_flight_same_sol(client):
-    """Submitting a download for the same sol twice returns the same job_id."""
-    import threading
+    """Submitting a download for the same sol twice returns the same job_id.
 
-    blocker = threading.Event()
-
+    The autouse ``_stub_pds_download_worker`` fixture keeps the first job in the
+    ``running`` state, so the second submit hits the single-flight path and gets
+    the same job_id back.
+    """
     # Use sol 888 (not yet ingested in fixture)
     resp1 = await client.post("/api/pds/download", json={"sol": 888})
     assert resp1.status_code == 202
