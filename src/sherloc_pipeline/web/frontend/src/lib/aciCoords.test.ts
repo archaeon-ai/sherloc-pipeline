@@ -177,11 +177,11 @@ describe('getAciPixel — colorized variant (issue #8)', () => {
     expect(getAciPixel(pt, true)).toEqual({ x: 793, y: 632 });
   });
 
-  it('falls back to grayscale when colorized coords are absent', () => {
+  it('suppresses the point (null) when colorized requested but colorized coords absent', () => {
     const pt = makePoint({ x_aci_pixel: 820, y_aci_pixel: 640 });
-    // colorized requested but the point carries no colorized fields →
-    // grayscale coords so the overlay degrades to a small offset, never null.
-    expect(getAciPixel(pt, true)).toEqual({ x: 820, y: 640 });
+    // The colorized image is active; falling back to the grayscale frame would
+    // draw the point ~28px off (the crop origin). Suppress instead.
+    expect(getAciPixel(pt, true)).toBeNull();
   });
 
   it('ignores colorized coords when colorized=false', () => {
@@ -194,14 +194,14 @@ describe('getAciPixel — colorized variant (issue #8)', () => {
     expect(getAciPixel(pt, false)).toEqual({ x: 820, y: 640 });
   });
 
-  it('treats a partial colorized pair (only x) as absent and falls back', () => {
+  it('treats a partial colorized pair (only x) as absent and suppresses', () => {
     const pt = makePoint({
       x_aci_pixel: 820,
       y_aci_pixel: 640,
       x_aci_pixel_colorized: 793,
       y_aci_pixel_colorized: null,
     });
-    expect(getAciPixel(pt, true)).toEqual({ x: 820, y: 640 });
+    expect(getAciPixel(pt, true)).toBeNull();
   });
 
   it('computeAciBBox(colorized=true) envelopes the colorized coords', () => {

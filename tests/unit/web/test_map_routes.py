@@ -336,13 +336,16 @@ async def test_map_layers_no_colorized_point_set_when_variant_absent(
 
 
 @pytest.mark.asyncio
-async def test_map_layers_colorized_missing_csv_omits_set_keeps_grayscale(
+async def test_map_layers_colorized_missing_csv_omits_image_and_set(
     client, scanner_workspace_scan, force_r2_mode, monkeypatch
 ):
-    """Colorized advertised but its spatial.csv 404s ⇒ omit colorized set, keep grayscale.
+    """Colorized image exists but its spatial.csv 404s ⇒ advertise NEITHER.
 
-    Guards the "overlay never vanishes" contract: a partial colorized
-    workspace must not error the endpoint or drop the grayscale overlay.
+    The colorized image and point set are coupled: if colorized coords can't
+    be resolved, the colorized ACI image is NOT advertised either, so the UI
+    never shows the colorized image with grayscale-frame coordinates (a
+    misregistered overlay). The endpoint still returns 200 with the grayscale
+    overlay intact.
     """
     def reader(file_path: str, filename: str) -> bytes:
         if "_colorized" in file_path:
@@ -359,4 +362,7 @@ async def test_map_layers_colorized_missing_csv_omits_set_keeps_grayscale(
     assert resp.status_code == 200
     body = resp.json()
     assert body["point_set"]["points"]  # grayscale still resolves
-    assert body["point_set_colorized"] is None  # colorized omitted, not an error
+    assert body["point_set_colorized"] is None  # colorized point set omitted
+    # ...and the colorized image is NOT offered, so the user can't activate a
+    # colorized view that would render with grayscale coordinates.
+    assert not any(b["type"] == "aci_colorized" for b in body["base_images"])

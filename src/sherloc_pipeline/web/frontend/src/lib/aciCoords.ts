@@ -27,14 +27,14 @@ export interface AciPixel {
  * Returns the point's coordinates in the ACI image-pixel frame, or
  * `null` if they cannot be safely interpreted as such.
  *
- * When `colorized` is true and the point carries colorized ACI coords
- * (`x_aci_pixel_colorized` / `y_aci_pixel_colorized`, issue #8), those are
- * returned so the overlay stays registered on the colorized image (a pure
- * crop of grayscale). If the colorized coords are absent the resolution
- * falls back to the grayscale order below — the overlay degrades to a
- * slight offset rather than vanishing.
+ * When `colorized` is true the active image is the colorized (cropped) ACI,
+ * so ONLY the colorized-frame coords (`x_aci_pixel_colorized` /
+ * `y_aci_pixel_colorized`, issue #8) are valid. If they are absent the point
+ * is suppressed (returns `null`) — it must NEVER fall back to the grayscale
+ * frame, which would draw the point ~28px off (the crop origin) on the
+ * colorized image. Suppressing one point is correct over misregistering it.
  *
- * Grayscale resolution order:
+ * Grayscale resolution order (colorized=false):
  *   1. `x_aci_pixel` / `y_aci_pixel` if both are present — these are
  *      authoritative ACI pixels regardless of `coordinate_frame`.
  *   2. Skip when `coordinate_frame === 'scanner_workspace'`: those
@@ -47,14 +47,18 @@ export interface AciPixel {
  *      records ingested before `coordinate_frame` was added.
  */
 export function getAciPixel(pt: ScanPoint, colorized = false): AciPixel | null {
-  if (
-    colorized &&
-    pt.x_aci_pixel_colorized !== null &&
-    pt.x_aci_pixel_colorized !== undefined &&
-    pt.y_aci_pixel_colorized !== null &&
-    pt.y_aci_pixel_colorized !== undefined
-  ) {
-    return { x: pt.x_aci_pixel_colorized, y: pt.y_aci_pixel_colorized };
+  if (colorized) {
+    // Colorized image active: only colorized-frame coords are valid; suppress
+    // the point rather than draw it in the wrong (grayscale) frame.
+    if (
+      pt.x_aci_pixel_colorized !== null &&
+      pt.x_aci_pixel_colorized !== undefined &&
+      pt.y_aci_pixel_colorized !== null &&
+      pt.y_aci_pixel_colorized !== undefined
+    ) {
+      return { x: pt.x_aci_pixel_colorized, y: pt.y_aci_pixel_colorized };
+    }
+    return null;
   }
   if (pt.x_aci_pixel !== null && pt.y_aci_pixel !== null) {
     return { x: pt.x_aci_pixel, y: pt.y_aci_pixel };

@@ -210,27 +210,33 @@ def get_map_layers(request: Request, scan_id: str) -> MapLayersResponse:
         )
         .first()
     )
-    # When a colorized ACI variant exists, advertise its image URL AND resolve
-    # a parallel point set against the colorized workspace's own spatial.csv
-    # (issue #8). The colorized PNG is a pure crop of grayscale, so grayscale
-    # coords drawn on it are offset by the crop origin (~28px on sol 1213);
-    # the frontend swaps to point_set_colorized when the colorized image is
-    # active. If the colorized coords can't be resolved (e.g. workspace file
-    # missing), omit the colorized point set — the grayscale overlay still
-    # renders rather than erroring the endpoint.
+    # When a colorized ACI variant exists, resolve a parallel point set against
+    # the colorized workspace's own spatial.csv (issue #8) and advertise the
+    # colorized image URL + point set TOGETHER. The colorized PNG is a pure crop
+    # of grayscale, so grayscale coords drawn on it are offset by the crop
+    # origin (~28px); the frontend swaps to point_set_colorized when the
+    # colorized image is active. The image and the point set are coupled: if the
+    # colorized coordinates can't be resolved (e.g. workspace file missing), the
+    # colorized image is NOT advertised either, so the UI never shows the
+    # colorized ACI with grayscale-frame coordinates (a misregistered overlay).
+    # The grayscale view is unaffected.
     point_set_colorized = None
     if aci_row is not None and colorized_variant_exists(aci_row.file_path):
-        base_images.append(
-            {"type": "aci_colorized", "url": f"/api/images/{scan_id}/aci?colorized=true"}
-        )
         try:
             colorized_coords = resolve_display_coordinates(
                 session, scan_id, workspace_reader=reader, colorized=True
             )
             point_set_colorized = _build_point_set_payload(colorized_coords)
+            base_images.append(
+                {
+                    "type": "aci_colorized",
+                    "url": f"/api/images/{scan_id}/aci?colorized=true",
+                }
+            )
         except CoordinatesUnavailableError as exc:
             logger.info(
-                "Colorized display coordinates unavailable for scan %s: %s",
+                "Colorized display coordinates unavailable for scan %s; "
+                "not advertising the colorized ACI: %s",
                 scan_id,
                 exc,
             )
