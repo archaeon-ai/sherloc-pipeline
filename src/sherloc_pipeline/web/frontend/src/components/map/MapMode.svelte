@@ -102,6 +102,11 @@
 
   // Store subscriptions
   let pointSet: PointSet | null = null;
+  // Colorized-variant point set (issue #8), mirroring colorizedAciImage's
+  // lifecycle: fetched alongside it in the layers fetch and cleared on each
+  // scan load. MapCanvas selects it while the colorized image is active so
+  // the overlay stays registered on the cropped colorized ACI.
+  let pointSetColorized: PointSet | null = null;
   let layers: ScalarLayer[] = [];
 
   const unsubPointSet = mapPointSet.subscribe((v) => (pointSet = v));
@@ -158,6 +163,7 @@
     // auth-error-stating.
     aciImage = null;
     colorizedAciImage = null;
+    pointSetColorized = null;
     const gen = ++mapLoadGeneration;
     mapAuthRequired = false;
     aciLoading = true;
@@ -206,6 +212,19 @@
         points: data.point_set?.points ?? [],
         voronoi: data.point_set?.voronoi ?? null,
       });
+      // Colorized point set (issue #8): aligned to the cropped colorized ACI.
+      // Set before the image fetch so a slow/failed image fetch doesn't strand
+      // the coords; MapCanvas only uses it once useColorized + colorizedAciImage
+      // are both live.
+      if (data.point_set_colorized) {
+        pointSetColorized = {
+          scan_id: scanId,
+          source: 'sherloc',
+          coordinate_source: data.coordinate_source ?? 'aci_pixel',
+          points: data.point_set_colorized.points ?? [],
+          voronoi: data.point_set_colorized.voronoi ?? null,
+        };
+      }
       const colorizedEntry = (data.base_images ?? []).find(
         (b) => b.type === 'aci_colorized',
       );
@@ -1032,6 +1051,7 @@
           bind:this={mapCanvas}
           {scanId}
           {pointSet}
+          {pointSetColorized}
           {layers}
           geometryMode={$mapGeometryMode}
           displayMode={$mapDisplayMode}

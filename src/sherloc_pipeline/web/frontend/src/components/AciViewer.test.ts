@@ -15,8 +15,28 @@ import { tick } from 'svelte';
 import AciViewer from './AciViewer.svelte';
 import * as api from '../lib/api';
 import * as renderers from '../lib/renderers/OverlayRenderer';
+import type { ScanPoint } from '../lib/types';
 
 const SCAN_ID = 'test-scan-0001';
+
+function makePoint(overrides: Partial<ScanPoint>): ScanPoint {
+  return {
+    id: 'p',
+    point_index: 0,
+    x_pixel: null,
+    y_pixel: null,
+    x_aci_pixel: null,
+    y_aci_pixel: null,
+    azimuth_dn: null,
+    elevation_dn: null,
+    azimuth_error: null,
+    elevation_error: null,
+    photodiode_mean: null,
+    photodiode_std: null,
+    coordinate_frame: null,
+    ...overrides,
+  };
+}
 
 // Use a permissive Mock type — the spy's specific signature trips
 // svelte-check (Mock with concrete params not assignable to
@@ -162,6 +182,64 @@ describe('AciViewer — overlay-renderer integration (issue #14)', () => {
     const colorizedBtn = buttons.find((b) => b.textContent?.trim() === 'Colorized');
     expect(colorizedBtn).toBeDefined();
     expect(colorizedBtn!.disabled).toBe(false);
+  });
+
+  it('draws points at colorized coords after toggling Colorized (issue #8)', async () => {
+    // Neutralize the overlay renderer so only drawPoints touches arc().
+    drawSpy.mockImplementation(() => undefined);
+
+    // Shared 2D context so arc() coordinates are inspectable across renders
+    // (the beforeEach mock returns a fresh object per getContext call).
+    const arc = vi.fn();
+    const sharedCtx = {
+      save: vi.fn(), restore: vi.fn(), translate: vi.fn(), scale: vi.fn(),
+      drawImage: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
+      beginPath: vi.fn(), closePath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(),
+      arc, stroke: vi.fn(), fill: vi.fn(), setLineDash: vi.fn(),
+      fillText: vi.fn(), measureText: vi.fn(() => ({ width: 0 })),
+      fillStyle: '', strokeStyle: '', lineWidth: 0, font: '',
+      textAlign: '', textBaseline: '',
+    };
+    HTMLCanvasElement.prototype.getContext = vi.fn(
+      () => sharedCtx,
+    ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+
+    const img = new Image();
+    vi.spyOn(api, 'fetchAciImage').mockResolvedValue(img);
+
+    // One point carrying BOTH grayscale and crop-shifted colorized coords.
+    const points = [
+      makePoint({
+        point_index: 0,
+        x_aci_pixel: 820,
+        y_aci_pixel: 640,
+        x_aci_pixel_colorized: 793,
+        y_aci_pixel_colorized: 632,
+      }),
+    ];
+
+    const { container } = render(AciViewer, {
+      props: { scanId: SCAN_ID, points, colorizedAvailable: true },
+    });
+    await flush();
+
+    // Grayscale: the point is drawn at x=820, never the colorized x.
+    const grayXs = arc.mock.calls.map((c) => c[0]);
+    expect(grayXs).toContain(820);
+    expect(grayXs).not.toContain(793);
+
+    // Toggle Colorized.
+    arc.mockClear();
+    const buttons = Array.from(container.querySelectorAll('button')) as HTMLButtonElement[];
+    const colorizedBtn = buttons.find((b) => b.textContent?.trim() === 'Colorized');
+    expect(colorizedBtn).toBeDefined();
+    colorizedBtn!.click();
+    await flush();
+
+    // Colorized: the point now draws at the crop-shifted x=793, not x=820.
+    const colorXs = arc.mock.calls.map((c) => c[0]);
+    expect(colorXs).toContain(793);
+    expect(colorXs).not.toContain(820);
   });
 
   it('does NOT emit a scaleBar option when ACI image fetch fails (no image visible)', async () => {

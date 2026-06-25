@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -36,6 +35,7 @@ from sherloc_pipeline.core.r2_keys import (
     TIER_TO_BUCKET,
     TIER_TO_STRIP_PREFIX,
     WORKSPACE_FILENAMES,
+    colorize_sol_segment,
     derive_r2_key,
     get_strip_prefix_for_current_tier,
 )
@@ -249,16 +249,13 @@ def find_colorized_key(base_key: str) -> Optional[str]:
 
     Returns the colorized key iff R2 HEAD finds it; else None. R2 analog
     of the legacy ``_find_colorized_path`` which probed the local FS for
-    sibling ``sol_NNNN_colorized/`` directories.
+    sibling ``sol_NNNN_colorized/`` directories. The bare segment swap is
+    shared with the coordinate resolver via
+    :func:`core.r2_keys.colorize_sol_segment`.
     """
-    parts = base_key.split("/")
-    for i, part in enumerate(parts):
-        if re.match(r"sol_\d+$", part):
-            candidate_parts = list(parts)
-            candidate_parts[i] = f"{part}_colorized"
-            candidate = "/".join(candidate_parts)
-            if r2_head_exists(candidate):
-                return candidate
+    candidate = colorize_sol_segment(base_key)
+    if candidate is not None and r2_head_exists(candidate):
+        return candidate
     return None
 
 

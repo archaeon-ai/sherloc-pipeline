@@ -157,6 +157,13 @@ class PointItem(BaseModel):
     y_pixel: Optional[float] = None
     x_aci_pixel: Optional[float] = None
     y_aci_pixel: Optional[float] = None
+    # ACI pixel coords against the colorized variant (sol_NNNN_colorized/),
+    # populated only when a colorized ACI exists for the scan (issue #8).
+    # The colorized image is a pure crop of grayscale, so these differ from
+    # x_aci_pixel/y_aci_pixel by the crop origin; the Workbench overlay uses
+    # them when the user toggles Colorized so points stay registered.
+    x_aci_pixel_colorized: Optional[float] = None
+    y_aci_pixel_colorized: Optional[float] = None
     azimuth_dn: Optional[int] = None
     elevation_dn: Optional[int] = None
     azimuth_error: Optional[float] = None
@@ -686,6 +693,12 @@ class MapLayersResponse(BaseModel):
     coordinate_source: str
     base_images: List[Dict[str, Any]]
     point_set: Dict[str, Any]  # {points: MapPointDTO[], voronoi: MapVoronoiDTO | null}
+    # Point set resolved against the colorized ACI variant, present only when
+    # a colorized ACI exists (issue #8). Same shape as point_set; the frontend
+    # selects it when the colorized base image is active so the overlay stays
+    # registered on the cropped colorized image. Absent (None) → no colorized
+    # variant, frontend keeps using point_set.
+    point_set_colorized: Optional[Dict[str, Any]] = None
     available_layers: Dict[str, Dict[str, Any]]
     cached_results: List[MapCachedResultDTO]
 

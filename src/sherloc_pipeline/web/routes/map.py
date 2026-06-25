@@ -62,6 +62,36 @@ def _get_data_access(request: Request) -> DataAccessService:
     return DataAccessService(access_mode=access_mode)
 
 
+def _build_point_set_payload(coords: list) -> dict:
+    """Build the ``{points, voronoi}`` payload from resolved display coords.
+
+    Shared by the grayscale ``point_set`` and the colorized
+    ``point_set_colorized`` so both carry an identically-shaped point list
+    plus a Voronoi tessellation computed from *their own* coordinates
+    (the colorized points are crop-shifted, so their Voronoi geometry must
+    be recomputed — reusing the grayscale tessellation would misalign the
+    colored regions on the colorized image).
+    """
+    point_dtos = [
+        MapPointDTO(index=c.point_index, x=c.aci_x, y=c.aci_y) for c in coords
+    ]
+    pts_array = np.array([[c.aci_x, c.aci_y] for c in coords], dtype=np.float64)
+    voronoi_result = compute_voronoi_geometry(pts_array)
+    if voronoi_result is not None:
+        voronoi_dto = MapVoronoiDTO(
+            vertices=voronoi_result.vertices,
+            regions=voronoi_result.regions,
+            boundary=voronoi_result.boundary,
+            edge_mask=voronoi_result.edge_mask,
+        )
+    else:
+        voronoi_dto = None
+    return {
+        "points": [p.model_dump() for p in point_dtos],
+        "voronoi": voronoi_dto.model_dump() if voronoi_dto is not None else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # GET /api/map/layers/{scan_id}
 # ---------------------------------------------------------------------------
@@ -95,24 +125,9 @@ def get_map_layers(request: Request, scan_id: str) -> MapLayersResponse:
             detail=f"No display coordinates available for scan {scan_id}",
         )
 
-    # Build point DTO list and numpy array for Voronoi
-    point_dtos = [
-        MapPointDTO(index=c.point_index, x=c.aci_x, y=c.aci_y) for c in coords
-    ]
-    pts_array = np.array([[c.aci_x, c.aci_y] for c in coords], dtype=np.float64)
+    # Build point set payload (points + Voronoi) for the grayscale base ACI.
+    point_set = _build_point_set_payload(coords)
     coordinate_source = coords[0].transform_method
-
-    # Compute Voronoi geometry (returns None for degenerate point sets)
-    voronoi_result = compute_voronoi_geometry(pts_array)
-    if voronoi_result is not None:
-        voronoi_dto = MapVoronoiDTO(
-            vertices=voronoi_result.vertices,
-            regions=voronoi_result.regions,
-            boundary=voronoi_result.boundary,
-            edge_mask=voronoi_result.edge_mask,
-        )
-    else:
-        voronoi_dto = None
 
     # Query available layers: group fitted_peaks by fit_modality + mineral_assignment
     # Join: FittedPeakORM -> SpectrumORM -> ScanPointORM (filtered by scan_id)
@@ -195,19 +210,37 @@ def get_map_layers(request: Request, scan_id: str) -> MapLayersResponse:
         )
         .first()
     )
+    # When a colorized ACI variant exists, advertise its image URL AND resolve
+    # a parallel point set against the colorized workspace's own spatial.csv
+    # (issue #8). The colorized PNG is a pure crop of grayscale, so grayscale
+    # coords drawn on it are offset by the crop origin (~28px on sol 1213);
+    # the frontend swaps to point_set_colorized when the colorized image is
+    # active. If the colorized coords can't be resolved (e.g. workspace file
+    # missing), omit the colorized point set — the grayscale overlay still
+    # renders rather than erroring the endpoint.
+    point_set_colorized = None
     if aci_row is not None and colorized_variant_exists(aci_row.file_path):
         base_images.append(
             {"type": "aci_colorized", "url": f"/api/images/{scan_id}/aci?colorized=true"}
         )
+        try:
+            colorized_coords = resolve_display_coordinates(
+                session, scan_id, workspace_reader=reader, colorized=True
+            )
+            point_set_colorized = _build_point_set_payload(colorized_coords)
+        except CoordinatesUnavailableError as exc:
+            logger.info(
+                "Colorized display coordinates unavailable for scan %s: %s",
+                scan_id,
+                exc,
+            )
 
     return MapLayersResponse(
         scan_id=scan_id,
         coordinate_source=coordinate_source,
         base_images=base_images,
-        point_set={
-            "points": [p.model_dump() for p in point_dtos],
-            "voronoi": voronoi_dto.model_dump() if voronoi_dto is not None else None,
-        },
+        point_set=point_set,
+        point_set_colorized=point_set_colorized,
         available_layers=available_layers,
         cached_results=cached_results,
     )

@@ -256,3 +256,107 @@ async def test_map_fit_preserves_504_timeout(
     )
     assert resp.status_code == 504
     assert resp.json()["detail"] == "upstream_timeout"
+
+
+# ---------------------------------------------------------------------------
+# /api/map/layers/<id> — colorized point set (issue #8)
+# ---------------------------------------------------------------------------
+
+# Grayscale + colorized Loupe CSVs. The colorized x/y are crop-shifted so the
+# two emitted point sets are provably distinct.
+_SPATIAL_GRAY = b"x,y\n0.0,0.0\n0.1,0.1\n0.2,0.2\n"
+_SPATIAL_COLOR = b"x,y\n0.3,0.1\n0.4,0.2\n0.5,0.3\n"
+_LOUPE = b"laser_x,809.0\nlaser_y,664.0\n"
+
+
+def _variant_reader(file_path: str, filename: str) -> bytes:
+    """Workspace reader returning the colorized CSV iff the path is colorized."""
+    is_colorized = "_colorized" in file_path
+    if filename == "spatial.csv":
+        return _SPATIAL_COLOR if is_colorized else _SPATIAL_GRAY
+    if filename == "loupe.csv":
+        return _LOUPE
+    raise AssertionError(f"unexpected filename: {filename!r}")
+
+
+@pytest.mark.asyncio
+async def test_map_layers_emits_colorized_point_set_when_variant_exists(
+    client, scanner_workspace_scan, force_r2_mode, monkeypatch
+):
+    """When a colorized ACI exists, the response carries a distinct point_set_colorized."""
+    monkeypatch.setattr(
+        "sherloc_pipeline.web.routes.map.get_working_file", _variant_reader
+    )
+    monkeypatch.setattr(
+        "sherloc_pipeline.web.routes.map.colorized_variant_exists",
+        lambda file_path: True,
+    )
+
+    resp = await client.get(f"/api/map/layers/{SCAN_UUID}")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # Both point sets present, same point count.
+    assert body["point_set"]["points"]
+    assert body["point_set_colorized"] is not None
+    gray_pts = body["point_set"]["points"]
+    color_pts = body["point_set_colorized"]["points"]
+    assert len(gray_pts) == len(color_pts)
+
+    # The colorized image URL is advertised too.
+    assert any(b["type"] == "aci_colorized" for b in body["base_images"])
+
+    # Per-index, the colorized coords are crop-shifted ⇒ differ from grayscale.
+    gray_by_idx = {p["index"]: p for p in gray_pts}
+    color_by_idx = {p["index"]: p for p in color_pts}
+    assert set(gray_by_idx) == set(color_by_idx)
+    for idx in gray_by_idx:
+        assert gray_by_idx[idx]["x"] != color_by_idx[idx]["x"]
+
+
+@pytest.mark.asyncio
+async def test_map_layers_no_colorized_point_set_when_variant_absent(
+    client, scanner_workspace_scan, force_r2_mode, monkeypatch
+):
+    """No colorized ACI ⇒ point_set_colorized is null and no aci_colorized image."""
+    monkeypatch.setattr(
+        "sherloc_pipeline.web.routes.map.get_working_file", _variant_reader
+    )
+    monkeypatch.setattr(
+        "sherloc_pipeline.web.routes.map.colorized_variant_exists",
+        lambda file_path: False,
+    )
+
+    resp = await client.get(f"/api/map/layers/{SCAN_UUID}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["point_set"]["points"]  # grayscale unaffected
+    assert body["point_set_colorized"] is None
+    assert not any(b["type"] == "aci_colorized" for b in body["base_images"])
+
+
+@pytest.mark.asyncio
+async def test_map_layers_colorized_missing_csv_omits_set_keeps_grayscale(
+    client, scanner_workspace_scan, force_r2_mode, monkeypatch
+):
+    """Colorized advertised but its spatial.csv 404s ⇒ omit colorized set, keep grayscale.
+
+    Guards the "overlay never vanishes" contract: a partial colorized
+    workspace must not error the endpoint or drop the grayscale overlay.
+    """
+    def reader(file_path: str, filename: str) -> bytes:
+        if "_colorized" in file_path:
+            raise HTTPException(status_code=404, detail="not_found")
+        return _variant_reader(file_path, filename)
+
+    monkeypatch.setattr("sherloc_pipeline.web.routes.map.get_working_file", reader)
+    monkeypatch.setattr(
+        "sherloc_pipeline.web.routes.map.colorized_variant_exists",
+        lambda file_path: True,
+    )
+
+    resp = await client.get(f"/api/map/layers/{SCAN_UUID}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["point_set"]["points"]  # grayscale still resolves
+    assert body["point_set_colorized"] is None  # colorized omitted, not an error

@@ -360,6 +360,14 @@ export interface MapLayersResponse {
     points: DisplayPoint[];
     voronoi: VoronoiGeometry | null;
   };
+  // Point set resolved against the colorized ACI variant (issue #8), present
+  // only when a colorized ACI exists. MapMode passes it to MapCanvas, which
+  // selects it while the colorized base image is active so the overlay stays
+  // registered on the cropped colorized image.
+  point_set_colorized?: {
+    points: DisplayPoint[];
+    voronoi: VoronoiGeometry | null;
+  } | null;
   base_images?: Array<{ type: string; url: string }>;
   available_layers?: Record<string, Record<string, { n_detections: number; classes: string[] }>>;
   // Future fields tolerated.

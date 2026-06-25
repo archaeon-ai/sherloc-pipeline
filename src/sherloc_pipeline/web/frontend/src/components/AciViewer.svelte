@@ -208,7 +208,7 @@
       // Coordinate-frame discipline: only render points resolvable to
       // ACI image-pixel space. Loupe scanner_workspace values (~±0.5)
       // are NOT valid pixel coords and must be skipped (issue #16).
-      const coord = getAciPixel(pt);
+      const coord = getAciPixel(pt, colorized);
       if (coord === null) continue;
       const x = coord.x;
       const y = coord.y;
@@ -266,7 +266,7 @@
     const hitRadius = Math.max(8, 12 / transform.scale);
 
     for (const pt of points) {
-      const coord = getAciPixel(pt);
+      const coord = getAciPixel(pt, colorized);
       if (coord === null) continue;
       const dx = coord.x - imgX;
       const dy = coord.y - imgY;
@@ -378,7 +378,7 @@
     // place rather than masquerade as a "Scan" zoom by fitting the full
     // image. The fix for those scans must come from the backend
     // `_compute_aci_pixels` resolver populating x_aci_pixel.
-    const bbox = computeAciBBox(points);
+    const bbox = computeAciBBox(points, colorized);
     if (bbox === null) {
       return;
     }

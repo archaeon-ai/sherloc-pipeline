@@ -31,6 +31,7 @@ Consumers:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -121,6 +122,34 @@ def _resolve_strip_prefix(
         if file_path.startswith(alias):
             return alias
     return None
+
+# Matches a bare ``sol_NNNN`` path segment (the colorized variant appends
+# ``_colorized``: ``sol_1213`` → ``sol_1213_colorized``).
+_SOL_SEGMENT_RE = re.compile(r"^sol_\d+$")
+
+
+def colorize_sol_segment(path: str) -> str | None:
+    """Swap the first ``sol_NNNN`` path segment to ``sol_NNNN_colorized``.
+
+    Pure string transform on a ``/``-delimited path (an R2 key *or* an
+    absolute ``file_path`` — both carry the ``sol_NNNN`` workspace
+    segment). Returns the rewritten path, or ``None`` when no bare
+    ``sol_NNNN`` segment is present (so callers can treat "no colorized
+    variant derivable" distinctly from a successful swap).
+
+    The colorized Loupe workspace mirrors the grayscale tree exactly with
+    only this one segment renamed, so the same swap derives both the
+    colorized image key (see :func:`web.r2_reader.find_colorized_key`) and
+    the colorized ``spatial.csv`` / ``loupe.csv`` workspace path (see
+    :func:`core.coordinates._resolve_scanner_workspace`).
+    """
+    parts = path.split("/")
+    for i, part in enumerate(parts):
+        if _SOL_SEGMENT_RE.match(part):
+            parts[i] = f"{part}_colorized"
+            return "/".join(parts)
+    return None
+
 
 # Allowlist of accepted Loupe-workspace companion-file names per spec §3.9.8.1.
 # ``derive_workspace_key`` rejects any filename not on this allowlist as

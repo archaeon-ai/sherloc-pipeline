@@ -224,6 +224,32 @@ def get_scan_points(request: Request, scan_id: str) -> PointsResponse:
         if pix is not None:
             dto.x_aci_pixel, dto.y_aci_pixel = pix
 
+    # Colorized-variant coords (issue #8): when a sol_NNNN_colorized/ ACI
+    # exists, resolve a second coord set against the colorized workspace so
+    # the Workbench AciViewer overlay stays registered when the user toggles
+    # Colorized (the colorized PNG is a pure crop of grayscale). Best-effort:
+    # any resolution failure leaves the *_colorized fields null and the viewer
+    # falls back to the grayscale coords. Mirrors the colorized gate used by
+    # get_scan() (colorized_aci_available) and map.py's point_set_colorized.
+    aci_row = select_served_aci(session, scan_id)
+    if aci_row is not None and colorized_variant_exists(aci_row.file_path):
+        try:
+            colorized_coords = resolve_display_coordinates(
+                session, scan_id, workspace_reader=reader, colorized=True
+            )
+        except CoordinatesUnavailableError as exc:
+            logger.info(
+                "Colorized ACI pixel resolution unavailable for scan %s: %s",
+                scan_id,
+                exc,
+            )
+            colorized_coords = []
+        colorized_map = {c.point_index: (c.aci_x, c.aci_y) for c in colorized_coords}
+        for dto in dtos:
+            pix = colorized_map.get(dto.point_index)
+            if pix is not None:
+                dto.x_aci_pixel_colorized, dto.y_aci_pixel_colorized = pix
+
     return PointsResponse(
         scan_id=scan_id,
         points=dtos,

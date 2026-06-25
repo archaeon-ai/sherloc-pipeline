@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] - 2026-06-25
+
+### Fixed
+- **Scan-point overlay stays registered when toggling the colorized ACI.** In
+  Map Mode and the Workbench ACI viewer, switching to the colorized image
+  previously left every overlay point offset by a near-constant ~28 px (the
+  colorized ACI is a pure crop of the grayscale image, but the overlay kept
+  using grayscale-frame coordinates). The coordinate resolver now reads the
+  colorized workspace's own `spatial.csv` / `loupe.csv` so each variant's
+  points are drawn in its own image frame.
+
+### Added
+- `GET /api/map/layers/{scan_id}` returns a `point_set_colorized` field (same
+  shape as `point_set`, with its own Voronoi geometry) when a colorized ACI
+  variant exists; otherwise `null`.
+- `GET /api/scans/{scan_id}/points` returns `x_aci_pixel_colorized` /
+  `y_aci_pixel_colorized` on each point when a colorized ACI variant exists.
+- `resolve_display_coordinates(..., colorized=True)` resolves coordinates
+  against the `sol_NNNN_colorized/` Loupe workspace. All of the above are
+  additive and backward-compatible.
+
+### Changed
+- The `map_display_coordinates` cache is now keyed by
+  `(scan_point_id, colorized)` so grayscale and colorized coordinates are
+  cached independently (Alembic revision `0c0107a1bed5`). The table is a
+  recomputable cache; the migration recreates it and existing entries
+  repopulate on first access.
+
 ## [5.0.1] - 2026-06-23
 
 ### Fixed
