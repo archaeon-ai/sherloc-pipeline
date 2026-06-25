@@ -162,3 +162,75 @@ describe('computeAciBBox', () => {
     });
   });
 });
+
+describe('getAciPixel — colorized variant (issue #8)', () => {
+  it('uses colorized coords when colorized=true and present', () => {
+    const pt = makePoint({
+      x_aci_pixel: 820,
+      y_aci_pixel: 640,
+      x_aci_pixel_colorized: 793,
+      y_aci_pixel_colorized: 632,
+    });
+    // Grayscale by default...
+    expect(getAciPixel(pt)).toEqual({ x: 820, y: 640 });
+    // ...colorized when requested (the ~crop-origin-shifted coords).
+    expect(getAciPixel(pt, true)).toEqual({ x: 793, y: 632 });
+  });
+
+  it('suppresses the point (null) when colorized requested but colorized coords absent', () => {
+    const pt = makePoint({ x_aci_pixel: 820, y_aci_pixel: 640 });
+    // The colorized image is active; falling back to the grayscale frame would
+    // draw the point ~28px off (the crop origin). Suppress instead.
+    expect(getAciPixel(pt, true)).toBeNull();
+  });
+
+  it('ignores colorized coords when colorized=false', () => {
+    const pt = makePoint({
+      x_aci_pixel: 820,
+      y_aci_pixel: 640,
+      x_aci_pixel_colorized: 793,
+      y_aci_pixel_colorized: 632,
+    });
+    expect(getAciPixel(pt, false)).toEqual({ x: 820, y: 640 });
+  });
+
+  it('treats a partial colorized pair (only x) as absent and suppresses', () => {
+    const pt = makePoint({
+      x_aci_pixel: 820,
+      y_aci_pixel: 640,
+      x_aci_pixel_colorized: 793,
+      y_aci_pixel_colorized: null,
+    });
+    expect(getAciPixel(pt, true)).toBeNull();
+  });
+
+  it('computeAciBBox(colorized=true) envelopes the colorized coords', () => {
+    const points: ScanPoint[] = [
+      makePoint({
+        x_aci_pixel: 800,
+        y_aci_pixel: 600,
+        x_aci_pixel_colorized: 773,
+        y_aci_pixel_colorized: 592,
+      }),
+      makePoint({
+        x_aci_pixel: 850,
+        y_aci_pixel: 620,
+        x_aci_pixel_colorized: 823,
+        y_aci_pixel_colorized: 612,
+      }),
+    ];
+    expect(computeAciBBox(points, true)).toEqual({
+      minX: 773,
+      minY: 592,
+      maxX: 823,
+      maxY: 612,
+    });
+    // Grayscale envelope differs (proves the colorized path is wired).
+    expect(computeAciBBox(points, false)).toEqual({
+      minX: 800,
+      minY: 600,
+      maxX: 850,
+      maxY: 620,
+    });
+  });
+});

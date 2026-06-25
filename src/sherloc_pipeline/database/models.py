@@ -45,6 +45,7 @@ from sqlalchemy import (
     Index,
     UniqueConstraint,
     Enum as SQLEnum,
+    false,
     text,
 )
 from sqlalchemy.dialects.sqlite import JSON
@@ -1261,9 +1262,17 @@ class SpectrogramORM(Base):
 class MapDisplayCoordinateORM(Base):
     """Cache table for resolved ACI pixel coordinates used in Map Mode display.
 
-    Keyed by scan_point_id (one row per scan point). Populated on first access
-    by resolve_display_coordinates() in core.coordinates, then reused on
-    subsequent calls without touching the workspace files.
+    Keyed by ``(scan_point_id, colorized)`` — one row per scan point per ACI
+    variant. Populated on first access by resolve_display_coordinates() in
+    core.coordinates, then reused on subsequent calls without touching the
+    workspace files.
+
+    ``colorized`` distinguishes the grayscale base ACI (``False``) from the
+    ``sol_NNNN_colorized/`` variant (``True``). The colorized image is a pure
+    crop of the grayscale one, so its workspace re-solves per-point
+    coordinates for the cropped frame; caching them separately keeps the
+    Map Mode / Workbench overlay registered when the user toggles Colorized
+    (issue #8).
 
     transform_method distinguishes how the coordinate was produced:
     - 'identity': scan point already in aci_pixel frame; x_pixel/y_pixel copied directly
@@ -1277,6 +1286,14 @@ class MapDisplayCoordinateORM(Base):
         String(36),
         ForeignKey("scan_points.id", ondelete="CASCADE"),
         primary_key=True,
+    )
+    colorized: Mapped[bool] = mapped_column(
+        Boolean,
+        primary_key=True,
+        nullable=False,
+        # Dialect-portable false literal (0 on SQLite, false on Postgres).
+        server_default=false(),
+        default=False,
     )
     aci_x: Mapped[float] = mapped_column(Float, nullable=False)
     aci_y: Mapped[float] = mapped_column(Float, nullable=False)

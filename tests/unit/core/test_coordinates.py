@@ -55,6 +55,13 @@ _TEAM_FILE_PATH = (
     "/data/sherloc/data/loupe/sol_0921/detail_1/"
     "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
 )
+# The colorized variant rewrites only the bare ``sol_NNNN`` segment
+# (``sol_0921`` → ``sol_0921_colorized``); the ``_0921`` inside the PNG
+# filename is NOT a bare sol segment and stays untouched (issue #8).
+_TEAM_FILE_PATH_COLORIZED = (
+    "/data/sherloc/data/loupe/sol_0921_colorized/detail_1/"
+    "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
+)
 
 # Minimal Loupe CSVs that produce a valid spatial table when load_spatial_table
 # parses them. spatial.csv has the 'x,y' block per the Loupe convention; loupe.csv
@@ -68,6 +75,16 @@ _SAMPLE_SPATIAL_CSV = (
 _SAMPLE_LOUPE_CSV = (
     b"laser_x,809.0\n"
     b"laser_y,664.0\n"
+)
+# Colorized spatial.csv: the colorized ACI is a pure crop of grayscale, so
+# the colorized workspace re-solves each point's x/y for the cropped frame.
+# Distinct x/y values here ⇒ distinct xPix/yPix so the resolver's two
+# variants are provably different (issue #8).
+_SAMPLE_SPATIAL_CSV_COLORIZED = (
+    b"x,y\n"
+    b"0.3,0.1\n"
+    b"0.4,0.2\n"
+    b"0.5,0.3\n"
 )
 
 
@@ -324,3 +341,142 @@ def test_resolve_legacy_fs_path_missing_files_raises(scan_session, tmp_path):
     assert "Loupe workspace files not found at" in msg
     # FS-mode message names the directory; R2-mode message names the file_path
     assert "spatial.csv present=False" in msg
+
+
+# ---------------------------------------------------------------------------
+# Colorized variant resolution (issue #8)
+# ---------------------------------------------------------------------------
+
+def _variant_aware_reader(calls: list[tuple[str, str]]):
+    """Reader returning the colorized spatial.csv iff the path is colorized.
+
+    Records (file_path, filename) calls so a test can assert WHICH workspace
+    (``sol_0921`` vs ``sol_0921_colorized``) the resolver fetched from.
+    """
+    def reader(file_path: str, filename: str) -> bytes:
+        calls.append((file_path, filename))
+        is_colorized = "_colorized" in file_path
+        if filename == "spatial.csv":
+            return _SAMPLE_SPATIAL_CSV_COLORIZED if is_colorized else _SAMPLE_SPATIAL_CSV
+        if filename == "loupe.csv":
+            return _SAMPLE_LOUPE_CSV
+        raise AssertionError(f"unexpected filename: {filename!r}")
+
+    return reader
+
+
+def test_resolve_colorized_reads_colorized_workspace_and_differs(scan_session):
+    """colorized=True fetches the sol_NNNN_colorized workspace and yields shifted coords."""
+    calls: list[tuple[str, str]] = []
+    reader = _variant_aware_reader(calls)
+
+    grayscale = resolve_display_coordinates(
+        scan_session, SCAN_UUID, workspace_reader=reader
+    )
+    colorized = resolve_display_coordinates(
+        scan_session, SCAN_UUID, workspace_reader=reader, colorized=True
+    )
+
+    # Grayscale fetched the base workspace; colorized fetched sol_0921_colorized.
+    assert (_TEAM_FILE_PATH, "spatial.csv") in calls
+    assert (_TEAM_FILE_PATH_COLORIZED, "spatial.csv") in calls
+    assert (_TEAM_FILE_PATH_COLORIZED, "loupe.csv") in calls
+    # The colorized variant must NEVER be fetched from the grayscale path.
+    assert (_TEAM_FILE_PATH, "spatial.csv") != (_TEAM_FILE_PATH_COLORIZED, "spatial.csv")
+
+    assert len(grayscale) == len(colorized) == N_POINTS
+    # Same point indices, but the colorized coords are crop-shifted ⇒ differ.
+    by_idx_gray = {c.point_index: c for c in grayscale}
+    by_idx_color = {c.point_index: c for c in colorized}
+    assert set(by_idx_gray) == set(by_idx_color)
+    for idx in by_idx_gray:
+        assert by_idx_gray[idx].aci_x != by_idx_color[idx].aci_x
+        assert by_idx_gray[idx].transform_method == "scanner_calibration"
+        assert by_idx_color[idx].transform_method == "scanner_calibration"
+
+
+def test_resolve_colorized_and_grayscale_cached_separately(scan_session):
+    """Both variants persist side by side keyed by (scan_point_id, colorized)."""
+    from sherloc_pipeline.database.models import MapDisplayCoordinateORM
+
+    calls: list[tuple[str, str]] = []
+    reader = _variant_aware_reader(calls)
+
+    resolve_display_coordinates(scan_session, SCAN_UUID, workspace_reader=reader)
+    resolve_display_coordinates(
+        scan_session, SCAN_UUID, workspace_reader=reader, colorized=True
+    )
+
+    gray_rows = (
+        scan_session.query(MapDisplayCoordinateORM)
+        .filter(MapDisplayCoordinateORM.colorized.is_(False))
+        .all()
+    )
+    color_rows = (
+        scan_session.query(MapDisplayCoordinateORM)
+        .filter(MapDisplayCoordinateORM.colorized.is_(True))
+        .all()
+    )
+    assert len(gray_rows) == N_POINTS
+    assert len(color_rows) == N_POINTS
+
+    # A second colorized call is served from cache — the reader is NOT touched.
+    calls_before = len(calls)
+    again = resolve_display_coordinates(
+        scan_session, SCAN_UUID, workspace_reader=reader, colorized=True
+    )
+    assert len(again) == N_POINTS
+    assert len(calls) == calls_before  # no new workspace fetches
+
+    # The cached colorized coords match the colorized (not grayscale) values.
+    cached_color = {c.point_index: c.aci_x for c in again}
+    gray = resolve_display_coordinates(scan_session, SCAN_UUID, workspace_reader=reader)
+    gray_x = {c.point_index: c.aci_x for c in gray}
+    for idx in cached_color:
+        assert cached_color[idx] != gray_x[idx]
+
+
+def test_resolve_colorized_missing_workspace_raises(scan_session):
+    """colorized=True with a missing colorized spatial.csv → CoordinatesUnavailableError.
+
+    The route layer turns this into "no colorized point set" (grayscale
+    overlay still renders) rather than erroring the endpoint.
+    """
+    def reader(file_path: str, filename: str) -> bytes:
+        if "_colorized" in file_path:
+            raise HTTPException(status_code=404, detail="not_found")
+        if filename == "spatial.csv":
+            return _SAMPLE_SPATIAL_CSV
+        if filename == "loupe.csv":
+            return _SAMPLE_LOUPE_CSV
+        raise AssertionError(f"unexpected filename: {filename!r}")
+
+    # Grayscale still resolves fine.
+    assert len(resolve_display_coordinates(
+        scan_session, SCAN_UUID, workspace_reader=reader
+    )) == N_POINTS
+
+    # Colorized raises because the colorized workspace file is absent.
+    with pytest.raises(CoordinatesUnavailableError) as excinfo:
+        resolve_display_coordinates(
+            scan_session, SCAN_UUID, workspace_reader=reader, colorized=True
+        )
+    assert "missing_file='spatial.csv'" in str(excinfo.value)
+    assert "sol_0921_colorized" in str(excinfo.value)
+
+
+def test_resolve_colorized_on_aci_pixel_frame_raises(scan_session):
+    """aci_pixel (PDS) scans have no colorized variant → colorized=True raises."""
+    # Flip the scan's points to the aci_pixel frame with real pixel values.
+    for pt in scan_session.query(ScanPointORM).filter_by(scan_id=SCAN_UUID).all():
+        pt.coordinate_frame = "aci_pixel"
+        pt.x_pixel = 100.0 + pt.point_index
+        pt.y_pixel = 200.0 + pt.point_index
+    scan_session.commit()
+
+    # Grayscale identity resolution works.
+    assert len(resolve_display_coordinates(scan_session, SCAN_UUID)) == N_POINTS
+
+    with pytest.raises(CoordinatesUnavailableError) as excinfo:
+        resolve_display_coordinates(scan_session, SCAN_UUID, colorized=True)
+    assert "aci_pixel" in str(excinfo.value)

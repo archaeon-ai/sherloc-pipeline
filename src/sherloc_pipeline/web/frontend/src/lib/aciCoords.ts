@@ -27,7 +27,14 @@ export interface AciPixel {
  * Returns the point's coordinates in the ACI image-pixel frame, or
  * `null` if they cannot be safely interpreted as such.
  *
- * Resolution order:
+ * When `colorized` is true the active image is the colorized (cropped) ACI,
+ * so ONLY the colorized-frame coords (`x_aci_pixel_colorized` /
+ * `y_aci_pixel_colorized`, issue #8) are valid. If they are absent the point
+ * is suppressed (returns `null`) — it must NEVER fall back to the grayscale
+ * frame, which would draw the point ~28px off (the crop origin) on the
+ * colorized image. Suppressing one point is correct over misregistering it.
+ *
+ * Grayscale resolution order (colorized=false):
  *   1. `x_aci_pixel` / `y_aci_pixel` if both are present — these are
  *      authoritative ACI pixels regardless of `coordinate_frame`.
  *   2. Skip when `coordinate_frame === 'scanner_workspace'`: those
@@ -39,7 +46,20 @@ export interface AciPixel {
  *      the null-frame path keeps backward compatibility with legacy
  *      records ingested before `coordinate_frame` was added.
  */
-export function getAciPixel(pt: ScanPoint): AciPixel | null {
+export function getAciPixel(pt: ScanPoint, colorized = false): AciPixel | null {
+  if (colorized) {
+    // Colorized image active: only colorized-frame coords are valid; suppress
+    // the point rather than draw it in the wrong (grayscale) frame.
+    if (
+      pt.x_aci_pixel_colorized !== null &&
+      pt.x_aci_pixel_colorized !== undefined &&
+      pt.y_aci_pixel_colorized !== null &&
+      pt.y_aci_pixel_colorized !== undefined
+    ) {
+      return { x: pt.x_aci_pixel_colorized, y: pt.y_aci_pixel_colorized };
+    }
+    return null;
+  }
   if (pt.x_aci_pixel !== null && pt.y_aci_pixel !== null) {
     return { x: pt.x_aci_pixel, y: pt.y_aci_pixel };
   }
@@ -65,7 +85,10 @@ export interface AciBBox {
   maxY: number;
 }
 
-export function computeAciBBox(points: ScanPoint[]): AciBBox | null {
+export function computeAciBBox(
+  points: ScanPoint[],
+  colorized = false,
+): AciBBox | null {
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -73,7 +96,7 @@ export function computeAciBBox(points: ScanPoint[]): AciBBox | null {
   let any = false;
 
   for (const pt of points) {
-    const coord = getAciPixel(pt);
+    const coord = getAciPixel(pt, colorized);
     if (coord === null) continue;
     any = true;
     if (coord.x < minX) minX = coord.x;

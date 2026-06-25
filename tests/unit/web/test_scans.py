@@ -156,6 +156,125 @@ async def test_get_scan_points_aci_pixel_from_cache(test_engine, client):
 
 
 @pytest.mark.asyncio
+async def test_get_scan_points_colorized_pixels_when_variant_exists(
+    test_engine, client, monkeypatch
+):
+    """Issue #8: when a colorized ACI exists, /points carries *_colorized coords.
+
+    Seeds both the grayscale (colorized=False) and colorized (colorized=True)
+    cache rows so the route surfaces each on its own field, and proves they
+    are independent (crop-shifted) rather than echoing the grayscale value.
+    """
+    from sherloc_pipeline.database.connection import get_session_factory
+    from sherloc_pipeline.database.models import MapDisplayCoordinateORM, ScanPointORM
+
+    _seed_aci_context_image(
+        test_engine,
+        "/data/sherloc/data/loupe/sol_0921/detail_1/"
+        "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG",
+    )
+
+    factory = get_session_factory(test_engine)
+    session = factory()
+    try:
+        point_ids = [
+            pt.id
+            for pt in session.query(ScanPointORM)
+            .filter(ScanPointORM.scan_id == SCAN_UUID)
+            .order_by(ScanPointORM.point_index)
+            .all()
+        ]
+        now = datetime.now(timezone.utc)
+        for idx, pt_id in enumerate(point_ids):
+            session.add(
+                MapDisplayCoordinateORM(
+                    scan_point_id=pt_id,
+                    colorized=False,
+                    aci_x=500.0 + idx * 25,
+                    aci_y=800.0 + idx * 7,
+                    transform_method="scanner_calibration",
+                    computed_at=now,
+                )
+            )
+            session.add(
+                MapDisplayCoordinateORM(
+                    scan_point_id=pt_id,
+                    colorized=True,
+                    aci_x=473.0 + idx * 25,  # crop-shifted, distinct from grayscale
+                    aci_y=792.0 + idx * 7,
+                    transform_method="scanner_calibration",
+                    computed_at=now,
+                )
+            )
+        session.commit()
+    finally:
+        session.close()
+
+    monkeypatch.setattr(
+        "sherloc_pipeline.web.routes.scans.colorized_variant_exists",
+        lambda file_path: True,
+    )
+
+    resp = await client.get(f"/api/scans/{SCAN_UUID}/points")
+    assert resp.status_code == 200
+    data = resp.json()
+    for idx, point in enumerate(sorted(data["points"], key=lambda p: p["point_index"])):
+        assert point["x_aci_pixel"] == pytest.approx(500.0 + idx * 25)
+        assert point["x_aci_pixel_colorized"] == pytest.approx(473.0 + idx * 25)
+        assert point["y_aci_pixel_colorized"] == pytest.approx(792.0 + idx * 7)
+        # The colorized field must be independent of the grayscale one.
+        assert point["x_aci_pixel_colorized"] != point["x_aci_pixel"]
+
+
+@pytest.mark.asyncio
+async def test_get_scan_points_no_colorized_pixels_when_variant_absent(
+    test_engine, client, monkeypatch
+):
+    """No colorized ACI ⇒ *_colorized fields stay null; grayscale unaffected."""
+    from sherloc_pipeline.database.connection import get_session_factory
+    from sherloc_pipeline.database.models import MapDisplayCoordinateORM, ScanPointORM
+
+    factory = get_session_factory(test_engine)
+    session = factory()
+    try:
+        point_ids = [
+            pt.id
+            for pt in session.query(ScanPointORM)
+            .filter(ScanPointORM.scan_id == SCAN_UUID)
+            .order_by(ScanPointORM.point_index)
+            .all()
+        ]
+        now = datetime.now(timezone.utc)
+        for idx, pt_id in enumerate(point_ids):
+            session.add(
+                MapDisplayCoordinateORM(
+                    scan_point_id=pt_id,
+                    colorized=False,
+                    aci_x=500.0 + idx * 25,
+                    aci_y=800.0 + idx * 7,
+                    transform_method="scanner_calibration",
+                    computed_at=now,
+                )
+            )
+        session.commit()
+    finally:
+        session.close()
+
+    monkeypatch.setattr(
+        "sherloc_pipeline.web.routes.scans.colorized_variant_exists",
+        lambda file_path: False,
+    )
+
+    resp = await client.get(f"/api/scans/{SCAN_UUID}/points")
+    assert resp.status_code == 200
+    data = resp.json()
+    for point in data["points"]:
+        assert point["x_aci_pixel"] is not None
+        assert point["x_aci_pixel_colorized"] is None
+        assert point["y_aci_pixel_colorized"] is None
+
+
+@pytest.mark.asyncio
 async def test_get_scan_points_aci_pixel_graceful_when_unresolvable(client):
     """When the resolver raises (e.g. fixture Loupe points have no
     coordinate_frame and no cache), the endpoint must still return 200 with

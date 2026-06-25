@@ -67,6 +67,7 @@ def resolve_display_coordinates(
     *,
     force_recompute: bool = False,
     workspace_reader: Optional[WorkspaceReader] = None,
+    colorized: bool = False,
 ) -> list[DisplayCoordinate]:
     """Resolve ACI pixel coordinates for all points in a scan.
 
@@ -81,8 +82,9 @@ def resolve_display_coordinates(
        :class:`CoordinatesUnavailableError`.
 
     Computed results are written to ``map_display_coordinates`` before
-    returning.  Existing cache rows for the scan are deleted first when
-    *force_recompute* is ``True``.
+    returning.  Existing cache rows for the scan (of the requested
+    ``colorized`` variant) are deleted first when *force_recompute* is
+    ``True``.
 
     Parameters
     ----------
@@ -101,6 +103,18 @@ def resolve_display_coordinates(
         worktree at branch ``main`` v3.0.0; production containers have
         NO local SHERLOC data mount
         per m2020-phase spec §3.9.6).
+    colorized:
+        When ``True``, resolve coordinates against the **colorized** Loupe
+        workspace (``sol_NNNN_colorized/``) instead of the grayscale base.
+        The colorized ACI PNG is a pure crop of the grayscale image, and
+        the colorized workspace ships its own ``spatial.csv`` / ``loupe.csv``
+        whose per-point coordinates are re-solved for the cropped frame.
+        Resolving against that dataset keeps the scan-point overlay
+        registered when the web UI toggles Colorized (issue #8). Only
+        ``scanner_workspace`` scans have a colorized variant; requesting
+        ``colorized=True`` for an ``aci_pixel`` (PDS) scan raises
+        :class:`CoordinatesUnavailableError`. Cached separately from the
+        grayscale result (cache key ``(scan_point_id, colorized)``).
 
     Returns
     -------
@@ -110,8 +124,9 @@ def resolve_display_coordinates(
     Raises
     ------
     CoordinatesUnavailableError
-        If there are no scan points, the coordinate frame is unknown, or
-        the scanner workspace files cannot be found/read.
+        If there are no scan points, the coordinate frame is unknown, the
+        scanner workspace files cannot be found/read, or ``colorized=True``
+        was requested for a scan with no colorized workspace.
     """
     from sherloc_pipeline.database.models import (
         ContextImageORM,
@@ -123,12 +138,14 @@ def resolve_display_coordinates(
     # 1. Cache check
     # ------------------------------------------------------------------
     if not force_recompute:
-        cached = _load_from_cache(session, scan_id)
+        cached = _load_from_cache(session, scan_id, colorized=colorized)
         if cached:
             logger.debug(
-                "resolve_display_coordinates: cache hit for scan %s (%d points)",
+                "resolve_display_coordinates: cache hit for scan %s "
+                "(%d points, colorized=%s)",
                 scan_id,
                 len(cached),
+                colorized,
             )
             return cached
 
@@ -154,10 +171,23 @@ def resolve_display_coordinates(
     # 3. Resolve coordinates
     # ------------------------------------------------------------------
     if frame == "aci_pixel":
+        if colorized:
+            # PDS aci_pixel scans have no colorized ACI variant (and no
+            # Loupe workspace to re-solve against). The route layer gates
+            # colorized requests on `colorized_variant_exists`, which is
+            # False for these, so this is a defensive guard.
+            raise CoordinatesUnavailableError(
+                f"Scan {scan_id!r} uses the 'aci_pixel' coordinate frame, "
+                "which has no colorized workspace variant."
+            )
         coords = _resolve_identity(points)
     elif frame == "scanner_workspace":
         coords = _resolve_scanner_workspace(
-            session, scan_id, points, workspace_reader=workspace_reader
+            session,
+            scan_id,
+            points,
+            workspace_reader=workspace_reader,
+            colorized=colorized,
         )
     else:
         raise CoordinatesUnavailableError(
@@ -169,7 +199,9 @@ def resolve_display_coordinates(
     # ------------------------------------------------------------------
     # 4. Write to cache (delete-then-insert for force_recompute safety)
     # ------------------------------------------------------------------
-    _write_cache(session, scan_id, coords, force_recompute=force_recompute)
+    _write_cache(
+        session, scan_id, coords, colorized=colorized, force_recompute=force_recompute
+    )
 
     return coords
 
@@ -179,14 +211,19 @@ def resolve_display_coordinates(
 # ---------------------------------------------------------------------------
 
 
-def _load_from_cache(session: Session, scan_id: str) -> list[DisplayCoordinate]:
-    """Return cached DisplayCoordinate objects for the scan, or [] if none."""
+def _load_from_cache(
+    session: Session, scan_id: str, *, colorized: bool = False
+) -> list[DisplayCoordinate]:
+    """Return cached DisplayCoordinate objects for the scan variant, or [] if none."""
     from sherloc_pipeline.database.models import MapDisplayCoordinateORM, ScanPointORM
 
     rows = (
         session.query(MapDisplayCoordinateORM, ScanPointORM.point_index)
         .join(ScanPointORM, ScanPointORM.id == MapDisplayCoordinateORM.scan_point_id)
-        .filter(ScanPointORM.scan_id == scan_id)
+        .filter(
+            ScanPointORM.scan_id == scan_id,
+            MapDisplayCoordinateORM.colorized == colorized,
+        )
         .order_by(ScanPointORM.point_index)
         .all()
     )
@@ -270,6 +307,7 @@ def _resolve_scanner_workspace(
     points: list,
     *,
     workspace_reader: Optional[WorkspaceReader] = None,
+    colorized: bool = False,
 ) -> list[DisplayCoordinate]:
     """Transform scanner_workspace coordinates to ACI pixels via Loupe spatial table.
 
@@ -283,9 +321,22 @@ def _resolve_scanner_workspace(
       existing 400 mapping (``map.py:get_map_layers``) applies.
     - ``workspace_reader=None``: legacy local-FS read (local dev
       worktree at branch ``main``).
+
+    When ``colorized`` is ``True`` the ACI ``file_path`` is rewritten
+    ``sol_NNNN → sol_NNNN_colorized`` (via
+    :func:`core.r2_keys.colorize_sol_segment`) so the colorized
+    workspace's own ``spatial.csv`` / ``loupe.csv`` drive the transform.
+    The colorized workspace mirrors the grayscale tree with only that one
+    segment renamed, so the same path math (R2 key derivation or
+    ``Path(...).parent.parent`` for the FS fallback) resolves the
+    colorized companion files. A missing colorized workspace surfaces as
+    :class:`CoordinatesUnavailableError` (R2 404 or FS not-found), which
+    the route layer turns into "no colorized point set" rather than an
+    error — the grayscale overlay still renders.
     """
     from fastapi import HTTPException
 
+    from sherloc_pipeline.core.r2_keys import colorize_sol_segment
     from sherloc_pipeline.database.models import ContextImageORM
     from sherloc_pipeline.core.spatial import load_spatial_table
 
@@ -306,6 +357,20 @@ def _resolve_scanner_workspace(
             "Cannot locate Loupe workspace to compute scanner_workspace transform."
         )
 
+    # Select the grayscale base workspace or its colorized sibling. The
+    # swap is on the same file_path the grayscale path uses, so both the
+    # R2 reader and the FS fallback below resolve the correct workspace.
+    workspace_file_path = aci.file_path
+    if colorized:
+        colorized_file_path = colorize_sol_segment(aci.file_path or "")
+        if colorized_file_path is None:
+            raise CoordinatesUnavailableError(
+                f"Cannot derive a colorized workspace for scan {scan_id!r}: "
+                f"ACI file_path {aci.file_path!r} has no 'sol_NNNN' segment "
+                "to rewrite to 'sol_NNNN_colorized'."
+            )
+        workspace_file_path = colorized_file_path
+
     if workspace_reader is not None:
         # v1.0-beta production path: fetch CSVs from R2 via the injected
         # reader, materialize to a temp dir, then call the unchanged
@@ -321,10 +386,10 @@ def _resolve_scanner_workspace(
         # CoordinatesUnavailableError → 400 mapping does NOT apply
         # to these; they surface their own status codes.
         spatial_bytes = _fetch_workspace_file(
-            workspace_reader, aci.file_path, "spatial.csv", scan_id
+            workspace_reader, workspace_file_path, "spatial.csv", scan_id
         )
         loupe_bytes = _fetch_workspace_file(
-            workspace_reader, aci.file_path, "loupe.csv", scan_id
+            workspace_reader, workspace_file_path, "loupe.csv", scan_id
         )
         with tempfile.TemporaryDirectory(prefix="loupe_ws_") as tmpdir:
             tmp_path = Path(tmpdir)
@@ -335,12 +400,12 @@ def _resolve_scanner_workspace(
             except Exception as exc:
                 raise CoordinatesUnavailableError(
                     f"Failed to parse Loupe workspace files from R2 for scan "
-                    f"{scan_id!r} (file_path={aci.file_path!r}): {exc}"
+                    f"{scan_id!r} (file_path={workspace_file_path!r}): {exc}"
                 ) from exc
     else:
         # Legacy FS path: local dev runtime + the `main` worktree's v3.0.0
         # service. Production VPS containers do NOT take this branch.
-        working_dir = Path(aci.file_path).parent.parent
+        working_dir = Path(workspace_file_path).parent.parent
 
         # Validate workspace files exist before calling load_spatial_table
         # so we can give a clearer error than a raw exception.
@@ -407,29 +472,35 @@ def _write_cache(
     scan_id: str,
     coords: list[DisplayCoordinate],
     *,
+    colorized: bool,
     force_recompute: bool,
 ) -> None:
     """Persist resolved coordinates to map_display_coordinates.
 
-    When *force_recompute* is True, deletes existing rows first.
+    Rows are keyed by ``(scan_point_id, colorized)``; the grayscale and
+    colorized variants of a scan coexist. When *force_recompute* is True,
+    deletes existing rows **of the same variant** first (so recomputing
+    grayscale never evicts the cached colorized result and vice versa).
     """
     from sherloc_pipeline.database.models import MapDisplayCoordinateORM, ScanPointORM
 
     if force_recompute:
-        # Delete existing cache rows for this scan's points.
+        # Delete existing cache rows for this scan's points, this variant.
         point_ids_subq = (
             session.query(ScanPointORM.id)
             .filter(ScanPointORM.scan_id == scan_id)
             .subquery()
         )
         session.query(MapDisplayCoordinateORM).filter(
-            MapDisplayCoordinateORM.scan_point_id.in_(point_ids_subq)
+            MapDisplayCoordinateORM.scan_point_id.in_(point_ids_subq),
+            MapDisplayCoordinateORM.colorized == colorized,
         ).delete(synchronize_session="fetch")
 
     now = datetime.now(timezone.utc)
     for coord in coords:
         row = MapDisplayCoordinateORM(
             scan_point_id=coord.scan_point_id,
+            colorized=colorized,
             aci_x=coord.aci_x,
             aci_y=coord.aci_y,
             transform_method=coord.transform_method,
@@ -439,7 +510,8 @@ def _write_cache(
 
     session.flush()
     logger.debug(
-        "_write_cache: wrote %d coordinate rows for scan %s",
+        "_write_cache: wrote %d coordinate rows for scan %s (colorized=%s)",
         len(coords),
         scan_id,
+        colorized,
     )

@@ -95,6 +95,13 @@ export interface ScanPoint {
   y_pixel: number | null;
   x_aci_pixel: number | null;
   y_aci_pixel: number | null;
+  // ACI pixel coords against the colorized variant (issue #8). Present only
+  // when a colorized ACI exists; the colorized image is a pure crop of
+  // grayscale so these differ by the crop origin. The Workbench overlay uses
+  // them when Colorized is toggled so points stay registered. Optional so
+  // older API responses (no colorized fields) deserialize unchanged.
+  x_aci_pixel_colorized?: number | null;
+  y_aci_pixel_colorized?: number | null;
   azimuth_dn: number | null;
   elevation_dn: number | null;
   azimuth_error: number | null;

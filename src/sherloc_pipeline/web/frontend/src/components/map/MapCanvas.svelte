@@ -13,10 +13,16 @@
   import { OverlayRenderer } from '../../lib/renderers/OverlayRenderer';
   import type { OverlayOptions } from '../../lib/renderers/OverlayRenderer';
   import { getColormap, normalizeValue, colormapToRGBA } from '../../lib/colormaps';
+  import { selectActivePointSet } from '../../lib/activePointSet';
 
   // --- Props ---
   export let scanId: string;
   export let pointSet: PointSet | null = null;
+  // Colorized-variant point set (issue #8). When the colorized image is
+  // active, `activePointSet` selects this so the overlay stays registered on
+  // the cropped colorized ACI. Null when no colorized variant exists, in
+  // which case `activePointSet` falls back to `pointSet`.
+  export let pointSetColorized: PointSet | null = null;
   export let layers: ScalarLayer[] = [];
   export let geometryMode: GeometryMode = 'voronoi';
   export let displayMode: DisplayMode = { type: 'all_domains' };
@@ -130,6 +136,30 @@
   $: if (activeImage && canvasReady) applyActiveImage();
   $: if (!activeImage && canvasReady) clearActiveImage();
 
+  // Point set paired with the active image (issue #8). Gated on the SAME
+  // condition as `activeImage` above (`useColorized && colorizedAciImage`),
+  // not just `useColorized`: the colorized point set must only be drawn when
+  // the colorized image is actually the one on screen. `pointSetColorized` is
+  // assigned by MapMode before the colorized image fetch resolves (so a
+  // slow/failed fetch doesn't strand it), so keying off `useColorized` alone
+  // would draw crop-shifted coordinates over the grayscale image during the
+  // load window or on fetch failure — recreating the registration bug. Falls
+  // back to the grayscale `pointSet` until the colorized image is live. The
+  // selection rule is a pure helper (see lib/activePointSet.ts) so the
+  // image/point-set pairing is unit-testable without mounting the canvas.
+  $: activePointSet = selectActivePointSet(
+    useColorized,
+    colorizedAciImage,
+    pointSetColorized,
+    pointSet,
+  );
+  // Rebuild the data layer when the active point set swaps (toggle/scan), so
+  // rings re-render at the new coordinates.
+  $: if (activePointSet) {
+    dataRenderer.invalidate();
+    scheduleRedraw();
+  }
+
   // Invalidate data layer when geometry mode or display mode changes
   $: if (geometryMode || displayMode) {
     dataRenderer.invalidate();
@@ -148,7 +178,7 @@
   }
 
   // Initialize data renderer when point set loads (we know the image dimensions)
-  $: if (pointSet && baseRenderer.loaded) {
+  $: if (activePointSet && baseRenderer.loaded) {
     const w = baseRenderer.naturalWidth;
     const h = baseRenderer.naturalHeight;
     if (w > 0 && h > 0) {
@@ -324,7 +354,7 @@
 
     ctxData.clearRect(0, 0, w, h);
 
-    if (!pointSet || layers.length === 0) return;
+    if (!activePointSet || layers.length === 0) return;
 
     // Skip rendering entirely if no layer has loaded values (clean ACI view)
     const anyLayerHasValues = layers.some((l) => l.values.length > 0);
@@ -351,7 +381,7 @@
     // display canvas so they stay crisp at any zoom level (no pixelation).
     if (geometryMode === 'ring') {
       const isRgb = displayMode.type === 'rgb_mix';
-      dataRenderer.drawRingsDirect(ctxData, visibleLayers, pointSet.points, transform, isRgb);
+      dataRenderer.drawRingsDirect(ctxData, visibleLayers, activePointSet.points, transform, isRgb);
       ctxData.restore();
       return;
     }
@@ -364,8 +394,8 @@
     if (dataRenderer.needsRebuild) {
       dataRenderer.renderFull(
         visibleLayers,
-        pointSet.points,
-        pointSet.voronoi,
+        activePointSet.points,
+        activePointSet.voronoi,
         geometryMode,
         compositeMode,
       );
@@ -377,7 +407,7 @@
     // For combined mode, also draw rings directly on top for crisp circles
     if (geometryMode === 'combined') {
       const isRgb = displayMode.type === 'rgb_mix';
-      dataRenderer.drawRingsDirect(ctxData, visibleLayers, pointSet.points, transform, isRgb);
+      dataRenderer.drawRingsDirect(ctxData, visibleLayers, activePointSet.points, transform, isRgb);
     }
 
     ctxData.restore();
@@ -392,12 +422,12 @@
     ctxUI.clearRect(0, 0, w, h);
 
     // Draw scan point positions as transparent gray circles
-    if (showPointPositions && pointSet && pointSet.points.length > 0) {
+    if (showPointPositions && activePointSet && activePointSet.points.length > 0) {
       drawPointPositions(ctxUI);
     }
 
     // Draw hover highlight in world space
-    if (hoveredPoint !== null && pointSet) {
+    if (hoveredPoint !== null && activePointSet) {
       drawHoverHighlight(ctxUI);
     }
 
@@ -435,7 +465,7 @@
    * Shows the spatial footprint of the scan before any fitting data is loaded.
    */
   function drawPointPositions(ctx: CanvasRenderingContext2D): void {
-    if (!pointSet) return;
+    if (!activePointSet) return;
 
     const radiusPx = 50 / pixelScale; // 100 µm diameter laser spot
 
@@ -447,7 +477,7 @@
     ctx.strokeStyle = 'rgba(200, 200, 200, 0.5)';
     ctx.lineWidth = strokeWidth;
 
-    for (const pt of pointSet.points) {
+    for (const pt of activePointSet.points) {
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, radiusPx, 0, Math.PI * 2);
       ctx.stroke();
@@ -460,9 +490,9 @@
    * Draw a highlight ring around the hovered point in world space.
    */
   function drawHoverHighlight(ctx: CanvasRenderingContext2D): void {
-    if (hoveredPoint === null || !pointSet) return;
+    if (hoveredPoint === null || !activePointSet) return;
 
-    const pt = pointSet.points.find((p) => p.index === hoveredPoint);
+    const pt = activePointSet.points.find((p) => p.index === hoveredPoint);
     if (!pt) return;
 
     ctx.save();
@@ -576,13 +606,13 @@
    * Find nearest point within a scale-adaptive hit radius.
    */
   function findNearestPoint(imgX: number, imgY: number): number | null {
-    if (!pointSet) return null;
+    if (!activePointSet) return null;
 
     let nearest: number | null = null;
     let minDist = Infinity;
     const hitRadius = Math.max(8, 12 / transform.scale);
 
-    for (const pt of pointSet.points) {
+    for (const pt of activePointSet.points) {
       const dx = pt.x - imgX;
       const dy = pt.y - imgY;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -713,13 +743,13 @@
 
   /** Zoom to the extents of the current point set. */
   export function zoomToPoints(): void {
-    if (!pointSet || pointSet.points.length === 0 || !canvasUI) return;
+    if (!activePointSet || activePointSet.points.length === 0 || !canvasUI) return;
 
     let minX = Infinity,
       maxX = -Infinity,
       minY = Infinity,
       maxY = -Infinity;
-    for (const pt of pointSet.points) {
+    for (const pt of activePointSet.points) {
       if (pt.x < minX) minX = pt.x;
       if (pt.x > maxX) maxX = pt.x;
       if (pt.y < minY) minY = pt.y;
@@ -822,7 +852,7 @@
     on:mouseleave={handleMouseLeave}
   />
 
-  {#if hoveredPoint !== null && pointSet}
+  {#if hoveredPoint !== null && activePointSet}
     <div
       class="point-tooltip"
       style="left: {tooltipX + 14}px; top: {tooltipY - 10}px"

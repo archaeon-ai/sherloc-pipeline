@@ -431,3 +431,54 @@ class TestIsR2Mode:
         """
         monkeypatch.setenv("PHASE_TIER", "")
         assert r2_reader.is_r2_mode() is True
+
+
+class TestColorizeSolSegment:
+    """Pure ``sol_NNNN → sol_NNNN_colorized`` swap (issue #8).
+
+    Shared by ``find_colorized_key`` (image key) and the coordinate
+    resolver (workspace spatial.csv/loupe.csv path), so it must swap only
+    the bare ``sol_NNNN`` segment regardless of the surrounding path.
+    """
+
+    def test_swaps_first_bare_sol_segment(self):
+        from sherloc_pipeline.core.r2_keys import colorize_sol_segment
+
+        assert (
+            colorize_sol_segment("sherloc-aci/loupe/sol_1213/ws/img/a.PNG")
+            == "sherloc-aci/loupe/sol_1213_colorized/ws/img/a.PNG"
+        )
+
+    def test_swaps_in_absolute_file_path(self):
+        from sherloc_pipeline.core.r2_keys import colorize_sol_segment
+
+        assert (
+            colorize_sol_segment(
+                "/data/sherloc/data/loupe/sol_0921/d1/ws/img/SC3_0921_T.PNG"
+            )
+            == "/data/sherloc/data/loupe/sol_0921_colorized/d1/ws/img/SC3_0921_T.PNG"
+        )
+
+    def test_does_not_touch_sol_substring_in_filename(self):
+        """``_0921`` inside a product filename is NOT a bare sol segment."""
+        from sherloc_pipeline.core.r2_keys import colorize_sol_segment
+
+        out = colorize_sol_segment("x/sol_5/SC3_0921_sol_thing.PNG")
+        # Only the standalone ``sol_5`` segment is rewritten.
+        assert out == "x/sol_5_colorized/SC3_0921_sol_thing.PNG"
+
+    def test_returns_none_when_no_sol_segment(self):
+        from sherloc_pipeline.core.r2_keys import colorize_sol_segment
+
+        assert colorize_sol_segment("/data/foo/bar/baz.PNG") is None
+        assert colorize_sol_segment("sherloc-aci/loupe/solitary/x.PNG") is None
+
+    def test_swaps_only_first_sol_segment(self):
+        from sherloc_pipeline.core.r2_keys import colorize_sol_segment
+
+        # Defensive: a path with two sol segments rewrites only the first
+        # (mirrors find_colorized_key's first-match behavior).
+        assert (
+            colorize_sol_segment("a/sol_1/b/sol_2/c")
+            == "a/sol_1_colorized/b/sol_2/c"
+        )
