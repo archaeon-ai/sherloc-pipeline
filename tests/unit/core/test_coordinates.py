@@ -480,3 +480,39 @@ def test_resolve_colorized_on_aci_pixel_frame_raises(scan_session):
     with pytest.raises(CoordinatesUnavailableError) as excinfo:
         resolve_display_coordinates(scan_session, SCAN_UUID, colorized=True)
     assert "aci_pixel" in str(excinfo.value)
+
+
+def test_resolve_force_recompute_rewrites_cache_quietly(scan_session):
+    """force_recompute deletes + rewrites the variant's cache rows, no SAWarning.
+
+    Covers the previously-untested force_recompute delete path and guards the
+    fix that passes an explicit ``select()`` (not a ``.subquery()``) to
+    ``in_()`` so SQLAlchemy 2.x does not emit the "Coercing Subquery into a
+    select()" warning.
+    """
+    import warnings
+
+    from sqlalchemy.exc import SAWarning
+
+    from sherloc_pipeline.database.models import MapDisplayCoordinateORM
+
+    reader = _variant_aware_reader([])
+    first = resolve_display_coordinates(
+        scan_session, SCAN_UUID, workspace_reader=reader, force_recompute=True
+    )
+    assert len(first) == N_POINTS
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SAWarning)
+        again = resolve_display_coordinates(
+            scan_session, SCAN_UUID, workspace_reader=reader, force_recompute=True
+        )
+    assert len(again) == N_POINTS
+
+    # Delete-then-insert leaves exactly N_POINTS grayscale rows (no duplication).
+    assert (
+        scan_session.query(MapDisplayCoordinateORM)
+        .filter(MapDisplayCoordinateORM.colorized.is_(False))
+        .count()
+        == N_POINTS
+    )

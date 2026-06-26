@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -486,13 +487,12 @@ def _write_cache(
 
     if force_recompute:
         # Delete existing cache rows for this scan's points, this variant.
-        point_ids_subq = (
-            session.query(ScanPointORM.id)
-            .filter(ScanPointORM.scan_id == scan_id)
-            .subquery()
-        )
+        # Pass an explicit select() to in_() (not a .subquery()) so SQLAlchemy
+        # 2.x doesn't emit the "Coercing Subquery into a select() for IN()"
+        # warning.
+        point_ids = select(ScanPointORM.id).where(ScanPointORM.scan_id == scan_id)
         session.query(MapDisplayCoordinateORM).filter(
-            MapDisplayCoordinateORM.scan_point_id.in_(point_ids_subq),
+            MapDisplayCoordinateORM.scan_point_id.in_(point_ids),
             MapDisplayCoordinateORM.colorized == colorized,
         ).delete(synchronize_session="fetch")
 
