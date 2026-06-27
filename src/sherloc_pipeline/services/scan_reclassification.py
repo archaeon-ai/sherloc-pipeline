@@ -474,29 +474,35 @@ def plan_product_roles(rows: Sequence[_ScanRow]) -> AxisPlan:
     return plan
 
 
-def multishot_groups_missing_canonical(scan_names: Sequence[str]) -> List[str]:
-    """Value-blind invariant: return raw base names that have >=1 recognized
-    reduction but NOT exactly one canonical reduction.
+def multishot_groups_missing_canonical(
+    scans: Sequence[Tuple[int, Optional[str], str]],
+) -> List[Tuple[int, Optional[str], str]]:
+    """Value-blind invariant: return the ``(sol_number, target, raw_base)``
+    group keys that have >=1 recognized reduction but NOT exactly one canonical
+    reduction.
 
     Encodes the ARC-M2P-311 / -315 "exactly one canonical per multishot raw
     group" rule (a relational invariant the single-row DB CHECK cannot express).
-    Operates on names only. An empty result means the invariant holds; a
-    non-empty result flags incomplete/malformed multishot groups (e.g. an
-    alternate-only group whose canonical is missing) for V&V to reject.
+    The group boundary is the **sol/target raw group** per spec §4.4 — NOT the
+    bare scan name — so a raw base that recurs across sols/targets cannot mask
+    an incomplete group (Codex F10). Each input is a value-blind
+    ``(sol_number, target, scan_name)`` record. Empty result => invariant holds;
+    a non-empty result flags incomplete/malformed groups for V&V to reject.
     """
-    names = set(scan_names)
-    canonical_by_base: Dict[str, int] = {}
-    for name in names:
-        if multishot_reduction_role(name) is None:
+    records = list(scans)
+    present = {(sol, target, name) for sol, target, name in records}
+    canonical_by_group: Dict[Tuple[int, Optional[str], str], int] = {}
+    for sol, target, name in records:
+        role = multishot_reduction_role(name)
+        if role is None:
             continue
         base = multishot_raw_base(name)
-        if base in names:  # the raw scan is present -> it is a multishot group
-            count = canonical_by_base.setdefault(base, 0)
-            if multishot_reduction_role(name) == "canonical":
-                canonical_by_base[base] = count + 1
-            else:
-                canonical_by_base[base] = count
-    return sorted(base for base, n in canonical_by_base.items() if n != 1)
+        if (sol, target, base) in present:  # raw present in the same sol/target
+            key = (sol, target, base)
+            canonical_by_group.setdefault(key, 0)
+            if role == "canonical":
+                canonical_by_group[key] += 1
+    return sorted(key for key, n in canonical_by_group.items() if n != 1)
 
 
 def _stage_role_update(plan: AxisPlan, row: _ScanRow, new: Dict[str, object]) -> None:

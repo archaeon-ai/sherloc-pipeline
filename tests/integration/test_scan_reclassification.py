@@ -303,7 +303,7 @@ class TestValueBlindInvariants:
         with engine.connect() as conn:
             rows = conn.execute(
                 text("SELECT id, scan_name, scan_type, scan_class, product_role, "
-                     "parent_scan_id, source_scan_ids FROM scans")
+                     "parent_scan_id, source_scan_ids, sol_number, target FROM scans")
             ).fetchall()
         by_id = {}
         for r in rows:
@@ -311,6 +311,7 @@ class TestValueBlindInvariants:
                 "scan_name": r[1], "scan_type": r[2], "scan_class": r[3],
                 "product_role": r[4], "parent_scan_id": r[5],
                 "source_scan_ids": json.loads(r[6]) if isinstance(r[6], str) else r[6],
+                "sol_number": r[7], "target": r[8],
             }
         by_name = {v["scan_name"]: v for v in by_id.values()}
         return by_name, by_id
@@ -386,8 +387,9 @@ class TestValueBlindInvariants:
         from sherloc_pipeline.services.scan_reclassification import (
             multishot_groups_missing_canonical,
         )
-        by_name, _ = corrected
-        assert multishot_groups_missing_canonical(list(by_name)) == []
+        _, by_id = corrected
+        records = [(s["sol_number"], s["target"], s["scan_name"]) for s in by_id.values()]
+        assert multishot_groups_missing_canonical(records) == []
 
 
 # ---------------------------------------------------------------------------
@@ -615,9 +617,31 @@ class TestCodexRound2Findings:
         from sherloc_pipeline.services.scan_reclassification import (
             multishot_groups_missing_canonical,
         )
-        assert multishot_groups_missing_canonical(
-            ["detail_2", "detail_2_median_all", "detail_2_sum_active_median_dark"]
-        ) == []
-        assert multishot_groups_missing_canonical(
-            ["detail_3", "detail_3_median_all"]
-        ) == ["detail_3"]
+        # Complete group -> holds.
+        assert multishot_groups_missing_canonical([
+            (100, "T", "detail_2"),
+            (100, "T", "detail_2_median_all"),
+            (100, "T", "detail_2_sum_active_median_dark"),
+        ]) == []
+        # Alternate-only group -> flagged.
+        assert multishot_groups_missing_canonical([
+            (100, "T", "detail_3"),
+            (100, "T", "detail_3_median_all"),
+        ]) == [(100, "T", "detail_3")]
+
+    def test_f10_invariant_is_sol_target_group_scoped(self):
+        """A raw base that recurs across sol/target groups cannot mask an
+        incomplete group: an alternate-only group is flagged even when another
+        group with the same raw base name has a canonical (Codex F10)."""
+        from sherloc_pipeline.services.scan_reclassification import (
+            multishot_groups_missing_canonical,
+        )
+        records = [
+            # sol 100: incomplete (alternate only)
+            (100, "T", "detail_3"),
+            (100, "T", "detail_3_median_all"),
+            # sol 200: complete (same raw base name, different group)
+            (200, "T", "detail_3"),
+            (200, "T", "detail_3_sum_active_median_dark"),
+        ]
+        assert multishot_groups_missing_canonical(records) == [(100, "T", "detail_3")]
