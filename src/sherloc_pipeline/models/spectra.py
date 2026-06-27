@@ -340,9 +340,41 @@ _HDR_TOKEN_RE = re.compile(r"(?:^|[^a-z])hdr(?:[^a-z]|$)")
 # (Key Decision K1). cross / asterisk are unions of `line` primaries.
 _INHERITED_LINE_NAMES = frozenset({"cross", "asterisk"})
 
-# Calibration scan-name prefixes — Loupe targets carry no SRLC sequence code,
-# so AlGaN internal-calibration scans are name-identified.
-_CALIBRATION_NAME_PREFIXES = ("algan",)
+# Calibration-target / engineering scan-name families (WS-1 §4.2, widened).
+# Loupe cal/engineering scans carry no SRLC sequence code, so they are
+# name-identified. These are NON-science acquisitions — cal targets, instrument
+# diagnostics, laser-off darks — and resolve to CALIBRATION regardless of
+# spectrum count. Validated value-blind against the full mission corpus: none of
+# these patterns match a genuine science survey/detail/line/HDR scan. In
+# particular the PPP rule is ANCHORED (`^\d+ppp`) so science `detail_*ppp` /
+# `survey_*ppp` acquisitions (where ppp is just a per-point shot-count param)
+# are NOT swept up.
+#
+# Substring tokens (matched anywhere in the name):
+#   * "algan"          — the internal-cal AlGaN lamp, named e.g. `AlGaN_1`,
+#                        `SRLC1_AlGaN_2`, `passive_AlGaN_5ppp_stowed`;
+#   * "laser_disabled" / "no_laser" — laser-off dark/diagnostic acquisitions.
+_CALIBRATION_NAME_SUBSTRINGS = ("algan", "laser_disabled", "no_laser")
+# Prefix tokens: cal-target materials, the external-cal meteorite (SaU-008),
+# the maze focus/intensity target, laser power-state housekeeping, and passive
+# (laser-off ambient) observations.
+_CALIBRATION_NAME_PREFIXES = (
+    "passive",
+    "power_on",
+    "power_off",
+    "maze",
+    "meteorite",
+    "marsmeteorite",
+    "teflon",
+    "vectran",
+    "orthofabric",
+    "polycarbonate",
+    "diffusil",
+    "ngimat",
+)
+# A bare PPP intensity/SNR test (e.g. `15ppp_1`, `500ppp_2_laser_disabled`).
+# Anchored so `detail_15ppp` / `survey_5ppp` (science) are NOT matched.
+_CALIBRATION_PPP_RE = re.compile(r"^\d+ppp")
 
 
 def _scan_type_from_name(scan_name: Optional[str]) -> Optional[ScanType]:
@@ -355,6 +387,13 @@ def _scan_type_from_name(scan_name: Optional[str]) -> Optional[ScanType]:
     low = (scan_name or "").strip().lower()
     if not low:
         return None
+    # `detailed_*` is a DETAIL variant whose trailing letters defeat the
+    # token-boundary prefix rule below, so map it explicitly; `lines` is the
+    # plural spelling of a `line` scan.
+    if low.startswith("detailed"):
+        return ScanType.DETAIL
+    if low == "lines":
+        return ScanType.LINE
     for token, scan_type in _SCAN_TYPE_PREFIX_RULES:
         if low.startswith(token):
             rest = low[len(token):]
@@ -368,9 +407,19 @@ def _scan_type_from_name(scan_name: Optional[str]) -> Optional[ScanType]:
 
 
 def _is_calibration_name(scan_name: Optional[str]) -> bool:
-    """True if the scan name identifies an internal-calibration scan (AlGaN)."""
+    """True if the scan name identifies a calibration-target or engineering
+    (non-science) acquisition: the AlGaN internal-cal lamp, a laser-off
+    dark/diagnostic, a cal-target material, the external-cal meteorite, the maze
+    focus target, laser power-state housekeeping, a passive (laser-off) ambient
+    observation, or a bare PPP intensity/SNR test (WS-1 §4.2)."""
     low = (scan_name or "").strip().lower()
-    return any(low.startswith(p) for p in _CALIBRATION_NAME_PREFIXES)
+    if not low:
+        return False
+    if any(token in low for token in _CALIBRATION_NAME_SUBSTRINGS):
+        return True
+    if low.startswith(_CALIBRATION_NAME_PREFIXES):
+        return True
+    return bool(_CALIBRATION_PPP_RE.match(low))
 
 
 def _is_uninformative_name(scan_name: Optional[str]) -> bool:
@@ -401,9 +450,13 @@ def classify_scan_type(
 
     Resolution order:
       1. **Calibration** — sequence code in {SRLC10000, SRLC16000} (first,
-         unshadowable by name); or a calibration scan-name prefix (AlGaN).
-      2. **RECOGNIZED name** — token-boundaried ordered map
-         (survey > detail > line > HDR; cross/asterisk inherit line per K1).
+         unshadowable by name); or a calibration / engineering scan-name family
+         (AlGaN, laser-off dark, cal-target material, meteorite, maze, laser
+         power housekeeping, passive, or a bare ``<n>ppp`` intensity test —
+         :func:`_is_calibration_name`).
+      2. **RECOGNIZED name** — token-boundaried ordered map (survey > detail >
+         line > HDR; ``detailed``→detail, ``lines``→line; cross/asterisk inherit
+         line per K1).
       3. **UNINFORMATIVE name** (empty / synthetic ``pds_*``) — spectrum-count
          fallback (> threshold ⇒ survey, else detail).
       4. **UNKNOWN name** (informative but unrecognized) — the

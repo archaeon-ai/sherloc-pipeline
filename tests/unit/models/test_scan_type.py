@@ -72,9 +72,11 @@ class TestTokenPrecedenceAndBoundary:
         assert _t("SURVEY_1296", None, 1296) == "survey"
 
     def test_detail_is_token_boundaried(self):
-        # 'detailed_center' must NOT match 'detail' (the token is followed by a
-        # letter) — it is informative-but-unrecognized -> quarantine.
-        assert _t("detailed_center_1a", None, 50) == SCAN_TYPE_QUARANTINE
+        # The 'detail' prefix is token-boundaried: a word that starts with
+        # 'detail' + another letter and is NOT the 'detailed' variant does not
+        # match the prefix rule -> quarantine. ('detailed_*' is handled
+        # explicitly as a DETAIL variant — see TestDetailedAndLines.)
+        assert _t("detailx_1", None, 50) == SCAN_TYPE_QUARANTINE
 
     def test_line_as_non_token_substring(self):
         # A name where 'line' appears as a non-leading-token substring.
@@ -131,3 +133,71 @@ class TestUninformativeCountFallback:
     def test_count_threshold_boundary(self):
         assert _t("pds_1_1_1", None, 200) == "detail"   # not > 200
         assert _t("pds_1_1_1", None, 201) == "survey"
+
+
+class TestDetailedAndLines:
+    """`detailed_*` is a DETAIL variant whose trailing letters defeat the token
+    boundary; `lines` is the plural spelling of a `line` scan (WS-1 §4.2)."""
+
+    @pytest.mark.parametrize(
+        "name", ["detailed_corner_1", "detailed_center_1a", "detailed_corner_2b", "DETAILED_X"]
+    )
+    def test_detailed_resolves_to_detail(self, name):
+        assert _t(name, None, 100) == "detail"
+
+    def test_lines_resolves_to_line(self):
+        assert _t("lines", None, 50) == "line"
+
+
+class TestCalibrationVocabulary:
+    """Widened calibration / engineering scan-name families (WS-1 §4.2).
+
+    These are non-science acquisitions (cal targets, instrument diagnostics,
+    laser-off darks) and resolve to CALIBRATION regardless of spectrum count.
+    Validated value-blind against the full mission corpus.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # AlGaN — substring match (fixes the SRLC-/passive-prefixed names the
+            # old prefix-only rule missed) and the existing AlGaN-prefixed names.
+            "AlGaN_1", "AlGaN340_pos1", "SRLC1_AlGaN_2", "passive_AlGaN_5ppp_stowed",
+            # laser-off dark / diagnostic (substring, any position)
+            "laser_disabled_detail", "detail_2_laser_disabled", "Diffusil_no_laser",
+            # bare PPP intensity/SNR test (anchored ^\d+ppp)
+            "15ppp_1", "500ppp_2_laser_disabled", "100ppp_3",
+            # laser power-state housekeeping
+            "power_on", "power_off", "power_on_1",
+            # maze focus / intensity target
+            "maze", "maze_2", "maze_in_focus", "MazeIntensity",
+            # external-cal meteorite (SaU-008)
+            "meteorite", "meteorite_detail", "MarsMeteorite_1",
+            # cal-target materials
+            "Teflon_1", "Vectran", "nGimat", "polycarbonate", "Orthofabric", "Diffusil",
+            # passive (laser-off ambient) observation
+            "passive_diffusil_5ppp_extended",
+        ],
+    )
+    def test_calibration_families(self, name):
+        assert _t(name, None, 100) == "calibration"
+
+    @pytest.mark.parametrize(
+        "name,n,expected",
+        [
+            # OVER-MATCH GUARDS: a science scan whose name merely CONTAINS a cal
+            # token keeps its geometry. `ppp` after a science prefix is a
+            # per-point shot-count param, so the anchored ^\d+ppp rule must NOT
+            # fire; the science prefix wins.
+            ("detail_15ppp_1", 100, "detail"),
+            ("detail_15ppp", 100, "detail"),
+            ("survey_5ppp", 100, "survey"),
+            ("survey_500ppp_a", 50, "survey"),
+            ("detail_1", 100, "detail"),
+            ("survey_1296", 1296, "survey"),
+            ("line_1", 25, "line"),
+            ("HDR_500", 100, "HDR"),
+        ],
+    )
+    def test_science_prefixes_not_swept_into_calibration(self, name, n, expected):
+        assert _t(name, None, n) == expected
