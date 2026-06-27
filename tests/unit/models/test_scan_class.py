@@ -80,6 +80,37 @@ class TestClassifyScanClass:
         assert classify_scan_class("detail_2_median_all") == "composite"
 
 
+# WS-1 §4.3 (defect D2): bare trailing-underscore unions — the name-union
+# composites the substring patterns missed (stored `primary` at the source).
+BARE_UNDERSCORE_VECTORS = [
+    ("detail_", "composite"),
+    ("line_", "composite"),
+    ("survey_", "composite"),
+    ("HDR_", "composite"),
+    # Must NOT over-match: numbered primaries / sub-scans don't end in `_`.
+    ("detail_1", "primary"),
+    ("line_1", "primary"),
+    ("line", "primary"),
+    ("detail_1a", "sub_scan"),
+    ("survey_100_a", "sub_scan"),
+]
+
+
+class TestBareTrailingUnderscoreComposites:
+    """WS-1 §4.3 — bare trailing-underscore unions classify as composite."""
+
+    @pytest.mark.parametrize("scan_name,expected", BARE_UNDERSCORE_VECTORS)
+    def test_classification(self, scan_name, expected):
+        assert classify_scan_class(scan_name) == expected, (
+            f"classify_scan_class('{scan_name}') should be '{expected}'"
+        )
+
+    def test_bare_underscore_does_not_break_existing_vectors(self):
+        # Every previously-frozen vector still classifies the same way.
+        for scan_name, expected in CLASSIFY_VECTORS:
+            assert classify_scan_class(scan_name) == expected
+
+
 PARENT_VECTORS = [
     # (scan_name, expected_parent)
     # Not sub-scans

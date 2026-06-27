@@ -111,19 +111,29 @@ class CoordinateFrame(str, Enum):
 
 
 class ScanType(str, Enum):
-    """Type of SHERLOC observation scan.
+    """Type of SHERLOC observation scan (the *kind* / geometry axis).
 
     Classifies scans by their observation type, replacing fragile
     name-pattern matching (e.g., "AlGaN" → calibration) with a
     first-class enum. Benefits both PDS and Loupe data.
 
+    Per WS-1 (scan-classification), ``scan_type`` is **name-authoritative**:
+    derived from the scan name via :func:`classify_scan_type`, with the
+    spectrum-count rule used only as a fallback for explicitly-uninformative
+    names. ``LINE`` and ``HDR`` were previously unrepresentable, which forced
+    every ``line``/``HDR`` scan to be mislabeled ``detail``/``survey``.
+
     Values:
-        DETAIL: Standard Mars surface scan (≤200 spectra per observation)
-        SURVEY: Large grid scan (>200 spectra per observation)
+        DETAIL: Standard Mars surface scan
+        SURVEY: Large grid / areal-coverage scan
+        LINE: 1-D traverse scan (constituent of cross/asterisk composites)
+        HDR: High-dynamic-range scan
         CALIBRATION: Calibration target / AlGaN internal calibration
     """
     DETAIL = "detail"
     SURVEY = "survey"
+    LINE = "line"
+    HDR = "HDR"
     CALIBRATION = "calibration"
 
 
@@ -225,9 +235,17 @@ def classify_scan_class(scan_name: str) -> str:
     """Classify a scan as primary, sub_scan, or composite based on its name.
 
     Priority cascade (highest first):
-      1. composite — name contains _all, _median, or _sum_active
+      1. composite — name contains _all, _median, _sum_active, asterisk, or
+         cross, OR is a bare trailing-underscore union (e.g. 'detail_',
+         'line_')
       2. sub_scan — name ends with [a-c] after a digit or underscore
       3. primary — everything else
+
+    The bare trailing-underscore union (WS-1 spec §4.3, defect D2) is a
+    name-union composite that the substring patterns above miss — e.g.
+    ``line_`` (Aitkenodden) and ``detail_`` were stored ``primary`` at the
+    source, which is why PHASE needed the ``COMPOSITE_BY_NAME_PRIMARIES``
+    consumer band-aid.
 
     Args:
         scan_name: Scan sequence name (e.g., 'detail_1', 'detail_1a', 'detail_all').
@@ -242,6 +260,9 @@ def classify_scan_class(scan_name: str) -> str:
     for pat in _COMPOSITE_PATTERNS:
         if pat in lower:
             return "composite"
+    # Bare trailing-underscore union (e.g. 'detail_', 'line_').
+    if clean.endswith("_"):
+        return "composite"
 
     # --- Sub-scan ---
     if len(clean) >= 2:
@@ -277,6 +298,196 @@ def derive_parent_name(scan_name: str) -> Optional[str]:
         else:
             return scan_name[:-1]  # strip a
     return None
+
+
+# ---------------------------------------------------------------------------
+# Scan type classification (name-authoritative; WS-1 spec §4.2)
+# ---------------------------------------------------------------------------
+
+# Sentinel returned by classify_scan_type() for an informative-but-unrecognized
+# name (e.g. a future DO_AREA_* pattern). The caller MUST NOT write a guessed
+# scan_type — the scan is quarantined (left NULL) for manual / role-expansion
+# review, guarding against silently mis-typing a new acquisition kind.
+SCAN_TYPE_QUARANTINE = "quarantine"
+
+# Calibration sequence codes (SRLC). Keyed FIRST and unshadowable by name.
+# Mirrors core.pds_parsers._CALIBRATION_SEQUENCE_CODES.
+_CALIBRATION_SEQUENCE_CODES = frozenset({"srlc10000", "srlc16000"})
+
+# Spectrum-count threshold separating survey from detail. Used ONLY as a
+# fallback for explicitly-uninformative names (the count rule is never the
+# authority when the name carries a kind signal).
+_SURVEY_SPECTRA_THRESHOLD = 200
+
+# Ordered, token-boundaried name -> ScanType map (precedence high to low).
+# 'survey' precedes 'hdr' so "survey_HDR" classifies as survey (the trailing
+# token is an acquisition parameter, not the kind). Matching is case-normalized
+# and token-boundaried: the token must be followed by a non-alphabetic
+# character (or end of name), so "detailed_center" does NOT match "detail" and
+# "hydration" does not match "hdr".
+_SCAN_TYPE_NAME_RULES = (
+    ("survey", ScanType.SURVEY),
+    ("detail", ScanType.DETAIL),
+    ("line", ScanType.LINE),
+    ("hdr", ScanType.HDR),
+)
+
+# Named composite groupings whose scan_type INHERITS the constituent kind
+# (Key Decision K1). cross / asterisk are unions of `line` primaries.
+_INHERITED_LINE_NAMES = frozenset({"cross", "asterisk"})
+
+# Calibration scan-name prefixes — Loupe targets carry no SRLC sequence code,
+# so AlGaN internal-calibration scans are name-identified.
+_CALIBRATION_NAME_PREFIXES = ("algan",)
+
+
+def _scan_type_from_name(scan_name: Optional[str]) -> Optional[ScanType]:
+    """Return the name-implied ScanType, or None if the name carries no
+    recognized kind token. Case-normalized, token-boundaried, ordered."""
+    low = (scan_name or "").strip().lower()
+    if not low:
+        return None
+    for token, scan_type in _SCAN_TYPE_NAME_RULES:
+        if low.startswith(token):
+            rest = low[len(token):]
+            if not rest or not rest[0].isalpha():
+                return scan_type
+    if low in _INHERITED_LINE_NAMES:
+        return ScanType.LINE
+    return None
+
+
+def _is_calibration_name(scan_name: Optional[str]) -> bool:
+    """True if the scan name identifies an internal-calibration scan (AlGaN)."""
+    low = (scan_name or "").strip().lower()
+    return any(low.startswith(p) for p in _CALIBRATION_NAME_PREFIXES)
+
+
+def _is_uninformative_name(scan_name: Optional[str]) -> bool:
+    """True for explicitly-enumerated empty / opaque name forms that carry no
+    kind signal — the ONLY class for which the spectrum-count fallback is
+    permitted.
+
+    Qualifying forms: empty / None, and the synthetic PDS observation name
+    ``pds_<sol>_<sclk>_<obs>`` (PDS products carry no human-readable scan
+    name). Every other non-empty name is treated as informative.
+    """
+    if scan_name is None:
+        return True
+    low = scan_name.strip().lower()
+    if not low:
+        return True
+    if low.startswith("pds_"):
+        return True
+    return False
+
+
+def classify_scan_type(
+    scan_name: Optional[str],
+    sequence_code: Optional[str] = None,
+    n_spectra: Optional[int] = None,
+) -> "ScanType | str":
+    """Name-authoritative scan-type resolver (WS-1 spec §4.2).
+
+    Resolution order:
+      1. **Calibration** — sequence code in {SRLC10000, SRLC16000} (first,
+         unshadowable by name); or a calibration scan-name prefix (AlGaN).
+      2. **RECOGNIZED name** — token-boundaried ordered map
+         (survey > detail > line > HDR; cross/asterisk inherit line per K1).
+      3. **UNINFORMATIVE name** (empty / synthetic ``pds_*``) — spectrum-count
+         fallback (> threshold ⇒ survey, else detail).
+      4. **UNKNOWN name** (informative but unrecognized) — the
+         :data:`SCAN_TYPE_QUARANTINE` sentinel; the caller MUST NOT write a
+         guessed scan_type.
+
+    Value-blind: reads only the scan name, sequence code, and spectrum count.
+
+    Returns:
+        A :class:`ScanType`, or :data:`SCAN_TYPE_QUARANTINE` for an
+        informative-unknown name.
+    """
+    seq = (sequence_code or "").strip().lower()
+    if seq in _CALIBRATION_SEQUENCE_CODES:
+        return ScanType.CALIBRATION
+    if _is_calibration_name(scan_name):
+        return ScanType.CALIBRATION
+
+    recognized = _scan_type_from_name(scan_name)
+    if recognized is not None:
+        return recognized
+
+    if _is_uninformative_name(scan_name):
+        if n_spectra is not None and n_spectra > _SURVEY_SPECTRA_THRESHOLD:
+            return ScanType.SURVEY
+        return ScanType.DETAIL
+
+    return SCAN_TYPE_QUARANTINE
+
+
+# ---------------------------------------------------------------------------
+# Analytical product role classification (multishot; WS-1 spec §4.4)
+# ---------------------------------------------------------------------------
+
+# Multishot SNR-reduction product suffixes (WS-1 spec §4.4). Ordered
+# most-specific first so ``_median_all`` is matched before the bare ``_all``
+# SPATIAL union and ``_sum_active_median_dark`` before any ``_dark`` shorthand.
+# The analytical CANONICAL product is ``*_sum_active_median_dark`` (sums active
+# → full ~900 ppp signal; 3× median dark → cleaner dark); other recognized
+# reductions are ALTERNATE. The bare ``*_all`` spatial union is NOT a multishot
+# product (product_role NULL) — this is the ``_all`` naming collision.
+_MULTISHOT_REDUCTION_SUFFIXES = (
+    ("_sum_active_median_dark", "canonical"),
+    ("_sum_active_sum_dark", "alternate"),
+    ("_median_all", "alternate"),
+)
+
+
+def multishot_reduction_role(scan_name: Optional[str]) -> Optional[str]:
+    """Return the analytical role of a multishot SNR-reduction product name.
+
+    'canonical' for ``*_sum_active_median_dark``, 'alternate' for other
+    recognized reductions (``*_median_all``, ``*_sum_active_sum_dark``), or
+    None if the name is not a recognized reduction.
+
+    Distinguishes the multishot reductions from the bare ``*_all`` SPATIAL
+    union (a composite with product_role NULL) — the ``_all`` naming collision
+    (spec §4.3/§4.4).
+    """
+    low = (scan_name or "").strip().lower()
+    for suffix, role in _MULTISHOT_REDUCTION_SUFFIXES:
+        if low.endswith(suffix) and len(low) > len(suffix):
+            return role
+    return None
+
+
+def multishot_raw_base(scan_name: Optional[str]) -> Optional[str]:
+    """For a recognized multishot reduction name, return the base (raw) scan
+    name it reduces (e.g. ``detail_2_median_all`` -> ``detail_2``); else None.
+
+    Case-preserving on the base portion so the result can be matched against
+    the sibling raw scan's stored name.
+    """
+    clean = (scan_name or "").strip()
+    low = clean.lower()
+    for suffix, _role in _MULTISHOT_REDUCTION_SUFFIXES:
+        if low.endswith(suffix) and len(low) > len(suffix):
+            return clean[: -len(suffix)]
+    return None
+
+
+def classify_product_role(scan_name: Optional[str]) -> Optional[str]:
+    """Name-derivable analytical ``product_role`` for a multishot reduction.
+
+    Returns 'canonical' for ``*_sum_active_median_dark``, 'alternate' for
+    other recognized reductions, or None for everything else (normal scans,
+    spatial unions, name-union composites).
+
+    Note: the 'raw' role and the ``source_scan_ids = [raw_id]`` lineage are
+    **corpus-level** (assigned by ``reclassify-product-roles``), since they
+    require resolving the sibling raw scan in the same sol/target group — they
+    cannot be derived from the name alone.
+    """
+    return multishot_reduction_role(scan_name)
 
 
 class ProcessingLevel(str, Enum):
@@ -484,6 +695,14 @@ class Scan(IdentifiableModel):
     source_scan_ids: Optional[List[str]] = Field(
         default=None,
         description="UUIDs of source scans (composites only, best-effort provenance)."
+    )
+    product_role: Optional[str] = Field(
+        default=None,
+        description="Analytical role of a multishot product: 'raw', 'canonical', "
+        "or 'alternate'. NULL for every non-multishot scan (≈the entire corpus). "
+        "The '*_sum_active_median_dark' reduction is the counted 'canonical' "
+        "product; the multishot raw is 'raw' (not counted); '*_median_all' is "
+        "'alternate'. Set by reclassify-product-roles (corpus-level)."
     )
 
     @field_validator("n_channels")

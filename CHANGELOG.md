@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - 2026-06-27
+
+Name-authoritative scan classification at the source: the three classification
+axes (`scan_type`, `scan_class`, `product_role`) are now derived from the scan
+name rather than a spectrum-count heuristic, and a new analytical product-role
+axis represents multishot acquisitions. All changes are additive and
+backward-compatible; values for the existing corpus are corrected in place with
+the new `reclassify-*` commands.
+
+### Added
+- **`ScanType` gains `line` and `HDR`.** These observation kinds were
+  previously unrepresentable, so every `line`/`HDR` scan was mislabeled
+  `detail`/`survey` by the count rule.
+- **`classify_scan_type(scan_name, sequence_code, n_spectra)`** — a
+  name-authoritative resolver (`models.spectra`). Calibration is keyed on the
+  sequence code first (unshadowable); the kind is then matched from the name by
+  a case-normalized, token-boundaried, ordered map (`survey` > `detail` >
+  `line` > `HDR`; `cross`/`asterisk` inherit `line`). The spectrum-count rule
+  is a fallback for explicitly-uninformative names only (empty / synthetic
+  `pds_*` names); an informative-but-unrecognized name is **quarantined**
+  (no guessed type written), guarding against silently mis-typing a future
+  acquisition kind.
+- **`product_role` axis** (`raw` / `canonical` / `alternate`; `NULL` for every
+  non-multishot scan) on `ScanORM` and the `Scan` model, with a DB CHECK
+  (Alembic revision `9b2e7c4a1f08`) enforcing enum membership and the role ⇒
+  class/parent/sources couplings. For a multishot acquisition the
+  `*_sum_active_median_dark` reduction is the counted `canonical` product; the
+  raw is retained but not counted.
+- **`classify_product_role` + multishot helpers** that distinguish the
+  `*_median_all` / `*_sum_active_median_dark` reductions from the bare `*_all`
+  spatial union (the `_all` naming collision).
+- **`reclassify-scan-types`, `reclassify-scan-classes`, `reclassify-product-roles`
+  CLI commands.** Each re-derives one axis in place with a dry-run default
+  (`--apply` to write), a value-blind transition-count diff, a single
+  transaction, a `--snapshot`/`--i-have-a-backup` gate before applying, a
+  schema/migration preflight, a measurement-table no-mutation assertion
+  (`spectra` / `fitted_peaks` content hash), and idempotence.
+
+### Changed
+- **`scan_class` now classifies bare trailing-underscore unions** (e.g.
+  `detail_`, `line_`) as `composite` (previously stored `primary`).
+- **Loupe ingestion sets `scan_type` name-authoritatively** at write time
+  (`to_scan()`), so new ingests are classified correctly going forward.
+- The PDS observation classifier (`PDSObservationGrouper.classify`) now routes
+  through the shared resolver; PDS observations carry synthetic, kind-blind
+  names, so they continue to fall back to sequence-code + spectrum count, with
+  the historical "missing count ⇒ unclassified" contract preserved.
+
 ## [5.1.0] - 2026-06-25
 
 ### Fixed

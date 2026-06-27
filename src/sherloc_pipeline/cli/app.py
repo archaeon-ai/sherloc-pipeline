@@ -2913,6 +2913,202 @@ def reclassify_targets_cmd(
         sys.exit(1)
 
 
+def _run_scan_reclassify(
+    ctx: typer.Context,
+    axis: str,
+    command_name: str,
+    database: Optional[Path],
+    apply: bool,
+    snapshot: Optional[Path],
+    i_have_a_backup: bool,
+) -> None:
+    """Shared driver for the scan-classification reclassify commands.
+
+    Re-derives one classification axis in place with the WS-1 §4.5 operational
+    contract: dry-run by default, value-blind transition diff, single
+    transaction, snapshot/backup gate before --apply, schema preflight, and a
+    measurement-table no-mutation assertion. Value-blind: only names / counts /
+    ids / error tokens are read or reported.
+    """
+    import os as _os
+
+    json_mode = (ctx.obj or {}).get("json", False)
+    if json_mode:
+        import logging as _logging
+        _logging.basicConfig(stream=sys.stderr)
+
+    try:
+        from sherloc_pipeline.database.connection import get_engine
+        from sherloc_pipeline.services.scan_reclassification import (
+            run_reclassification,
+            ScanReclassificationError,
+        )
+
+        db_path = database or Path(_os.getenv("SHERLOC_DB", "./phase.db"))
+        if not db_path.exists():
+            console.print(f"[red]Database not found: {db_path}[/red]")
+            raise typer.Exit(code=1)
+
+        engine = get_engine(db_path)
+        snap = Path(snapshot) if snapshot else None
+        try:
+            if apply:
+                # engine.begin() owns the transaction: a measurement-mutation
+                # assertion (or any error) rolls the whole run back.
+                with engine.begin() as conn:
+                    result = run_reclassification(
+                        conn, [axis], apply=True, snapshot_path=snap,
+                        db_path=db_path, have_backup=i_have_a_backup,
+                    )
+            else:
+                with engine.connect() as conn:
+                    result = run_reclassification(conn, [axis], apply=False)
+        except ScanReclassificationError as exc:
+            if json_mode:
+                err = CLIError(
+                    pipeline_version=_pipeline_version,
+                    error_type=type(exc).__name__,
+                    message=exc.message,
+                    context=exc.context,
+                    exit_code=exc.exit_code,
+                )
+                print(json.dumps(err.model_dump(), default=str), file=sys.stderr)
+            else:
+                console.print(f"\n[red]{exc.message}[/red]")
+            sys.exit(exc.exit_code)
+
+        plan = result.plans[axis]
+        payload = {
+            "axis": axis,
+            "apply": apply,
+            "dry_run": not apply,
+            "total_scans": result.total_scans,
+            "changed": plan.n_changed,
+            "transitions": plan.transitions,
+            "quarantined": len(plan.quarantined),
+            "snapshot": result.snapshot_path,
+        }
+        if json_mode:
+            output = CLIResult(
+                pipeline_version=_pipeline_version,
+                command=command_name,
+                result=payload,
+            )
+            print(json.dumps(output.model_dump(), default=str))
+        else:
+            header = "APPLIED" if apply else "DRY RUN (use --apply to write)"
+            color = "green" if apply else "yellow"
+            console.print(
+                f"[{color}]{header} — {plan.n_changed}/{result.total_scans} "
+                f"scans change ({axis})[/{color}]"
+            )
+            for transition, count in sorted(plan.transitions.items()):
+                console.print(f"  {transition}: {count}")
+            if plan.quarantined:
+                console.print(f"  quarantined (no guessed value): {len(plan.quarantined)}")
+            if result.snapshot_path:
+                console.print(f"  snapshot written: {result.snapshot_path}")
+
+        sys.exit(0)
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        if json_mode:
+            err = CLIError(
+                pipeline_version=_pipeline_version,
+                error_type=type(e).__name__,
+                message=str(e),
+                exit_code=1,
+            )
+            print(json.dumps(err.model_dump(), default=str), file=sys.stderr)
+        else:
+            console.print(f"\n[red]Reclassify failed: {e}[/red]")
+        sys.exit(1)
+
+
+_RECLASSIFY_DB_OPTION = typer.Option(
+    None, "--database", "-d",
+    help="Database path (default: $SHERLOC_DB or ./phase.db)",
+)
+_RECLASSIFY_APPLY_OPTION = typer.Option(
+    False, "--apply",
+    help="Write changes (default is a dry-run that only reports the diff).",
+)
+_RECLASSIFY_SNAPSHOT_OPTION = typer.Option(
+    None, "--snapshot",
+    help="Copy the DB to this path before --apply (required unless "
+    "--i-have-a-backup is given).",
+)
+_RECLASSIFY_BACKUP_OPTION = typer.Option(
+    False, "--i-have-a-backup",
+    help="Assert an external backup exists, allowing --apply without --snapshot.",
+)
+
+
+@app.command("reclassify-scan-types")
+def reclassify_scan_types_cmd(
+    ctx: typer.Context,
+    database: Optional[Path] = _RECLASSIFY_DB_OPTION,
+    apply: bool = _RECLASSIFY_APPLY_OPTION,
+    snapshot: Optional[Path] = _RECLASSIFY_SNAPSHOT_OPTION,
+    i_have_a_backup: bool = _RECLASSIFY_BACKUP_OPTION,
+):
+    """Re-derive name-authoritative scan_type for every scan (in place).
+
+    Defaults to a dry-run. Informative-unknown names are quarantined
+    (scan_type left NULL) rather than guessed.
+
+    Examples:
+        sherloc reclassify-scan-types                       # dry-run diff
+        sherloc reclassify-scan-types --apply --snapshot phase.db.bak
+    """
+    _run_scan_reclassify(
+        ctx, "scan_type", "reclassify-scan-types",
+        database, apply, snapshot, i_have_a_backup,
+    )
+
+
+@app.command("reclassify-scan-classes")
+def reclassify_scan_classes_cmd(
+    ctx: typer.Context,
+    database: Optional[Path] = _RECLASSIFY_DB_OPTION,
+    apply: bool = _RECLASSIFY_APPLY_OPTION,
+    snapshot: Optional[Path] = _RECLASSIFY_SNAPSHOT_OPTION,
+    i_have_a_backup: bool = _RECLASSIFY_BACKUP_OPTION,
+):
+    """Re-derive scan_class + lineage (parent_scan_id / source_scan_ids).
+
+    Catches the bare trailing-underscore unions (detail_, line_) the historical
+    backfill missed and (re)populates composite source_scan_ids. Defaults to a
+    dry-run.
+    """
+    _run_scan_reclassify(
+        ctx, "scan_class", "reclassify-scan-classes",
+        database, apply, snapshot, i_have_a_backup,
+    )
+
+
+@app.command("reclassify-product-roles")
+def reclassify_product_roles_cmd(
+    ctx: typer.Context,
+    database: Optional[Path] = _RECLASSIFY_DB_OPTION,
+    apply: bool = _RECLASSIFY_APPLY_OPTION,
+    snapshot: Optional[Path] = _RECLASSIFY_SNAPSHOT_OPTION,
+    i_have_a_backup: bool = _RECLASSIFY_BACKUP_OPTION,
+):
+    """Assign multishot product_role (raw / canonical / alternate).
+
+    Tags a recognized reduction (canonical=*_sum_active_median_dark,
+    alternate=*_median_all) and its raw base scan, only when the raw sibling
+    exists. Run after reclassify-scan-classes. Defaults to a dry-run.
+    """
+    _run_scan_reclassify(
+        ctx, "product_role", "reclassify-product-roles",
+        database, apply, snapshot, i_have_a_backup,
+    )
+
+
 @app.command("init")
 def init_cmd(
     ctx: typer.Context,

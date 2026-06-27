@@ -60,6 +60,11 @@ from sherloc_pipeline.models.spectra import (
     classify_target_type,
     classify_scan_class,
     derive_parent_name,
+    classify_scan_type,
+    classify_product_role,
+    multishot_reduction_role,
+    multishot_raw_base,
+    SCAN_TYPE_QUARANTINE,
 )
 
 # Instrument state and configuration
@@ -173,6 +178,11 @@ __all__ = [
     "classify_target_type",
     "classify_scan_class",
     "derive_parent_name",
+    "classify_scan_type",
+    "classify_product_role",
+    "multishot_reduction_role",
+    "multishot_raw_base",
+    "SCAN_TYPE_QUARANTINE",
     # Core domain models
     "Sol",
     "Scan",

@@ -19,10 +19,11 @@ defaults, output locations, and exit-code semantics do not change without
 either (a) deprecation in `CHANGELOG.md` for at least one minor version, or
 (b) a major-version bump.
 
-**Current commands** (17; see `src/sherloc_pipeline/cli/app.py`):
+**Current commands** (20; see `src/sherloc_pipeline/cli/app.py`):
 `apply-review`, `backfill`, `backfill-masks`, `db-stats`,
 `extract-training`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`,
 `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`,
+`reclassify-product-roles`, `reclassify-scan-classes`, `reclassify-scan-types`,
 `reclassify-targets`, `serve`.
 
 > **v5.0.0 — `detect-confidence` withdrawn (breaking).** The experimental
