@@ -369,3 +369,113 @@ class TestValueBlindInvariants:
                 assert multishot_reduction_role(name) is not None, name
             elif s["product_role"] == "raw":
                 assert name in reduction_bases, f"raw {name} has no reduction sibling"
+
+
+# ---------------------------------------------------------------------------
+# Codex Round-1 finding regressions (F1, F3, F4, F5)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def blank_migrated_db(tmp_path):
+    """A migrated DB with a sol but no scans — tests seed their own corpus."""
+    db_path = tmp_path / "phase.db"
+    config = Config(str(_PROJECT_ROOT / "alembic.ini"))
+    os.environ["PHASE_DATABASE_PATH"] = str(db_path)
+    try:
+        command.upgrade(config, "head")
+        engine = get_engine(db_path)
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO sols (sol_number, data_source, created_at) "
+                "VALUES (100,'loupe','2026-01-01')"
+            ))
+        yield db_path
+    finally:
+        os.environ.pop("PHASE_DATABASE_PATH", None)
+
+
+class TestCodexFindings:
+    def test_f1_pds_missing_count_null_preserved(self, blank_migrated_db):
+        """A PDS synthetic-name row left scan_type=NULL by a missing count
+        (stored as the n_points=1 placeholder) must NOT be flipped to detail."""
+        engine = get_engine(blank_migrated_db)
+        with engine.begin() as conn:
+            _seed_scan(conn, "pds_0100_123_001", 1, "primary", None)  # NULL type
+            _seed_scan(conn, "detail_1", 100, "primary", None)        # recognized
+        _reclassify(blank_migrated_db, axes=("scan_type",))
+        scans = _scans_by_name(get_engine(blank_migrated_db))
+        assert scans["pds_0100_123_001"]["scan_type"] is None  # preserved
+        assert scans["detail_1"]["scan_type"] == "detail"       # corrected
+
+    def test_f3_alternate_only_group_not_tagged(self, blank_migrated_db):
+        """A multishot group with no canonical reduction is left untagged so
+        its raw stays a counted primary (no silent undercount)."""
+        engine = get_engine(blank_migrated_db)
+        with engine.begin() as conn:
+            # Complete group (canonical + alternate) -> tagged.
+            _seed_scan(conn, "detail_2", 300, "primary", "detail")
+            _seed_scan(conn, "detail_2_median_all", 100, "composite", "detail")
+            _seed_scan(conn, "detail_2_sum_active_median_dark", 100, "composite", "detail")
+            # Incomplete group (alternate only) -> NOT tagged.
+            _seed_scan(conn, "detail_3", 300, "primary", "detail")
+            _seed_scan(conn, "detail_3_median_all", 100, "composite", "detail")
+        _reclassify(blank_migrated_db)
+        scans = _scans_by_name(get_engine(blank_migrated_db))
+        # complete group tagged
+        assert scans["detail_2"]["product_role"] == "raw"
+        assert scans["detail_2_sum_active_median_dark"]["product_role"] == "canonical"
+        # incomplete group: raw stays a counted primary, reduction untagged
+        assert scans["detail_3"]["product_role"] is None
+        assert scans["detail_3"]["scan_class"] == "primary"
+        assert scans["detail_3_median_all"]["product_role"] is None
+
+    def test_f4_create_all_schema_has_product_role_check(self, tmp_path):
+        """The ORM (create_all) path produces the same product_role CHECK as
+        Alembic, and reclassify's preflight accepts it."""
+        from sherloc_pipeline.database.connection import create_all_tables
+        from sherloc_pipeline.services.scan_reclassification import preflight_schema
+        from sqlalchemy.exc import IntegrityError
+
+        db_path = tmp_path / "create_all.db"
+        engine = get_engine(db_path)
+        create_all_tables(engine)
+        with engine.connect() as conn:
+            scans_sql = conn.execute(text(
+                "SELECT sql FROM sqlite_master WHERE name='scans'")).scalar()
+        assert "ck_scans_product_role" in scans_sql
+        # CHECK is enforced on a create_all DB:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO sols (sol_number, data_source, created_at) "
+                "VALUES (100,'loupe','2026-01-01')"))
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO scans (id, sol_number, scan_name, scan_id, sclk_start, "
+                    "n_points, n_channels, laser_wavelength_nm, created_at, target_type, "
+                    "scan_class, product_role) VALUES "
+                    "('x',100,'s','s',1,1,2148,248.6,'2026-01-01','mars_target',"
+                    "'composite','raw')"))  # raw must be primary
+        # preflight accepts the create_all schema (no alembic_version needed):
+        with engine.connect() as conn:
+            preflight_schema(conn)
+
+    def test_f5_spatial_union_excludes_unrelated_base(self, blank_migrated_db):
+        """A target-prefixed spatial union links only its own base family, not
+        an unrelated different-base same-kind primary in the same group."""
+        engine = get_engine(blank_migrated_db)
+        with engine.begin() as conn:
+            _seed_scan(conn, "meteorite_detail_1", 100, "primary", "detail")
+            _seed_scan(conn, "meteorite_detail_2", 100, "primary", "detail")
+            _seed_scan(conn, "cal_detail_1", 100, "primary", "detail")  # unrelated base
+            _seed_scan(conn, "meteorite_detail_all", 200, "primary", "detail")
+        _reclassify(blank_migrated_db, axes=("scan_class",))
+        engine = get_engine(blank_migrated_db)
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT id, scan_name, source_scan_ids FROM scans")).fetchall()
+        by_id = {r[0]: r[1] for r in rows}
+        union = next(r for r in rows if r[1] == "meteorite_detail_all")
+        src_names = {by_id[i] for i in json.loads(union[2])}
+        assert src_names == {"meteorite_detail_1", "meteorite_detail_2"}
+        assert "cal_detail_1" not in src_names

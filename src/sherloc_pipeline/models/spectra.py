@@ -29,6 +29,7 @@ Example:
 from datetime import date, datetime
 from enum import Enum
 from typing import Optional, List, Dict, Any
+import re
 import uuid
 import zlib
 
@@ -319,18 +320,21 @@ _CALIBRATION_SEQUENCE_CODES = frozenset({"srlc10000", "srlc16000"})
 # authority when the name carries a kind signal).
 _SURVEY_SPECTRA_THRESHOLD = 200
 
-# Ordered, token-boundaried name -> ScanType map (precedence high to low).
-# 'survey' precedes 'hdr' so "survey_HDR" classifies as survey (the trailing
-# token is an acquisition parameter, not the kind). Matching is case-normalized
-# and token-boundaried: the token must be followed by a non-alphabetic
-# character (or end of name), so "detailed_center" does NOT match "detail" and
-# "hydration" does not match "hdr".
-_SCAN_TYPE_NAME_RULES = (
+# Token-boundaried PREFIX rules (the `survey*` / `detail*` / `line*` map
+# entries), highest precedence first. Matching is case-normalized: the token
+# must be followed by a non-alphabetic character (or end of name), so
+# "detailed_center" does NOT match "detail".
+_SCAN_TYPE_PREFIX_RULES = (
     ("survey", ScanType.SURVEY),
     ("detail", ScanType.DETAIL),
     ("line", ScanType.LINE),
-    ("hdr", ScanType.HDR),
 )
+
+# HDR is the `*HDR*` map entry (ARC-M2P-308): a token-boundaried match
+# ANYWHERE in the name (not just a prefix), at the LOWEST precedence so
+# "survey_HDR" still resolves to survey. The boundary guard means "hydration"
+# does not match (no standalone `hdr` token).
+_HDR_TOKEN_RE = re.compile(r"(?:^|[^a-z])hdr(?:[^a-z]|$)")
 
 # Named composite groupings whose scan_type INHERITS the constituent kind
 # (Key Decision K1). cross / asterisk are unions of `line` primaries.
@@ -343,17 +347,23 @@ _CALIBRATION_NAME_PREFIXES = ("algan",)
 
 def _scan_type_from_name(scan_name: Optional[str]) -> Optional[ScanType]:
     """Return the name-implied ScanType, or None if the name carries no
-    recognized kind token. Case-normalized, token-boundaried, ordered."""
+    recognized kind token. Case-normalized, token-boundaried, ordered.
+
+    Precedence: survey > detail > line (token-boundaried prefixes) >
+    cross/asterisk (inherit line) > HDR (`*HDR*`, token-boundaried anywhere).
+    """
     low = (scan_name or "").strip().lower()
     if not low:
         return None
-    for token, scan_type in _SCAN_TYPE_NAME_RULES:
+    for token, scan_type in _SCAN_TYPE_PREFIX_RULES:
         if low.startswith(token):
             rest = low[len(token):]
             if not rest or not rest[0].isalpha():
                 return scan_type
     if low in _INHERITED_LINE_NAMES:
         return ScanType.LINE
+    if _HDR_TOKEN_RE.search(low):
+        return ScanType.HDR
     return None
 
 

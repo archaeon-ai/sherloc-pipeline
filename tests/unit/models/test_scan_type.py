@@ -84,6 +84,24 @@ class TestTokenPrecedenceAndBoundary:
         assert _t("hydration_x", None, 50) == SCAN_TYPE_QUARANTINE
 
 
+class TestHdrAnywhere:
+    """ARC-M2P-308 maps HDR as `*HDR*` (token-boundaried anywhere), not just a
+    prefix — lowest precedence so survey/detail/line still win."""
+
+    @pytest.mark.parametrize("name", ["HDR_500", "hdr", "cal_HDR_1", "foo_hdr", "x_hdr_3"])
+    def test_non_prefix_hdr_resolves(self, name):
+        assert _t(name, None, 50) == "HDR"
+
+    def test_survey_prefix_beats_trailing_hdr(self):
+        assert _t("survey_HDR", None, 100) == "survey"
+        assert _t("detail_HDR", None, 100) == "detail"
+
+    @pytest.mark.parametrize("name", ["hydration", "withdraw", "shutdown_1", "shaders"])
+    def test_no_false_positive_on_embedded_letters(self, name):
+        # 'hdr' must be a standalone token, not a letter-bounded substring.
+        assert _t(name, None, 50) == SCAN_TYPE_QUARANTINE
+
+
 class TestQuarantine:
     def test_informative_unknown_quarantines(self):
         # A future DO_AREA-class name must quarantine, never fall through to

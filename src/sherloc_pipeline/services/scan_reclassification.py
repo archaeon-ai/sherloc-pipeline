@@ -38,6 +38,10 @@ from sherloc_pipeline.models.spectra import (
     derive_parent_name,
     multishot_raw_base,
     multishot_reduction_role,
+    _CALIBRATION_SEQUENCE_CODES,
+    _is_calibration_name,
+    _is_uninformative_name,
+    _scan_type_from_name,
 )
 from sherloc_pipeline.services.errors import SherlocServiceError
 
@@ -121,43 +125,37 @@ class ReclassificationResult:
 # ---------------------------------------------------------------------------
 
 def preflight_schema(conn: Connection) -> str:
-    """Verify the DB is migrated to (at least) the product_role revision.
+    """Verify the scans table carries the product_role column + governance
+    CHECK (WS-1 §4.4) before reclassifying.
 
-    Returns the current alembic version. Raises if the migration table is
-    absent or the head predates product_role.
+    Checks the schema artifact directly rather than the Alembic version, so it
+    accepts BOTH migration-built and ORM-created (``create_all``) schemas —
+    which carry the same ``ck_scans_product_role`` constraint (Codex F4).
+    Returns the Alembic head if the DB is migration-managed (informational).
     """
-    try:
-        rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
-    except Exception as exc:  # noqa: BLE001 — surface as a domain error
-        raise ScanReclassificationError(
-            "Database is not Alembic-managed (no alembic_version table); "
-            "run `sherloc init` / `alembic upgrade head` first.",
-            context={"error": str(exc)},
-        ) from exc
-    versions = {r[0] for r in rows}
-    if PRODUCT_ROLE_REVISION not in _reachable_revisions(conn, versions):
-        raise ScanReclassificationError(
-            "Database schema predates the product_role migration "
-            f"({PRODUCT_ROLE_REVISION}); run `alembic upgrade head` before "
-            "reclassifying.",
-            context={"alembic_version": sorted(versions)},
-        )
-    return ",".join(sorted(versions))
-
-
-def _reachable_revisions(conn: Connection, versions: set) -> set:
-    """Best-effort: the product_role CHECK must exist on the scans table.
-
-    Rather than walk the Alembic graph, we directly verify the schema artifact
-    this reclassifier depends on (the column + CHECK), which is robust to head
-    naming and merge points.
-    """
-    sql = conn.execute(
-        text("SELECT sql FROM sqlite_master WHERE name = 'scans'")
+    scans_sql = conn.execute(
+        text("SELECT sql FROM sqlite_master WHERE type='table' AND name='scans'")
     ).scalar()
-    if sql and "ck_scans_product_role" in sql and "product_role" in sql:
-        return versions | {PRODUCT_ROLE_REVISION}
-    return versions
+    if not scans_sql:
+        raise ScanReclassificationError(
+            "No 'scans' table found; initialize the database first "
+            "(`sherloc init` / `alembic upgrade head`).",
+        )
+    if "product_role" not in scans_sql or "ck_scans_product_role" not in scans_sql:
+        raise ScanReclassificationError(
+            "Database schema is missing the product_role column / CHECK "
+            f"(migration {PRODUCT_ROLE_REVISION}); run `alembic upgrade head` "
+            "before reclassifying.",
+            context={"has_product_role_column": "product_role" in scans_sql},
+        )
+    try:
+        versions = [
+            r[0]
+            for r in conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
+        ]
+    except Exception:  # noqa: BLE001 — alembic_version absent on create_all DBs
+        versions = []
+    return ",".join(sorted(versions))
 
 
 def measurement_fingerprint(conn: Connection) -> Dict[str, Tuple[int, str]]:
@@ -235,20 +233,36 @@ def _name_kind(scan_name: str) -> Optional[str]:
 
 
 def plan_scan_types(rows: Sequence[_ScanRow]) -> AxisPlan:
-    """Re-derive name-authoritative ``scan_type`` for every scan.
+    """Re-derive name-authoritative ``scan_type`` (the actual #115 fix).
 
-    An informative-unknown name resolves to the QUARANTINE sentinel; rather
-    than write a guessed type, the scan_type is set to NULL (explicit
-    quarantine) and the scan is recorded in ``quarantined``.
+    Only re-derives scan_type for names that carry a kind signal:
+
+    * calibration (sequence code or AlGaN name) -> calibration;
+    * a RECOGNIZED name -> its name-implied type (corrects the mislabels);
+    * an UNINFORMATIVE name (empty / synthetic ``pds_*``) -> **left
+      unchanged**. The spectrum-count value cannot be re-derived
+      name-authoritatively, and ``n_points`` is the PDS missing-count
+      placeholder (1) for rows whose original count was unknown — re-deriving
+      from it would flip an ingest-time ``scan_type=NULL`` to ``detail``
+      (Codex F1). The ingest-time decision stands;
+    * an informative-but-unrecognized (UNKNOWN) name -> quarantined: the
+      ``scan_type`` is set to NULL (no guessed type kept) and the scan is
+      recorded. On the current corpus this class is empty.
     """
     plan = AxisPlan(axis=AXIS_SCAN_TYPE)
     for row in rows:
-        resolved = classify_scan_type(row.scan_name, row.sequence_id, row.n_points)
-        if isinstance(resolved, ScanType):
-            new_type: Optional[str] = resolved.value
-        else:  # SCAN_TYPE_QUARANTINE
-            new_type = None
-            plan.quarantined.append(row.id)
+        seq = (row.sequence_id or "").strip().lower()
+        if seq in _CALIBRATION_SEQUENCE_CODES or _is_calibration_name(row.scan_name):
+            new_type: Optional[str] = ScanType.CALIBRATION.value
+        else:
+            recognized = _scan_type_from_name(row.scan_name)
+            if recognized is not None:
+                new_type = recognized.value
+            elif _is_uninformative_name(row.scan_name):
+                continue  # leave the ingest-time value (preserves PDS NULL)
+            else:
+                new_type = None  # informative-unknown -> quarantine
+                plan.quarantined.append(row.id)
         if new_type != row.scan_type:
             plan.updates[row.id] = {"scan_type": new_type}
             key = f"{row.scan_type!r}->{new_type!r}"
@@ -299,6 +313,19 @@ def plan_scan_classes(rows: Sequence[_ScanRow]) -> AxisPlan:
     return plan
 
 
+def _extends_base(scan_name: Optional[str], base_prefix_lower: str) -> bool:
+    """True if scan_name is the base itself or a member extending it by a
+    separator/index (e.g. base 'detail' matches 'detail', 'detail_1',
+    'detail2' but NOT 'detailx_1')."""
+    low = (scan_name or "").strip().lower()
+    if low == base_prefix_lower:
+        return True
+    if not low.startswith(base_prefix_lower):
+        return False
+    nxt = low[len(base_prefix_lower)]
+    return nxt == "_" or nxt.isdigit()
+
+
 def _derive_composite_sources(
     composite: _ScanRow,
     group: Sequence[_ScanRow],
@@ -306,44 +333,80 @@ def _derive_composite_sources(
 ) -> list:
     """Best-effort constituent ids for a composite (value-blind, name-based).
 
-    * Multishot reduction (``*_median_all`` / ``*_sum_active_*``): the single
-      raw base scan, matched by exact name.
-    * Spatial / named union (``detail_all``, ``detail_``, ``line_``, ``cross``,
-      ``asterisk``): the same-kind primaries in the same sol/target group.
-    """
-    base = multishot_raw_base(composite.scan_name)
-    if base is not None:
-        raw = by_name.get((composite.sol_number, composite.target, base))
-        return [raw.id] if raw is not None else []
+    Mirrors the historical Alembic backfill (suffix-strip -> base prefix), so
+    a spatial/bare union attaches only the in-group primaries that extend its
+    OWN base (``detail_all``/``detail_`` -> ``detail_1``/``detail_2``, NOT an
+    unrelated different-base same-kind scan — Codex F5). Specifically:
 
+    * Multishot reduction (``*_median_all`` / ``*_sum_active_*``): the single
+      raw base scan by exact name; if absent, the base-prefix members.
+    * Spatial / bare union (``*_all`` / trailing ``_``): the base-prefix
+      primaries.
+    * Named union (``cross`` / ``asterisk``): constituents are not
+      name-derivable, so fall back to the same-kind primaries in the group
+      (the documented best-effort — the line scans at this sol/target).
+    """
+    clean = composite.scan_name.strip()
+    low = clean.lower()
+
+    raw_base = multishot_raw_base(clean)
+    base_prefix: Optional[str] = None
+    if raw_base is not None:
+        raw = by_name.get((composite.sol_number, composite.target, raw_base))
+        if raw is not None:
+            return [raw.id]
+        base_prefix = raw_base.lower()
+    elif low.endswith("_all"):
+        base_prefix = low[: -len("_all")]
+    elif low.endswith("_"):
+        base_prefix = low[:-1]
+
+    if base_prefix:
+        members = [
+            member.id
+            for member in group
+            if member.id != composite.id
+            and classify_scan_class(member.scan_name) == "primary"
+            and _extends_base(member.scan_name, base_prefix)
+        ]
+        if members:
+            return members
+
+    # Named union (cross / asterisk) or an unresolved reduction: best-effort
+    # same-kind primaries (constituents not name-derivable for these).
     kind = _name_kind(composite.scan_name)
     if kind is None:
         return []
-    sources = [
+    return [
         member.id
         for member in group
         if member.id != composite.id
         and classify_scan_class(member.scan_name) == "primary"
         and _name_kind(member.scan_name) == kind
     ]
-    return sources
 
 
 def plan_product_roles(rows: Sequence[_ScanRow]) -> AxisPlan:
-    """Assign ``product_role`` to multishot products.
+    """Assign ``product_role`` to multishot products, at the raw-group level.
 
-    A recognized reduction name (``*_sum_active_median_dark`` → canonical;
-    ``*_median_all`` / ``*_sum_active_sum_dark`` → alternate) is tagged only
-    when its raw base scan exists in the same sol/target group; the raw is
-    then tagged ``role='raw'``. Reductions with no resolvable raw sibling are
-    left NULL (and recorded as quarantined) rather than guessed.
+    A multishot group is the raw scan plus its recognized reductions
+    (``*_sum_active_median_dark`` → canonical; ``*_median_all`` /
+    ``*_sum_active_sum_dark`` → alternate), keyed by the reduction's raw base
+    name. A group is tagged **only when it has its raw sibling AND exactly one
+    canonical reduction** (the ARC-M2P-311 / -315 "exactly one canonical per
+    raw group" invariant, Codex F3). An incomplete group — no raw, no
+    canonical, or >1 canonical — is left untagged: the raw stays a counted
+    primary and its reductions stay composites with ``product_role`` NULL, so
+    no spatial positions are silently dropped. Reductions in untagged groups
+    are recorded as quarantined.
     """
     plan = AxisPlan(axis=AXIS_PRODUCT_ROLE)
     by_name: Dict[Tuple[int, Optional[str], str], _ScanRow] = {
         (r.sol_number, r.target, r.scan_name): r for r in rows
     }
-    raw_targets: Dict[str, _ScanRow] = {}
 
+    # Group reductions by their resolved raw scan.
+    groups: Dict[str, Dict[str, object]] = {}
     for row in rows:
         role = multishot_reduction_role(row.scan_name)
         if role is None:
@@ -351,19 +414,27 @@ def plan_product_roles(rows: Sequence[_ScanRow]) -> AxisPlan:
         base = multishot_raw_base(row.scan_name)
         raw = by_name.get((row.sol_number, row.target, base)) if base else None
         if raw is None:
-            plan.quarantined.append(row.id)
+            plan.quarantined.append(row.id)  # reduction with no raw sibling
             continue
-        raw_targets[raw.id] = raw
-        # Reduction: composite, role-tagged, sourced to the raw (single coupled
-        # update keeps the row CHECK-valid).
-        _stage_role_update(plan, row, {
-            "product_role": role,
-            "scan_class": "composite",
-            "parent_scan_id": None,
-            "source_scan_ids": [raw.id],
-        })
+        group = groups.setdefault(raw.id, {"raw": raw, "reductions": []})
+        group["reductions"].append((row, role))  # type: ignore[union-attr]
 
-    for raw in raw_targets.values():
+    for group in groups.values():
+        raw: _ScanRow = group["raw"]  # type: ignore[assignment]
+        reductions = group["reductions"]  # type: ignore[index]
+        canonical_count = sum(1 for _r, role in reductions if role == "canonical")
+        if canonical_count != 1:
+            # Incomplete group: do not tag. The raw remains counted.
+            for r, _role in reductions:
+                plan.quarantined.append(r.id)
+            continue
+        for r, role in reductions:
+            _stage_role_update(plan, r, {
+                "product_role": role,
+                "scan_class": "composite",
+                "parent_scan_id": None,
+                "source_scan_ids": [raw.id],
+            })
         _stage_role_update(plan, raw, {
             "product_role": "raw",
             "scan_class": "primary",
