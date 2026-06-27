@@ -380,6 +380,15 @@ class TestValueBlindInvariants:
             elif s["product_role"] == "raw":
                 assert name in reduction_bases, f"raw {name} has no reduction sibling"
 
+    def test_no_incomplete_multishot_groups(self, corrected):
+        # Every multishot group in the corrected corpus has exactly one canonical
+        # (the relational invariant the DB CHECK cannot express; ARC-M2P-315).
+        from sherloc_pipeline.services.scan_reclassification import (
+            multishot_groups_missing_canonical,
+        )
+        by_name, _ = corrected
+        assert multishot_groups_missing_canonical(list(by_name)) == []
+
 
 # ---------------------------------------------------------------------------
 # Codex Round-1 finding regressions (F1, F3, F4, F5)
@@ -563,14 +572,14 @@ class TestCodexRound2Findings:
         assert scans["detail_2_sum_active_median_dark"]["product_role"] == "canonical"
         assert scans["detail_2_median_all"]["product_role"] == "alternate"
 
-    def test_f6_named_union_links_same_kind_primaries(self, blank_migrated_db):
-        """A named union (cross) links the line primaries at its sol/target —
-        the spec §4.3 best-effort (exact constituents are not name-derivable;
-        §4.9 requires non-empty sources, so it cannot be left empty)."""
+    def test_f6_named_union_uses_locked_constituents(self, blank_migrated_db):
+        """The locked taxonomy (§4.1) fixes `cross` = line_1,line_2: a cross
+        links exactly those, NOT an unrelated extra line in the same group."""
         engine = get_engine(blank_migrated_db)
         with engine.begin() as conn:
             _seed_scan(conn, "line_1", 25, "primary", "line")
             _seed_scan(conn, "line_2", 25, "primary", "line")
+            _seed_scan(conn, "line_3", 25, "primary", "line")  # extra, not in the cross
             _seed_scan(conn, "cross", 50, "composite", "line")
         _reclassify(blank_migrated_db, axes=("scan_class",))
         engine = get_engine(blank_migrated_db)
@@ -580,4 +589,35 @@ class TestCodexRound2Findings:
         by_id = {r[0]: r[1] for r in rows}
         cross = next(r for r in rows if r[1] == "cross")
         src = {by_id[i] for i in json.loads(cross[2])}
-        assert src == {"line_1", "line_2"}  # non-empty, same-kind constituents
+        assert src == {"line_1", "line_2"}  # line_3 excluded
+
+    def test_f6_asterisk_links_four_lines(self, blank_migrated_db):
+        """`asterisk` = line_1..line_4 per the locked taxonomy."""
+        engine = get_engine(blank_migrated_db)
+        with engine.begin() as conn:
+            for i in range(1, 5):
+                _seed_scan(conn, f"line_{i}", 25, "primary", "line")
+            _seed_scan(conn, "asterisk", 100, "composite", "line")
+        _reclassify(blank_migrated_db, axes=("scan_class",))
+        engine = get_engine(blank_migrated_db)
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT id, scan_name, source_scan_ids FROM scans")).fetchall()
+        by_id = {r[0]: r[1] for r in rows}
+        ast = next(r for r in rows if r[1] == "asterisk")
+        src = {by_id[i] for i in json.loads(ast[2])}
+        assert src == {"line_1", "line_2", "line_3", "line_4"}
+
+    def test_f8_invariant_catches_incomplete_multishot_group(self):
+        """The value-blind invariant flags a multishot group lacking its
+        canonical (raw + alternate, no canonical) — the synthetic invalid case
+        the V&V suite must reject (ARC-M2P-315)."""
+        from sherloc_pipeline.services.scan_reclassification import (
+            multishot_groups_missing_canonical,
+        )
+        assert multishot_groups_missing_canonical(
+            ["detail_2", "detail_2_median_all", "detail_2_sum_active_median_dark"]
+        ) == []
+        assert multishot_groups_missing_canonical(
+            ["detail_3", "detail_3_median_all"]
+        ) == ["detail_3"]

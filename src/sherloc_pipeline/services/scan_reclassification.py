@@ -58,6 +58,11 @@ AXIS_SCAN_CLASS = "scan_class"
 AXIS_PRODUCT_ROLE = "product_role"
 ALL_AXES: Tuple[str, ...] = (AXIS_SCAN_TYPE, AXIS_SCAN_CLASS, AXIS_PRODUCT_ROLE)
 
+# Named-union constituent rule (locked taxonomy, spec §4.1): a `cross` is the
+# union of line_1,line_2; an `asterisk` is line_1..line_4. Constituents are
+# matched by these canonical line names at the union's sol/target.
+_NAMED_UNION_LINE_COUNT: Dict[str, int] = {"cross": 2, "asterisk": 4}
+
 
 class ScanReclassificationError(SherlocServiceError):
     """Raised when reclassification cannot proceed safely."""
@@ -381,17 +386,24 @@ def _derive_composite_sources(
         if members:
             return members
 
-    # Named union (cross / asterisk) or an unresolved reduction: the EXACT
-    # constituents are not derivable from the name — `cross` / `asterisk`
-    # carry no link to specific `line_N` scans, and only operational metadata
-    # (which lines the operator combined) would identify the subset, which is
-    # outside SP1's value-blind name/count inputs. Spec §4.3 defines a
-    # composite's constituents as "the constituent primaries on the same
-    # sol/target", and §4.9 REQUIRES a non-empty source_scan_ids array — so the
-    # same-kind primaries at the sol/target are the documented best-effort
-    # (exact when the target's lines are precisely the union's constituents,
-    # the real corpus). Leaving sources empty is not an option (it would
-    # violate §4.9 / ARC-M2P-310 AC2).
+    # Named union: the locked taxonomy (spec §4.1) fixes the constituents by
+    # their canonical line names — `cross` = line_1,line_2; `asterisk` =
+    # line_1..line_4 — so match those exact names at the sol/target (a cross
+    # therefore never attaches line_3+, even when extra lines exist).
+    union_line_count = _NAMED_UNION_LINE_COUNT.get(low)
+    if union_line_count is not None:
+        named = [
+            by_name[(composite.sol_number, composite.target, f"line_{i}")].id
+            for i in range(1, union_line_count + 1)
+            if (composite.sol_number, composite.target, f"line_{i}") in by_name
+            and classify_scan_class(f"line_{i}") == "primary"
+        ]
+        if named:
+            return named
+
+    # Unresolved reduction / unrecognized composite: fall back to the same-kind
+    # primaries at the sol/target (§4.3 best-effort; §4.9 / ARC-M2P-310 AC2
+    # require a non-empty array, so empty is not an option).
     kind = _name_kind(composite.scan_name)
     if kind is None:
         return []
@@ -460,6 +472,31 @@ def plan_product_roles(rows: Sequence[_ScanRow]) -> AxisPlan:
             "source_scan_ids": None,
         })
     return plan
+
+
+def multishot_groups_missing_canonical(scan_names: Sequence[str]) -> List[str]:
+    """Value-blind invariant: return raw base names that have >=1 recognized
+    reduction but NOT exactly one canonical reduction.
+
+    Encodes the ARC-M2P-311 / -315 "exactly one canonical per multishot raw
+    group" rule (a relational invariant the single-row DB CHECK cannot express).
+    Operates on names only. An empty result means the invariant holds; a
+    non-empty result flags incomplete/malformed multishot groups (e.g. an
+    alternate-only group whose canonical is missing) for V&V to reject.
+    """
+    names = set(scan_names)
+    canonical_by_base: Dict[str, int] = {}
+    for name in names:
+        if multishot_reduction_role(name) is None:
+            continue
+        base = multishot_raw_base(name)
+        if base in names:  # the raw scan is present -> it is a multishot group
+            count = canonical_by_base.setdefault(base, 0)
+            if multishot_reduction_role(name) == "canonical":
+                canonical_by_base[base] = count + 1
+            else:
+                canonical_by_base[base] = count
+    return sorted(base for base, n in canonical_by_base.items() if n != 1)
 
 
 def _stage_role_update(plan: AxisPlan, row: _ScanRow, new: Dict[str, object]) -> None:
