@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] - 2026-06-27
+
+Widens the name-authoritative `scan_type` resolver's calibration vocabulary so
+the full mission corpus classifies without spuriously quarantining
+calibration-target and engineering acquisitions. A follow-up to 5.2.0, applied
+before the corpus was ever reclassified: validating the 5.2.0 resolver against
+the full corpus (not just the golden fixture) showed it would have left ~half of
+all scans with a `NULL` `scan_type` — the calibration-target, instrument-
+diagnostic, and `detailed_*` naming families never appear in the golden fixture.
+
+### Changed
+- **`classify_scan_type` recognizes the calibration / engineering scan-name
+  families** as `calibration` (regardless of spectrum count), in addition to
+  the SRLC sequence code and AlGaN name: the AlGaN internal-cal lamp (now a
+  substring match, so `SRLC*_AlGaN_*` / `passive_AlGaN_*` are caught, not only
+  `AlGaN_*` prefixes); laser-off darks (`*laser_disabled*` / `*no_laser*`);
+  cal-target materials (Teflon, Vectran, Orthofabric, Polycarbonate, Diffusil,
+  nGimat); the external-cal meteorite; the maze focus/intensity target; laser
+  power-state housekeeping (`power_on` / `power_off`); passive observations; and
+  bare PPP intensity/SNR tests (`^\d+ppp`, anchored so science `detail_*ppp` /
+  `survey_*ppp` acquisitions keep their geometry).
+- **`detailed_*` now resolves to `detail` and `lines` to `line`** — variant
+  spellings that the token-boundaried prefix rule did not match (and which the
+  5.2.0 resolver would have quarantined).
+
+### Notes
+- `scan_type` (acquisition geometry) and `target_type` (mars/cal/engineering
+  purpose) remain **orthogonal**: a real `survey`/`detail`/`line`/`HDR` geometry
+  performed at a calibration or engineering target keeps its geometry. The
+  widened vocabulary was verified value-blind against the full corpus to never
+  assign `scan_type=calibration` to a `target_type=mars_target` scan; a
+  cross-consistency test locks this so the two vocabularies cannot drift apart.
+- Behavior-only change to the resolver (no CLI surface, schema, or migration
+  change). Re-run `reclassify-scan-types` (dry-run first) to apply the corrected
+  classification to an existing corpus.
+
 ## [5.2.0] - 2026-06-27
 
 Name-authoritative scan classification at the source: the three classification
