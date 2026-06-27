@@ -57,6 +57,10 @@ from sherloc_pipeline.models.pds import (
     PDSWavelengthRegion,
     PDS_EXPECTED_CHANNELS,
 )
+from sherloc_pipeline.models.spectra import (
+    SCAN_TYPE_QUARANTINE,
+    classify_scan_type,
+)
 
 from sherloc_pipeline.core.utils import require_file
 
@@ -1406,6 +1410,15 @@ class PDSObservationGrouper:
         - detail: other SRLC codes with ≤200 spectra
         - survey: other SRLC codes with >200 spectra
 
+        PDS observations carry a synthetic, kind-blind scan name
+        (``pds_<sol>_<sclk>_<obs>``), so the name-authoritative resolver
+        (:func:`sherloc_pipeline.models.spectra.classify_scan_type`) falls
+        back here to sequence-code (calibration) + spectrum count — exactly
+        the WS-1 §4.2 "uninformative name" branch. The human-readable
+        Loupe scan names that the resolver classifies authoritatively are
+        applied on the Loupe ingest path, not here. A missing count stays
+        ``None`` (the carry layer quarantines it) rather than guessing.
+
         Args:
             sequence_code: SRLC sequence code (e.g., 'srlc10000').
             n_spectra: Number of spectra in the spectral product.
@@ -1415,15 +1428,23 @@ class PDSObservationGrouper:
             'calibration', 'detail', 'survey', or None if n_spectra
             is needed but not provided.
         """
-        if sequence_code.lower() in _CALIBRATION_SEQUENCE_CODES:
-            return "calibration"
-
-        if n_spectra is None:
+        # Preserve the historical PDS contract: a non-calibration observation
+        # with an unknown spectrum count is left unclassified (None), not
+        # guessed (the §4.2 resolver would fall back to 'detail').
+        if (
+            n_spectra is None
+            and sequence_code.strip().lower() not in _CALIBRATION_SEQUENCE_CODES
+        ):
             return None
 
-        if n_spectra > _SURVEY_SPECTRA_THRESHOLD:
-            return "survey"
-        return "detail"
+        result = classify_scan_type(
+            scan_name=None,
+            sequence_code=sequence_code,
+            n_spectra=n_spectra,
+        )
+        if result is SCAN_TYPE_QUARANTINE:
+            return None
+        return result.value if result is not None else None
 
     @staticmethod
     def validate_spectral_exclusivity(

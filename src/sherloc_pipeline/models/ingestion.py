@@ -55,7 +55,10 @@ from sherloc_pipeline.models.spectra import (
     Scan,
     ScanPoint,
     Spectrum,
+    ScanType,
+    SCAN_TYPE_QUARANTINE,
     classify_scan_class,
+    classify_scan_type,
 )
 from sherloc_pipeline.models.instrument import (
     InstrumentState,
@@ -199,12 +202,32 @@ class RawLoupeMetadata(PHASEBaseModel):
         Returns:
             Validated Scan instance
         """
+        # Name-authoritative scan_type (WS-1 §4.2). Loupe workspaces carry the
+        # human-readable scan name (detail_1, survey_100, line_2, HDR_500, …),
+        # so classification is name-driven; the spectrum count is only a
+        # fallback for uninformative names. An informative-unknown name is
+        # quarantined (scan_type left NULL) rather than guessed.
+        try:
+            n_spectra = int(self.n_spectra)
+        except (TypeError, ValueError):
+            n_spectra = None
+        resolved_scan_type = classify_scan_type(
+            self.human_readable_workspace,
+            n_spectra=n_spectra,
+        )
+        scan_type = (
+            resolved_scan_type
+            if isinstance(resolved_scan_type, ScanType)
+            else None
+        )
+
         return Scan(
             sol_number=sol_number,
             scan_name=self.human_readable_workspace,
             scan_id=self.original_data_file,
             sclk_start=self.extract_sclk(),
             n_points=int(self.n_spectra),
+            scan_type=scan_type,
             n_channels=int(self.n_channels),
             shots_per_point=int(self.shots_per_spec),
             laser_wavelength_nm=float(self.laser_wavelength),

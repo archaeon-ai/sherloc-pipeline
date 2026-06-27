@@ -44,6 +44,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     UniqueConstraint,
+    CheckConstraint,
     Enum as SQLEnum,
     false,
     text,
@@ -205,6 +206,7 @@ class ScanORM(Base):
     source_scan_ids: Mapped[Optional[dict]] = mapped_column(
         JSON(none_as_null=True), nullable=True
     )
+    product_role: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     processing_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     processing_config_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -267,6 +269,20 @@ class ScanORM(Base):
         Index("ix_scans_target_type", "target_type"),
         Index("ix_scans_scan_class", "scan_class"),
         # Note: target column already has index=True which creates ix_scans_target
+        # product_role governance CHECK (WS-1 §4.4). Kept in sync with Alembic
+        # migration 9b2e7c4a1f08 so ORM-created (create_all) and migration-built
+        # schemas are equivalent for this constraint. The explicit
+        # `source_scan_ids IS NOT NULL` guard defeats the SQL three-valued-logic
+        # gotcha (json_array_length(NULL) >= 1 is NULL, which a CHECK passes).
+        CheckConstraint(
+            "product_role IS NULL OR "
+            "(product_role = 'raw' AND scan_class = 'primary' "
+            "AND parent_scan_id IS NULL AND source_scan_ids IS NULL) OR "
+            "(product_role IN ('canonical', 'alternate') AND scan_class = 'composite' "
+            "AND parent_scan_id IS NULL AND source_scan_ids IS NOT NULL "
+            "AND json_array_length(source_scan_ids) >= 1)",
+            name="ck_scans_product_role",
+        ),
     )
 
     def __init__(self, **kwargs):
@@ -304,6 +320,7 @@ class ScanORM(Base):
             scan_class=self.scan_class,
             parent_scan_id=_str_to_uuid(self.parent_scan_id) if self.parent_scan_id else None,
             source_scan_ids=self.source_scan_ids,
+            product_role=self.product_role,
             created_at=self.created_at,
             updated_at=self.updated_at,
         )
@@ -342,6 +359,7 @@ class ScanORM(Base):
             **({"scan_class": scan.scan_class} if scan.scan_class != "primary" else {}),
             parent_scan_id=_uuid_to_str(scan.parent_scan_id) if scan.parent_scan_id else None,
             source_scan_ids=scan.source_scan_ids,
+            product_role=scan.product_role,
             created_at=scan.created_at,
             updated_at=scan.updated_at,
         )
