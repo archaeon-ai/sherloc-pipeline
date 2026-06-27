@@ -57,6 +57,7 @@ from sherloc_pipeline.models.spectra import (
 )
 from sherloc_pipeline.services.base import ServiceResult
 from sherloc_pipeline.services.errors import SherlocServiceError
+from sherloc_pipeline.services.scan_reclassification import finalize_sol_scans
 
 
 logger = logging.getLogger(__name__)
@@ -340,6 +341,12 @@ class IngestionService:
                 stats = self._ingest_workspace_internal(
                     session, workspace_path, sol_number, force=force
                 )
+                # Finalize lineage / product_role against this sol's scans
+                # (resolves against any sibling scans already in the DB).
+                if not stats.scans_skipped:
+                    session.flush()
+                    finalize_sol_scans(session.connection(), sol_number)
+                    session.expire_all()
         except Exception as e:
             raise IngestionError(f"Failed to ingest workspace: {e}")
 
@@ -422,6 +429,19 @@ class IngestionService:
                 except Exception as e:
                     stats.errors.append(f"Workspace {workspace_path.name}: {e}")
                     logger.exception(f"Error ingesting workspace {workspace_path}")
+
+            # Write-time finalization: now that every workspace for this sol is
+            # persisted, populate the corpus-level fields the single-scan write
+            # path cannot — composite source_scan_ids / sub_scan parents
+            # (lineage) and multishot product_role — so new ingests are
+            # source-complete without a separate reclassify pass.
+            try:
+                session.flush()
+                finalize_sol_scans(session.connection(), sol_number)
+                session.expire_all()
+            except Exception as e:
+                stats.errors.append(f"Sol {sol_number} finalization: {e}")
+                logger.exception(f"Error finalizing sol {sol_number} scans")
 
         return stats
 

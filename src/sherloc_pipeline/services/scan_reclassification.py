@@ -190,16 +190,19 @@ def measurement_fingerprint(conn: Connection) -> Dict[str, Tuple[int, str]]:
 # Per-axis planners (pure: read rows, emit value-blind update plans)
 # ---------------------------------------------------------------------------
 
-def _load_rows(conn: Connection) -> List[_ScanRow]:
+def _load_rows(conn: Connection, sol_number: Optional[int] = None) -> List[_ScanRow]:
     import json
 
-    rows = conn.execute(
-        text(
-            "SELECT id, sol_number, target, scan_name, sequence_id, n_points, "
-            "scan_type, scan_class, parent_scan_id, source_scan_ids, product_role "
-            "FROM scans"
-        )
-    ).fetchall()
+    sql = (
+        "SELECT id, sol_number, target, scan_name, sequence_id, n_points, "
+        "scan_type, scan_class, parent_scan_id, source_scan_ids, product_role "
+        "FROM scans"
+    )
+    params: Dict[str, object] = {}
+    if sol_number is not None:
+        sql += " WHERE sol_number = :sol"
+        params["sol"] = sol_number
+    rows = conn.execute(text(sql), params).fetchall()
     out: List[_ScanRow] = []
     for r in rows:
         raw_sources = r[9]
@@ -233,36 +236,42 @@ def _name_kind(scan_name: str) -> Optional[str]:
 
 
 def plan_scan_types(rows: Sequence[_ScanRow]) -> AxisPlan:
-    """Re-derive name-authoritative ``scan_type`` (the actual #115 fix).
+    """Re-derive name-authoritative ``scan_type`` in place (the #115 fix).
 
-    Only re-derives scan_type for names that carry a kind signal:
+    Per the §4.2 resolver:
 
     * calibration (sequence code or AlGaN name) -> calibration;
     * a RECOGNIZED name -> its name-implied type (corrects the mislabels);
-    * an UNINFORMATIVE name (empty / synthetic ``pds_*``) -> **left
-      unchanged**. The spectrum-count value cannot be re-derived
-      name-authoritatively, and ``n_points`` is the PDS missing-count
-      placeholder (1) for rows whose original count was unknown — re-deriving
-      from it would flip an ingest-time ``scan_type=NULL`` to ``detail``
-      (Codex F1). The ingest-time decision stands;
-    * an informative-but-unrecognized (UNKNOWN) name -> quarantined: the
-      ``scan_type`` is set to NULL (no guessed type kept) and the scan is
-      recorded. On the current corpus this class is empty.
+    * an UNINFORMATIVE name (empty / synthetic ``pds_*``) -> the spectrum-count
+      fallback (ARC-M2P-308 permits it here; ARC-M2P-312 wants in-place
+      re-derivation, Codex F9) — **except** a missing-count NULL is preserved:
+      ``n_points <= 1`` is the PDS missing-count placeholder, so a row left
+      ``scan_type=NULL`` at ingest is never promoted to a guessed type from it
+      (Codex F1). A genuine 1-spectrum PDS scan was already typed at ingest, so
+      this guard only catches the placeholder;
+    * an informative-but-unrecognized (UNKNOWN) name -> quarantined: NULL (no
+      guessed type kept), recorded. On the current corpus this class is empty.
     """
     plan = AxisPlan(axis=AXIS_SCAN_TYPE)
     for row in rows:
-        seq = (row.sequence_id or "").strip().lower()
-        if seq in _CALIBRATION_SEQUENCE_CODES or _is_calibration_name(row.scan_name):
-            new_type: Optional[str] = ScanType.CALIBRATION.value
-        else:
-            recognized = _scan_type_from_name(row.scan_name)
-            if recognized is not None:
-                new_type = recognized.value
-            elif _is_uninformative_name(row.scan_name):
-                continue  # leave the ingest-time value (preserves PDS NULL)
-            else:
-                new_type = None  # informative-unknown -> quarantine
-                plan.quarantined.append(row.id)
+        resolved = classify_scan_type(row.scan_name, row.sequence_id, row.n_points)
+        if isinstance(resolved, ScanType):
+            new_type: Optional[str] = resolved.value
+        else:  # SCAN_TYPE_QUARANTINE (informative-unknown)
+            new_type = None
+            plan.quarantined.append(row.id)
+
+        # Preserve a PDS missing-count NULL: never promote an ingest-time NULL
+        # to a count-guessed type from the n_points==1 placeholder of an
+        # uninformative (synthetic pds_*) name.
+        if (
+            new_type is not None
+            and row.scan_type is None
+            and row.n_points <= 1
+            and _is_uninformative_name(row.scan_name)
+        ):
+            continue
+
         if new_type != row.scan_type:
             plan.updates[row.id] = {"scan_type": new_type}
             key = f"{row.scan_type!r}->{new_type!r}"
@@ -372,8 +381,17 @@ def _derive_composite_sources(
         if members:
             return members
 
-    # Named union (cross / asterisk) or an unresolved reduction: best-effort
-    # same-kind primaries (constituents not name-derivable for these).
+    # Named union (cross / asterisk) or an unresolved reduction: the EXACT
+    # constituents are not derivable from the name — `cross` / `asterisk`
+    # carry no link to specific `line_N` scans, and only operational metadata
+    # (which lines the operator combined) would identify the subset, which is
+    # outside SP1's value-blind name/count inputs. Spec §4.3 defines a
+    # composite's constituents as "the constituent primaries on the same
+    # sol/target", and §4.9 REQUIRES a non-empty source_scan_ids array — so the
+    # same-kind primaries at the sol/target are the documented best-effort
+    # (exact when the target's lines are precisely the union's constituents,
+    # the real corpus). Leaving sources empty is not an option (it would
+    # violate §4.9 / ARC-M2P-310 AC2).
     kind = _name_kind(composite.scan_name)
     if kind is None:
         return []
@@ -485,6 +503,37 @@ def _apply_plan(conn: Connection, plan: AxisPlan) -> None:
             text(f"UPDATE scans SET {', '.join(assignments)} WHERE id = :id"),
             params,
         )
+
+
+# ---------------------------------------------------------------------------
+# Write-time finalization (going-forward ingests)
+# ---------------------------------------------------------------------------
+
+def finalize_sol_scans(conn: Connection, sol_number: int) -> Dict[str, AxisPlan]:
+    """Populate corpus-level lineage + product_role for a freshly-ingested sol.
+
+    ``scan_type`` and ``scan_class`` are set name-authoritatively at write time
+    (``to_scan()`` / ``ScanORM.__init__``), but ``source_scan_ids`` /
+    ``parent_scan_id`` (lineage) and ``product_role`` (multishot role) require
+    the sibling scans of the sol/target, which a single-scan write path does
+    not have. This runs once, after all of a sol's workspaces are ingested, so
+    going-forward ingests satisfy the composite non-empty-sources guarantee
+    (ARC-M2P-310) and the multishot product_role model (ARC-M2P-311) without a
+    separate operator reclassify pass (Codex F7).
+
+    Operates in place on the caller's connection/transaction; only the
+    ``scan_class`` (lineage) and ``product_role`` axes are derived (scan_type
+    is already final). Returns the per-axis plans (value-blind).
+    """
+    plans: Dict[str, AxisPlan] = {}
+    rows = _load_rows(conn, sol_number=sol_number)
+    for axis in (AXIS_SCAN_CLASS, AXIS_PRODUCT_ROLE):
+        plan = PLANNERS[axis](rows)
+        plans[axis] = plan
+        if plan.updates:
+            _apply_plan(conn, plan)
+            rows = _load_rows(conn, sol_number=sol_number)
+    return plans
 
 
 # ---------------------------------------------------------------------------

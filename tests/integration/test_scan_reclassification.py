@@ -27,8 +27,11 @@ from sherloc_pipeline.models.spectra import multishot_raw_base, multishot_reduct
 from sherloc_pipeline.services.scan_reclassification import (
     ALL_AXES,
     ScanReclassificationError,
+    finalize_sol_scans,
     measurement_fingerprint,
+    plan_product_roles,
     run_reclassification,
+    _ScanRow,
 )
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -333,16 +336,23 @@ class TestValueBlindInvariants:
             else:
                 assert role is None
 
-    def test_exactly_one_canonical_per_raw_group(self, corrected):
+    def test_exactly_one_canonical_per_tagged_raw_group(self, corrected):
+        # ARC-M2P-311/-315: every TAGGED raw group has EXACTLY one canonical
+        # (not merely <= 1 — a zero-canonical group must never be tagged).
         by_name, _ = corrected
-        by_raw = {}
+        reductions_by_base = {}
         for name, s in by_name.items():
             base = multishot_raw_base(name)
-            if base is not None and s["product_role"] is not None:
-                by_raw.setdefault(base, []).append((name, s["product_role"]))
-        for base, members in by_raw.items():
+            if base is not None and s["product_role"] in ("canonical", "alternate"):
+                reductions_by_base.setdefault(base, []).append((name, s["product_role"]))
+        tagged_raws = [n for n, s in by_name.items() if s["product_role"] == "raw"]
+        assert tagged_raws  # the fixture has a complete multishot group
+        for raw_name in tagged_raws:
+            members = reductions_by_base.get(raw_name, [])
             canon = [m for m in members if m[1] == "canonical"]
-            assert len(canon) <= 1, f"raw group {base} has >1 canonical: {canon}"
+            assert len(canon) == 1, (
+                f"tagged raw {raw_name} must have exactly one canonical, got {canon}"
+            )
 
     def test_sources_resolve_to_in_group_raw(self, corrected):
         # Every canonical/alternate's single source id resolves to a scan whose
@@ -479,3 +489,95 @@ class TestCodexFindings:
         src_names = {by_id[i] for i in json.loads(union[2])}
         assert src_names == {"meteorite_detail_1", "meteorite_detail_2"}
         assert "cal_detail_1" not in src_names
+
+
+def _row(scan_id, name, n_points=100, scan_class="primary", product_role=None,
+         parent=None, sources=None, scan_type=None, sol=100, target="TargetA"):
+    return _ScanRow(
+        id=scan_id, sol_number=sol, target=target, scan_name=name,
+        sequence_id=None, n_points=n_points, scan_type=scan_type,
+        scan_class=scan_class, parent_scan_id=parent, source_scan_ids=sources,
+        product_role=product_role,
+    )
+
+
+class TestCodexRound2Findings:
+    def test_f8_planner_requires_canonical(self):
+        """plan_product_roles tags a group only with exactly one canonical;
+        an alternate-only group leaves the raw untagged (counted)."""
+        # Complete group -> tagged.
+        good = plan_product_roles([
+            _row("r1", "detail_2", 300),
+            _row("a1", "detail_2_median_all", 100, scan_class="composite"),
+            _row("c1", "detail_2_sum_active_median_dark", 100, scan_class="composite"),
+        ])
+        assert good.updates["r1"]["product_role"] == "raw"
+        assert good.updates["c1"]["product_role"] == "canonical"
+        # Alternate-only group -> NOT tagged (raw absent from updates).
+        bad = plan_product_roles([
+            _row("r2", "detail_3", 300),
+            _row("a2", "detail_3_median_all", 100, scan_class="composite"),
+        ])
+        assert "r2" not in bad.updates  # raw stays a counted primary
+        assert "a2" not in bad.updates
+        assert "a2" in bad.quarantined
+
+    def test_f9_pds_real_count_reclassified(self, blank_migrated_db):
+        """A PDS row with a real count > 1 but stale/NULL scan_type IS
+        reclassified via the permitted count fallback; only the n_points<=1
+        missing-count NULL is preserved."""
+        engine = get_engine(blank_migrated_db)
+        with engine.begin() as conn:
+            _seed_scan(conn, "pds_0100_1_001", 300, "primary", None)   # real count
+            _seed_scan(conn, "pds_0100_1_002", 100, "primary", None)   # real count
+            _seed_scan(conn, "pds_0100_1_003", 1, "primary", None)     # missing-count
+        _reclassify(blank_migrated_db, axes=("scan_type",))
+        scans = _scans_by_name(get_engine(blank_migrated_db))
+        assert scans["pds_0100_1_001"]["scan_type"] == "survey"   # 300 > threshold
+        assert scans["pds_0100_1_002"]["scan_type"] == "detail"   # <= threshold
+        assert scans["pds_0100_1_003"]["scan_type"] is None       # preserved
+
+    def test_f7_finalize_populates_lineage_and_roles(self, blank_migrated_db):
+        """finalize_sol_scans (the write-time hook) fills composite
+        source_scan_ids, sub_scan parents, and multishot product_role for a
+        sol whose scans were written without them."""
+        engine = get_engine(blank_migrated_db)
+        with engine.begin() as conn:
+            # Written as a fresh single-scan path would: scan_class set, but no
+            # lineage / product_role yet.
+            _seed_scan(conn, "detail_1", 100, "primary", "detail")
+            _seed_scan(conn, "detail_2", 300, "primary", "detail")
+            _seed_scan(conn, "detail_1a", 50, "sub_scan", "detail")
+            _seed_scan(conn, "detail_", 200, "composite", "detail")
+            _seed_scan(conn, "detail_2_median_all", 100, "composite", "detail")
+            _seed_scan(conn, "detail_2_sum_active_median_dark", 100, "composite", "detail")
+        with engine.begin() as conn:
+            finalize_sol_scans(conn, 100)
+        scans = _scans_by_name(get_engine(blank_migrated_db))
+        # composite gets non-empty sources
+        assert len(scans["detail_"]["source_scan_ids"]) >= 1
+        # sub_scan gets a parent
+        assert scans["detail_1a"]["parent_scan_id"] is not None
+        # multishot roles assigned
+        assert scans["detail_2"]["product_role"] == "raw"
+        assert scans["detail_2_sum_active_median_dark"]["product_role"] == "canonical"
+        assert scans["detail_2_median_all"]["product_role"] == "alternate"
+
+    def test_f6_named_union_links_same_kind_primaries(self, blank_migrated_db):
+        """A named union (cross) links the line primaries at its sol/target —
+        the spec §4.3 best-effort (exact constituents are not name-derivable;
+        §4.9 requires non-empty sources, so it cannot be left empty)."""
+        engine = get_engine(blank_migrated_db)
+        with engine.begin() as conn:
+            _seed_scan(conn, "line_1", 25, "primary", "line")
+            _seed_scan(conn, "line_2", 25, "primary", "line")
+            _seed_scan(conn, "cross", 50, "composite", "line")
+        _reclassify(blank_migrated_db, axes=("scan_class",))
+        engine = get_engine(blank_migrated_db)
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT id, scan_name, source_scan_ids FROM scans")).fetchall()
+        by_id = {r[0]: r[1] for r in rows}
+        cross = next(r for r in rows if r[1] == "cross")
+        src = {by_id[i] for i in json.loads(cross[2])}
+        assert src == {"line_1", "line_2"}  # non-empty, same-kind constituents
