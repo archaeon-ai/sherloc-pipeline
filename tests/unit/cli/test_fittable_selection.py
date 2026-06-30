@@ -21,10 +21,9 @@ import pytest
 from rich.console import Console
 from sqlalchemy.orm import Session
 
-from sherloc_pipeline.cli.app import _iter_all_scans
+from sherloc_pipeline.cli.app import _iter_all_scans, _select_fittable_scans
 from sherloc_pipeline.database.connection import get_engine
 from sherloc_pipeline.database.models import Base, ScanORM, SolORM
-from sherloc_pipeline.models.spectra import is_fittable
 
 
 def _make_scan(**overrides):
@@ -94,25 +93,24 @@ def test_science_only_excludes_engineering_on_meteorite_sol(db_path):
     assert (1521, "power_on") not in selected
 
 
-def test_process_new_step3_selection_matches_is_fittable(db_path):
-    """Mirror process-new Step 3: candidate query (mars ∪ cal) + is_fittable."""
+def test_process_new_step3_selector_selects_fittable(db_path):
+    """Exercise the production process-new Step 3 selector (_select_fittable_scans).
+
+    Calls the actual shared selector used by process_new_cmd — so a regression
+    in the candidate query or predicate wiring fails here, not just a mirror.
+    """
     engine = get_engine(str(db_path))
     with Session(engine) as session:
-        candidates = (
-            session.query(
-                ScanORM.sol_number,
-                ScanORM.target,
-                ScanORM.scan_name,
-                ScanORM.target_type,
-            )
-            .filter(ScanORM.target_type.in_(["mars_target", "cal_target"]))
-            .all()
-        )
-    selected = {
-        (sol, scn)
-        for sol, tgt, scn, ttype in candidates
-        if is_fittable(ttype, tgt, scn)
-    }
+        selected = set()
+        for sol in sorted({row[0] for row in SEED}):
+            selected |= {(s, scn) for s, _tgt, scn in _select_fittable_scans(session, sol)}
     assert selected == EXPECTED_FITTABLE
-    # engineering never even enters the candidate set
-    assert all(ttype != "engineering" for _, _, _, ttype in candidates)
+
+
+def test_process_new_step3_selector_per_sol_excludes_engineering(db_path):
+    """The selector drops engineering power_on even on a meteorite-target sol."""
+    engine = get_engine(str(db_path))
+    with Session(engine) as session:
+        sol_1256 = {scn for _s, _t, scn in _select_fittable_scans(session, 1256)}
+    assert sol_1256 == {"detail_1"}
+    assert "power_on" not in sol_1256
