@@ -1994,7 +1994,7 @@ def _iter_all_scans(
     """
     from sherloc_pipeline.database.connection import get_engine, get_session
     from sherloc_pipeline.database.models import ScanORM
-    from sqlalchemy import or_
+    from sqlalchemy import and_, or_
 
     engine = get_engine(database_path)
     with get_session(engine) as session:
@@ -2006,13 +2006,22 @@ def _iter_all_scans(
         )
         if science_only:
             # SQL-level equivalent of models.spectra.is_fittable() — mars_target
-            # ∪ the cal-target meteorite (SaU 008). Keep in sync with that
-            # single-source predicate (SCAN_CLASSIFICATION_SPEC §4.2.2 + K6).
+            # ∪ (cal_target ∧ meteorite). The cal_target guard is load-bearing:
+            # it drops engineering scans (e.g. power_on) on a dedicated
+            # meteorite sol whose sol-wide target is "ext cal meteorite" (which
+            # would otherwise match `target contains meteorite`). ilike() makes
+            # the case-insensitivity match is_fittable()'s .lower(). Keep in sync
+            # with that single-source predicate (SCAN_CLASSIFICATION_SPEC §4.2.2
+            # + K6).
             query = query.filter(or_(
                 ScanORM.target_type == "mars_target",
-                ScanORM.scan_name.contains("meteorite"),
-                ScanORM.scan_name.contains("MarsMeteorite"),
-                ScanORM.target.contains("meteorite"),
+                and_(
+                    ScanORM.target_type == "cal_target",
+                    or_(
+                        ScanORM.scan_name.ilike("%meteorite%"),
+                        ScanORM.target.ilike("%meteorite%"),
+                    ),
+                ),
             ))
         else:
             if target_type is not None:
