@@ -950,6 +950,37 @@ def ingest_cmd(
         sys.exit(1)
 
 
+def _select_fittable_scans(session, sol_number: int):
+    """Select the fittable science scans for a sol as (sol, target, scan_name).
+
+    The mars_target ∪ cal_target candidate set, filtered through the
+    single-source is_fittable() predicate (every mars_target scan plus the
+    cal-target meteorite). Shared by process-new Step 3 so the production
+    selection surface is directly testable (SCAN_CLASSIFICATION_SPEC §4.2.2
+    + K6).
+    """
+    from sherloc_pipeline.database.models import ScanORM
+    from sherloc_pipeline.models.spectra import is_fittable
+
+    candidates = (
+        session.query(
+            ScanORM.sol_number,
+            ScanORM.target,
+            ScanORM.scan_name,
+            ScanORM.target_type,
+        )
+        .filter(ScanORM.sol_number == sol_number)
+        .filter(ScanORM.target_type.in_(["mars_target", "cal_target"]))
+        .order_by(ScanORM.scan_name)
+        .all()
+    )
+    return [
+        (sol_num, tgt, scn)
+        for sol_num, tgt, scn, ttype in candidates
+        if is_fittable(ttype, tgt, scn)
+    ]
+
+
 @app.command("process-new")
 def process_new_cmd(
     ctx: typer.Context,
@@ -1103,22 +1134,21 @@ def process_new_cmd(
             result = service.ingest_sol(sol_dir, force=False)
             console.print(f"  [green]{result.summary}[/green]")
 
-        # Step 3: Run pipeline on mars_target scans
+        # Step 3: Run pipeline on fittable science scans.
+        # Fit-eligibility is decoupled from target_type (a provenance axis):
+        # every mars_target scan plus the cal-target meteorite (SaU 008).
+        # _select_fittable_scans is the single-source selector (widens the
+        # query to the mars_target ∪ cal_target candidate set, then filters
+        # through is_fittable) — SCAN_CLASSIFICATION_SPEC §4.2.2 + K6.
         from sherloc_pipeline.database.connection import get_engine, get_session
         from sherloc_pipeline.database.models import ScanORM
 
         engine = get_engine(db_path)
         with get_session(engine) as session:
-            scans = (
-                session.query(ScanORM.sol_number, ScanORM.target, ScanORM.scan_name)
-                .filter(ScanORM.sol_number == sol_number)
-                .filter(ScanORM.target_type == "mars_target")
-                .order_by(ScanORM.scan_name)
-                .all()
-            )
+            scans = _select_fittable_scans(session, sol_number)
 
         if not scans:
-            console.print(f"\n[yellow]No mars_target scans found for sol {sol_number}[/yellow]")
+            console.print(f"\n[yellow]No fittable science scans found for sol {sol_number}[/yellow]")
             # Show all scans for debugging
             with get_session(engine) as session:
                 all_scans = (
@@ -1978,7 +2008,7 @@ def _iter_all_scans(
     """
     from sherloc_pipeline.database.connection import get_engine, get_session
     from sherloc_pipeline.database.models import ScanORM
-    from sqlalchemy import or_
+    from sqlalchemy import and_, or_
 
     engine = get_engine(database_path)
     with get_session(engine) as session:
@@ -1989,11 +2019,23 @@ def _iter_all_scans(
             .order_by(ScanORM.sol_number, ScanORM.target, ScanORM.scan_name)
         )
         if science_only:
+            # SQL-level equivalent of models.spectra.is_fittable() — mars_target
+            # ∪ (cal_target ∧ meteorite). The cal_target guard is load-bearing:
+            # it drops engineering scans (e.g. power_on) on a dedicated
+            # meteorite sol whose sol-wide target is "ext cal meteorite" (which
+            # would otherwise match `target contains meteorite`). ilike() makes
+            # the case-insensitivity match is_fittable()'s .lower(). Keep in sync
+            # with that single-source predicate (SCAN_CLASSIFICATION_SPEC §4.2.2
+            # + K6).
             query = query.filter(or_(
                 ScanORM.target_type == "mars_target",
-                ScanORM.scan_name.contains("meteorite"),
-                ScanORM.scan_name.contains("MarsMeteorite"),
-                ScanORM.target.contains("meteorite"),
+                and_(
+                    ScanORM.target_type == "cal_target",
+                    or_(
+                        ScanORM.scan_name.ilike("%meteorite%"),
+                        ScanORM.target.ilike("%meteorite%"),
+                    ),
+                ),
             ))
         else:
             if target_type is not None:

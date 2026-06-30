@@ -224,6 +224,66 @@ def classify_target_type(target: Optional[str], scan_name: Optional[str]) -> str
     return TargetType.MARS_TARGET.value
 
 
+def is_fittable(
+    target_type: Optional[str],
+    target: Optional[str],
+    scan_name: Optional[str],
+) -> bool:
+    """Whether a scan is eligible for automatic peak fitting.
+
+    Fitting eligibility is **decoupled from** ``target_type``: ``target_type``
+    is a *provenance* axis (what/where), not a fit-eligibility flag. Every
+    exploration-area rock/regolith scan (``mars_target``) is fit-eligible.
+    Among calibration targets, only the one natural geological sample — the
+    meteorite (SaU 008), a Mars rock mounted on the rover's cal target — is
+    scientifically fit-worthy; every other cal target is an engineered/
+    synthetic standard or instrument-diagnostic target (AlGaN lamp, Teflon,
+    vectran, Orthofabric, polycarbonate, Diffusil, nGimat, the ``maze`` focus
+    target, ``power_on``/``power_off`` housekeeping) and is not fit.
+
+    The meteorite correctly stays ``target_type='cal_target'`` (it is *on the
+    rover*, not in the exploration area); ``mars_target`` remains reserved for
+    exploration-area rock/regolith. ``classify_target_type`` is therefore
+    unchanged — fit-eligibility lives in this predicate instead.
+
+    Both ``scan_name`` and ``target`` are keyed because two cal-sol naming
+    conventions exist:
+
+    * **mixed** cal sol (``.lpe`` target ``"external calibration"``) — scans
+      are named by material, so the meteorite is identified by ``scan_name``
+      (``meteorite``, ``meteorite_detail_1``, ``MarsMeteorite_1``) while
+      AlGaN/Teflon/etc. are correctly excluded;
+    * **dedicated** meteorite sol (``.lpe`` target ``"ext cal meteorite"``) —
+      scans are named generically (``detail_1``…``detail_N``), so the
+      meteorite is identified by ``target``.
+
+    The ``cal_target`` guard drops ``engineering`` scans (e.g. ``power_on``)
+    even on a sol whose sol-wide target is ``"ext cal meteorite"``.
+
+    Meteorite-only: the meteorite is SHERLOC's *sole* natural geological cal
+    sample, so the carve-out needs no general named-sample set. Should SHERLOC
+    ever add another natural cal sample, extend this one predicate.
+
+    See ``SCAN_CLASSIFICATION_SPEC §4.2.2`` + Key Decision K6 (m2020-phase).
+
+    Args:
+        target_type: One of 'mars_target', 'cal_target', 'engineering'
+            (as produced by :func:`classify_target_type`).
+        target: Geological/sol target name (may be None).
+        scan_name: Scan sequence name (may be None).
+
+    Returns:
+        True if the scan is eligible for automatic peak fitting.
+    """
+    if target_type == TargetType.MARS_TARGET.value:
+        return True
+    if target_type == TargetType.CAL_TARGET.value:
+        clean_target = (target or "").lower()
+        clean_scan = (scan_name or "").lower()
+        return "meteorite" in clean_scan or "meteorite" in clean_target
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Scan class classification
 # ---------------------------------------------------------------------------
