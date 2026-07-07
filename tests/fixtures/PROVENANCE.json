@@ -161,6 +161,11 @@
       "path": "src/sherloc_pipeline/web/frontend/tsconfig.json",
       "category": "metadata",
       "description": "Frontend TypeScript config"
+    },
+    {
+      "path": "src/sherloc_pipeline/models/schemas/cli_contract.golden.json",
+      "category": "metadata",
+      "description": "Frozen structural contract (JSON schema + shape fingerprint) of the --json CLI output envelope; generated from the models by cli_contract.py, value-free"
     }
   ]
 }
