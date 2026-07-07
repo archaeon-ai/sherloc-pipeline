@@ -1,0 +1,123 @@
+{
+  "models": {
+    "CLIError": {
+      "properties": {
+        "context": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        },
+        "error_type": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        },
+        "pipeline_version": {
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_version",
+        "error_type",
+        "message",
+        "exit_code"
+      ],
+      "type": "object"
+    },
+    "CLIResult": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        },
+        "pipeline_version": {
+          "type": "string"
+        },
+        "result": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_version",
+        "command",
+        "result"
+      ],
+      "type": "object"
+    },
+    "PipelineManifest": {
+      "properties": {
+        "artifacts": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        },
+        "config_hash": {
+          "type": "string"
+        },
+        "findings": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pipeline_version": {
+          "type": "string"
+        },
+        "processed_at": {
+          "type": "string"
+        },
+        "scan_id": {
+          "type": "integer"
+        },
+        "scan_name": {
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "type": "string"
+        },
+        "sol": {
+          "type": "integer"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_version",
+        "scan_id",
+        "sol",
+        "target",
+        "scan_name",
+        "processed_at",
+        "config_hash"
+      ],
+      "type": "object"
+    }
+  },
+  "schema_version": "1.0.0",
+  "shape_fingerprint": "1cd8999c51e90b906f60380d146bec4e7c19ce4399954fb7554659b4a5796185"
+}
