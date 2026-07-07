@@ -1,4 +1,4 @@
-"""Self-contained contract for the ``--json`` CLI output envelope (§3.2.9).
+"""Self-contained contract for the ``--json`` CLI output envelope.
 
 The versioned CLI output models (:class:`CLIResult`, :class:`CLIError`,
 :class:`PipelineManifest`) are the wire surface that downstream consumers vendor
