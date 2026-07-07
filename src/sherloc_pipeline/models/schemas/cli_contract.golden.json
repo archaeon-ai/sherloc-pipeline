@@ -1,33 +1,26 @@
 {
   "models": {
     "CLIError": {
-      "description": "CLI command error.",
       "properties": {
         "context": {
           "additionalProperties": true,
           "default": {},
-          "title": "Context",
           "type": "object"
         },
         "error_type": {
-          "title": "Error Type",
           "type": "string"
         },
         "exit_code": {
-          "title": "Exit Code",
           "type": "integer"
         },
         "message": {
-          "title": "Message",
           "type": "string"
         },
         "pipeline_version": {
-          "title": "Pipeline Version",
           "type": "string"
         },
         "schema_version": {
           "default": "1.0.0",
-          "title": "Schema Version",
           "type": "string"
         }
       },
@@ -37,34 +30,27 @@
         "message",
         "exit_code"
       ],
-      "title": "CLIError",
       "type": "object"
     },
     "CLIResult": {
-      "description": "Successful CLI command result.",
       "properties": {
         "command": {
-          "title": "Command",
           "type": "string"
         },
         "metadata": {
           "additionalProperties": true,
           "default": {},
-          "title": "Metadata",
           "type": "object"
         },
         "pipeline_version": {
-          "title": "Pipeline Version",
           "type": "string"
         },
         "result": {
           "additionalProperties": true,
-          "title": "Result",
           "type": "object"
         },
         "schema_version": {
           "default": "1.0.0",
-          "title": "Schema Version",
           "type": "string"
         }
       },
@@ -73,20 +59,16 @@
         "command",
         "result"
       ],
-      "title": "CLIResult",
       "type": "object"
     },
     "PipelineManifest": {
-      "description": "Per-scan pipeline run manifest.",
       "properties": {
         "artifacts": {
           "additionalProperties": true,
           "default": {},
-          "title": "Artifacts",
           "type": "object"
         },
         "config_hash": {
-          "title": "Config Hash",
           "type": "string"
         },
         "findings": {
@@ -99,36 +81,28 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Findings"
+          "default": null
         },
         "pipeline_version": {
-          "title": "Pipeline Version",
           "type": "string"
         },
         "processed_at": {
-          "title": "Processed At",
           "type": "string"
         },
         "scan_id": {
-          "title": "Scan Id",
           "type": "integer"
         },
         "scan_name": {
-          "title": "Scan Name",
           "type": "string"
         },
         "schema_version": {
           "default": "1.0.0",
-          "title": "Schema Version",
           "type": "string"
         },
         "sol": {
-          "title": "Sol",
           "type": "integer"
         },
         "target": {
-          "title": "Target",
           "type": "string"
         }
       },
@@ -141,10 +115,9 @@
         "processed_at",
         "config_hash"
       ],
-      "title": "PipelineManifest",
       "type": "object"
     }
   },
   "schema_version": "1.0.0",
-  "shape_fingerprint": "0218dc1b498e473778499cce1f3b20dc81ec0f4aae6b3dfe7b01550668d3740f"
+  "shape_fingerprint": "1cd8999c51e90b906f60380d146bec4e7c19ce4399954fb7554659b4a5796185"
 }

@@ -16,6 +16,19 @@ package's own models and its own committed golden. Consumers that vendor this
 envelope detect breaking changes via ``schema_version``; how any consumer
 re-binds afterward is its own concern and is deliberately not modeled here.
 
+**What the contract freezes.** The golden freezes a *structural projection* of
+each model's JSON schema — field names, types, requiredness, defaults — with
+non-structural metadata (``title`` / ``description``) stripped. Those never
+appear in the ``--json`` output, so a docstring or title edit does not touch
+the contract or trip the version-bump guard. The ``schema_version`` *value* is
+also normalized out of the shape fingerprint, so a pure version bump is not
+mistaken for a shape change.
+
+**One envelope, one version.** All three models share a single
+``schema_version`` default; :func:`build_live_contract` refuses to build a
+contract if they ever diverge, so the top-level version can never silently
+disagree with a per-model default.
+
 Regenerate after an intentional change::
 
     python -m sherloc_pipeline.models.schemas.cli_contract        # regen (guarded)
@@ -44,8 +57,10 @@ _CONTRACT_MODELS = {
 #: (a consumer could read it directly) and moves with the models it freezes.
 GOLDEN_PATH = Path(__file__).with_name("cli_contract.golden.json")
 
-#: Single source of truth for the envelope version (all models share it).
-SCHEMA_VERSION: str = CLIResult.model_fields["schema_version"].default
+# Non-structural JSON-schema keys that pydantic emits but that never appear in
+# the ``--json`` *output* — stripped before the contract is computed so the
+# frozen surface is wire shape only.
+_METADATA_KEYS = ("title", "description")
 
 # Placeholder substituted for the ``schema_version`` default when computing the
 # shape fingerprint, so the fingerprint tracks *shape* only and is independent
@@ -53,15 +68,57 @@ SCHEMA_VERSION: str = CLIResult.model_fields["schema_version"].default
 _VERSION_SENTINEL = "<version>"
 
 
-def _model_schemas() -> Dict[str, Any]:
-    return {name: model.model_json_schema() for name, model in _CONTRACT_MODELS.items()}
+class SchemaVersionDivergence(RuntimeError):
+    """Raised when the envelope models disagree on ``schema_version``."""
 
 
-def _shape_fingerprint(model_schemas: Dict[str, Any]) -> str:
+class VersionBumpRequired(RuntimeError):
+    """Raised when the shape changed but ``schema_version`` was not bumped."""
+
+
+def _model_version(model) -> str:
+    return model.model_fields["schema_version"].default
+
+
+def _assert_uniform_schema_version() -> str:
+    """All envelope models must share one ``schema_version`` default; return it."""
+    versions = {name: _model_version(model) for name, model in _CONTRACT_MODELS.items()}
+    distinct = set(versions.values())
+    if len(distinct) != 1:
+        raise SchemaVersionDivergence(
+            "envelope models disagree on schema_version "
+            f"({versions}); all --json models version as one envelope, so bump "
+            "them together."
+        )
+    return next(iter(distinct))
+
+
+def _strip_metadata(node: Any) -> Any:
+    """Recursively drop non-structural metadata keys from a JSON-schema node."""
+    if isinstance(node, dict):
+        return {
+            key: _strip_metadata(value)
+            for key, value in node.items()
+            if key not in _METADATA_KEYS
+        }
+    if isinstance(node, list):
+        return [_strip_metadata(item) for item in node]
+    return node
+
+
+def _structural_schemas() -> Dict[str, Any]:
+    """Per-model JSON schema, projected to structure only (metadata stripped)."""
+    return {
+        name: _strip_metadata(model.model_json_schema())
+        for name, model in _CONTRACT_MODELS.items()
+    }
+
+
+def _shape_fingerprint(structural_schemas: Dict[str, Any]) -> str:
     """SHA-256 over the canonical structural shape, with the ``schema_version``
     default value normalized out. A pure version bump therefore does NOT change
     the fingerprint, while any field add/remove/retype does."""
-    normalized = json.loads(json.dumps(model_schemas))  # deep copy
+    normalized = json.loads(json.dumps(structural_schemas))  # deep copy
     for schema in normalized.values():
         prop = schema.get("properties", {}).get("schema_version")
         if isinstance(prop, dict) and "default" in prop:
@@ -71,12 +128,17 @@ def _shape_fingerprint(model_schemas: Dict[str, Any]) -> str:
 
 
 def build_live_contract() -> Dict[str, Any]:
-    """The contract implied by the current, in-tree models."""
-    schemas = _model_schemas()
+    """The contract implied by the current, in-tree models.
+
+    Raises :class:`SchemaVersionDivergence` if the models disagree on
+    ``schema_version`` — a programming error the contract must never freeze.
+    """
+    schema_version = _assert_uniform_schema_version()
+    structural = _structural_schemas()
     return {
-        "schema_version": SCHEMA_VERSION,
-        "shape_fingerprint": _shape_fingerprint(schemas),
-        "models": schemas,
+        "schema_version": schema_version,
+        "shape_fingerprint": _shape_fingerprint(structural),
+        "models": structural,
     }
 
 
@@ -104,10 +166,6 @@ def diff() -> List[str]:
     if live["models"] != golden.get("models"):
         problems.append("model JSON schema(s) differ from the golden")
     return problems
-
-
-class VersionBumpRequired(RuntimeError):
-    """Raised when the shape changed but ``schema_version`` was not bumped."""
 
 
 def regen(enforce_bump: bool = True) -> Dict[str, Any]:

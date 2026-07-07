@@ -34,7 +34,45 @@ def test_cli_envelope_matches_committed_golden():
 def test_golden_records_current_schema_version():
     """The golden's recorded version tracks the models' shared default."""
     golden = cli_contract.load_golden()
-    assert golden["schema_version"] == cli_contract.SCHEMA_VERSION
+    assert golden["schema_version"] == cli_contract._assert_uniform_schema_version()
+
+
+def test_all_models_share_one_schema_version():
+    """One envelope, one version: every model's schema_version default agrees."""
+    version = cli_contract._assert_uniform_schema_version()  # must not raise
+    for model in cli_contract._CONTRACT_MODELS.values():
+        assert cli_contract._model_version(model) == version
+
+
+def test_divergent_per_model_versions_are_rejected(monkeypatch):
+    """If a future change bumps only one model, building the contract fails
+    rather than silently freezing a golden with mismatched per-model versions."""
+    real = cli_contract._model_version
+    monkeypatch.setattr(
+        cli_contract,
+        "_model_version",
+        lambda m: "9.9.9" if m is cli_contract.CLIError else real(m),
+    )
+    with pytest.raises(cli_contract.SchemaVersionDivergence):
+        cli_contract.build_live_contract()
+
+
+def test_strip_metadata_drops_title_and_description_recursively():
+    """Non-structural metadata never enters the frozen contract, so a docstring
+    or title edit cannot trip the version-bump guard."""
+    node = {
+        "title": "CLIResult",
+        "description": "a docstring",
+        "properties": {
+            "command": {"title": "Command", "type": "string"},
+        },
+        "required": ["command"],
+    }
+    stripped = cli_contract._strip_metadata(node)
+    assert stripped == {
+        "properties": {"command": {"type": "string"}},
+        "required": ["command"],
+    }
 
 
 def test_shape_fingerprint_ignores_version_value():
