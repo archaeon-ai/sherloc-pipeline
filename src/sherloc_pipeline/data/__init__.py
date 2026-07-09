@@ -1,8 +1,7 @@
 """Static algorithmic reference data shipped with the sherloc-pipeline package.
 
 Subpackages here contain calibration / reference inputs that are NOT
-per-scan, per-tier mission data (those live in R2 per the m2020-phase
-platform spec §3.9). Examples:
+per-scan, per-tier mission data (those live in R2). Examples:
 
 - :mod:`sherloc_pipeline.data.background` — arm-stowed + fused-silica
   calibration spectra used by the Workbench background subtraction step

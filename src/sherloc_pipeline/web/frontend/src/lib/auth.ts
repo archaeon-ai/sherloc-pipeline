@@ -148,8 +148,8 @@ async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
     }
   } else {
     // Silent SSO on mount: if the user has an active
-    // Auth0 SSO cookie at auth.m2020-phase.net (e.g., from a prior login
-    // at apex/dashboard or viewer via the same tenant), getTokenSilently()
+    // Auth0 SSO cookie on the tenant's custom domain (e.g., from a prior
+    // login at a sibling app on the same tenant), getTokenSilently()
     // completes the OAuth handshake via hidden iframe and the user lands
     // authenticated without clicking Log in. Failure paths fall through
     // to the existing "Log in button" UX — no regression.

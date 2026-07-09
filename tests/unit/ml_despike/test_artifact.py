@@ -1,6 +1,6 @@
 """Mocked-network tests for artifact fetch-and-cache integrity mechanics.
 
-Covers MLD-DET-003 AC1–AC4 (decomposing MLD-IFC-006 and MLD-SEC-002):
+Covers the fetch-and-cache integrity controls:
 fetch-verify-cache, cache re-verification with quarantine, fetched-bytes
 tamper rejection, explicit-path verification with no bypass, and
 actionable failure remedies. No test touches the network or the real
@@ -113,7 +113,7 @@ class TestFetchAndCache:
         assert leftovers == []
 
     def test_fetch_uses_finite_timeout(self, tmp_path, manifest, fetcher):
-        """A stalled host must fail, not hang (MLD-IFC-008 AC2)."""
+        """A stalled host must fail, not hang."""
         resolve_artifact(manifest, cache_dir=tmp_path / "cache")
         assert fetcher.timeouts == [pytest.approx(60.0)]
 

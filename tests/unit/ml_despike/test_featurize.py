@@ -1,11 +1,11 @@
 """Golden-vector tests for the certified 8-channel featurization.
 
 Pins the featurization math against hand-constructed synthetic frames
-whose robust statistics are known by design (MLD-DET-002 AC1). Expected
+whose robust statistics are known by design. Expected
 values are computed with explicit scalar arithmetic in the test — never
 by calling the module under test — and committed as code, not binaries.
 End-to-end numeric equivalence to the certified implementation is proven
-separately by the LOCAL parity harness (MLD-QUA-003 AC1).
+separately by the LOCAL parity harness.
 """
 
 import math

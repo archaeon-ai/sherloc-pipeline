@@ -7,12 +7,12 @@ and serializes structured outputs as reference snapshots.
 Usage:
     python scripts/generate_golden_baseline.py [--despike-method {ml,modz}]
 
-Each despike method anchors its own golden set (MLD-QUA-008):
+Each despike method anchors its own golden set:
     ml   -> tests/golden/sol_921_detail_1_ml/   (default-path anchor;
             requires the [ml-despike] extra and the cached
             ONNX artifact — generation is local-only)
-    modz -> tests/golden/sol_921_detail_1/      (frozen anchor,
-            MLD-SYS-010 — regenerate only with explicit intent)
+    modz -> tests/golden/sol_921_detail_1/      (frozen anchor;
+            regenerate only with explicit intent)
 """
 
 from __future__ import annotations

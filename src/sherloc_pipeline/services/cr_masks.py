@@ -2,17 +2,16 @@
 Cosmic-ray mask persistence service for the SHERLOC pipeline.
 
 Persists the per-(point, region) channel-index masks produced by the ML
-despike path into the ``cosmic_ray_masks`` satellite table (spec §4.5,
-MLD-SYS-008/012), attached to each (scan_point, region)'s DARK_SUBTRACTED
+despike path into the ``cosmic_ray_masks`` satellite table (spec §4.5),
+attached to each (scan_point, region)'s DARK_SUBTRACTED
 spectrum row — the canonical serving representation (§3.4). Persistence
 follows parent-row existence: masks whose parent spectrum row was never
 ingested (e.g. a full-region run against an ``R1_only``-ingested database)
 are skipped with a debug log while remaining in the run artifacts, so
-provenance is never silently lost (MLD-SYS-008 AC3).
+provenance is never silently lost.
 
 This module imports no ML runtime and nothing from ``ml_despike`` — it
-consumes only the provenance metadata dict the despike step recorded
-(MLD-QUA-002).
+consumes only the provenance metadata dict the despike step recorded.
 
 Usage:
     from sherloc_pipeline.services.cr_masks import CRMaskService
@@ -71,7 +70,7 @@ class CRMaskService:
         fresh rows (idempotent re-run; the (spectrum_id, method) unique
         constraint is never violated). Every (point, region) entry is
         persisted — including empty masks — so the stored set reconstructs
-        the in-run mask set exactly (MLD-SYS-008 AC2).
+        the in-run mask set exactly.
 
         Args:
             sol: Sol number (e.g., "0921")
@@ -172,8 +171,8 @@ class CRMaskService:
                                 .first()
                             )
                         if spectrum is None:
-                            # Persistence follows parent-row existence
-                            # (MLD-SYS-008 AC3): skip with a debug log; the
+                            # Persistence follows parent-row existence:
+                            # skip with a debug log; the
                             # mask stays in the run artifacts.
                             logger.debug(
                                 "CR mask persistence: no %s spectrum row for "
@@ -257,9 +256,9 @@ class CRMaskService:
 
         Read path for stored-mask consumers that address data the way the
         pipeline does — (sol, target, scan) + point index — rather than by
-        spectrum row id (the ``plot`` despike path, MLD-IFC-007). Stored
+        spectrum row id (the ``plot`` despike path). Stored
         masks are optional at read time (the communicated-state contract,
-        MLD-IFC-003 AC2 / §4.7): a missing database, scan, or mask set
+        §4.7): a missing database, scan, or mask set
         returns ``{}`` so callers render non-despiked and say so, rather
         than erroring.
 
@@ -335,7 +334,7 @@ class CRMaskService:
             # a SQLite file that is not a SHERLOC database at all. Stored
             # masks are optional at read time — treat exactly like "no
             # masks" so consumers render non-despiked with the note
-            # instead of erroring (MLD-IFC-007).
+            # instead of erroring.
             logger.debug(
                 "Stored-mask lookup against %s failed (%s) — treating as "
                 "no stored masks",

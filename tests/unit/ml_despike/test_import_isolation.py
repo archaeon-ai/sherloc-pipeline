@@ -1,4 +1,4 @@
-"""Import-isolation and lazy-runtime tests (MLD-DET-005, MLD-QUA-002).
+"""Import-isolation and lazy-runtime tests.
 
 The detector package must be importable everywhere without dragging the
 optional ML runtime; the runtime import happens lazily at detector
@@ -26,7 +26,7 @@ manifest_mod = importlib.import_module("sherloc_pipeline.ml_despike.manifest")
 
 def test_package_import_does_not_import_ml_runtime():
     """Fresh interpreter: importing the package (detector module included)
-    must not load onnxruntime or torch (MLD-DET-005 AC1)."""
+    must not load onnxruntime or torch."""
     code = (
         "import sys\n"
         "import sherloc_pipeline.ml_despike\n"
@@ -60,7 +60,7 @@ def _third_party_top_level_imports(module) -> set:
 
 
 def test_featurize_module_imports_numpy_only():
-    """MLD-DET-002 AC2: numpy-only import surface (no scipy, no pandas,
+    """numpy-only import surface (no scipy, no pandas,
     no runtime, no experiment paths)."""
     assert _third_party_top_level_imports(featurize_mod) == {"numpy"}
 
@@ -70,7 +70,7 @@ def test_manifest_module_is_stdlib_only():
 
 
 def test_missing_runtime_error_names_extra(monkeypatch, stub_manifest):
-    """MLD-DET-005 AC2 / MLD-IFC-008 AC1: the no-runtime failure names the
+    """The no-runtime failure names the
     extra and the exact install command."""
     # A None entry makes `import onnxruntime` raise ImportError even when
     # the runtime is installed.

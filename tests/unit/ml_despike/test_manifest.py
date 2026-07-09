@@ -1,8 +1,7 @@
 """Frozen-identity tests for the ML despike model manifest.
 
 Pins the manifest to the model's release record at full precision
-(MLD-DET-001 AC1, MLD-SYS-005 AC1) and asserts runtime immutability
-(MLD-DET-001 AC2). The literal digests and taus below are the test's
+and asserts runtime immutability. The literal digests and taus below are the test's
 authority, not the manifest module.
 """
 

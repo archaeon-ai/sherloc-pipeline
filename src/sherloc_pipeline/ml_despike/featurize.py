@@ -2,11 +2,11 @@
 
 Clean-room port of the certified reference implementation (maintained in
 the research tree, not tracked here). The formulas below ARE the certified
-observable's definition (MLD-DET-002): per-frame robust normalization of
+observable's definition: per-frame robust normalization of
 the raw ACTIVE and DARK planes over the region's certified detection
 window, region one-hot, and log-scale context channels. Any change here
 voids the certification evidence base unless re-verified through the
-parity gate (MLD-QUA-003).
+parity gate.
 
 Import surface is numpy-only (plus the stdlib manifest module) — no
 scipy, no pandas, no onnxruntime, no experiment paths.

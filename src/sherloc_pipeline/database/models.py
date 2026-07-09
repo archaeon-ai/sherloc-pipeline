@@ -1065,14 +1065,13 @@ class CosmicRayMaskORM(Base):
     spectrum) produced by a despike method. One row exists per
     (DARK_SUBTRACTED spectrum, method) pair, enforced by a unique
     constraint, carrying the absolute flagged channel indices plus the
-    provenance trio (method identity, model sha256, applied tau) required
-    by MLD-SYS-008.
+    provenance trio (method identity, model sha256, applied tau).
 
     Channel indices are stored as a JSON list of absolute offsets
     (0..2147) on the region's 2148-channel plane, following the
     ``RegionOfInterestORM.point_indices`` JSON-list pattern. The FK to
     ``spectra.id`` uses ``ON DELETE CASCADE`` so re-ingest wipes masks
-    automatically (MLD-SYS-009).
+    automatically.
 
     Masks are immutable: a re-run deletes the existing row for the
     (spectrum, method) pair and inserts a fresh one, so this table has

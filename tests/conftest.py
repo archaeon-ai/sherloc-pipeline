@@ -143,9 +143,9 @@ def loupe_datasets(fixtures_path: Path, manifest: Dict[str, Any]) -> Dict[str, D
     return {ds["sol"]: ds for ds in manifest["datasets"]}
 
 
-# --- ML despike stub-detector fixtures (MLD-QUA-003 CI proxy) --------------
-# The stub ONNX model is built at test time (never committed, MLD-SEC-001
-# AC2) and honors the certified I/O contract, so it flows through the REAL
+# --- ML despike stub-detector fixtures (CI proxy) --------------------------
+# The stub ONNX model is built at test time (never committed) and honors
+# the certified I/O contract, so it flows through the REAL
 # artifact-resolution and detector chain; only the manifest digest and
 # artifact location differ. Builders live in tests/unit/ml_despike/conftest.
 

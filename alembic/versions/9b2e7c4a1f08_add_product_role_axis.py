@@ -1,7 +1,7 @@
 """add_product_role_axis
 
-Add the analytical ``product_role`` axis to the ``scans`` table (WS-1 spec
-§4.4 — SHERLOC scan classification).
+Add the analytical ``product_role`` axis to the ``scans`` table (SHERLOC
+scan classification).
 
 ``product_role ∈ {raw, canonical, alternate}`` (NULL for every non-multishot
 scan ≈ the entire corpus) separates the *analytical role* of a multishot
@@ -9,11 +9,10 @@ acquisition's co-spatial products (raw N×k shots, ``*_median_all`` reduction,
 ``*_sum_active_median_dark`` canonical reduction) from the structural
 ``scan_class`` topology. The live source CHECK forbids a ``primary`` from
 carrying ``source_scan_ids``, so a counted-standalone-and-lineage-linked
-reduction cannot be encoded in ``scan_class`` alone — hence a dedicated axis
-(Key Decision K3).
+reduction cannot be encoded in ``scan_class`` alone — hence a dedicated axis.
 
-A single nullable column + a CHECK; **no new table**; forward-safe per
-ARC-SHR-SYS-031. Values are assigned by ``sherloc reclassify-product-roles``
+A single nullable column + a CHECK; **no new table**; forward-safe.
+Values are assigned by ``sherloc reclassify-product-roles``
 (corpus-level — the raw role and source linkage require the sibling raw
 scan), NOT at this migration; every existing row is left NULL, so the new
 CHECK is trivially satisfied on upgrade.
@@ -37,7 +36,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-# product_role governance CHECK (WS-1 spec §4.4). A single constraint enforces
+# product_role governance CHECK. A single constraint enforces
 # enum membership AND the role ⇒ class/parent/sources couplings:
 #   - NULL                    : any non-multishot scan (≈ the whole corpus)
 #   - raw                     : scan_class='primary',  parent NULL, sources NULL

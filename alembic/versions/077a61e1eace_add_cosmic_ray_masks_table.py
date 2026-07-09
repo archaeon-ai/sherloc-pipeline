@@ -5,14 +5,14 @@ cosmic-ray detection masks for the ML despike integration.
 One row exists per
 (DARK_SUBTRACTED spectrum, despike method) pair, carrying the absolute
 flagged channel indices (JSON list, 0..2147 on the region's 2148-channel
-plane) plus the provenance trio required by MLD-SYS-008: the method
+plane) plus the provenance trio: the method
 identity (e.g. ``ml_v1.1_tau_matched``), the model artifact sha256
 digest, and the applied per-region threshold ``tau``.
 
 The table is keyed to ``spectra.id`` with ``ON DELETE CASCADE`` so that
 re-ingest (which wipes and regenerates a scan's derived data) cascades
 through ``scans → scan_points → spectra → cosmic_ray_masks`` and leaves
-no orphaned mask rows (MLD-SYS-009). A unique constraint on
+no orphaned mask rows. A unique constraint on
 (``spectrum_id``, ``method``) enforces one mask per method per spectrum
 (idempotent delete+insert on re-run); masks are immutable, so the table
 has **no** ``updated_at`` column.

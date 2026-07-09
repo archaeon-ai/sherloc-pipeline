@@ -1,4 +1,4 @@
-"""Tests for the --despike-method CLI option (MLD-IFC-001/002, MLD-SYS-001/002/003).
+"""Tests for the --despike-method CLI option.
 
 Covers the override helper (config-singleton mutation, the --trim-pct
 pattern), help-text exposure on all three commands, and Typer's
@@ -22,7 +22,7 @@ def _clean_config():
 
 
 class TestDespikeMethodEnum:
-    """MLD-SYS-001: closed set, mirrors VALID_DESPIKE_METHODS."""
+    """Closed set, mirrors VALID_DESPIKE_METHODS."""
 
     def test_values_match_service_constant(self):
         from sherloc_pipeline.services.preprocessing import VALID_DESPIKE_METHODS
@@ -44,7 +44,7 @@ class TestApplyDespikeMethodOverride:
         assert get_config().preprocessing['despike']['method'] == method.value
 
     def test_override_outranks_shipped_default(self):
-        """CLI > config precedence (MLD-SYS-003): the shipped config says
+        """CLI > config precedence: the shipped config says
         ml; the override flips the resolved method."""
         from sherloc_pipeline.services.preprocessing import resolve_despike_method
 
@@ -61,7 +61,7 @@ class TestApplyDespikeMethodOverride:
 
 
 class TestCliHelpText:
-    """MLD-IFC-001: --despike-method exposed on all three commands."""
+    """--despike-method exposed on all three commands."""
 
     @pytest.mark.parametrize("command", ["full-pipeline", "process-new", "plot"])
     def test_help_shows_despike_method(self, command):
@@ -71,7 +71,7 @@ class TestCliHelpText:
 
 
 class TestCliDispatch:
-    """MLD-IFC-001 AC1 / MLD-SYS-001 AC1: a valid --despike-method on the
+    """A valid --despike-method on the
     pipeline commands reaches the service layer's method resolution —
     not merely the parser. full-pipeline is stubbed at the service
     boundary and the effective method is resolved exactly the way
@@ -186,7 +186,7 @@ class TestCliDispatch:
 
 
 class TestCliInvalidValue:
-    """MLD-IFC-002 AC1: invalid values rejected at parse time with a
+    """Invalid values rejected at parse time with a
     nonzero exit and the choice list — before any processing."""
 
     @pytest.mark.parametrize(

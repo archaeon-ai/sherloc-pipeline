@@ -336,9 +336,9 @@ def _extract_request_token(request: Request, mode: str) -> Optional[str]:
 def required_role_for_access_mode(access_mode: str) -> Optional[str]:
     """Resolve the required role-per-API for the given access mode.
 
-    m2020-phase Revised++ §2.6.1: team-mode endpoints require
+    Team-mode endpoints require
     ``phase:team-member``; public-mode endpoints accept any valid token
-    (no role requirement — §2.6.1 line 359).
+    (no role requirement).
 
     Returns ``None`` when the access mode does not impose a role
     requirement (public mode, or unrecognized access mode). Callers
@@ -351,11 +351,11 @@ def required_role_for_access_mode(access_mode: str) -> Optional[str]:
 
 
 def _www_authenticate_header() -> dict[str, str]:
-    """Build the ``WWW-Authenticate`` header per m2020-phase §2.6.1.
+    """Build the ``WWW-Authenticate`` header.
 
     Reads ``SHERLOC_AUTH_REALM`` per call so deployment-time env changes
     take effect without re-importing the module. The default realm is
-    ``m2020-phase`` (the §2.6.1 contract literal); deployments may
+    ``m2020-phase`` (the contract literal); deployments may
     override (staging, future platform renames).
     """
     realm = os.environ.get("SHERLOC_AUTH_REALM", "m2020-phase")
@@ -423,7 +423,7 @@ def require_authenticated_request(request: Request) -> TokenClaims:
 
     token = _extract_request_token(request, mode)
     if not token:
-        # m2020-phase Revised++ §2.6.1: missing-credential 401 must
+        # A missing-credential 401 must
         # surface a ``WWW-Authenticate: Bearer realm=...`` header.
         logger.warning("authn failed reason=no_credential")
         raise HTTPException(

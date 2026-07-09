@@ -1,4 +1,4 @@
-"""Cold-path isolation (MLD-QUA-002) and pipeline wiring shape.
+"""Cold-path isolation and pipeline wiring shape.
 
 The ML runtime must never load unless the ml branch executes: importing
 the preprocessing/pipeline/cr_masks services — and resolving the
@@ -42,7 +42,7 @@ class TestModuleIsolation:
         )
 
     def test_web_app_import_does_not_load_ml_runtime(self):
-        """MLD-QUA-002 AC2: building the web app (and importing the spectra
+        """Building the web app (and importing the spectra
         route that adds the stored-mask despike toggle) must not pull
         onnxruntime — the serving host never runs inference."""
         _run_isolated(

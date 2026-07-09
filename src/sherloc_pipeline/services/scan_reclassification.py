@@ -1,6 +1,6 @@
 """In-place reclassification of the three SHERLOC scan-classification axes.
 
-WS-1 scan-classification spec §4.5 (ARC-M2P-312). Re-derives ``scan_type``
+Re-derives ``scan_type``
 (name-authoritative), ``scan_class`` (+ ``parent_scan_id`` / ``source_scan_ids``
 lineage), and ``product_role`` (multishot analytical role) for the existing
 corpus **in place**, going-forward-safe, with operational safeguards:
@@ -131,11 +131,11 @@ class ReclassificationResult:
 
 def preflight_schema(conn: Connection) -> str:
     """Verify the scans table carries the product_role column + governance
-    CHECK (WS-1 §4.4) before reclassifying.
+    CHECK before reclassifying.
 
     Checks the schema artifact directly rather than the Alembic version, so it
     accepts BOTH migration-built and ORM-created (``create_all``) schemas —
-    which carry the same ``ck_scans_product_role`` constraint (Codex F4).
+    which carry the same ``ck_scans_product_role`` constraint.
     Returns the Alembic head if the DB is migration-managed (informational).
     """
     scans_sql = conn.execute(
@@ -243,16 +243,16 @@ def _name_kind(scan_name: str) -> Optional[str]:
 def plan_scan_types(rows: Sequence[_ScanRow]) -> AxisPlan:
     """Re-derive name-authoritative ``scan_type`` in place (the #115 fix).
 
-    Per the §4.2 resolver:
+    Per the name-authoritative scan-type resolver:
 
     * calibration (sequence code or AlGaN name) -> calibration;
     * a RECOGNIZED name -> its name-implied type (corrects the mislabels);
     * an UNINFORMATIVE name (empty / synthetic ``pds_*``) -> the spectrum-count
-      fallback (ARC-M2P-308 permits it here; ARC-M2P-312 wants in-place
-      re-derivation, Codex F9) — **except** a missing-count NULL is preserved:
+      fallback (permitted for uninformative names; in-place re-derivation is
+      intended) — **except** a missing-count NULL is preserved:
       ``n_points <= 1`` is the PDS missing-count placeholder, so a row left
-      ``scan_type=NULL`` at ingest is never promoted to a guessed type from it
-      (Codex F1). A genuine 1-spectrum PDS scan was already typed at ingest, so
+      ``scan_type=NULL`` at ingest is never promoted to a guessed type from it.
+      A genuine 1-spectrum PDS scan was already typed at ingest, so
       this guard only catches the placeholder;
     * an informative-but-unrecognized (UNKNOWN) name -> quarantined: NULL (no
       guessed type kept), recorded. On the current corpus this class is empty.
@@ -350,7 +350,7 @@ def _derive_composite_sources(
     Mirrors the historical Alembic backfill (suffix-strip -> base prefix), so
     a spatial/bare union attaches only the in-group primaries that extend its
     OWN base (``detail_all``/``detail_`` -> ``detail_1``/``detail_2``, NOT an
-    unrelated different-base same-kind scan — Codex F5). Specifically:
+    unrelated different-base same-kind scan). Specifically:
 
     * Multishot reduction (``*_median_all`` / ``*_sum_active_*``): the single
       raw base scan by exact name; if absent, the base-prefix members.
@@ -402,8 +402,8 @@ def _derive_composite_sources(
             return named
 
     # Unresolved reduction / unrecognized composite: fall back to the same-kind
-    # primaries at the sol/target (§4.3 best-effort; §4.9 / ARC-M2P-310 AC2
-    # require a non-empty array, so empty is not an option).
+    # primaries at the sol/target (best-effort; a non-empty array is required,
+    # so empty is not an option).
     kind = _name_kind(composite.scan_name)
     if kind is None:
         return []
@@ -423,8 +423,8 @@ def plan_product_roles(rows: Sequence[_ScanRow]) -> AxisPlan:
     (``*_sum_active_median_dark`` → canonical; ``*_median_all`` /
     ``*_sum_active_sum_dark`` → alternate), keyed by the reduction's raw base
     name. A group is tagged **only when it has its raw sibling AND exactly one
-    canonical reduction** (the ARC-M2P-311 / -315 "exactly one canonical per
-    raw group" invariant, Codex F3). An incomplete group — no raw, no
+    canonical reduction** (the "exactly one canonical per raw group"
+    invariant). An incomplete group — no raw, no
     canonical, or >1 canonical — is left untagged: the raw stays a counted
     primary and its reductions stay composites with ``product_role`` NULL, so
     no spatial positions are silently dropped. Reductions in untagged groups
@@ -481,11 +481,11 @@ def multishot_groups_missing_canonical(
     group keys that have >=1 recognized reduction but NOT exactly one canonical
     reduction.
 
-    Encodes the ARC-M2P-311 / -315 "exactly one canonical per multishot raw
-    group" rule (a relational invariant the single-row DB CHECK cannot express).
-    The group boundary is the **sol/target raw group** per spec §4.4 — NOT the
+    Encodes the "exactly one canonical per multishot raw group" rule (a
+    relational invariant the single-row DB CHECK cannot express).
+    The group boundary is the **sol/target raw group** — NOT the
     bare scan name — so a raw base that recurs across sols/targets cannot mask
-    an incomplete group (Codex F10). Each input is a value-blind
+    an incomplete group. Each input is a value-blind
     ``(sol_number, target, scan_name)`` record. Empty result => invariant holds;
     a non-empty result flags incomplete/malformed groups for V&V to reject.
     """
@@ -561,8 +561,8 @@ def finalize_sol_scans(conn: Connection, sol_number: int) -> Dict[str, AxisPlan]
     the sibling scans of the sol/target, which a single-scan write path does
     not have. This runs once, after all of a sol's workspaces are ingested, so
     going-forward ingests satisfy the composite non-empty-sources guarantee
-    (ARC-M2P-310) and the multishot product_role model (ARC-M2P-311) without a
-    separate operator reclassify pass (Codex F7).
+    and the multishot product_role model without a
+    separate operator reclassify pass.
 
     Operates in place on the caller's connection/transaction; only the
     ``scan_class`` (lineage) and ``product_role`` axes are derived (scan_type

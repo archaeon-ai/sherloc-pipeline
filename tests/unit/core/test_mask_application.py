@@ -1,9 +1,9 @@
 """Mask application semantics on the three pipeline representations.
 
 Covers the contributor-set principle and certified-window applicability
-(spec §3.3, MLD-SYS-014/015) plus the R123 stitch-alignment test: the
+(spec §3.3) plus the R123 stitch-alignment test: the
 derived winning-region map must agree, channel by channel, with what
-``create_r123_spectrum`` actually assigns (MLD-SYS-014 AC1 — the map is
+``create_r123_spectrum`` actually assigns (the map is
 derived from the construction's definition, never hardcoded separately).
 """
 
@@ -126,7 +126,7 @@ class TestR123Application:
     def test_non_winning_region_flag_is_inert(self):
         frame, winner, windows = self._setup()
         # Channel 22 is inside R1's window (0,30) but R2 wins it: an R1
-        # flag there must produce no change (MLD-SYS-014 AC1).
+        # flag there must produce no change.
         masks = {"R1": {0: np.array([22])}}
         out = apply_masks_to_r123_frame(frame, masks, winner, windows, "linear")
         np.testing.assert_array_equal(out[0].to_numpy(), frame[0].to_numpy())
@@ -170,7 +170,7 @@ class TestFluorescenceUnion:
 
     def test_edge_segments_never_screened(self):
         """Channels [0,52) and [2140,2148) have no covered contributor —
-        flags there from any region are inert (MLD-SYS-015 AC1)."""
+        flags there from any region are inert."""
         frame = _frame(N_CHANNELS, n_points=1, seed=3)
         masks = {
             "R2": {0: np.array([0, 10, 51, 2140, 2147])},

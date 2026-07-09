@@ -1,7 +1,7 @@
 """Tests for classify_scan_type() — name-authoritative scan_type resolver.
 
-WS-1 scan-classification spec §4.2 (ARC-M2P-308 / -309). Value-blind: every
-vector is a name / sequence-code / spectrum-count, never a science value.
+Value-blind: every vector is a name / sequence-code / spectrum-count,
+never a science value.
 """
 
 import pytest
@@ -87,7 +87,7 @@ class TestTokenPrecedenceAndBoundary:
 
 
 class TestHdrAnywhere:
-    """ARC-M2P-308 maps HDR as `*HDR*` (token-boundaried anywhere), not just a
+    """HDR maps as `*HDR*` (token-boundaried anywhere), not just a
     prefix — lowest precedence so survey/detail/line still win."""
 
     @pytest.mark.parametrize("name", ["HDR_500", "hdr", "cal_HDR_1", "foo_hdr", "x_hdr_3"])
@@ -107,7 +107,7 @@ class TestHdrAnywhere:
 class TestQuarantine:
     def test_informative_unknown_quarantines(self):
         # A future DO_AREA-class name must quarantine, never fall through to
-        # the count rule (ARC-M2P-308 AC5).
+        # the count rule.
         assert _t("DO_AREA_1", None, 1000) == SCAN_TYPE_QUARANTINE
         assert _t("DO_AREA_1", None, 10) == SCAN_TYPE_QUARANTINE
 

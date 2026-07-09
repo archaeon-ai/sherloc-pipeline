@@ -374,10 +374,10 @@ class PDSIngestionService:
         # Target name resolver (spec s10).
         # Curated mapping is operator-supplied at
         # $SHERLOC_HOME/configs/pds_target_mapping.json (CWD-relative when
-        # SHERLOC_HOME is unset, per §8.1). Missing file is treated as an
+        # SHERLOC_HOME is unset). Missing file is treated as an
         # empty mapping (Tier 1 SCLK cross-reference + Tier 3 NULL fallback
         # still work). External users without Loupe access typically run
-        # without this file. See PUBLIC_TOOLKIT_ARCHITECTURE_SPEC §11.4.
+        # without this file.
         sherloc_home = Path(os.environ.get("SHERLOC_HOME", "."))
         curated_path = sherloc_home / "configs" / "pds_target_mapping.json"
         self._target_resolver = TargetNameResolver(

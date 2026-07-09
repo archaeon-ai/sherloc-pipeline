@@ -1,4 +1,4 @@
-"""Raw ACTIVE/DARK plane loader (detection input path, MLD-SYS-004).
+"""Raw ACTIVE/DARK plane loader (detection input path).
 
 Uses the committed sol_0921 fixture workspace, which carries real
 ``activeSpectra.csv`` / ``darkSpectra.csv`` files in the Loupe section
@@ -76,7 +76,7 @@ class TestLoadActiveDarkPlanes:
 
     def test_raw_planes_differ_from_normalized(self, ingestion, workspace):
         """The loader yields raw DN, not any normalized representation —
-        the certified observable distinction behind MLD-SYS-004 AC2."""
+        the certified observable distinction."""
         planes = ingestion.load_active_dark_planes(workspace)
         normalized = ingestion.process_normalized_spectra(workspace)
         r1_norm = normalized["R1"][0].to_numpy(dtype=float)

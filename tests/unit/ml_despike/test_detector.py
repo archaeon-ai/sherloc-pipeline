@@ -1,11 +1,11 @@
 """Stub-model chain tests for the ONNX CR detector.
 
-Deterministically asserts the certified numeric structure (MLD-DET-004
-AC1/AC2, MLD-QUA-003 AC2): featurize → infer → float64 sigmoid → strict
+Deterministically asserts the certified numeric structure: featurize →
+infer → float64 sigmoid → strict
 ``p > tau`` → window-restricted absolute-index masks — with the stub
 artifact flowing through the real ``resolve_artifact`` chain. CI never
 sees the certified artifact; bit-exact parity against it is the LOCAL
-gate (MLD-QUA-003 AC1).
+gate.
 """
 
 import dataclasses
@@ -84,7 +84,7 @@ class TestDetectionChain:
         assert all(lo <= ch < hi for ch in masks[0])
 
     def test_flags_restricted_to_certified_window(self, detector):
-        """Out-of-window spikes never flag, in-window edges do (MLD-SYS-015 AC3)."""
+        """Out-of-window spikes never flag, in-window edges do."""
         # R1 window is [52, 575): 10 and 600 are outside, 52/574 are edges.
         active, dark = make_frame(spike_channels=(10, 52, 574, 600))
         masks = detector.detect([active], [dark], ["R1"])
@@ -141,7 +141,7 @@ class TestDetectionChain:
         assert channel in masks[0]
 
     def test_r1_alone_first_class(self, detector):
-        """An all-R1 call is a fully supported path (MLD-SYS-006)."""
+        """An all-R1 call is a fully supported path."""
         frames = [make_frame((ch,)) for ch in (60, 200, 400)]
         actives = [f[0] for f in frames]
         darks = [f[1] for f in frames]
@@ -149,7 +149,7 @@ class TestDetectionChain:
         assert [m.tolist() for m in masks] == [[60], [200], [400]]
 
     def test_all_three_regions_detected(self, detector):
-        """Each region flags through its own window and tau (MLD-SYS-006 AC1)."""
+        """Each region flags through its own window and tau."""
         spec = {"R1": 300, "R2": 800, "R3": 1800}
         actives, darks, regions = [], [], []
         for region, channel in spec.items():
@@ -193,7 +193,7 @@ class TestDetectionChain:
 
 class TestSessionConfiguration:
     def test_certified_session_config(self, detector):
-        """CPU EP only, 2 intra-op / 1 inter-op threads (MLD-DET-004 AC2)."""
+        """CPU EP only, 2 intra-op / 1 inter-op threads."""
         assert detector._session.get_providers() == ["CPUExecutionProvider"]
         assert detector.intra_op_threads == 2
         assert detector.inter_op_threads == 1
@@ -206,8 +206,7 @@ class TestArtifactResolutionChain:
     def test_tampered_artifact_creates_no_session(
         self, tmp_path, stub_manifest, stub_model_path
     ):
-        """Digest mismatch fails construction before any session exists
-        (MLD-SEC-002 AC1)."""
+        """Digest mismatch fails construction before any session exists."""
         corrupt = tmp_path / "corrupt.onnx"
         corrupt.write_bytes(stub_model_path.read_bytes() + b"!")
         with pytest.raises(ArtifactDigestError):

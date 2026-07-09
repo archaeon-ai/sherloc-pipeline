@@ -1,4 +1,4 @@
-"""Tests for classify_product_role() + multishot helpers (WS-1 spec §4.4).
+"""Tests for classify_product_role() + multishot helpers.
 
 Value-blind: only scan names are exercised.
 """

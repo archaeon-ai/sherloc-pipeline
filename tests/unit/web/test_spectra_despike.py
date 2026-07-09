@@ -1,4 +1,4 @@
-"""Web stored-mask despike toggle round-trip tests (spec §4.6, MLD-IFC-003).
+"""Web stored-mask despike toggle round-trip tests (spec §4.6).
 
 The serving host never runs inference: ``?despike=true`` looks up the
 persisted ``cosmic_ray_masks`` and applies the same interpolation helper the
@@ -389,7 +389,7 @@ async def test_subset_r123_mixed_points_falls_back(client):
 
 @pytest.mark.asyncio
 async def test_process_despike_endpoint_unchanged(client):
-    # MLD-IFC-004: the real-time modz endpoint keeps its contract; it does
+    # The real-time modz endpoint keeps its contract; it does
     # not gain a stored-mask despike toggle.
     resp = await client.post(
         "/api/process/despike",

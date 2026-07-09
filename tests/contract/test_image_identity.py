@@ -10,12 +10,12 @@ Pins DEPLOYMENT_CONTRACT.md §2 + §10:
 - ``.github/workflows/publish.yml`` IMAGE_NAME equals
   ``ghcr.io/archaeon-ai/sherloc-pipeline``.
 - ``publish.yml`` ``platforms:`` line equals ``linux/amd64,linux/arm64``
-  (multi-arch added at v4.1.16 per FOUNDATION §3.5 step 6).
+  (multi-arch added at v4.1.16).
 
-The PR-mode three-state rule (per Chunk B design §5.10 Round 2 fix):
+The PR-mode three-state rule:
 - ``project.version`` AHEAD of latest tag → ``pytest.skip`` (the
-  operator-coordinated post-Chunk-D window before the new tag is
-  pushed; see Activity B in chunk_b_design.md §10.5).
+  coordinated window before the new tag is pushed, when pyproject is
+  bumped ahead of the tag).
 - ``project.version`` EQUAL to latest tag → PASS.
 - ``project.version`` BEHIND latest tag → FAIL (the regression this
   guards against: pyproject lagging the live image tag).
@@ -95,7 +95,7 @@ def test_pr_mode_version_not_behind_latest_tag():
 
     - project.version EQUAL to latest tag → PASS.
     - project.version AHEAD of latest tag → SKIP (operator-coordinated
-      tag-push window; see chunk_b_design.md §10.5 Activity B).
+      tag-push window before the new tag is published).
     - project.version BEHIND latest tag → FAIL.
     """
     if os.environ.get("GITHUB_REF_TYPE") == "tag":
@@ -112,8 +112,7 @@ def test_pr_mode_version_not_behind_latest_tag():
     if proj_tuple > tag_tuple:
         pytest.skip(
             f"pyproject.toml version {version!r} is AHEAD of latest tag "
-            f"{latest!r} — awaiting operator tag publish per "
-            "chunk_b_design.md §10.5 Activity B"
+            f"{latest!r} — awaiting operator tag publish"
         )
     pytest.fail(
         f"pyproject.toml version {version!r} is BEHIND latest tag "
@@ -133,9 +132,8 @@ def test_publish_yml_image_name():
 
 
 def test_publish_yml_platforms_multi_arch():
-    """v4.1.16 adds linux/arm64 alongside linux/amd64 per FOUNDATION §3.5
-    step 6 (sunset deliverable for the public CLI install audience —
-    Apple Silicon / AWS Graviton). DEPLOYMENT_CONTRACT.md §2.
+    """v4.1.16 adds linux/arm64 alongside linux/amd64 (Apple Silicon /
+    AWS Graviton support). DEPLOYMENT_CONTRACT.md §2.
 
     The build-push action's ``platforms:`` line is the contract surface
     (the manifest the registry sees). The QEMU setup step also carries

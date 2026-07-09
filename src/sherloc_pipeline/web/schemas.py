@@ -202,8 +202,8 @@ class ProvenanceInfo(BaseModel):
 DespikeMethodLiteral = Literal["none", "ml", "modz"]
 
 
-# Additive despike fields shared by the spectra responses (spec §4.6,
-# MLD-IFC-003; issue #6 method selector). All optional with defaults: a
+# Additive despike fields shared by the spectra responses (spec §4.6;
+# issue #6 method selector). All optional with defaults: a
 # client that never sends ``despike``/``despike_method`` sees the
 # pre-integration response contract, so API_SCHEMA_VERSION stays "1.0.0"
 # (additive optional fields do not bump the version, which flags breaking

@@ -361,7 +361,7 @@ class PixliseExportParser:
 
     Example:
         >>> parser = PixliseExportParser()
-        >>> result = parser.parse_zip("/nas/000_pixl/Pixlise Data Export 2026-01-28 (1).zip")
+        >>> result = parser.parse_zip("/path/to/pixl-exports/Pixlise Data Export 2026-01-28 (1).zip")
         >>> print(f"Parsed {result.target.name}: {len(result.quant_points)} points")
     """
 

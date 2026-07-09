@@ -23,11 +23,11 @@
 #
 # Architecture:
 #   uvicorn (port 8000) → FastAPI app (sherloc_pipeline.web.app:create_app)
-#   Optionally expose via cloudflared tunnel — see scripts/tunnel.sh
+#   Use a reverse proxy or tunnel of your choice for external access.
 #
 # Notes:
 #   - Single worker (uvicorn default). Only one pipeline operation runs at a time.
-#   - Binds to 127.0.0.1 only; use tunnel.sh or a reverse proxy for external access.
+#   - Binds to 127.0.0.1 only; use a reverse proxy or tunnel of your choice for external access.
 
 set -euo pipefail
 

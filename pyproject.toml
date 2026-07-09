@@ -47,8 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 # PDS download client (core/pds_client.py). Lazy-imported so plain
 # `pip install sherloc-pipeline` does not require httpx; only users
-# running PDS downloads need this extra. See PUBLIC_TOOLKIT_ARCHITECTURE_SPEC
-# §9.1 deviation D5 (resolved in §19.1 B.3).
+# running PDS downloads need this extra.
 pds = [
     "httpx>=0.24.0",
 ]
@@ -57,8 +56,8 @@ web = [
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.6",
     "websockets>=12.0",
-    # §2.6.1 Auth0 validator. Single source of truth for the JWT
-    # validation contract; consumed starting v4.1 (B.0 switchover).
+    # Auth0 validator. Single source of truth for the JWT validation
+    # contract; consumed starting v4.1.
     # Git URL pin until the PyPI publish; operator's existing install
     # workflow handles git+https deps. After PyPI publish swap back to
     # ``"phase-platform-auth>=0.1.0,<1"``.
@@ -68,11 +67,10 @@ web = [
     "pyjwt[crypto]>=2.8.0",
     # CF Access JWKS fetch (web/auth.py).
     "httpx>=0.24.0",
-    # Cloudflare R2 (S3-compatible) reads for SHERLOC ACI bytes per
-    # m2020-phase platform spec §3.9 (v4.1.7+). The resolver in
-    # web/routes/images.py uses boto3 to GET ACI bytes from the per-
-    # tier R2 bucket (phase-team / phase-public). See §3.9.2 for the
-    # AWS_*/PHASE_TIER env contract.
+    # Cloudflare R2 (S3-compatible) reads for SHERLOC ACI bytes
+    # (v4.1.7+). The resolver in web/routes/images.py uses boto3 to GET
+    # ACI bytes from the per-tier R2 bucket (phase-team / phase-public).
+    # See DEPLOYMENT_CONTRACT.md §5 for the AWS_*/PHASE_TIER env contract.
     "boto3>=1.34.0",
 ]
 dev = [
@@ -100,13 +98,13 @@ ml = [
     "segment-anything>=1.0",
 ]
 # ML cosmic-ray despike runtime (~30 MB CPU onnxruntime) — distinct from
-# the torch [ml] (SAM) extra; plain installs stay lean (MLD-QUA-001).
+# the torch [ml] (SAM) extra; plain installs stay lean.
 # The upper bound deviates deliberately from the house floor-only pin
 # style: numeric flag parity of the certified v1.1 detector is certified
-# against onnxruntime 1.26.0 (the sole certified runtime configuration;
-# MLD-QUA-009), later 1.x versions are operationally acceptable but not
+# against onnxruntime 1.26.0 (the sole certified runtime configuration),
+# later 1.x versions are operationally acceptable but not
 # certified, and a major-version jump must not arrive silently. The
-# installed version is recorded in run provenance (MLD spec §4.8).
+# installed version is recorded in run provenance.
 ml-despike = [
     "onnxruntime>=1.26.0,<2.0",
 ]

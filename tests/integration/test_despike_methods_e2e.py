@@ -1,13 +1,13 @@
 """End-to-end despike method dispatch through run_scan on the committed
 sol_0921 fixture workspace.
 
-- ``none`` equivalence (MLD-SYS-011): identical shared outputs to a modz
+- ``none`` equivalence: identical shared outputs to a modz
   run minus every despike artifact — the former despike_r1=False
   behavior under the unified selector.
 - ``modz``: legacy artifact set unchanged (the byte-level golden anchor
-  is the local slow suite, MLD-SYS-010).
+  is the local slow suite).
 - ``ml`` (stub model): full detect → replace → record → persist →
-  round-trip chain (MLD-SYS-006/008/012).
+  round-trip chain.
 """
 
 import json
@@ -58,7 +58,7 @@ class TestNoneEquivalence:
     def test_none_matches_modz_minus_despike_artifacts(
         self, tmp_path, fixtures_path
     ):
-        """MLD-SYS-011 AC1: a `none` run produces no despike artifacts and
+        """A `none` run produces no despike artifacts and
         every output it does produce is byte-identical to the modz run's
         counterpart (modz only ADDS despike artifacts)."""
         none_result, none_dir = _run_scan(
@@ -132,7 +132,7 @@ class TestMlEndToEnd:
             baseline_r1=False,
         )
 
-        # Record: run-level provenance (MLD-SYS-012 AC1)
+        # Record: run-level provenance
         despike_meta = result.metadata["despike"]
         assert despike_meta["method"] == "ml_v1.3_tau_matched"
         assert despike_meta["model_sha256"] == stub_manifest.sha256
@@ -150,7 +150,7 @@ class TestMlEndToEnd:
         with open(cr_json[0]) as f:
             assert json.load(f) == despike_meta
 
-        # Persist + round-trip equality (MLD-SYS-008 AC2)
+        # Persist + round-trip equality
         persist = CRMaskService().persist_masks(
             sol="0921",
             target=TARGET,
@@ -180,7 +180,7 @@ class TestMlEndToEnd:
                 stored.setdefault(str(point.point_index), {})[
                     spectrum.region
                 ] = list(mask.channel_indices)
-                # Provenance equality on rows (MLD-SYS-012 AC2)
+                # Provenance equality on rows
                 assert mask.method == despike_meta["method"]
                 assert mask.model_sha256 == despike_meta["model_sha256"]
                 assert mask.tau == despike_meta["tau"][spectrum.region]
