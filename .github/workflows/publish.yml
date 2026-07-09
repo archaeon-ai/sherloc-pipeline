@@ -1,17 +1,12 @@
 # Tag-triggered GHCR publish for sherloc-pipeline.
 #
-# Track B5 deliverable for the m2020-phase v1.0-beta deploy chain
-# (ARCHITECTURE_LOCKED §14 D3.2). Fires on `v*` tag pushes on any
-# branch, builds the runtime stage of the multi-stage Dockerfile,
-# and pushes `ghcr.io/archaeon-ai/sherloc-pipeline:<tag>`.
+# Fires on `v*` tag pushes on any branch. Builds the runtime stage of the
+# multi-stage Dockerfile as a multi-arch image (linux/amd64 + linux/arm64)
+# and pushes it to `ghcr.io/archaeon-ai/sherloc-pipeline:<tag>`.
 #
-# Image visibility: private for v1.0-beta. The VPS pulls with a PAT
-# scoped to packages:read. The v1.0.1 visibility flip will re-evaluate.
-#
-# Follow-up (v1.0.1 sunset deliverable on the new public
-# `archaeon-ai/sherloc-pipeline` repo): port the supply-chain extras
-# pattern from `ubs/.github/workflows/oci.yml` — cosign keyless
-# signing, SPDX SBOM attestation, SLSA v1 provenance.
+# Before anything is built or pushed, a gate enforces that the pushed tag
+# equals `v<project.version>` from pyproject.toml (see the "Verify pyproject
+# version matches pushed tag" step and DEPLOYMENT_CONTRACT.md §10).
 name: Publish image to GHCR
 
 on:
