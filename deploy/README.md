@@ -11,9 +11,9 @@ self-hosted Docker service. The two files here are the canonical
 
 ## What does NOT live here
 
-- `Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh` — at repo
-  root; they ship as part of the published GHCR image, not as
-  separately-installed artefacts.
+- `Dockerfile`, `docker-entrypoint.sh` — at repo root; they ship as part
+  of the published GHCR image, not as separately-installed artefacts.
+  Use `docker-compose.example.yml` above as the reference Compose shape.
 - Runtime environment files (`/etc/sherloc/*.env` or equivalent) —
   materialised on the deploy host from `env-templates/sherloc.env.example`
   plus operator-provided secrets. Do not commit per-deploy environment
