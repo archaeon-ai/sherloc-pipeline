@@ -36,6 +36,7 @@ from rich.progress import (
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from sherloc_pipeline.core.r2_keys import resolve_disk_path
 from sherloc_pipeline.database import get_engine, get_session
 from sherloc_pipeline.services.base import ServiceResult
 from sherloc_pipeline.services.errors import SherlocServiceError
@@ -170,6 +171,8 @@ class SegmentationService:
         console: Optional[Console] = None,
         database_path: Optional[Path] = None,
         segmentation_config: Optional[SegmentationConfig] = None,
+        data_root: Optional[str] = None,
+        pds_cache_dir: Optional[str] = None,
     ):
         """Initialize the segmentation service.
 
@@ -177,6 +180,13 @@ class SegmentationService:
             console: Rich console for progress output
             database_path: Path to SQLite database
             segmentation_config: Configuration for the segmenter
+            data_root: Root of the Loupe (team-tier) data tree used to
+                resolve ``loupe/…`` locators to disk paths. Defaults to
+                the runtime config (``paths.data_root``; env
+                ``SHERLOC_DATA_DIR``).
+            pds_cache_dir: Root of the PDS ACI cache used to resolve
+                ``sol_NNNN/data_aci/…`` locators. Defaults to the runtime
+                config (``pds.cache_dir``; env ``SHERLOC_PDS_CACHE_DIR``).
         """
         self.console = console or Console()
         self.seg_config = segmentation_config or SegmentationConfig()
@@ -186,6 +196,17 @@ class SegmentationService:
 
         self.database_path = database_path
         self.engine = get_engine(database_path)
+
+        if data_root is None or pds_cache_dir is None:
+            from sherloc_pipeline.services.config import get_runtime_config
+
+            config = get_runtime_config()
+            if data_root is None:
+                data_root = config.paths.get("data_root")
+            if pds_cache_dir is None:
+                pds_cache_dir = config.pds.cache_dir
+        self.data_root = data_root
+        self.pds_cache_dir = pds_cache_dir
 
         # Initialize schema
         self._ensure_schema()
@@ -214,11 +235,12 @@ class SegmentationService:
             limit: Maximum number of images
 
         Returns:
-            List of image records with id, file_path
+            List of image records with id, r2_rel_key
         """
-        # Get images that haven't been segmented yet
+        # Get images that haven't been segmented yet. Disk reads derive
+        # from the stored relative locator (r2_rel_key), not file_path (#7).
         query = """
-            SELECT ci.id, ci.file_path, ci.scan_id, ci.sol_number
+            SELECT ci.id, ci.r2_rel_key, ci.scan_id, ci.sol_number
             FROM context_images ci
             WHERE ci.file_format = 'IMG'
             AND NOT EXISTS (
@@ -239,7 +261,7 @@ class SegmentationService:
         return [
             {
                 "id": row[0],
-                "file_path": row[1],
+                "r2_rel_key": row[1],
                 "scan_id": row[2],
                 "sol_number": row[3],
             }
@@ -447,8 +469,8 @@ class SegmentationService:
 
                             except Exception as e:
                                 stats.images_failed += 1
-                                stats.errors.append(f"{img_record['file_path']}: {e}")
-                                logger.exception(f"Error processing {img_record['file_path']}")
+                                stats.errors.append(f"{img_record['r2_rel_key']}: {e}")
+                                logger.exception(f"Error processing {img_record['r2_rel_key']}")
 
                             progress.advance(task)
                 else:
@@ -471,8 +493,8 @@ class SegmentationService:
 
                         except Exception as e:
                             stats.images_failed += 1
-                            stats.errors.append(f"{img_record['file_path']}: {e}")
-                            logger.exception(f"Error processing {img_record['file_path']}")
+                            stats.errors.append(f"{img_record['r2_rel_key']}: {e}")
+                            logger.exception(f"Error processing {img_record['r2_rel_key']}")
 
                 # Final commit
                 self._update_job(
@@ -525,16 +547,30 @@ class SegmentationService:
         """
         stats = BatchStats()
         image_id = img_record["id"]
-        file_path = img_record["file_path"]
+        locator = img_record["r2_rel_key"]
+
+        # Resolve the on-disk path from the stored relative locator (#7).
+        # A None resolution (missing/unknown locator) fails this image the
+        # same way a missing file always has.
+        path = resolve_disk_path(
+            locator,
+            data_root=self.data_root,
+            pds_cache_dir=self.pds_cache_dir,
+        )
+        if path is None:
+            raise SegmentationError(
+                f"Cannot resolve disk path from locator {locator!r}",
+                image_path=locator,
+            )
 
         # Read image
-        image, metadata = read_aci_image(file_path, validate_dimensions=False)
+        image, metadata = read_aci_image(str(path), validate_dimensions=False)
 
         # Segment
         result = segmenter.segment(
             image,
             image_id=image_id,
-            image_path=file_path,
+            image_path=str(path),
             compute_morphometry=True,
         )
 
@@ -566,16 +602,17 @@ class SegmentationService:
 
         try:
             with get_session(self.engine) as session:
-                # Get image record
+                # Get image record. Disk reads derive from the stored
+                # relative locator (r2_rel_key), not file_path (#7).
                 result = session.execute(
-                    text("SELECT file_path FROM context_images WHERE id = :id"),
+                    text("SELECT r2_rel_key FROM context_images WHERE id = :id"),
                     {"id": image_id}
                 ).fetchone()
 
                 if not result:
                     raise SegmentationError(f"Image not found: {image_id}")
 
-                file_path = result[0]
+                locator = result[0]
 
                 # Check if already processed
                 if not force:
@@ -597,12 +634,26 @@ class SegmentationService:
                         {"id": image_id}
                     )
 
+                # Resolve the on-disk path from the stored relative
+                # locator (#7); a None resolution fails like a missing file.
+                path = resolve_disk_path(
+                    locator,
+                    data_root=self.data_root,
+                    pds_cache_dir=self.pds_cache_dir,
+                )
+                if path is None:
+                    raise SegmentationError(
+                        f"Cannot resolve disk path from locator {locator!r} "
+                        f"for image {image_id}",
+                        image_path=locator,
+                    )
+
                 # Process
-                image, metadata = read_aci_image(file_path, validate_dimensions=False)
+                image, metadata = read_aci_image(str(path), validate_dimensions=False)
                 seg_result = segmenter.segment(
                     image,
                     image_id=image_id,
-                    image_path=file_path,
+                    image_path=str(path),
                     compute_morphometry=True,
                 )
 

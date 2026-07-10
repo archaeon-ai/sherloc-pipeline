@@ -6,8 +6,9 @@ image's position in the tier's data tree. Physical locations derive from
 it at the edges:
 
 - R2 key   = ``sherloc-aci/`` + locator (:func:`derive_r2_key`)
-- disk path = ``<data_root>/`` + locator (processing side; deployment
-  config, not this module)
+- disk path = ``<root>/`` + locator (processing side;
+  :func:`resolve_disk_path` — the deployment roots are passed in, not
+  read from env here)
 
 Unresolved PDS references carry the ``pds:<lidvid>`` scheme in the same
 column (one scheme in the relative-locator family); they have no R2 key
@@ -36,7 +37,7 @@ per-tier databases — the locator itself is tier-neutral.
 from __future__ import annotations
 
 import re
-from pathlib import PurePath, PurePosixPath
+from pathlib import Path, PurePath, PurePosixPath
 
 # NOTE: fastapi is imported lazily inside the raising functions.
 # This module sits on the ingestion import path (services/ingestion.py
@@ -186,4 +187,61 @@ def derive_rel_locator(file_path: str | PurePath) -> str | None:
         if ".." in rel or "\\" in rel:
             return None
         return rel
+    return None
+
+
+def resolve_disk_path(
+    rel_locator: str | None,
+    *,
+    data_root: str | PurePath | None,
+    pds_cache_dir: str | PurePath | None,
+) -> Path | None:
+    """Resolve a stored relative locator to an on-disk path, or ``None``.
+
+    The **disk-edge inverse** of :func:`derive_rel_locator`: where
+    :func:`derive_r2_key` prepends the R2 key prefix, this prepends the
+    deployment's data root. Processing-side callers read image bytes from
+    ``<root> + locator`` instead of the machine-specific absolute
+    ``file_path`` (issue #7). Two tiers, two roots:
+
+    - Loupe workspace tree (team tier):
+      ``loupe/sol_NNNN/…`` → ``<data_root>/loupe/sol_NNNN/…``
+    - PDS ACI cache tree (public tier):
+      ``sol_NNNN/data_aci/…`` → ``<pds_cache_dir>/sol_NNNN/data_aci/…``
+
+    The ``sol_NNNN`` anchor accepts the ``_colorized`` variant
+    (:func:`core.coordinates` colorizes the *locator* before resolving),
+    so a ``loupe/sol_NNNN_colorized/…`` locator resolves under
+    ``data_root``.
+
+    Returns ``None`` — the caller then raises its own error equivalent to
+    a missing-file failure — when:
+
+    - the locator is missing / empty (unknown-layout row; NULL in the DB),
+    - it carries the unresolved ``pds:`` scheme (not yet downloaded — the
+      caller branches on this exactly as before),
+    - it matches neither tier layout,
+    - it fails the path-traversal guard (``..`` / absolute / backslash),
+      mirroring :func:`derive_r2_key`, or
+    - the matched tier's root is ``None`` (that tier's data is not
+      mounted in this deployment).
+    """
+    if not rel_locator or rel_locator.startswith("pds:"):
+        return None
+    # Path-traversal / absolute guard — same conservative substring
+    # semantics as _validate_key on the R2-key edge.
+    if ".." in rel_locator or rel_locator.startswith("/") or "\\" in rel_locator:
+        return None
+
+    parts = rel_locator.split("/")
+    # Loupe workspace tree (team tier) → data_root.
+    if len(parts) >= 2 and parts[0] == "loupe" and _SOL_ANCHOR_RE.match(parts[1]):
+        if data_root is None:
+            return None
+        return Path(data_root).joinpath(*parts)
+    # PDS ACI cache tree (public tier) → pds_cache_dir.
+    if len(parts) >= 2 and _SOL_ANCHOR_RE.match(parts[0]) and parts[1] == "data_aci":
+        if pds_cache_dir is None:
+            return None
+        return Path(pds_cache_dir).joinpath(*parts)
     return None

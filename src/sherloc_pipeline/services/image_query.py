@@ -52,6 +52,7 @@ from sherloc_pipeline.vision.img_reader import (
     read_aci_image,
     ACIImageMetadata,
 )
+from sherloc_pipeline.core.r2_keys import resolve_disk_path
 from sherloc_pipeline.services.base import ServiceResult
 from sherloc_pipeline.services.errors import SherlocServiceError
 
@@ -79,7 +80,11 @@ class ImageInfo:
         scan_id: Associated scan UUID
         sol_number: Mars sol number
         sclk_start: Spacecraft clock timestamp
-        file_path: Path to image file
+        file_path: Absolute path to image file (write-only transitional
+            column; disk reads now derive from ``r2_rel_key``, see #7)
+        r2_rel_key: Canonical relative locator (the string after
+            ``sherloc-aci/`` in the R2 key); disk reads resolve it to a
+            path via :func:`core.r2_keys.resolve_disk_path`
         file_format: File format (IMG or PNG)
         camera_id: Camera identifier (SC0, SC1, SC2, SC3)
         image_type: Image type (ACI or WATSON)
@@ -107,6 +112,7 @@ class ImageInfo:
     image_time: Optional[datetime]
     focus_mode: Optional[str]
     local_time: Optional[str]
+    r2_rel_key: Optional[str] = None
     scan_target: Optional[str] = None
     scan_n_points: Optional[int] = None
 
@@ -119,6 +125,7 @@ class ImageInfo:
             sol_number=image.sol_number,
             sclk_start=image.sclk_start,
             file_path=image.file_path,
+            r2_rel_key=image.r2_rel_key,
             file_format=image.file_format,
             camera_id=image.camera_id,
             image_type=image.image_type,
@@ -197,12 +204,21 @@ class ImageQueryService:
         self,
         console: Optional[Console] = None,
         database_path: Optional[Path] = None,
+        data_root: Optional[Union[str, Path]] = None,
+        pds_cache_dir: Optional[Union[str, Path]] = None,
     ):
         """Initialize the image query service.
 
         Args:
             console: Rich console for progress output
             database_path: Path to SQLite database (defaults to ./phase.db)
+            data_root: Root of the Loupe (team-tier) data tree used to
+                resolve ``loupe/…`` locators to disk paths. Defaults to
+                the runtime config (``paths.data_root``; env
+                ``SHERLOC_DATA_DIR``).
+            pds_cache_dir: Root of the PDS ACI cache used to resolve
+                ``sol_NNNN/data_aci/…`` locators. Defaults to the runtime
+                config (``pds.cache_dir``; env ``SHERLOC_PDS_CACHE_DIR``).
         """
         self.console = console or Console()
 
@@ -211,6 +227,31 @@ class ImageQueryService:
 
         self.database_path = database_path
         self.engine = get_engine(database_path)
+
+        if data_root is None or pds_cache_dir is None:
+            from sherloc_pipeline.services.config import get_runtime_config
+
+            config = get_runtime_config()
+            if data_root is None:
+                data_root = config.paths.get("data_root")
+            if pds_cache_dir is None:
+                pds_cache_dir = config.pds.cache_dir
+        self.data_root = data_root
+        self.pds_cache_dir = pds_cache_dir
+
+    def _resolve_disk_path(self, image_info: "ImageInfo") -> Optional[Path]:
+        """Resolve an image's on-disk path from its stored relative locator.
+
+        Disk reads derive from ``r2_rel_key`` (``<root> + locator``), never
+        the transitional absolute ``file_path`` (#7). Returns ``None`` when
+        the locator is missing / ``pds:``-schemed / unrecognized — callers
+        raise their own missing-file-equivalent error.
+        """
+        return resolve_disk_path(
+            image_info.r2_rel_key,
+            data_root=self.data_root,
+            pds_cache_dir=self.pds_cache_dir,
+        )
 
     # ===========================================================================
     # Query Methods
@@ -595,7 +636,15 @@ class ImageQueryService:
 
         def process_image(image_info: ImageInfo) -> Optional[Path]:
             """Process a single image for export."""
-            src_path = Path(image_info.file_path)
+            src_path = self._resolve_disk_path(image_info)
+
+            if src_path is None:
+                stats.images_failed += 1
+                stats.errors.append(
+                    f"Cannot resolve disk path from locator "
+                    f"{image_info.r2_rel_key!r} (image_id={image_info.id})"
+                )
+                return None
 
             if not src_path.exists():
                 stats.images_failed += 1
@@ -802,12 +851,22 @@ class ImageQueryService:
             >>> images = service.query_by_sol(921)
             >>> data, metadata = service.load_image(images[0])
         """
-        path = Path(image_info.file_path)
+        path = self._resolve_disk_path(image_info)
+
+        if path is None:
+            raise ImageQueryError(
+                f"Cannot resolve image path from locator: {image_info.r2_rel_key!r}",
+                {"image_id": image_info.id, "r2_rel_key": image_info.r2_rel_key},
+            )
 
         if not path.exists():
             raise ImageQueryError(
                 f"Image file not found: {path}",
-                {"image_id": image_info.id, "file_path": str(path)},
+                {
+                    "image_id": image_info.id,
+                    "r2_rel_key": image_info.r2_rel_key,
+                    "resolved_path": str(path),
+                },
             )
 
         if path.suffix.upper() == ".IMG":
@@ -925,11 +984,17 @@ class ImageQueryService:
             if image.vicar_metadata:
                 return image.vicar_metadata
 
-            # Try to read from file if not in database
-            if image.file_path and Path(image.file_path).suffix.upper() == ".IMG":
+            # Try to read the label from disk if not in the database.
+            # Disk reads derive from the stored relative locator (#7).
+            resolved = resolve_disk_path(
+                image.r2_rel_key,
+                data_root=self.data_root,
+                pds_cache_dir=self.pds_cache_dir,
+            )
+            if resolved is not None and resolved.suffix.upper() == ".IMG":
                 try:
                     from sherloc_pipeline.vision.img_reader import get_raw_vicar_label
-                    return get_raw_vicar_label(image.file_path)
+                    return get_raw_vicar_label(str(resolved))
                 except Exception:
                     pass
 
