@@ -235,6 +235,29 @@ class TestUnderivableLocatorSkipped:
         with get_session(service.engine) as session:
             assert session.query(ContextImageORM).count() == 0
 
+    def test_public_ingest_image_reports_failure_not_success(self, tmp_path):
+        """#7 F3: the public ingest_image() wrapper must NOT report success
+        when the row was rejected for having no derivable locator — it must
+        surface the error, mirroring ingest_all_images(). An existing file
+        outside any derivable locator layout exercises the public path."""
+        db_path = tmp_path / "test.db"
+        service = ImageIngestionService(database_path=db_path)
+        create_all_tables(service.engine)
+
+        # An EXISTING file (ingest_image raises if absent) at a path with
+        # no sol_NNNN anchor -> derive_rel_locator returns None -> skipped.
+        bad = tmp_path / "unrecognized" / "x.IMG"
+        bad.parent.mkdir(parents=True)
+        bad.write_bytes(b"not a real IMG")
+
+        result = service.ingest_image(bad)
+
+        assert result.metadata["success"] is False
+        assert result.metadata["errors"]
+        assert "locator" in result.metadata["errors"][0].lower()
+        with get_session(service.engine) as session:
+            assert session.query(ContextImageORM).count() == 0
+
 
 class TestScanLinkage:
     """Tests for SCLK-based scan linkage."""

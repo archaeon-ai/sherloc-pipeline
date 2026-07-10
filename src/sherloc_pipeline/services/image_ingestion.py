@@ -330,6 +330,12 @@ class ImageIngestionService:
 
         if stats.images_skipped:
             summary = f"Image already exists (skipped): {img_path.name}"
+        elif stats.errors:
+            # Fail closed (#7): a row with no derivable locator (or an
+            # unreadable image) is rejected, not persisted — report that
+            # honestly rather than as a success, mirroring
+            # ingest_all_images()'s error propagation.
+            summary = f"Image rejected: {img_path.name} ({stats.errors[0]})"
         else:
             linked = "linked to scan" if stats.images_linked else "no scan found"
             summary = f"Ingested image: {img_path.name} ({linked})"
@@ -338,10 +344,11 @@ class ImageIngestionService:
             summary=summary,
             warnings=stats.warnings,
             metadata={
-                "success": True,
+                "success": len(stats.errors) == 0,
                 "file_path": str(img_path),
                 "ingested": stats.images_ingested > 0,
                 "linked": stats.images_linked > 0,
+                "errors": stats.errors,
             },
         )
 
