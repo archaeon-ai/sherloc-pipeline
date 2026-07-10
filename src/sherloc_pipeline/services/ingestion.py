@@ -541,11 +541,11 @@ class IngestionService:
             roi_orm = RegionOfInterestORM.from_pydantic(roi)
             session.add(roi_orm)
 
-        # Add context images (dual-write: absolute file_path for
-        # processing-side disk reads, relative locator for R2 serving)
+        # Add context images: derive the relative locator from the
+        # ingestion source path (source_path is transient — never persisted).
         for img in result.context_images:
-            if img.r2_rel_key is None:
-                img.r2_rel_key = derive_rel_locator(img.file_path)
+            if img.r2_rel_key is None and img.source_path:
+                img.r2_rel_key = derive_rel_locator(img.source_path)
             img_orm = ContextImageORM.from_pydantic(img)
             session.add(img_orm)
 

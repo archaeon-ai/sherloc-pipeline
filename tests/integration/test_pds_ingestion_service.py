@@ -749,13 +749,12 @@ class TestACIContextImageAssociation:
                     "urn:nasa:pds:mars2020_imgops:data_aci_imgops:"
                 )
 
-    def test_file_path_format(self, service_with_sol921):
-        """All context images have file_path='pds:{lidvid}' and a matching locator."""
+    def test_r2_rel_key_format(self, service_with_sol921):
+        """All context images have r2_rel_key='pds:{lidvid}' (issue #7)."""
         service, _ = service_with_sol921
         with get_session(service.pds_engine) as session:
             images = session.query(ContextImageORM).all()
             for img in images:
-                assert img.file_path == f"pds:{img.pds_lidvid}"
                 # The locator round-trips the pds: scheme until the
                 # download step resolves the product to a cached file.
                 assert img.r2_rel_key == f"pds:{img.pds_lidvid}"

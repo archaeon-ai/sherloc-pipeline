@@ -47,18 +47,29 @@ class TestContextImage:
         image = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.ACI,
-            file_path="/data/img/aci_921.png",
+            source_path="/data/img/aci_921.png",
         )
         assert image.scan_id == scan_id
         assert image.image_type == ImageType.ACI
-        assert image.file_path == "/data/img/aci_921.png"
+        assert image.source_path == "/data/img/aci_921.png"
+
+    def test_basic_creation_without_source_path(self, scan_id):
+        """source_path is optional — a ContextImage can be built from a
+        stored r2_rel_key alone, with no ingestion-time source path."""
+        image = ContextImage(
+            scan_id=scan_id,
+            image_type=ImageType.ACI,
+            r2_rel_key="sol_0921/data_aci/aci_921.png",
+        )
+        assert image.source_path is None
+        assert image.r2_rel_key == "sol_0921/data_aci/aci_921.png"
 
     def test_full_creation(self, scan_id):
         """Create ContextImage with all fields."""
         image = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.ACI,
-            file_path="/data/img/aci_921.png",
+            source_path="/data/img/aci_921.png",
             product_id="urn:nasa:pds:mars2020_sherloc:...",
             sclk=672194998,
             pixel_scale_um=10.1,
@@ -73,22 +84,13 @@ class TestContextImage:
         assert image.width_px == 1648
         assert image.led_illumination is True
 
-    def test_file_path_not_empty(self, scan_id):
-        """file_path must not be empty."""
-        with pytest.raises(ValidationError):
-            ContextImage(
-                scan_id=scan_id,
-                image_type=ImageType.ACI,
-                file_path="",
-            )
-
     def test_positive_values(self, scan_id):
         """Positive value constraints are enforced."""
         with pytest.raises(ValidationError):
             ContextImage(
                 scan_id=scan_id,
                 image_type=ImageType.ACI,
-                file_path="/data/img/test.png",
+                source_path="/data/img/test.png",
                 pixel_scale_um=-10.1,  # Must be > 0
             )
 
@@ -96,7 +98,7 @@ class TestContextImage:
             ContextImage(
                 scan_id=scan_id,
                 image_type=ImageType.ACI,
-                file_path="/data/img/test.png",
+                source_path="/data/img/test.png",
                 width_px=0,  # Must be > 0
             )
 
@@ -105,7 +107,7 @@ class TestContextImage:
         image = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.ACI,
-            file_path="/data/img/test.png",
+            source_path="/data/img/test.png",
             width_px=1648,
             height_px=1200,
         )
@@ -115,7 +117,7 @@ class TestContextImage:
         image2 = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.ACI,
-            file_path="/data/img/test.png",
+            source_path="/data/img/test.png",
         )
         assert image2.aspect_ratio is None
 
@@ -124,7 +126,7 @@ class TestContextImage:
         image = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.ACI,
-            file_path="/data/img/test.png",
+            source_path="/data/img/test.png",
             width_px=1648,
             height_px=1200,
         )
@@ -134,7 +136,7 @@ class TestContextImage:
         image2 = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.ACI,
-            file_path="/data/img/test.png",
+            source_path="/data/img/test.png",
         )
         assert image2.total_pixels is None
 
@@ -152,7 +154,7 @@ class TestContextImage:
 
         image = ContextImage.from_loupe_metadata(
             scan_id=scan_id,
-            file_path="/data/img/test.png",
+            source_path="/data/img/test.png",
             image_type=ImageType.ACI,
             metadata=metadata,
         )
@@ -172,7 +174,7 @@ class TestContextImage:
             metadata = {"led_flag": true_val}
             image = ContextImage.from_loupe_metadata(
                 scan_id=scan_id,
-                file_path="/data/img/test.png",
+                source_path="/data/img/test.png",
                 image_type=ImageType.ACI,
                 metadata=metadata,
             )
@@ -183,7 +185,7 @@ class TestContextImage:
             metadata = {"led_flag": false_val}
             image = ContextImage.from_loupe_metadata(
                 scan_id=scan_id,
-                file_path="/data/img/test.png",
+                source_path="/data/img/test.png",
                 image_type=ImageType.ACI,
                 metadata=metadata,
             )
@@ -194,7 +196,7 @@ class TestContextImage:
         image = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.WATSON,
-            file_path="/data/img/watson_921.png",
+            source_path="/data/img/watson_921.png",
         )
         assert image.image_type == ImageType.WATSON
 
@@ -203,7 +205,7 @@ class TestContextImage:
         image = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.ACI,
-            file_path="/data/img/test.png",
+            source_path="/data/img/test.png",
         )
         assert image.id is not None
         assert isinstance(image.id, uuid.UUID)
@@ -464,12 +466,12 @@ class TestContextModelIntegration:
         aci = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.ACI,
-            file_path="/data/img/aci_921.png",
+            source_path="/data/img/aci_921.png",
         )
         watson = ContextImage(
             scan_id=scan_id,
             image_type=ImageType.WATSON,
-            file_path="/data/img/watson_921.png",
+            source_path="/data/img/watson_921.png",
         )
 
         assert aci.scan_id == watson.scan_id == scan_id

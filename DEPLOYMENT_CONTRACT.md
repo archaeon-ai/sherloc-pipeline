@@ -165,7 +165,7 @@ deliberate decision rather than silent drift. See
 
 | Element | Value |
 |---|---|
-| Current head | `931df60632cb` (`add_r2_rel_key_locator_to_context_images`) |
+| Current head | `17db1a1940d6` (`drop_file_path_from_context_images`) |
 | Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade head` → uvicorn |
 | Contract guarantee | Single head (no fork); migrations idempotent |
 

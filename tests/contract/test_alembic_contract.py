@@ -19,7 +19,7 @@ from typing import Optional, Sequence, Union
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERSIONS_DIR = REPO_ROOT / "alembic" / "versions"
 
-EXPECTED_HEAD = "931df60632cb"  # add_r2_rel_key_locator_to_context_images
+EXPECTED_HEAD = "17db1a1940d6"  # drop_file_path_from_context_images
 
 DownRevision = Union[None, str, Sequence[str]]
 

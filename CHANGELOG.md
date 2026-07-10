@@ -7,11 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Processing-side half of #7: the disk-read sites now derive their path
-from the stored relative locator (`context_images.r2_rel_key`) via
-`<root> + locator`, exactly as the serve path derives R2 keys. `file_path`
-is now **write-only** — ingestion still dual-writes it, but no code reads
-it for disk access, so its column drop is the remaining #7 step.
+Closes #7: the transitional `context_images.file_path` column is
+dropped. Ingestion, the web serve path, and the processing-side disk
+resolver now use `r2_rel_key` exclusively — `file_path` carried no
+information `r2_rel_key` lacked (both serving databases were fully
+backfilled: team 1107/1107, public 1529/1529 including the 5 `pds:`
+sentinel rows). Deploying this release requires running the new Alembic
+migration (`17db1a1940d6`, `DROP COLUMN` via SQLite batch mode) against
+both the team and public databases; no separate data re-sync is needed
+since the locator was already the live read path before the drop.
+
+### Removed
+- **`context_images.file_path` column** (migration `17db1a1940d6`,
+  down-revision `931df60632cb`). `downgrade()` re-adds it as nullable
+  Text — the absolute paths cannot be reconstructed from `r2_rel_key`
+  alone, so a downgrade cannot restore the original data.
+- **`ImageInfo.file_path`** (`services/image_query.py`) — not part of
+  the frozen `--json` CLI contract (verified via
+  `tests/contract/test_cli_schema_contract.py` and a repo-wide grep of
+  `tests/contract/`), so dropped outright rather than kept as a
+  compatibility shim.
+
+Processing-side half of #7 (prior entry, still accurate): the
+disk-read sites derive their path from the stored relative locator
+(`context_images.r2_rel_key`) via `<root> + locator`, exactly as the
+serve path derives R2 keys.
 
 ### Added
 - **`core.r2_keys.resolve_disk_path(rel_locator, *, data_root,

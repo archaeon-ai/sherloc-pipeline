@@ -297,8 +297,9 @@ async def test_get_scan_points_aci_pixel_graceful_when_unresolvable(client):
 # ---------------------------------------------------------------------------
 
 
-def _seed_aci_context_image(test_engine, file_path: str) -> None:
-    """Add one ACI context_images row for SCAN_UUID with the given file_path.
+def _seed_aci_context_image(test_engine, source_path: str) -> None:
+    """Add one ACI context_images row for SCAN_UUID, locator derived from
+    the given ingestion-shaped source path.
 
     The colorized-variant probe in `get_scan` only fires when an ACI row
     exists, so tests that exercise the gating need to seed one. Uses the
@@ -319,9 +320,8 @@ def _seed_aci_context_image(test_engine, file_path: str) -> None:
                 id=str(_uuid.UUID("00000000-0000-0000-0000-000000000200")),
                 scan_id=SCAN_UUID,
                 image_type="ACI",
-                file_path=file_path,
                 # Same rule the production ingestion writer applies.
-                r2_rel_key=derive_rel_locator(file_path),
+                r2_rel_key=derive_rel_locator(source_path),
             )
         )
         session.commit()
@@ -387,7 +387,7 @@ async def test_get_scan_colorized_probe_targets_base_aci_not_angle_range(
 ):
     """With multiple ACI rows where the first
     is an angle-range variant (``_145-185``), the probe must target the
-    BASE row's file_path — the same row that GET /api/images/{id}/aci
+    BASE row's r2_rel_key — the same row that GET /api/images/{id}/aci
     actually serves. Earlier ``.first()``-based code path would have
     probed the angle-range row and answered with stale data, making
     the Workbench button state disagree with the served image bytes.
@@ -407,10 +407,6 @@ async def test_get_scan_colorized_probe_targets_base_aci_not_angle_range(
                 id=str(_uuid.UUID("00000000-0000-0000-0000-000000000301")),
                 scan_id=SCAN_UUID,
                 image_type="ACI",
-                file_path=(
-                    "/work/sherloc/PHASE-data/loupe/sol_0921/"
-                    "Amherst_Point_aci_145-185.png"
-                ),
                 r2_rel_key="loupe/sol_0921/Amherst_Point_aci_145-185.png",
             )
         )
@@ -419,10 +415,6 @@ async def test_get_scan_colorized_probe_targets_base_aci_not_angle_range(
                 id=str(_uuid.UUID("00000000-0000-0000-0000-000000000302")),
                 scan_id=SCAN_UUID,
                 image_type="ACI",
-                file_path=(
-                    "/work/sherloc/PHASE-data/loupe/sol_0921/"
-                    "Amherst_Point_aci.png"
-                ),
                 r2_rel_key="loupe/sol_0921/Amherst_Point_aci.png",
             )
         )
@@ -449,7 +441,7 @@ async def test_get_scan_colorized_probe_targets_base_aci_not_angle_range(
     assert resp.status_code == 200
     assert resp.json()["scan"]["colorized_aci_available"] is True
     assert len(seen_paths) == 1, f"expected single probe, got {seen_paths!r}"
-    # The probe MUST have seen the base file_path (no angle-range
+    # The probe MUST have seen the base r2_rel_key (no angle-range
     # suffix), matching what GET /api/images/{id}/aci would serve.
     assert seen_paths[0].endswith("Amherst_Point_aci.png")
     assert "_145-185" not in seen_paths[0]

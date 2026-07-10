@@ -16,7 +16,7 @@ Example:
     >>> image = ContextImage(
     ...     scan_id=scan.id,
     ...     image_type=ImageType.ACI,
-    ...     file_path="/data/img/aci_921.png",
+    ...     source_path="/data/img/aci_921.png",
     ...     pixel_scale_um=10.1,
     ... )
 """
@@ -54,7 +54,8 @@ class ContextImage(IdentifiableModel):
     Attributes:
         scan_id: UUID of parent Scan
         image_type: Type of image (ACI or WATSON)
-        file_path: Path to image file
+        source_path: Ingestion-time source path (used only to derive
+            r2_rel_key during ingestion; not persisted)
         product_id: PDS product ID (if from PDS)
         sclk: Acquisition spacecraft clock
         pixel_scale_um: Micrometers per pixel
@@ -69,7 +70,7 @@ class ContextImage(IdentifiableModel):
         >>> image = ContextImage(
         ...     scan_id=scan.id,
         ...     image_type=ImageType.ACI,
-        ...     file_path="/data/img/aci_921.png",
+        ...     source_path="/data/img/aci_921.png",
         ...     pixel_scale_um=10.1,
         ...     width_px=1648,
         ...     height_px=1200,
@@ -84,9 +85,10 @@ class ContextImage(IdentifiableModel):
     image_type: ImageType = Field(
         description="Type of image (ACI or WATSON)"
     )
-    file_path: str = Field(
-        min_length=1,
-        description="Path to image file"
+    source_path: Optional[str] = Field(
+        default=None,
+        description="Ingestion-time source path; used only to derive "
+        "r2_rel_key during ingestion — NOT persisted."
     )
     r2_rel_key: Optional[str] = Field(
         default=None,
@@ -163,7 +165,7 @@ class ContextImage(IdentifiableModel):
     def from_loupe_metadata(
         cls,
         scan_id: uuid.UUID,
-        file_path: str,
+        source_path: str,
         image_type: ImageType,
         metadata: dict,
         **kwargs,
@@ -172,7 +174,8 @@ class ContextImage(IdentifiableModel):
 
         Args:
             scan_id: UUID of parent Scan
-            file_path: Path to image file
+            source_path: Ingestion-time source path; used only to derive
+                r2_rel_key — not persisted
             image_type: Type of image
             metadata: Dictionary with image metadata
             **kwargs: Additional fields
@@ -183,7 +186,7 @@ class ContextImage(IdentifiableModel):
         return cls(
             scan_id=scan_id,
             image_type=image_type,
-            file_path=file_path,
+            source_path=source_path,
             product_id=metadata.get("product_ID"),
             sclk=cls._safe_int(metadata.get("sclk")),
             pixel_scale_um=cls._safe_float(metadata.get("pixel_scale")),

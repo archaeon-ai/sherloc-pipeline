@@ -362,12 +362,18 @@ class ImageIngestionService:
         stats = ImageIngestionStats(images_scanned=1)
 
         with get_session(self.engine) as session:
-            # Check if image already exists by file_path
-            existing = session.execute(
-                select(ContextImageORM).where(
-                    ContextImageORM.file_path == str(img_path)
-                )
-            ).scalar_one_or_none()
+            # Check if image already exists by its derived relative locator.
+            # A path that derives no locator has no stable identity to
+            # dedup against — treat it as not-existing rather than risk an
+            # IS NULL match against every other un-derivable row.
+            existing = None
+            loc = derive_rel_locator(img_path)
+            if loc is not None:
+                existing = session.execute(
+                    select(ContextImageORM).where(
+                        ContextImageORM.r2_rel_key == loc
+                    )
+                ).scalar_one_or_none()
 
             if existing and not force:
                 stats.images_skipped = 1
@@ -422,7 +428,7 @@ class ImageIngestionService:
             # Insert record using raw SQL to handle new columns
             insert_sql = text("""
                 INSERT INTO context_images (
-                    id, scan_id, image_type, file_path, r2_rel_key,
+                    id, scan_id, image_type, r2_rel_key,
                     product_id, sclk,
                     pixel_scale_um, working_distance_cm, motor_position,
                     exposure_time_ms, led_illumination, width_px, height_px,
@@ -430,7 +436,7 @@ class ImageIngestionService:
                     sequence_id, image_time, focus_mode, focus_position_count,
                     local_mean_solar_time, vicar_metadata
                 ) VALUES (
-                    :id, :scan_id, :image_type, :file_path, :r2_rel_key,
+                    :id, :scan_id, :image_type, :r2_rel_key,
                     :product_id, :sclk,
                     :pixel_scale_um, :working_distance_cm, :motor_position,
                     :exposure_time_ms, :led_illumination, :width_px, :height_px,
@@ -447,8 +453,7 @@ class ImageIngestionService:
                 "id": image_id,
                 "scan_id": scan_id,
                 "image_type": image_type,
-                "file_path": str(img_path),
-                "r2_rel_key": derive_rel_locator(img_path),
+                "r2_rel_key": loc,
                 "product_id": metadata.product_id,
                 "sclk": sclk_start,
                 "pixel_scale_um": 10.1,  # ACI fixed pixel scale

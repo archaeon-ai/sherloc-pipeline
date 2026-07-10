@@ -33,15 +33,10 @@ from sherloc_pipeline.web import r2_reader
 from sherloc_pipeline.web.routes import images as images_module
 from tests.unit.web.conftest import SCAN_UUID
 
-# Per-tier file_path conventions match the canonical per-tier ingestion
-# layout; the rel keys are what the backfill migration derives from them.
-_TEAM_FILE_PATH = (
-    "/data/sherloc/data/loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG"
-)
+# Per-tier r2_rel_key conventions match the canonical per-tier ingestion
+# layout (what the (now-retired) backfill migration derived from the
+# dropped file_path column at migration time).
 _TEAM_REL_KEY = "loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG"
-_PUBLIC_FILE_PATH = (
-    "/data/sherloc/pds/sol_0921/data_aci/SC0_0921_TEST.IMG"
-)
 _PUBLIC_REL_KEY = "sol_0921/data_aci/SC0_0921_TEST.IMG"
 
 
@@ -97,15 +92,13 @@ def _make_png_bytes(size: tuple[int, int] = (16, 16), color: int = 128) -> bytes
     return buf.getvalue()
 
 
-def _insert_aci(
-    test_engine, file_path: str, r2_rel_key: str | None = None
-) -> None:
-    """Insert a ContextImageORM row for SCAN_UUID.
+def _insert_aci(test_engine, r2_rel_key: str | None) -> None:
+    """Insert a ContextImageORM row for SCAN_UUID with the given locator.
 
-    ``r2_rel_key`` defaults to what the backfill migration would derive
-    for a canonical-layout ``file_path``; pass ``None`` explicitly via
-    ``_insert_aci(engine, path, r2_rel_key=None)`` … callers below use
-    the module-level constants to be explicit either way.
+    Pass ``None`` for a row with no derivable R2 identity (e.g. the row
+    predates the backfill, or its source path matched no known ingestion
+    layout) — callers below use the module-level constants or ``None``
+    to be explicit either way.
     """
     factory = get_session_factory(test_engine)
     session = factory()
@@ -115,7 +108,6 @@ def _insert_aci(
                 id=str(uuid.uuid4()),
                 scan_id=SCAN_UUID,
                 image_type="ACI",
-                file_path=file_path,
                 r2_rel_key=r2_rel_key,
             )
         )
@@ -229,7 +221,7 @@ def test_aci_path_traversal_regex_blocks_dotdot():
 @pytest.mark.asyncio
 async def test_aci_team_resolve_200(client, test_engine, r2_team_client):
     """Team-tier PNG resolves through R2 → returns image bytes."""
-    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
+    _insert_aci(test_engine, _TEAM_REL_KEY)
     r2_team_client.put_object(
         Bucket="phase-team",
         Key="sherloc-aci/loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG",
@@ -249,7 +241,7 @@ async def test_aci_public_tier_vicar_converted(
     client, test_engine, r2_public_client
 ):
     """Public-tier .IMG (VICAR) — bytes fetched from R2, converted via tempfile."""
-    _insert_aci(test_engine, _PUBLIC_FILE_PATH, _PUBLIC_REL_KEY)
+    _insert_aci(test_engine, _PUBLIC_REL_KEY)
     r2_public_client.put_object(
         Bucket="phase-public",
         Key="sherloc-aci/sol_0921/data_aci/SC0_0921_TEST.IMG",
@@ -273,7 +265,7 @@ async def test_aci_public_tier_vicar_converted(
 @pytest.mark.asyncio
 async def test_aci_missing_object_404(client, test_engine, r2_team_client):
     """DB row exists, R2 key does not → resolver maps NoSuchKey to 404 not_found."""
-    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
+    _insert_aci(test_engine, _TEAM_REL_KEY)
     # NOTE: we deliberately do NOT put_object — bucket is empty.
 
     resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
@@ -285,7 +277,7 @@ async def test_aci_missing_object_404(client, test_engine, r2_team_client):
 async def test_aci_r2_timeout_returns_504(client, test_engine):
     """boto3 ReadTimeoutError → 504 upstream_timeout per spec §3.9.4."""
     from botocore.exceptions import ReadTimeoutError
-    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
+    _insert_aci(test_engine, _TEAM_REL_KEY)
     client_mock = MagicMock()
     client_mock.get_object.side_effect = ReadTimeoutError(endpoint_url="https://moto")
     r2_reader.set_r2_client_for_tests(client_mock, "team")
@@ -301,7 +293,7 @@ async def test_aci_r2_timeout_returns_504(client, test_engine):
 async def test_aci_r2_botocore_error_returns_500(client, test_engine):
     """boto3 non-timeout BotoCoreError → 500 upstream_error per spec §3.9.4."""
     from botocore.exceptions import EndpointConnectionError
-    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
+    _insert_aci(test_engine, _TEAM_REL_KEY)
     client_mock = MagicMock()
     client_mock.get_object.side_effect = EndpointConnectionError(
         endpoint_url="https://moto"
@@ -326,7 +318,7 @@ async def test_aci_cross_tier_access_denied_502(client, test_engine):
     would return.
     """
     from botocore.exceptions import ClientError
-    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
+    _insert_aci(test_engine, _TEAM_REL_KEY)
 
     client_mock = MagicMock()
     client_mock.get_object.side_effect = ClientError(
@@ -350,12 +342,12 @@ async def test_aci_cross_tier_access_denied_502(client, test_engine):
 async def test_aci_misconfigured_path_500(client, test_engine, r2_team_client):
     """Row with a NULL locator → misconfigured_path 500.
 
-    A NULL ``r2_rel_key`` (row predates the backfill, or its file_path
-    matched no known ingestion layout) has no R2 identity and is
-    rejected before any R2 call per §3.9.4 — the same failure class the
-    strip-prefix mismatch produced pre-locator.
+    A NULL ``r2_rel_key`` (row predates the backfill, or its ingestion
+    source path matched no known ingestion layout) has no R2 identity
+    and is rejected before any R2 call per §3.9.4 — the same failure
+    class the strip-prefix mismatch produced pre-locator.
     """
-    _insert_aci(test_engine, "/somewhere/unrecognized/img/x.PNG", None)
+    _insert_aci(test_engine, None)
 
     resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
     assert resp.status_code == 500
@@ -373,7 +365,7 @@ async def test_aci_pds_lidvid_returns_misconfigured_path_500(
     misconfiguration. v1.0-beta rejects (same behavior as pre-locator).
     """
     lidvid = "pds:urn:nasa:pds:mars2020_mission:data_sherloc:SHRLC0001_0001"
-    _insert_aci(test_engine, lidvid, lidvid)
+    _insert_aci(test_engine, lidvid)
     resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
     assert resp.status_code == 500
     assert resp.json()["detail"] == "misconfigured_path"
@@ -392,7 +384,7 @@ async def test_aci_colorized_variant_via_r2(client, test_engine, r2_team_client)
     """
     import hashlib
 
-    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
+    _insert_aci(test_engine, _TEAM_REL_KEY)
     base_bytes = _make_png_bytes(color=64)
     colorized_bytes = _make_png_bytes(color=200)
     assert base_bytes != colorized_bytes  # sanity — the colors differ
@@ -426,7 +418,7 @@ async def test_aci_colorized_falls_back_to_base(
     client, test_engine, r2_team_client
 ):
     """colorized=true with no colorized variant in R2 → fall back to base key."""
-    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
+    _insert_aci(test_engine, _TEAM_REL_KEY)
     r2_team_client.put_object(
         Bucket="phase-team",
         Key="sherloc-aci/loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG",

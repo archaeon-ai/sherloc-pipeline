@@ -1107,7 +1107,7 @@ class LoupeWorkspaceParser:
                         ContextImage(
                             scan_id=scan.id,
                             image_type=img_type,
-                            file_path=str(img_file),
+                            source_path=str(img_file),
                         )
                     )
 
