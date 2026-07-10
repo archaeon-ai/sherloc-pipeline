@@ -298,12 +298,18 @@ def test_resolve_via_workspace_reader_malformed_csv_raises_coords_unavailable(
 # Legacy FS path (no reader)
 # ---------------------------------------------------------------------------
 
+# FS-fallback locator: workspace two levels up from the ACI file. Kept
+# distinct from the fixture's _TEAM_LOCATOR so each FS test lays its own
+# tmp layout and resolves it via data_root + r2_rel_key (NOT file_path, #7).
+_FS_LOCATOR = "loupe/sol_0921/detail_1/ws/img/test.PNG"
+
+
 def test_resolve_legacy_fs_path(scan_session, tmp_path, monkeypatch):
     """workspace_reader=None → resolver reads spatial.csv/loupe.csv from FS.
 
-    The ACI file_path is rewritten to point at tmp_path so the parent.parent
-    derivation lands in a real directory we control. Mirrors
-    local-filesystem dev installs (no PHASE_TIER set; no R2 mode).
+    Disk reads derive from the ACI's stored locator (r2_rel_key) + the
+    injected data_root (#7); .parent.parent lands in a real workspace dir
+    we control. Mirrors local-filesystem dev installs (no R2 mode).
     """
     workspace = tmp_path / "loupe" / "sol_0921" / "detail_1" / "ws"
     workspace.mkdir(parents=True)
@@ -314,12 +320,15 @@ def test_resolve_legacy_fs_path(scan_session, tmp_path, monkeypatch):
     aci_file = img_dir / "test.PNG"
     aci_file.write_bytes(b"\x89PNG\r\n\x1a\n")  # tiny PNG header
 
-    # Update ACI row to point at the temp location so .parent.parent == workspace.
+    # Point the ACI locator at the tmp layout so
+    # resolve_disk_path(locator, data_root=tmp_path).parent.parent == workspace.
     aci = scan_session.query(ContextImageORM).filter_by(scan_id=SCAN_UUID).first()
-    aci.file_path = str(aci_file)
+    aci.r2_rel_key = _FS_LOCATOR
     scan_session.commit()
 
-    coords = resolve_display_coordinates(scan_session, SCAN_UUID)
+    coords = resolve_display_coordinates(
+        scan_session, SCAN_UUID, data_root=str(tmp_path)
+    )
     assert len(coords) == N_POINTS
     for c in coords:
         assert c.transform_method == "scanner_calibration"
@@ -336,15 +345,35 @@ def test_resolve_legacy_fs_path_missing_files_raises(scan_session, tmp_path):
     aci_file.write_bytes(b"\x89PNG\r\n\x1a\n")
 
     aci = scan_session.query(ContextImageORM).filter_by(scan_id=SCAN_UUID).first()
-    aci.file_path = str(aci_file)
+    aci.r2_rel_key = _FS_LOCATOR
     scan_session.commit()
 
     with pytest.raises(CoordinatesUnavailableError) as excinfo:
-        resolve_display_coordinates(scan_session, SCAN_UUID)
+        resolve_display_coordinates(
+            scan_session, SCAN_UUID, data_root=str(tmp_path)
+        )
     msg = str(excinfo.value)
     assert "Loupe workspace files not found at" in msg
-    # FS-mode message names the directory; R2-mode message names the file_path
+    # FS-mode message names the resolved workspace directory.
     assert "spatial.csv present=False" in msg
+
+
+def test_resolve_legacy_fs_path_null_locator_raises(scan_session, tmp_path):
+    """workspace_reader=None and a NULL r2_rel_key → CoordinatesUnavailableError.
+
+    A row that matched no known layout has a NULL locator; the FS fallback
+    cannot resolve a disk path and fails with the missing-locator error
+    (the same shape as today's missing-file failure).
+    """
+    aci = scan_session.query(ContextImageORM).filter_by(scan_id=SCAN_UUID).first()
+    aci.r2_rel_key = None
+    scan_session.commit()
+
+    with pytest.raises(CoordinatesUnavailableError) as excinfo:
+        resolve_display_coordinates(
+            scan_session, SCAN_UUID, data_root=str(tmp_path)
+        )
+    assert "Cannot resolve a Loupe workspace disk path" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

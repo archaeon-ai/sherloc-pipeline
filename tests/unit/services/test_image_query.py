@@ -51,6 +51,7 @@ class TestImageInfo:
             sol_number = 921
             sclk_start = 748731411
             file_path = "/path/to/image.IMG"
+            r2_rel_key = "sol_0921/data_aci/image.IMG"
             file_format = "IMG"
             camera_id = "SC3"
             image_type = "ACI"
@@ -66,6 +67,7 @@ class TestImageInfo:
         assert info.id == "test-id"
         assert info.sol_number == 921
         assert info.camera_id == "SC3"
+        assert info.r2_rel_key == "sol_0921/data_aci/image.IMG"
         assert info.scan_target is None
 
     def test_from_orm_with_scan(self):
@@ -76,6 +78,7 @@ class TestImageInfo:
             sol_number = 921
             sclk_start = 748731411
             file_path = "/path/to/image.IMG"
+            r2_rel_key = "sol_0921/data_aci/image.IMG"
             file_format = "IMG"
             camera_id = "SC3"
             image_type = "ACI"
@@ -633,33 +636,37 @@ class TestExportImages:
 
     @pytest.fixture
     def service_with_real_images(self, db_with_images, tmp_path):
-        """Create service with actual image files."""
+        """Create service with actual image files under a locator-shaped tree.
+
+        Disk reads resolve ``r2_rel_key`` against ``data_root`` (#7), so the
+        file is laid out at ``<data_root>/<locator>`` and the row carries the
+        matching locator.
+        """
         db_path, scan1_id, _ = db_with_images
 
-        # Create a small test PNG
-        img_dir = tmp_path / "images"
-        img_dir.mkdir()
-
-        png_path = img_dir / "test.PNG"
+        # Lay the PNG under a Loupe-shaped locator tree rooted at data_root.
+        data_root = tmp_path / "data"
+        locator = "loupe/sol_0921/detail_1/ws/img/test.PNG"
+        png_path = data_root / locator
+        png_path.parent.mkdir(parents=True)
         from PIL import Image
         img = Image.fromarray(np.zeros((100, 100), dtype=np.uint8))
         img.save(png_path)
 
-        # Update database to point to real file
+        # Point the PNG row's locator at the tree.
         engine = get_engine(db_path)
         with get_session(engine) as session:
-            # Get the PNG image and update its path
             images = session.execute(
                 select(ContextImageORM).where(ContextImageORM.file_format == "PNG")
             ).scalars().all()
 
             for image in images:
-                image.file_path = str(png_path)
+                image.r2_rel_key = locator
 
             session.commit()
 
-        service = ImageQueryService(database_path=db_path)
-        return service, img_dir
+        service = ImageQueryService(database_path=db_path, data_root=data_root)
+        return service, png_path.parent
 
     def test_export_png(self, service_with_real_images, tmp_path):
         """Test exporting to PNG format."""
@@ -767,16 +774,21 @@ class TestLoadImage:
 
     @pytest.fixture
     def service_with_png(self, db_with_images, tmp_path):
-        """Create service with actual PNG file."""
+        """Create service with an actual PNG under a locator-shaped tree.
+
+        Disk reads resolve ``r2_rel_key`` against ``data_root`` (#7).
+        """
         db_path, _, _ = db_with_images
 
-        # Create test PNG
-        png_path = tmp_path / "test.PNG"
+        data_root = tmp_path / "data"
+        locator = "loupe/sol_0921/detail_1/ws/img/test.PNG"
+        png_path = data_root / locator
+        png_path.parent.mkdir(parents=True)
         from PIL import Image
         img = Image.fromarray(np.random.randint(0, 255, (100, 100), dtype=np.uint8))
         img.save(png_path)
 
-        # Update database
+        # Point the PNG row's locator at the tree.
         engine = get_engine(db_path)
         with get_session(engine) as session:
             images = session.execute(
@@ -785,12 +797,12 @@ class TestLoadImage:
 
             image_id = None
             for image in images:
-                image.file_path = str(png_path)
+                image.r2_rel_key = locator
                 image_id = image.id
 
             session.commit()
 
-        service = ImageQueryService(database_path=db_path)
+        service = ImageQueryService(database_path=db_path, data_root=data_root)
         return service, image_id
 
     def test_load_png(self, service_with_png):
@@ -821,15 +833,43 @@ class TestLoadImage:
 
         assert "not found" in str(exc_info.value).lower()
 
-    def test_load_missing_file(self, db_with_images):
-        """Test loading when file is missing."""
+    def test_load_null_locator(self, db_with_images):
+        """NULL locator (unknown-layout row) → cannot-resolve error (#7).
+
+        The db_with_images rows carry no r2_rel_key, so the disk read
+        cannot resolve a path and fails the same way a missing file did.
+        """
         db_path, _, _ = db_with_images
         service = ImageQueryService(database_path=db_path)
 
         images = service.query_all(limit=1)
+        assert images[0].r2_rel_key is None
 
         with pytest.raises(ImageQueryError) as exc_info:
             service.load_image(images[0])
+
+        assert "cannot resolve" in str(exc_info.value).lower()
+        assert "locator" in str(exc_info.value).lower()
+
+    def test_load_resolvable_but_missing_file(self, db_with_images, tmp_path):
+        """A valid locator whose file is absent under data_root → not-found."""
+        db_path, _, _ = db_with_images
+        data_root = tmp_path / "data"
+        service = ImageQueryService(database_path=db_path, data_root=data_root)
+
+        # Give one row a well-formed locator, but write no file for it.
+        engine = get_engine(db_path)
+        with get_session(engine) as session:
+            image = session.execute(
+                select(ContextImageORM).where(ContextImageORM.file_format == "PNG")
+            ).scalars().first()
+            image.r2_rel_key = "loupe/sol_0921/detail_1/ws/img/absent.PNG"
+            image_id = image.id
+            session.commit()
+
+        info = service.get_image_by_id(image_id)
+        with pytest.raises(ImageQueryError) as exc_info:
+            service.load_image(info)
 
         assert "not found" in str(exc_info.value).lower()
 

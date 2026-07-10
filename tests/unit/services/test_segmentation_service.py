@@ -68,6 +68,7 @@ def temp_db(tmp_path):
                 scan_id VARCHAR(36),
                 image_type VARCHAR(10),
                 file_path TEXT,
+                r2_rel_key TEXT,
                 file_format VARCHAR(10),
                 sol_number INTEGER,
                 width_px INTEGER,
@@ -340,3 +341,110 @@ class TestJobManagement:
 
             assert result[0] == "completed"
             assert result[1] is not None  # completed_at should be set
+
+
+class _FakeSegResult:
+    grains = []
+    n_grains = 0
+    model_name = "fake"
+    inference_time_s = 0.0
+
+
+class _FakeSegmenter:
+    """Stand-in for GrainSegmenter so the read path can be exercised without
+    a real IMG or a real segmentation model."""
+
+    last_image_path = None
+
+    def __init__(self, _config):
+        pass
+
+    def segment(self, _image, *, image_id, image_path, compute_morphometry):
+        _FakeSegmenter.last_image_path = image_path
+        return _FakeSegResult()
+
+    def unload_model(self):
+        pass
+
+
+class TestProcessImageLocatorResolution:
+    """process_image() reads disk from the stored locator (r2_rel_key), not
+    the transitional file_path column (#7)."""
+
+    def test_process_image_resolves_locator(self, temp_db, tmp_path, monkeypatch):
+        """A well-formed locator resolves to ``<data_root>/<locator>`` and that
+        resolved path is what reaches read_aci_image / the segmenter."""
+        data_root = tmp_path / "data"
+        locator = "loupe/sol_0921/detail_1/ws/img/SC3_0921.IMG"
+        expected_path = str(data_root / locator)
+
+        with get_session(get_engine(temp_db)) as session:
+            session.execute(text("""
+                INSERT INTO context_images
+                    (id, scan_id, image_type, r2_rel_key, file_format, created_at)
+                VALUES
+                    ('img-loc', 'scan-1', 'ACI', :loc, 'IMG', datetime('now'))
+            """), {"loc": locator})
+            session.commit()
+
+        read_calls = []
+
+        def fake_read(path, validate_dimensions=False):
+            read_calls.append(path)
+            return np.zeros((8, 8), dtype=np.uint8), None
+
+        monkeypatch.setattr(
+            "sherloc_pipeline.services.segmentation.read_aci_image", fake_read
+        )
+        monkeypatch.setattr(
+            "sherloc_pipeline.services.segmentation.GrainSegmenter", _FakeSegmenter
+        )
+
+        config = SegmentationConfig(model=SegmentationModel.WATERSHED)
+        service = SegmentationService(
+            database_path=temp_db,
+            segmentation_config=config,
+            data_root=data_root,
+        )
+
+        result = service.process_image("img-loc")
+
+        assert result.metadata["success"] is True
+        # The resolved disk path (data_root + locator) is what was read.
+        assert read_calls == [expected_path]
+        assert _FakeSegmenter.last_image_path == expected_path
+
+    def test_process_image_null_locator_raises(self, temp_db, tmp_path, monkeypatch):
+        """A NULL locator fails like a missing file, naming the locator (#7)."""
+        from sherloc_pipeline.services.segmentation import SegmentationError
+
+        with get_session(get_engine(temp_db)) as session:
+            session.execute(text("""
+                INSERT INTO context_images
+                    (id, scan_id, image_type, r2_rel_key, file_format, created_at)
+                VALUES
+                    ('img-null', 'scan-1', 'ACI', NULL, 'IMG', datetime('now'))
+            """))
+            session.commit()
+
+        # read_aci_image must NOT be reached for a null locator.
+        def fail_read(*_a, **_k):
+            raise AssertionError("read_aci_image should not be called")
+
+        monkeypatch.setattr(
+            "sherloc_pipeline.services.segmentation.read_aci_image", fail_read
+        )
+        monkeypatch.setattr(
+            "sherloc_pipeline.services.segmentation.GrainSegmenter", _FakeSegmenter
+        )
+
+        service = SegmentationService(
+            database_path=temp_db,
+            segmentation_config=SegmentationConfig(model=SegmentationModel.WATERSHED),
+            data_root=tmp_path / "data",
+        )
+
+        with pytest.raises(SegmentationError) as excinfo:
+            service.process_image("img-null")
+        msg = str(excinfo.value).lower()
+        assert "resolve" in msg and "locator" in msg
