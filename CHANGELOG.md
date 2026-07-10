@@ -46,8 +46,11 @@ column drop remain tracked there).
 - **Schema + migration change**: deploys must run `alembic upgrade
   head` (the boot sequence does this) and then **re-sync both tier
   databases** to the VPS per the established DB-sync pattern. Web ACI
-  serving and Map Mode read `r2_rel_key` exclusively — serving from a
-  pre-migration database fails with `misconfigured_path` 500s.
+  serving and Map Mode read `r2_rel_key` exclusively. A database whose
+  schema was never migrated (column absent) fails at ORM query time —
+  the boot-sequence `alembic upgrade head` is the guard for that case;
+  a *migrated* row whose locator is NULL (matched no known layout)
+  fails with the controlled `misconfigured_path` 500.
 - `file_path` semantics are unchanged for processing-side disk reads;
   dropping the column (and converting those readers to
   `data_root + locator`) is deferred until the locator is proven on
