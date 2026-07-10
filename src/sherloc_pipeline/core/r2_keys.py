@@ -38,7 +38,11 @@ from __future__ import annotations
 import re
 from pathlib import PurePath, PurePosixPath
 
-from fastapi import HTTPException
+# NOTE: fastapi is imported lazily inside the raising functions.
+# This module sits on the ingestion import path (services/ingestion.py
+# imports derive_rel_locator), which must work in installs without the
+# ``web`` extra — e.g. the contract-smoke workflow's host-side
+# ``pip install -e '.[dev]'``.
 
 R2_KEY_PREFIX = "sherloc-aci/"
 
@@ -82,10 +86,17 @@ def colorize_sol_segment(path: str) -> str | None:
 WORKSPACE_FILENAMES = frozenset({"spatial.csv", "loupe.csv"})
 
 
+def _misconfigured_path() -> Exception:
+    """The serve path's 500 for an unusable locator (lazy fastapi import)."""
+    from fastapi import HTTPException
+
+    return HTTPException(status_code=500, detail="misconfigured_path")
+
+
 def _validate_key(key: str) -> str:
     """Shared path-traversal guard for derived R2 keys."""
     if ".." in key or key.startswith("/") or "\\" in key:
-        raise HTTPException(status_code=500, detail="misconfigured_path")
+        raise _misconfigured_path()
     return key
 
 
@@ -104,7 +115,7 @@ def derive_r2_key(rel_locator: str | None) -> str:
         or rel_locator.startswith("pds:")
         or rel_locator.startswith("/")
     ):
-        raise HTTPException(status_code=500, detail="misconfigured_path")
+        raise _misconfigured_path()
     return _validate_key(R2_KEY_PREFIX + rel_locator)
 
 
@@ -128,16 +139,16 @@ def derive_workspace_key(rel_locator: str | None, filename: str) -> str:
     a derived key failing the path-traversal guard.
     """
     if filename not in WORKSPACE_FILENAMES:
-        raise HTTPException(status_code=500, detail="misconfigured_path")
+        raise _misconfigured_path()
     if (
         not rel_locator
         or rel_locator.startswith("pds:")
         or rel_locator.startswith("/")
     ):
-        raise HTTPException(status_code=500, detail="misconfigured_path")
+        raise _misconfigured_path()
     working_rel = PurePosixPath(rel_locator).parent.parent
     if str(working_rel) in (".", "/", ""):
-        raise HTTPException(status_code=500, detail="misconfigured_path")
+        raise _misconfigured_path()
     return _validate_key(f"{R2_KEY_PREFIX}{working_rel}/{filename}")
 
 
