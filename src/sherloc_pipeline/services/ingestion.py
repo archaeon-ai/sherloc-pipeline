@@ -541,11 +541,23 @@ class IngestionService:
             roi_orm = RegionOfInterestORM.from_pydantic(roi)
             session.add(roi_orm)
 
-        # Add context images (dual-write: absolute file_path for
-        # processing-side disk reads, relative locator for R2 serving)
+        # Add context images: derive the relative locator from the
+        # ingestion source path (source_path is transient — never persisted).
+        # A row with no derivable locator has no stable object identity
+        # (#7) — it cannot be served and cannot be disk-resolved, so it
+        # must never be persisted. Fail closed: skip rather than insert.
         for img in result.context_images:
+            if img.r2_rel_key is None and img.source_path:
+                img.r2_rel_key = derive_rel_locator(img.source_path)
             if img.r2_rel_key is None:
-                img.r2_rel_key = derive_rel_locator(img.file_path)
+                msg = (
+                    f"Skipping context image with no derivable locator "
+                    f"(source_path={img.source_path!r}) — no stable "
+                    f"identity (#7)."
+                )
+                logger.warning(msg)
+                stats.warnings.append(msg)
+                continue
             img_orm = ContextImageORM.from_pydantic(img)
             session.add(img_orm)
 

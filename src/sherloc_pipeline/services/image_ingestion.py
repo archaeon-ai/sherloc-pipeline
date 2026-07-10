@@ -330,6 +330,12 @@ class ImageIngestionService:
 
         if stats.images_skipped:
             summary = f"Image already exists (skipped): {img_path.name}"
+        elif stats.errors:
+            # Fail closed (#7): a row with no derivable locator (or an
+            # unreadable image) is rejected, not persisted — report that
+            # honestly rather than as a success, mirroring
+            # ingest_all_images()'s error propagation.
+            summary = f"Image rejected: {img_path.name} ({stats.errors[0]})"
         else:
             linked = "linked to scan" if stats.images_linked else "no scan found"
             summary = f"Ingested image: {img_path.name} ({linked})"
@@ -338,10 +344,11 @@ class ImageIngestionService:
             summary=summary,
             warnings=stats.warnings,
             metadata={
-                "success": True,
+                "success": len(stats.errors) == 0,
                 "file_path": str(img_path),
                 "ingested": stats.images_ingested > 0,
                 "linked": stats.images_linked > 0,
+                "errors": stats.errors,
             },
         )
 
@@ -362,10 +369,23 @@ class ImageIngestionService:
         stats = ImageIngestionStats(images_scanned=1)
 
         with get_session(self.engine) as session:
-            # Check if image already exists by file_path
+            # A row with no derivable locator has no stable object identity
+            # (#7): it cannot be served and cannot be disk-resolved on the
+            # processing side, so it must never be persisted. Fail closed
+            # here, before any metadata read or insert.
+            loc = derive_rel_locator(img_path)
+            if loc is None:
+                stats.errors.append(
+                    f"No derivable R2 locator for {img_path}; skipping — a "
+                    f"context image requires a stable relative locator "
+                    f"identity (#7)."
+                )
+                return stats
+
+            # Check if image already exists by its derived relative locator.
             existing = session.execute(
                 select(ContextImageORM).where(
-                    ContextImageORM.file_path == str(img_path)
+                    ContextImageORM.r2_rel_key == loc
                 )
             ).scalar_one_or_none()
 
@@ -422,7 +442,7 @@ class ImageIngestionService:
             # Insert record using raw SQL to handle new columns
             insert_sql = text("""
                 INSERT INTO context_images (
-                    id, scan_id, image_type, file_path, r2_rel_key,
+                    id, scan_id, image_type, r2_rel_key,
                     product_id, sclk,
                     pixel_scale_um, working_distance_cm, motor_position,
                     exposure_time_ms, led_illumination, width_px, height_px,
@@ -430,7 +450,7 @@ class ImageIngestionService:
                     sequence_id, image_time, focus_mode, focus_position_count,
                     local_mean_solar_time, vicar_metadata
                 ) VALUES (
-                    :id, :scan_id, :image_type, :file_path, :r2_rel_key,
+                    :id, :scan_id, :image_type, :r2_rel_key,
                     :product_id, :sclk,
                     :pixel_scale_um, :working_distance_cm, :motor_position,
                     :exposure_time_ms, :led_illumination, :width_px, :height_px,
@@ -447,8 +467,7 @@ class ImageIngestionService:
                 "id": image_id,
                 "scan_id": scan_id,
                 "image_type": image_type,
-                "file_path": str(img_path),
-                "r2_rel_key": derive_rel_locator(img_path),
+                "r2_rel_key": loc,
                 "product_id": metadata.product_id,
                 "sclk": sclk_start,
                 "pixel_scale_um": 10.1,  # ACI fixed pixel scale

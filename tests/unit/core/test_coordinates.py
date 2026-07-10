@@ -48,13 +48,9 @@ from sherloc_pipeline.database.models import (
     SolORM,
 )
 
-# Canonical team-tier shapes; the Loupe workspace is two levels up. The
-# R2 path keys off the relative locator (r2_rel_key); the FS fallback
-# still uses the absolute file_path.
-_TEAM_FILE_PATH = (
-    "/data/sherloc/data/loupe/sol_0921/detail_1/"
-    "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
-)
+# Canonical team-tier shapes; the Loupe workspace is two levels up. Both
+# the R2 path and the FS fallback key off the relative locator
+# (r2_rel_key) — the FS fallback resolves it via data_root (#7).
 _TEAM_LOCATOR = (
     "loupe/sol_0921/detail_1/"
     "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
@@ -165,7 +161,6 @@ def scan_session():
                 id=str(uuid.uuid4()),
                 scan_id=SCAN_UUID,
                 image_type="ACI",
-                file_path=_TEAM_FILE_PATH,
                 r2_rel_key=_TEAM_LOCATOR,
             )
         )

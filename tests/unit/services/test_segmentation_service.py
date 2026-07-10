@@ -67,7 +67,6 @@ def temp_db(tmp_path):
                 id VARCHAR(36) PRIMARY KEY,
                 scan_id VARCHAR(36),
                 image_type VARCHAR(10),
-                file_path TEXT,
                 r2_rel_key TEXT,
                 file_format VARCHAR(10),
                 sol_number INTEGER,
@@ -149,8 +148,8 @@ class TestSegmentationService:
         engine = get_engine(temp_db)
         with get_session(engine) as session:
             session.execute(text("""
-                INSERT INTO context_images (id, scan_id, image_type, file_path, file_format, created_at)
-                VALUES ('img-001', 'scan-001', 'ACI', '/test/image.IMG', 'IMG', datetime('now'))
+                INSERT INTO context_images (id, scan_id, image_type, r2_rel_key, file_format, created_at)
+                VALUES ('img-001', 'scan-001', 'ACI', 'sol_0001/data_aci/image.IMG', 'IMG', datetime('now'))
             """))
             session.commit()
 
@@ -193,8 +192,8 @@ class TestSegmentationService:
         # Create test data
         with get_session(engine) as session:
             session.execute(text("""
-                INSERT INTO context_images (id, scan_id, image_type, file_path, file_format, created_at)
-                VALUES ('img-002', 'scan-001', 'ACI', '/test/image2.IMG', 'IMG', datetime('now'))
+                INSERT INTO context_images (id, scan_id, image_type, r2_rel_key, file_format, created_at)
+                VALUES ('img-002', 'scan-001', 'ACI', 'sol_0001/data_aci/image2.IMG', 'IMG', datetime('now'))
             """))
 
             # Insert grains
@@ -237,10 +236,10 @@ class TestSegmentationService:
         with get_session(engine) as session:
             # Create test images
             session.execute(text("""
-                INSERT INTO context_images (id, scan_id, image_type, file_path, file_format, created_at)
+                INSERT INTO context_images (id, scan_id, image_type, r2_rel_key, file_format, created_at)
                 VALUES
-                    ('img-a', 'scan-001', 'ACI', '/test/a.IMG', 'IMG', datetime('now')),
-                    ('img-b', 'scan-001', 'ACI', '/test/b.IMG', 'IMG', datetime('now'))
+                    ('img-a', 'scan-001', 'ACI', 'sol_0001/data_aci/a.IMG', 'IMG', datetime('now')),
+                    ('img-b', 'scan-001', 'ACI', 'sol_0001/data_aci/b.IMG', 'IMG', datetime('now'))
             """))
 
             # Create grains for first image
@@ -368,8 +367,8 @@ class _FakeSegmenter:
 
 
 class TestProcessImageLocatorResolution:
-    """process_image() reads disk from the stored locator (r2_rel_key), not
-    the transitional file_path column (#7)."""
+    """process_image() reads disk from the stored locator (r2_rel_key);
+    the transitional file_path column was dropped (#7)."""
 
     def test_process_image_resolves_locator(self, temp_db, tmp_path, monkeypatch):
         """A well-formed locator resolves to ``<data_root>/<locator>`` and that

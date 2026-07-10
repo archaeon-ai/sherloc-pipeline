@@ -65,7 +65,7 @@ def select_served_aci(session: Session, scan_id: str) -> Optional[ContextImageOR
         .all()
     )
     for candidate in aci_candidates:
-        fname = Path(candidate.file_path or "").stem
+        fname = Path(candidate.r2_rel_key or "").stem
         if not re.search(r"_\d+-\d+$", fname):
             return candidate
     if aci_candidates:

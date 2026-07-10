@@ -163,9 +163,9 @@ def _download_aci_for_sol(
 ) -> int:
     """Download ACI images for a sol by resolving pds: references.
 
-    Queries the PDS database for context image records whose ``file_path``
-    starts with ``pds:`` (i.e. unresolved LIDVIDs), resolves them to
-    download URLs via the PDS Search API, downloads the images, and
+    Queries the PDS database for context image records whose
+    ``r2_rel_key`` starts with ``pds:`` (i.e. unresolved LIDVIDs), resolves
+    them to download URLs via the PDS Search API, downloads the images, and
     updates the DB records to point at the local files.
 
     Args:
@@ -197,7 +197,7 @@ def _download_aci_for_sol(
             .filter(
                 ScanORM.sol_number == sol,
                 ContextImageORM.image_type == "ACI",
-                ContextImageORM.file_path.like("pds:%"),
+                ContextImageORM.r2_rel_key.like("pds:%"),
             )
             .all()
         )
@@ -207,7 +207,7 @@ def _download_aci_for_sol(
             return 0
 
         # Collect LIDVIDs (strip "pds:" prefix)
-        lidvids = [r.file_path[4:] for r in aci_records]
+        lidvids = [r.r2_rel_key[4:] for r in aci_records]
 
         # Batch resolve download URLs
         url_map = downloader.resolve_aci_urls(lidvids)
@@ -219,7 +219,7 @@ def _download_aci_for_sol(
 
         downloaded = 0
         for record in aci_records:
-            lidvid = record.file_path[4:]
+            lidvid = record.r2_rel_key[4:]
             url = url_map.get(lidvid)
             if url is None:
                 continue
@@ -229,7 +229,6 @@ def _download_aci_for_sol(
             dest = dest_dir / filename
 
             if downloader.download_aci_image(url, dest):
-                record.file_path = str(dest)
                 # Locator = position under the PDS cache root — exactly
                 # the tree the R2 sync mirrors under sherloc-aci/.
                 record.r2_rel_key = dest.relative_to(cache_dir).as_posix()

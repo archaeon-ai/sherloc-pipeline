@@ -804,10 +804,10 @@ class ContextImageORM(Base):
         index=True,
     )
     image_type: Mapped[str] = mapped_column(String(10), nullable=False)
-    file_path: Mapped[str] = mapped_column(Text, nullable=False)
     # Relative locator: the string after "sherloc-aci/" in the image's R2
-    # key. file_path (absolute ingestion path) is retained transitionally
-    # for processing-side disk reads and old-code rollback.
+    # key. The transitional absolute-path column (file_path) was dropped
+    # in migration 17db1a1940d6 (issue #7) once r2_rel_key was fully
+    # backfilled; this is now the sole object identity for context images.
     r2_rel_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     product_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     sclk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -860,7 +860,6 @@ class ContextImageORM(Base):
             id=_str_to_uuid(self.id),
             scan_id=_str_to_uuid(self.scan_id),
             image_type=ImageType(self.image_type),
-            file_path=self.file_path,
             r2_rel_key=self.r2_rel_key,
             product_id=self.product_id,
             pds_lidvid=self.pds_lidvid,
@@ -885,7 +884,6 @@ class ContextImageORM(Base):
             id=_uuid_to_str(image.id),
             scan_id=_uuid_to_str(image.scan_id),
             image_type=image_type,
-            file_path=image.file_path,
             r2_rel_key=image.r2_rel_key,
             product_id=image.product_id,
             pds_lidvid=image.pds_lidvid,

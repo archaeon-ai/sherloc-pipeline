@@ -80,8 +80,6 @@ class ImageInfo:
         scan_id: Associated scan UUID
         sol_number: Mars sol number
         sclk_start: Spacecraft clock timestamp
-        file_path: Absolute path to image file (write-only transitional
-            column; disk reads now derive from ``r2_rel_key``, see #7)
         r2_rel_key: Canonical relative locator (the string after
             ``sherloc-aci/`` in the R2 key); disk reads resolve it to a
             path via :func:`core.r2_keys.resolve_disk_path`
@@ -102,7 +100,6 @@ class ImageInfo:
     scan_id: str
     sol_number: Optional[int]
     sclk_start: Optional[int]
-    file_path: str
     file_format: Optional[str]
     camera_id: Optional[str]
     image_type: str
@@ -124,7 +121,6 @@ class ImageInfo:
             scan_id=image.scan_id,
             sol_number=image.sol_number,
             sclk_start=image.sclk_start,
-            file_path=image.file_path,
             r2_rel_key=image.r2_rel_key,
             file_format=image.file_format,
             camera_id=image.camera_id,
@@ -146,7 +142,6 @@ class ImageInfo:
             "scan_id": self.scan_id,
             "sol_number": self.sol_number,
             "sclk_start": self.sclk_start,
-            "file_path": self.file_path,
             "file_format": self.file_format,
             "camera_id": self.camera_id,
             "image_type": self.image_type,
@@ -242,10 +237,11 @@ class ImageQueryService:
     def _resolve_disk_path(self, image_info: "ImageInfo") -> Optional[Path]:
         """Resolve an image's on-disk path from its stored relative locator.
 
-        Disk reads derive from ``r2_rel_key`` (``<root> + locator``), never
-        the transitional absolute ``file_path`` (#7). Returns ``None`` when
-        the locator is missing / ``pds:``-schemed / unrecognized — callers
-        raise their own missing-file-equivalent error.
+        Disk reads derive from ``r2_rel_key`` (``<root> + locator``); the
+        machine-specific absolute ``file_path`` column was dropped (#7).
+        Returns ``None`` when the locator is missing / ``pds:``-schemed /
+        unrecognized — callers raise their own missing-file-equivalent
+        error.
         """
         return resolve_disk_path(
             image_info.r2_rel_key,

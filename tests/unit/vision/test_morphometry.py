@@ -58,7 +58,7 @@ def temp_db(tmp_path):
                 id VARCHAR(36) PRIMARY KEY,
                 scan_id VARCHAR(36),
                 image_type VARCHAR(10),
-                file_path TEXT,
+                r2_rel_key TEXT,
                 file_format VARCHAR(10),
                 pixel_scale_um FLOAT
             )
@@ -246,8 +246,8 @@ class TestGrainMorphometryAnalyzer:
         with get_session(engine) as session:
             # Create image
             session.execute(text("""
-                INSERT INTO context_images (id, scan_id, image_type, file_path, pixel_scale_um)
-                VALUES ('img-001', 'scan-001', 'ACI', '/test.IMG', 10.1)
+                INSERT INTO context_images (id, scan_id, image_type, r2_rel_key, pixel_scale_um)
+                VALUES ('img-001', 'scan-001', 'ACI', 'sol_0001/data_aci/test.IMG', 10.1)
             """))
 
             # Create grains with varying properties

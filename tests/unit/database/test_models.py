@@ -466,7 +466,7 @@ class TestContextImageORM:
             id=str(uuid.uuid4()),
             scan_id=scan_id,
             image_type="ACI",
-            file_path="/data/img/test.png",
+            r2_rel_key="sol_0921/data_aci/test.png",
             pixel_scale_um=10.1,
             width_px=1648,
             height_px=1200,

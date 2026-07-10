@@ -130,6 +130,14 @@ mode, used for tests + the `contract-smoke` workflow.
 
 ### 5.5 Retired — MUST NOT appear
 
+This table is a retirement **record**, not deploy config — the listed
+variables must not appear in *active* configuration or
+`deploy/env-templates/`, but the table itself stays: the strip-prefix
+rows in particular are the intended exception to "delete what's
+retired", since their only remaining consumer is the one-time backfill
+migration `931df60632cb` (translation parity), so removing the rows
+here would create a doc↔code mismatch rather than resolve one.
+
 | Variable | Removed in | Reason |
 |---|---|---|
 | (legacy identity-claim split var; see `src/sherloc_pipeline/web/auth.py`) | v4.1.0 / Phase B.0 | Single identity-claim URI under §2.6.1; legacy split path eliminated. |
@@ -165,7 +173,7 @@ deliberate decision rather than silent drift. See
 
 | Element | Value |
 |---|---|
-| Current head | `931df60632cb` (`add_r2_rel_key_locator_to_context_images`) |
+| Current head | `17db1a1940d6` (`drop_file_path_from_context_images`) |
 | Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade head` → uvicorn |
 | Contract guarantee | Single head (no fork); migrations idempotent |
 

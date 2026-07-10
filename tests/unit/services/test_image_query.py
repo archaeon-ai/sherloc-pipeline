@@ -50,7 +50,6 @@ class TestImageInfo:
             scan_id = "scan-id"
             sol_number = 921
             sclk_start = 748731411
-            file_path = "/path/to/image.IMG"
             r2_rel_key = "sol_0921/data_aci/image.IMG"
             file_format = "IMG"
             camera_id = "SC3"
@@ -77,7 +76,6 @@ class TestImageInfo:
             scan_id = "scan-id"
             sol_number = 921
             sclk_start = 748731411
-            file_path = "/path/to/image.IMG"
             r2_rel_key = "sol_0921/data_aci/image.IMG"
             file_format = "IMG"
             camera_id = "SC3"
@@ -105,7 +103,6 @@ class TestImageInfo:
             scan_id="scan-id",
             sol_number=921,
             sclk_start=748731411,
-            file_path="/path/to/image.IMG",
             file_format="IMG",
             camera_id="SC3",
             image_type="ACI",
@@ -130,7 +127,6 @@ class TestImageInfo:
             scan_id="scan-id",
             sol_number=None,
             sclk_start=None,
-            file_path="/path/to/image.IMG",
             file_format="PNG",
             camera_id=None,
             image_type="ACI",
@@ -240,12 +236,17 @@ def db_with_images(tmp_path):
         # Create images
         images = [
             # Sol 921, scan1, IMG format
+            # NOTE: these rows deliberately carry no r2_rel_key (stays
+            # NULL) — TestLoadImage.test_load_null_locator and
+            # TestExportBySol.test_basic depend on every row here having
+            # no derivable locator. Tests that need a resolvable locator
+            # set one explicitly on a fetched row (see
+            # test_load_resolvable_but_missing_file).
             {
                 "id": str(uuid.uuid4()),
                 "scan_id": scan1_id,
                 "sol_number": 921,
                 "sclk_start": 748731397,
-                "file_path": "/data/sol_921/image1.IMG",
                 "file_format": "IMG",
                 "camera_id": "SC3",
                 "image_type": "ACI",
@@ -255,7 +256,6 @@ def db_with_images(tmp_path):
                 "scan_id": scan1_id,
                 "sol_number": 921,
                 "sclk_start": 748731400,
-                "file_path": "/data/sol_921/image2.IMG",
                 "file_format": "IMG",
                 "camera_id": "SC2",
                 "image_type": "ACI",
@@ -266,7 +266,6 @@ def db_with_images(tmp_path):
                 "scan_id": scan1_id,
                 "sol_number": 921,
                 "sclk_start": None,
-                "file_path": "/data/sol_921/image3.PNG",
                 "file_format": "PNG",
                 "camera_id": None,
                 "image_type": "ACI",
@@ -277,7 +276,6 @@ def db_with_images(tmp_path):
                 "scan_id": scan2_id,
                 "sol_number": 922,
                 "sclk_start": 748831397,
-                "file_path": "/data/sol_922/image4.IMG",
                 "file_format": "IMG",
                 "camera_id": "SC3",
                 "image_type": "ACI",
@@ -288,7 +286,6 @@ def db_with_images(tmp_path):
                 "scan_id": scan2_id,
                 "sol_number": 1242,
                 "sclk_start": 777229084,
-                "file_path": "/data/sol_1242/watson.IMG",
                 "file_format": "IMG",
                 "camera_id": "SC1",
                 "image_type": "WATSON",
@@ -301,7 +298,6 @@ def db_with_images(tmp_path):
                 scan_id=img_data["scan_id"],
                 sol_number=img_data["sol_number"],
                 sclk_start=img_data["sclk_start"],
-                file_path=img_data["file_path"],
                 file_format=img_data["file_format"],
                 camera_id=img_data["camera_id"],
                 image_type=img_data["image_type"],
@@ -614,7 +610,6 @@ class TestGetScanPointsForImage:
             scan_id=None,
             sol_number=None,
             sclk_start=None,
-            file_path="/path",
             file_format="PNG",
             camera_id=None,
             image_type="ACI",
