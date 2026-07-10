@@ -221,7 +221,7 @@ def get_map_layers(request: Request, scan_id: str) -> MapLayersResponse:
     # colorized ACI with grayscale-frame coordinates (a misregistered overlay).
     # The grayscale view is unaffected.
     point_set_colorized = None
-    if aci_row is not None and colorized_variant_exists(aci_row.file_path):
+    if aci_row is not None and colorized_variant_exists(aci_row.r2_rel_key):
         try:
             colorized_coords = resolve_display_coordinates(
                 session, scan_id, workspace_reader=reader, colorized=True

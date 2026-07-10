@@ -169,7 +169,7 @@ def get_scan(request: Request, scan_id: str) -> ScanDetailResponse:
     # bytes the route serves.
     aci_row = select_served_aci(session, scan_id)
     if aci_row is not None:
-        detail.colorized_aci_available = colorized_variant_exists(aci_row.file_path)
+        detail.colorized_aci_available = colorized_variant_exists(aci_row.r2_rel_key)
 
     # Stored ML cosmic-ray mask availability signal (issue #6). The frontend
     # despike selector enables its "ML" option only when this is > 0.
@@ -232,7 +232,7 @@ def get_scan_points(request: Request, scan_id: str) -> PointsResponse:
     # falls back to the grayscale coords. Mirrors the colorized gate used by
     # get_scan() (colorized_aci_available) and map.py's point_set_colorized.
     aci_row = select_served_aci(session, scan_id)
-    if aci_row is not None and colorized_variant_exists(aci_row.file_path):
+    if aci_row is not None and colorized_variant_exists(aci_row.r2_rel_key):
         try:
             colorized_coords = resolve_display_coordinates(
                 session, scan_id, workspace_reader=reader, colorized=True

@@ -1,8 +1,8 @@
 """ACI image endpoint tests — R2-backed (v4.1.7+, refactored v4.1.9).
 
-Exercises the R2 hierarchical-key contract: hierarchical-key
-resolution from per-tier DB `context_images.file_path` → strip-prefix
-→ `sherloc-aci/<rest>` in the per-tier R2 bucket.
+Exercises the R2 hierarchical-key contract: key resolution from the
+per-tier DB `context_images.r2_rel_key` locator →
+`sherloc-aci/<locator>` in the per-tier R2 bucket.
 
 Tests use moto's in-process S3 mock (`mock_aws`) so the boto3 client
 exercises real serialization + signing + response handling, while no
@@ -34,13 +34,15 @@ from sherloc_pipeline.web.routes import images as images_module
 from tests.unit.web.conftest import SCAN_UUID
 
 # Per-tier file_path conventions match the canonical per-tier ingestion
-# layout.
+# layout; the rel keys are what the backfill migration derives from them.
 _TEAM_FILE_PATH = (
     "/data/sherloc/data/loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG"
 )
+_TEAM_REL_KEY = "loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG"
 _PUBLIC_FILE_PATH = (
     "/data/sherloc/pds/sol_0921/data_aci/SC0_0921_TEST.IMG"
 )
+_PUBLIC_REL_KEY = "sol_0921/data_aci/SC0_0921_TEST.IMG"
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +97,16 @@ def _make_png_bytes(size: tuple[int, int] = (16, 16), color: int = 128) -> bytes
     return buf.getvalue()
 
 
-def _insert_aci(test_engine, file_path: str) -> None:
-    """Insert a ContextImageORM row for SCAN_UUID with the given file_path."""
+def _insert_aci(
+    test_engine, file_path: str, r2_rel_key: str | None = None
+) -> None:
+    """Insert a ContextImageORM row for SCAN_UUID.
+
+    ``r2_rel_key`` defaults to what the backfill migration would derive
+    for a canonical-layout ``file_path``; pass ``None`` explicitly via
+    ``_insert_aci(engine, path, r2_rel_key=None)`` … callers below use
+    the module-level constants to be explicit either way.
+    """
     factory = get_session_factory(test_engine)
     session = factory()
     try:
@@ -106,6 +116,7 @@ def _insert_aci(test_engine, file_path: str) -> None:
                 scan_id=SCAN_UUID,
                 image_type="ACI",
                 file_path=file_path,
+                r2_rel_key=r2_rel_key,
             )
         )
         session.commit()
@@ -148,30 +159,26 @@ class TestResolverConfig:
         assert excinfo.value.status_code == 500
 
     def test_derive_team_key(self):
-        # Team strip-prefix removes the team-data prefix; re-roots under sherloc-aci/.
-        key = r2_reader.derive_r2_key(_TEAM_FILE_PATH, "/data/sherloc/data/")
+        # Locator → key is a single concatenation under sherloc-aci/.
+        key = r2_reader.derive_r2_key(_TEAM_REL_KEY)
         assert key == "sherloc-aci/loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG"
 
     def test_derive_public_key(self):
-        key = r2_reader.derive_r2_key(_PUBLIC_FILE_PATH, "/data/sherloc/pds/")
+        key = r2_reader.derive_r2_key(_PUBLIC_REL_KEY)
         assert key == "sherloc-aci/sol_0921/data_aci/SC0_0921_TEST.IMG"
 
-    def test_derive_key_wrong_prefix_raises_500(self):
-        """Team-tier strip prefix on a public-tier path → misconfigured_path."""
+    def test_derive_key_missing_locator_raises_500(self):
+        """NULL locator (pre-backfill / unknown-layout row) → misconfigured_path."""
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as excinfo:
-            r2_reader.derive_r2_key(
-                _PUBLIC_FILE_PATH, "/data/sherloc/data/"
-            )
+            r2_reader.derive_r2_key(None)
         assert excinfo.value.status_code == 500
         assert excinfo.value.detail == "misconfigured_path"
 
     def test_derive_key_traversal_raises_500(self):
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as excinfo:
-            r2_reader.derive_r2_key(
-                "/data/sherloc/data/../etc/passwd", "/data/sherloc/data/"
-            )
+            r2_reader.derive_r2_key("loupe/sol_1/../../../etc/passwd")
         assert excinfo.value.status_code == 500
         assert excinfo.value.detail == "misconfigured_path"
 
@@ -222,7 +229,7 @@ def test_aci_path_traversal_regex_blocks_dotdot():
 @pytest.mark.asyncio
 async def test_aci_team_resolve_200(client, test_engine, r2_team_client):
     """Team-tier PNG resolves through R2 → returns image bytes."""
-    _insert_aci(test_engine, _TEAM_FILE_PATH)
+    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
     r2_team_client.put_object(
         Bucket="phase-team",
         Key="sherloc-aci/loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG",
@@ -242,7 +249,7 @@ async def test_aci_public_tier_vicar_converted(
     client, test_engine, r2_public_client
 ):
     """Public-tier .IMG (VICAR) — bytes fetched from R2, converted via tempfile."""
-    _insert_aci(test_engine, _PUBLIC_FILE_PATH)
+    _insert_aci(test_engine, _PUBLIC_FILE_PATH, _PUBLIC_REL_KEY)
     r2_public_client.put_object(
         Bucket="phase-public",
         Key="sherloc-aci/sol_0921/data_aci/SC0_0921_TEST.IMG",
@@ -266,7 +273,7 @@ async def test_aci_public_tier_vicar_converted(
 @pytest.mark.asyncio
 async def test_aci_missing_object_404(client, test_engine, r2_team_client):
     """DB row exists, R2 key does not → resolver maps NoSuchKey to 404 not_found."""
-    _insert_aci(test_engine, _TEAM_FILE_PATH)
+    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
     # NOTE: we deliberately do NOT put_object — bucket is empty.
 
     resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
@@ -278,7 +285,7 @@ async def test_aci_missing_object_404(client, test_engine, r2_team_client):
 async def test_aci_r2_timeout_returns_504(client, test_engine):
     """boto3 ReadTimeoutError → 504 upstream_timeout per spec §3.9.4."""
     from botocore.exceptions import ReadTimeoutError
-    _insert_aci(test_engine, _TEAM_FILE_PATH)
+    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
     client_mock = MagicMock()
     client_mock.get_object.side_effect = ReadTimeoutError(endpoint_url="https://moto")
     r2_reader.set_r2_client_for_tests(client_mock, "team")
@@ -294,7 +301,7 @@ async def test_aci_r2_timeout_returns_504(client, test_engine):
 async def test_aci_r2_botocore_error_returns_500(client, test_engine):
     """boto3 non-timeout BotoCoreError → 500 upstream_error per spec §3.9.4."""
     from botocore.exceptions import EndpointConnectionError
-    _insert_aci(test_engine, _TEAM_FILE_PATH)
+    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
     client_mock = MagicMock()
     client_mock.get_object.side_effect = EndpointConnectionError(
         endpoint_url="https://moto"
@@ -319,7 +326,7 @@ async def test_aci_cross_tier_access_denied_502(client, test_engine):
     would return.
     """
     from botocore.exceptions import ClientError
-    _insert_aci(test_engine, _TEAM_FILE_PATH)
+    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
 
     client_mock = MagicMock()
     client_mock.get_object.side_effect = ClientError(
@@ -341,12 +348,14 @@ async def test_aci_cross_tier_access_denied_502(client, test_engine):
 
 @pytest.mark.asyncio
 async def test_aci_misconfigured_path_500(client, test_engine, r2_team_client):
-    """Team-tier DB row with a public-tier path → misconfigured_path 500.
+    """Row with a NULL locator → misconfigured_path 500.
 
-    A misclassified ingestion (DB tier ≠ file_path-implied tier) is
-    rejected before any R2 call per §3.9.4.
+    A NULL ``r2_rel_key`` (row predates the backfill, or its file_path
+    matched no known ingestion layout) has no R2 identity and is
+    rejected before any R2 call per §3.9.4 — the same failure class the
+    strip-prefix mismatch produced pre-locator.
     """
-    _insert_aci(test_engine, _PUBLIC_FILE_PATH)  # public-tier path inserted into TEAM DB
+    _insert_aci(test_engine, "/somewhere/unrecognized/img/x.PNG", None)
 
     resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
     assert resp.status_code == 500
@@ -357,17 +366,14 @@ async def test_aci_misconfigured_path_500(client, test_engine, r2_team_client):
 async def test_aci_pds_lidvid_returns_misconfigured_path_500(
     client, test_engine, r2_team_client
 ):
-    """pds: LIDVID refs don't match the per-tier strip prefix → 500 misconfigured_path.
+    """Unresolved pds: locator → 500 misconfigured_path.
 
-    Per spec §3.9.4 row "DB file_path does not begin with the expected
-    per-tier strip prefix". An unresolved `pds:` ref in production IS
-    a misconfiguration (the rclone-time resolution at D3.4 should have
-    converted it to an absolute path). v1.0-beta rejects.
+    The locator round-trips the ``pds:`` scheme until the download step
+    resolves the product; serving an unresolved ref in production IS a
+    misconfiguration. v1.0-beta rejects (same behavior as pre-locator).
     """
-    _insert_aci(
-        test_engine,
-        "pds:urn:nasa:pds:mars2020_mission:data_sherloc:SHRLC0001_0001",
-    )
+    lidvid = "pds:urn:nasa:pds:mars2020_mission:data_sherloc:SHRLC0001_0001"
+    _insert_aci(test_engine, lidvid, lidvid)
     resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
     assert resp.status_code == 500
     assert resp.json()["detail"] == "misconfigured_path"
@@ -386,7 +392,7 @@ async def test_aci_colorized_variant_via_r2(client, test_engine, r2_team_client)
     """
     import hashlib
 
-    _insert_aci(test_engine, _TEAM_FILE_PATH)
+    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
     base_bytes = _make_png_bytes(color=64)
     colorized_bytes = _make_png_bytes(color=200)
     assert base_bytes != colorized_bytes  # sanity — the colors differ
@@ -420,7 +426,7 @@ async def test_aci_colorized_falls_back_to_base(
     client, test_engine, r2_team_client
 ):
     """colorized=true with no colorized variant in R2 → fall back to base key."""
-    _insert_aci(test_engine, _TEAM_FILE_PATH)
+    _insert_aci(test_engine, _TEAM_FILE_PATH, _TEAM_REL_KEY)
     r2_team_client.put_object(
         Bucket="phase-team",
         Key="sherloc-aci/loupe/sol_0921/detail_1/img/SC3_0921_TEST.PNG",

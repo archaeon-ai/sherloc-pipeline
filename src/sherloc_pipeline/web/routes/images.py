@@ -1,18 +1,11 @@
 """ACI context image endpoints.
 
 R2-backed deployments serve SHERLOC ACI bytes from R2 (hierarchical-key
-model). The route handler does its existing DB-driven file_path
-resolution + colorized / enhanced / VICAR pipeline; the storage layer
-changes from local FS to R2 via per-tier strip-prefix + bucket selection.
-
-PHASE_TIER drives the strip prefix + bucket:
-
-- team:   <team-data-root>/<rest>  → phase-team/sherloc-aci/<rest>
-- public: <public-pds-root>/<rest> → phase-public/sherloc-aci/<rest>
-
-v4.1.9 refactor: the R2 client + per-tier config machinery moved to
-``web/r2_reader``; this module imports the shared primitives. Behavior
-is unchanged.
+model). The route handler resolves the scan's ACI row, derives the R2
+key from the stored relative locator (``context_images.r2_rel_key``),
+and runs the colorized / enhanced / VICAR pipeline on the fetched bytes.
+``PHASE_TIER`` selects the bucket (credential-side isolation); the key
+itself is ``sherloc-aci/`` + locator on both tiers.
 
 VICAR ``.IMG`` files are converted in-process at request time (via the
 existing ``read_aci_image()`` path through a ``NamedTemporaryFile``
@@ -38,7 +31,6 @@ from sherloc_pipeline.web.r2_reader import (
     colorized_variant_exists,
     derive_r2_key,
     find_colorized_key,
-    get_r2_client_and_config,
     r2_get_bytes,
 )
 
@@ -235,8 +227,8 @@ def get_aci_image(
 ):
     """Serve the ACI context image for a scan.
 
-    Resolves the per-tier R2 key from the ``context_images.file_path``
-    column (spec §3.9.3 hierarchical-key model). Optional query params:
+    Derives the R2 key from the ``context_images.r2_rel_key`` locator
+    (spec §3.9.3 hierarchical-key model). Optional query params:
 
     - colorized: probe sibling ``sol_NNNN_colorized/<...>`` R2 key; serve
       that variant if present, else the base.
@@ -265,19 +257,13 @@ def get_aci_image(
             detail=f"No ACI context image found for scan {scan_id}",
         )
 
-    file_path_str = aci.file_path or ""
-
-    # Derive R2 key from per-tier strip + base file_path. A `pds:` LIDVID
-    # ref (legacy on-demand-fetch path) does not begin with the per-tier
-    # strip prefix, so it surfaces as `misconfigured_path` 500 per spec
-    # §3.9.4 — an unresolved `pds:` ref in production IS broken ingestion
-    # (the ingestion-time rclone should have resolved
-    # LIDVIDs to absolute paths before R2 population). v1.1 may revisit
-    # the on-demand path; v1.0-beta rejects.
-    _, cfg = get_r2_client_and_config()
-    base_key = derive_r2_key(
-        file_path_str, cfg["strip_prefix"], active_tier=cfg.get("tier")
-    )
+    # Derive the R2 key from the stored locator. A missing locator (row
+    # predates the backfill or matched no known ingestion layout) or an
+    # unresolved `pds:` LIDVID ref surfaces as `misconfigured_path` 500
+    # per spec §3.9.4 — an unresolved `pds:` ref in production IS broken
+    # ingestion (the download step resolves LIDVIDs before R2
+    # population). v1.1 may revisit the on-demand path; v1.0-beta rejects.
+    base_key = derive_r2_key(aci.r2_rel_key)
 
     # Optional colorized variant — sibling sol_NNNN_colorized/ key.
     key = base_key

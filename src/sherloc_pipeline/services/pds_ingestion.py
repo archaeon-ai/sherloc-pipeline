@@ -928,6 +928,9 @@ class PDSIngestionService:
                 scan_id=scan.id,
                 image_type=ImageType.ACI,
                 file_path=f"pds:{lidvid}",
+                # The locator round-trips the pds: scheme until the
+                # download step resolves the product to a cached file.
+                r2_rel_key=f"pds:{lidvid}",
                 pds_lidvid=lidvid,
             ))
 

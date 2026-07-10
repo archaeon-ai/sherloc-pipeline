@@ -48,16 +48,22 @@ from sherloc_pipeline.database.models import (
     SolORM,
 )
 
-# Per-tier file_path conventions; the Loupe workspace is two levels up.
+# Canonical team-tier shapes; the Loupe workspace is two levels up. The
+# R2 path keys off the relative locator (r2_rel_key); the FS fallback
+# still uses the absolute file_path.
 _TEAM_FILE_PATH = (
     "/data/sherloc/data/loupe/sol_0921/detail_1/"
+    "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
+)
+_TEAM_LOCATOR = (
+    "loupe/sol_0921/detail_1/"
     "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
 )
 # The colorized variant rewrites only the bare ``sol_NNNN`` segment
 # (``sol_0921`` → ``sol_0921_colorized``); the ``_0921`` inside the PNG
 # filename is NOT a bare sol segment and stays untouched (issue #8).
-_TEAM_FILE_PATH_COLORIZED = (
-    "/data/sherloc/data/loupe/sol_0921_colorized/detail_1/"
+_TEAM_LOCATOR_COLORIZED = (
+    "loupe/sol_0921_colorized/detail_1/"
     "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
 )
 
@@ -160,6 +166,7 @@ def scan_session():
                 scan_id=SCAN_UUID,
                 image_type="ACI",
                 file_path=_TEAM_FILE_PATH,
+                r2_rel_key=_TEAM_LOCATOR,
             )
         )
         session.commit()
@@ -188,9 +195,9 @@ def test_resolve_via_workspace_reader_returns_coords(scan_session):
         scan_session, SCAN_UUID, workspace_reader=fake_reader
     )
 
-    # Reader called for both spatial.csv and loupe.csv with the same file_path
-    assert (_TEAM_FILE_PATH, "spatial.csv") in calls
-    assert (_TEAM_FILE_PATH, "loupe.csv") in calls
+    # Reader called for both spatial.csv and loupe.csv with the same locator
+    assert (_TEAM_LOCATOR, "spatial.csv") in calls
+    assert (_TEAM_LOCATOR, "loupe.csv") in calls
 
     # Resolver produced 3 coords matching the 3 scan points
     assert len(coords) == N_POINTS
@@ -219,7 +226,7 @@ def test_resolve_via_workspace_reader_spatial_404_names_spatial(scan_session):
     msg = str(excinfo.value)
     assert "Loupe workspace file not found in R2" in msg
     assert SCAN_UUID in msg
-    assert "file_path=" in msg
+    assert "locator=" in msg
     assert "missing_file='spatial.csv'" in msg
     assert "expected_key=" in msg
     assert "spatial.csv" in msg
@@ -375,11 +382,11 @@ def test_resolve_colorized_reads_colorized_workspace_and_differs(scan_session):
     )
 
     # Grayscale fetched the base workspace; colorized fetched sol_0921_colorized.
-    assert (_TEAM_FILE_PATH, "spatial.csv") in calls
-    assert (_TEAM_FILE_PATH_COLORIZED, "spatial.csv") in calls
-    assert (_TEAM_FILE_PATH_COLORIZED, "loupe.csv") in calls
+    assert (_TEAM_LOCATOR, "spatial.csv") in calls
+    assert (_TEAM_LOCATOR_COLORIZED, "spatial.csv") in calls
+    assert (_TEAM_LOCATOR_COLORIZED, "loupe.csv") in calls
     # The colorized variant must NEVER be fetched from the grayscale path.
-    assert (_TEAM_FILE_PATH, "spatial.csv") != (_TEAM_FILE_PATH_COLORIZED, "spatial.csv")
+    assert (_TEAM_LOCATOR, "spatial.csv") != (_TEAM_LOCATOR_COLORIZED, "spatial.csv")
 
     assert len(grayscale) == len(colorized) == N_POINTS
     # Same point indices, but the colorized coords are crop-shifted ⇒ differ.

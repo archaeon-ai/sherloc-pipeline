@@ -230,6 +230,9 @@ def _download_aci_for_sol(
 
             if downloader.download_aci_image(url, dest):
                 record.file_path = str(dest)
+                # Locator = position under the PDS cache root — exactly
+                # the tree the R2 sync mirrors under sherloc-aci/.
+                record.r2_rel_key = dest.relative_to(cache_dir).as_posix()
                 downloaded += 1
 
         session.commit()

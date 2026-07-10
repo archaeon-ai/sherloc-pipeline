@@ -263,7 +263,7 @@ def _resolve_identity(points: list) -> list[DisplayCoordinate]:
 
 def _fetch_workspace_file(
     workspace_reader: WorkspaceReader,
-    file_path: str,
+    rel_locator: str,
     filename: str,
     scan_id: str,
 ) -> bytes:
@@ -277,24 +277,23 @@ def _fetch_workspace_file(
     from fastapi import HTTPException
 
     try:
-        return workspace_reader(file_path, filename)
+        return workspace_reader(rel_locator, filename)
     except HTTPException as exc:
         if exc.status_code == 404:
             # Diagnostic re-derivation per spec §3.9.8.3.
             # Imports from ``core.r2_keys`` — NOT ``web.r2_reader`` — so the
             # cli/->api/->services/->core/->models/ layering rule holds
-            # (tests/architecture/test_layering.py). When the env-based tier
-            # lookup fails (e.g., production tier config disappeared mid-flight
-            # or this is the FS-fallback path), fall back to a placeholder so
-            # the error message still has actionable context.
+            # (tests/architecture/test_layering.py). Key derivation is a
+            # pure locator transform; a failure still yields a placeholder
+            # so the error message has actionable context.
             from sherloc_pipeline.core.r2_keys import derive_workspace_key
             try:
-                key = derive_workspace_key(file_path, filename)
+                key = derive_workspace_key(rel_locator, filename)
             except HTTPException:
                 key = f"<key-derivation-failed for {filename!r}>"
             raise CoordinatesUnavailableError(
                 f"Loupe workspace file not found in R2 for scan {scan_id!r} "
-                f"(file_path={file_path!r}, missing_file={filename!r}, "
+                f"(locator={rel_locator!r}, missing_file={filename!r}, "
                 f"expected_key={key!r}, "
                 f"upstream_detail={exc.detail!r}). "
                 "Cannot compute scanner_workspace transform."
@@ -323,8 +322,9 @@ def _resolve_scanner_workspace(
     - ``workspace_reader=None``: legacy local-FS read (local-filesystem
       dev installs without R2).
 
-    When ``colorized`` is ``True`` the ACI ``file_path`` is rewritten
-    ``sol_NNNN → sol_NNNN_colorized`` (via
+    When ``colorized`` is ``True`` the workspace reference — the
+    ``r2_rel_key`` locator on the R2 path, the ACI ``file_path`` on the
+    FS fallback — is rewritten ``sol_NNNN → sol_NNNN_colorized`` (via
     :func:`core.r2_keys.colorize_sol_segment`) so the colorized
     workspace's own ``spatial.csv`` / ``loupe.csv`` drive the transform.
     The colorized workspace mirrors the grayscale tree with only that one
@@ -358,21 +358,19 @@ def _resolve_scanner_workspace(
             "Cannot locate Loupe workspace to compute scanner_workspace transform."
         )
 
-    # Select the grayscale base workspace or its colorized sibling. The
-    # swap is on the same file_path the grayscale path uses, so both the
-    # R2 reader and the FS fallback below resolve the correct workspace.
-    workspace_file_path = aci.file_path
-    if colorized:
-        colorized_file_path = colorize_sol_segment(aci.file_path or "")
-        if colorized_file_path is None:
-            raise CoordinatesUnavailableError(
-                f"Cannot derive a colorized workspace for scan {scan_id!r}: "
-                f"ACI file_path {aci.file_path!r} has no 'sol_NNNN' segment "
-                "to rewrite to 'sol_NNNN_colorized'."
-            )
-        workspace_file_path = colorized_file_path
-
     if workspace_reader is not None:
+        # R2 path keys off the stored relative locator; select the
+        # grayscale base workspace or its colorized sibling.
+        workspace_locator = aci.r2_rel_key or ""
+        if colorized:
+            colorized_locator = colorize_sol_segment(workspace_locator)
+            if colorized_locator is None:
+                raise CoordinatesUnavailableError(
+                    f"Cannot derive a colorized workspace for scan "
+                    f"{scan_id!r}: ACI locator {aci.r2_rel_key!r} has no "
+                    "'sol_NNNN' segment to rewrite to 'sol_NNNN_colorized'."
+                )
+            workspace_locator = colorized_locator
         # v1.0-beta production path: fetch CSVs from R2 via the injected
         # reader, materialize to a temp dir, then call the unchanged
         # FS-bound load_spatial_table on that temp dir.
@@ -387,10 +385,10 @@ def _resolve_scanner_workspace(
         # CoordinatesUnavailableError → 400 mapping does NOT apply
         # to these; they surface their own status codes.
         spatial_bytes = _fetch_workspace_file(
-            workspace_reader, workspace_file_path, "spatial.csv", scan_id
+            workspace_reader, workspace_locator, "spatial.csv", scan_id
         )
         loupe_bytes = _fetch_workspace_file(
-            workspace_reader, workspace_file_path, "loupe.csv", scan_id
+            workspace_reader, workspace_locator, "loupe.csv", scan_id
         )
         with tempfile.TemporaryDirectory(prefix="loupe_ws_") as tmpdir:
             tmp_path = Path(tmpdir)
@@ -401,11 +399,23 @@ def _resolve_scanner_workspace(
             except Exception as exc:
                 raise CoordinatesUnavailableError(
                     f"Failed to parse Loupe workspace files from R2 for scan "
-                    f"{scan_id!r} (file_path={workspace_file_path!r}): {exc}"
+                    f"{scan_id!r} (locator={workspace_locator!r}): {exc}"
                 ) from exc
     else:
         # Legacy FS path: local-filesystem dev runtime without R2.
-        # Production containers do NOT take this branch.
+        # Production containers do NOT take this branch. Disk reads stay
+        # on the absolute file_path (retained transitionally alongside
+        # the locator).
+        workspace_file_path = aci.file_path
+        if colorized:
+            colorized_file_path = colorize_sol_segment(aci.file_path or "")
+            if colorized_file_path is None:
+                raise CoordinatesUnavailableError(
+                    f"Cannot derive a colorized workspace for scan "
+                    f"{scan_id!r}: ACI file_path {aci.file_path!r} has no "
+                    "'sol_NNNN' segment to rewrite to 'sol_NNNN_colorized'."
+                )
+            workspace_file_path = colorized_file_path
         working_dir = Path(workspace_file_path).parent.parent
 
         # Validate workspace files exist before calling load_spatial_table

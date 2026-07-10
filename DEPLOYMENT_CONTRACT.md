@@ -127,14 +127,14 @@ mode, used for tests + the `contract-smoke` workflow.
 | `SHERLOC_CORS_ALLOWED_ORIGINS` | unset | CSV of allowed Origins for `/api/*`. Empty string disables CORS; unset leaves it unconfigured. |
 | `SHERLOC_FEATURE_PDS_BROWSER` | unset (= ENABLED) | Only literal `disabled` (case-insensitive) opts out |
 | `AWS_REGION` | `auto` | Used by boto3 R2 client |
-| `PHASE_TEAM_LEGACY_STRIP_ALIASES` | unset | Colon-separated (`$PATH`-style) list of legacy team-tier `file_path` prefixes to accept ALONGSIDE the canonical `PHASE_TEAM_STRIP_PREFIX`. Additive — does NOT replace the built-in production default carried in `src/sherloc_pipeline/core/r2_keys.py`. Alias values containing a literal `:` are unsupported. Trailing slash required to match real `file_path` rows. v4.1.17+. |
-| `PHASE_PUBLIC_LEGACY_STRIP_ALIASES` | unset | Same shape and semantics as the team variant, for the public tier. Default has no built-in aliases. v4.1.17+. |
 
 ### 5.5 Retired — MUST NOT appear
 
 | Variable | Removed in | Reason |
 |---|---|---|
 | (legacy identity-claim split var; see `src/sherloc_pipeline/web/auth.py`) | v4.1.0 / Phase B.0 | Single identity-claim URI under §2.6.1; legacy split path eliminated. |
+| `PHASE_TEAM_STRIP_PREFIX` / `PHASE_PUBLIC_STRIP_PREFIX` | v5.4.0 | R2 keys derive from the stored `context_images.r2_rel_key` locator (migration `931df60632cb`); serve-time path stripping eliminated. The backfill migration alone still consults these for translation parity on non-canonical layouts — they have no effect on a migrated database. |
+| `PHASE_TEAM_LEGACY_STRIP_ALIASES` / `PHASE_PUBLIC_LEGACY_STRIP_ALIASES` | v5.4.0 | Same locator migration; legacy-prefix rows were normalized by the backfill, so runtime aliasing has nothing left to do. Backfill-only, as above. |
 
 The retired-var literal name is **deliberately omitted from this
 document**. `tests/contract/test_env_template_contract.py` asserts the
@@ -165,7 +165,7 @@ deliberate decision rather than silent drift. See
 
 | Element | Value |
 |---|---|
-| Current head | `9b2e7c4a1f08` (`add_product_role_axis`) |
+| Current head | `931df60632cb` (`add_r2_rel_key_locator_to_context_images`) |
 | Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade head` → uvicorn |
 | Contract guarantee | Single head (no fork); migrations idempotent |
 

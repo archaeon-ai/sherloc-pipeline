@@ -1,13 +1,16 @@
 """Tests for ``web/r2_reader.py`` — the shared R2-reader module (v4.1.9+).
 
 Exercises the R2 companion-file contract:
-``get_working_file(file_path, filename) → bytes`` for Loupe-workspace
+``get_working_file(rel_locator, filename) → bytes`` for Loupe-workspace
 companion files (``spatial.csv``, ``loupe.csv``). Uses moto's in-process
 S3 mock (``mock_aws``) so the boto3 client exercises real serialization +
 signing while no network traffic leaves the test process.
 
-Mirrors the per-tier resolve / cross-tier-creds / misconfigured-path /
-traversal coverage from ``test_images.py``.
+Keys derive from the stored relative locator
+(``context_images.r2_rel_key``) by concatenation — there is no per-tier
+strip-prefix table or legacy-alias machinery anymore (retired with the
+v5.4.0 locator migration). Tier isolation is credential-side (bucket-
+scoped tokens) plus per-tier databases.
 """
 
 from __future__ import annotations
@@ -23,15 +26,15 @@ from moto import mock_aws
 
 from sherloc_pipeline.web import r2_reader
 
-# Per-tier file_path conventions match the canonical per-tier ingestion
-# layout. The Loupe workspace directory is two levels up from the ACI
-# file (drops ``img/<aci-product>.{PNG,IMG}``).
-_TEAM_FILE_PATH = (
-    "/data/sherloc/data/loupe/sol_0921/detail_1/"
+# Relative locators (the ``r2_rel_key`` column value). The Loupe
+# workspace directory is two levels up from the ACI file (drops
+# ``img/<aci-product>.{PNG,IMG}``).
+_TEAM_LOCATOR = (
+    "loupe/sol_0921/detail_1/"
     "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
 )
-_PUBLIC_FILE_PATH = (
-    "/data/sherloc/pds/sol_0921/detail_1/"
+_PUBLIC_LOCATOR = (
+    "sol_0921/detail_1/"
     "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC0_0921_TEST.IMG"
 )
 
@@ -91,6 +94,41 @@ def r2_public_client():
 
 
 # ---------------------------------------------------------------------------
+# derive_r2_key — pure locator → key concatenation
+# ---------------------------------------------------------------------------
+
+class TestDeriveR2Key:
+    def test_team_locator_concatenates(self):
+        assert r2_reader.derive_r2_key(_TEAM_LOCATOR) == (
+            "sherloc-aci/" + _TEAM_LOCATOR
+        )
+
+    def test_public_locator_concatenates(self):
+        assert r2_reader.derive_r2_key(_PUBLIC_LOCATOR) == (
+            "sherloc-aci/" + _PUBLIC_LOCATOR
+        )
+
+    @pytest.mark.parametrize(
+        "bad_locator",
+        [
+            None,  # row predates backfill or matched no known layout
+            "",
+            # Unresolved PDS reference: no R2 identity until the download
+            # step resolves it (same 500 the pre-locator serve path gave).
+            "pds:urn:nasa:pds:mars2020_imgops:data_aci_imgops:x::1.0",
+            "loupe/sol_1/../../../etc/passwd",  # traversal
+            "/absolute/path/img/a.PNG",  # absolute → not a locator
+            "loupe\\sol_1\\img\\a.PNG",  # backslash
+        ],
+    )
+    def test_bad_locator_misconfigured_path_500(self, bad_locator):
+        with pytest.raises(HTTPException) as excinfo:
+            r2_reader.derive_r2_key(bad_locator)
+        assert excinfo.value.status_code == 500
+        assert excinfo.value.detail == "misconfigured_path"
+
+
+# ---------------------------------------------------------------------------
 # get_working_file — happy path (team + public)
 # ---------------------------------------------------------------------------
 
@@ -100,7 +138,7 @@ class TestGetWorkingFile:
         r2_team_client.put_object(
             Bucket="phase-team", Key=_TEAM_SPATIAL_KEY, Body=_SAMPLE_SPATIAL_CSV
         )
-        result = r2_reader.get_working_file(_TEAM_FILE_PATH, "spatial.csv")
+        result = r2_reader.get_working_file(_TEAM_LOCATOR, "spatial.csv")
         assert result == _SAMPLE_SPATIAL_CSV
 
     def test_get_working_file_team_resolve_loupe(self, r2_team_client):
@@ -108,7 +146,7 @@ class TestGetWorkingFile:
         r2_team_client.put_object(
             Bucket="phase-team", Key=_TEAM_LOUPE_KEY, Body=_SAMPLE_LOUPE_CSV
         )
-        result = r2_reader.get_working_file(_TEAM_FILE_PATH, "loupe.csv")
+        result = r2_reader.get_working_file(_TEAM_LOCATOR, "loupe.csv")
         assert result == _SAMPLE_LOUPE_CSV
 
     def test_get_working_file_public_resolve(self, r2_public_client):
@@ -118,7 +156,7 @@ class TestGetWorkingFile:
             Key=_PUBLIC_SPATIAL_KEY,
             Body=_SAMPLE_SPATIAL_CSV,
         )
-        result = r2_reader.get_working_file(_PUBLIC_FILE_PATH, "spatial.csv")
+        result = r2_reader.get_working_file(_PUBLIC_LOCATOR, "spatial.csv")
         assert result == _SAMPLE_SPATIAL_CSV
 
     def test_get_working_file_missing_404(self, r2_team_client):
@@ -132,27 +170,29 @@ class TestGetWorkingFile:
         """
         # NOTE: bucket exists (fixture creates it) but no put_object — key absent.
         with pytest.raises(HTTPException) as excinfo:
-            r2_reader.get_working_file(_TEAM_FILE_PATH, "spatial.csv")
+            r2_reader.get_working_file(_TEAM_LOCATOR, "spatial.csv")
         assert excinfo.value.status_code == 404
         assert excinfo.value.detail == "not_found"
 
-    def test_get_working_file_misconfigured_path(self, r2_team_client):
-        """Team-tier creds with public-tier file_path → misconfigured_path 500.
+    @pytest.mark.parametrize(
+        "bad_locator",
+        [
+            None,  # NULL r2_rel_key (row matched no known ingestion layout)
+            "",
+            "pds:urn:nasa:pds:mars2020_imgops:data_aci_imgops:x::1.0",
+            "loupe/sol_1/../../../etc/passwd/img/aci.PNG",  # traversal
+            "img/a.PNG",  # too shallow for a <workspace>/img/<file> tree
+        ],
+    )
+    def test_get_working_file_bad_locator_500(self, r2_team_client, bad_locator):
+        """Unusable locator → misconfigured_path 500 BEFORE any R2 call.
 
-        `_PUBLIC_FILE_PATH` does not begin with the team strip-prefix
-        (the per-tier ``TIER_TO_STRIP_PREFIX["team"]`` value), so the
-        resolver rejects without an R2 call per spec §3.9.4 / §3.9.8.3.
+        Covers the NULL-locator row (pre-backfill / unknown-layout), the
+        unresolved ``pds:`` sentinel, path traversal, and locators too
+        shallow to contain a Loupe workspace — spec §3.9.4 / §3.9.8.3.
         """
         with pytest.raises(HTTPException) as excinfo:
-            r2_reader.get_working_file(_PUBLIC_FILE_PATH, "spatial.csv")
-        assert excinfo.value.status_code == 500
-        assert excinfo.value.detail == "misconfigured_path"
-
-    def test_get_working_file_path_traversal_rejected(self, r2_team_client):
-        """A file_path with `..` segments cannot derive a traversal key."""
-        traversal_path = "/data/sherloc/data/../etc/passwd/img/aci.PNG"
-        with pytest.raises(HTTPException) as excinfo:
-            r2_reader.get_working_file(traversal_path, "spatial.csv")
+            r2_reader.get_working_file(bad_locator, "spatial.csv")
         assert excinfo.value.status_code == 500
         assert excinfo.value.detail == "misconfigured_path"
 
@@ -181,7 +221,7 @@ class TestGetWorkingFile:
         workspace-object reader.
         """
         with pytest.raises(HTTPException) as excinfo:
-            r2_reader.get_working_file(_TEAM_FILE_PATH, disallowed_filename)
+            r2_reader.get_working_file(_TEAM_LOCATOR, disallowed_filename)
         assert excinfo.value.status_code == 500
         assert excinfo.value.detail == "misconfigured_path"
 
@@ -190,6 +230,8 @@ class TestGetWorkingFile:
 
         Simulates the §3.9.5 negative: a team container misconfigured
         with public-tier (slot 3) credentials attempts a team-bucket GET.
+        With locator-derived keys, cross-tier misconfiguration is caught
+        entirely credential-side — exactly this 403 → 502 mapping.
         moto's mock_aws doesn't model per-bucket scoping, so inject a
         client whose `get_object` raises a ClientError(AccessDenied) —
         exactly what live R2 would return.
@@ -205,147 +247,28 @@ class TestGetWorkingFile:
         r2_reader.set_r2_client_for_tests(client_mock, "team")
         try:
             with pytest.raises(HTTPException) as excinfo:
-                r2_reader.get_working_file(_TEAM_FILE_PATH, "spatial.csv")
+                r2_reader.get_working_file(_TEAM_LOCATOR, "spatial.csv")
             assert excinfo.value.status_code == 502
             assert excinfo.value.detail == "upstream_credential_error"
         finally:
             r2_reader.reset_r2_client_for_tests()
 
-    def test_derive_workspace_key_team(self, r2_team_client):
-        """derive_workspace_key returns the canonical R2 key for team-tier file_path."""
-        key = r2_reader.derive_workspace_key(_TEAM_FILE_PATH, "spatial.csv")
+    def test_derive_workspace_key_team(self):
+        """derive_workspace_key returns the canonical R2 key for a team locator."""
+        key = r2_reader.derive_workspace_key(_TEAM_LOCATOR, "spatial.csv")
         assert key == _TEAM_SPATIAL_KEY
 
-    def test_derive_workspace_key_public(self, r2_public_client):
-        """derive_workspace_key returns the canonical R2 key for public-tier file_path."""
-        key = r2_reader.derive_workspace_key(_PUBLIC_FILE_PATH, "spatial.csv")
+    def test_derive_workspace_key_public(self):
+        """derive_workspace_key returns the canonical R2 key for a public locator."""
+        key = r2_reader.derive_workspace_key(_PUBLIC_LOCATOR, "spatial.csv")
         assert key == _PUBLIC_SPATIAL_KEY
 
-    def test_derive_workspace_key_rejects_disallowed_filename(self, r2_team_client):
+    def test_derive_workspace_key_rejects_disallowed_filename(self):
         """derive_workspace_key applies the same WORKSPACE_FILENAMES allowlist."""
         with pytest.raises(HTTPException) as excinfo:
-            r2_reader.derive_workspace_key(_TEAM_FILE_PATH, "other.csv")
+            r2_reader.derive_workspace_key(_TEAM_LOCATOR, "other.csv")
         assert excinfo.value.status_code == 500
         assert excinfo.value.detail == "misconfigured_path"
-
-    # -----------------------------------------------------------------
-    # Legacy-alias acceptance (v4.1.17) — some DBs carry pre-v4.1.9
-    # `file_path` rows with a NAS-mount prefix. ``derive_r2_key`` and
-    # ``derive_workspace_key`` accept those as aliases of the canonical
-    # team-tier prefix, deriving the SAME ``sherloc-aci/<rel>`` R2 key.
-    # Such rows had been 500-ing on every ACI route since v4.1.9 deployed.
-    # -----------------------------------------------------------------
-
-    def test_get_working_file_team_resolves_legacy_nas_alias(self, r2_team_client):
-        """A legacy NAS-prefixed ``file_path`` resolves to the same R2 key as the canonical sibling."""
-        legacy_path = (
-            "/nas/000_sherloc/data/loupe/sol_1810/line_1/"
-            "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC2_1810_TEST.PNG"
-        )
-        canonical_key = (
-            "sherloc-aci/loupe/sol_1810/line_1/"
-            "SrlcSpecSpecSohRaw_TEST_Loupe_working/spatial.csv"
-        )
-        r2_team_client.put_object(
-            Bucket="phase-team", Key=canonical_key, Body=_SAMPLE_SPATIAL_CSV
-        )
-        body = r2_reader.get_working_file(legacy_path, "spatial.csv")
-        assert body == _SAMPLE_SPATIAL_CSV
-
-    def test_derive_workspace_key_team_accepts_legacy_nas_alias(self, r2_team_client):
-        """derive_workspace_key strips the legacy alias to the same R2 key."""
-        legacy_path = (
-            "/nas/000_sherloc/data/loupe/sol_0921/detail_1/"
-            "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
-        )
-        key = r2_reader.derive_workspace_key(legacy_path, "spatial.csv")
-        assert key == _TEAM_SPATIAL_KEY  # identical to canonical-prefix sibling
-
-    def test_get_working_file_public_rejects_team_legacy_alias(self, r2_public_client):
-        """Public tier does not inherit team-tier legacy aliases (tier isolation)."""
-        team_legacy_path = (
-            "/nas/000_sherloc/data/loupe/sol_1810/line_1/"
-            "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC2_1810_TEST.PNG"
-        )
-        with pytest.raises(HTTPException) as excinfo:
-            r2_reader.get_working_file(team_legacy_path, "spatial.csv")
-        assert excinfo.value.status_code == 500
-        assert excinfo.value.detail == "misconfigured_path"
-
-    def test_legacy_alias_still_enforces_path_traversal_guard(self, r2_team_client):
-        """A legacy-aliased path with `..` segments still 500s — guard applies post-strip."""
-        traversal_legacy = (
-            "/nas/000_sherloc/data/../etc/passwd/img/aci.PNG"
-        )
-        with pytest.raises(HTTPException) as excinfo:
-            r2_reader.get_working_file(traversal_legacy, "spatial.csv")
-        assert excinfo.value.status_code == 500
-        assert excinfo.value.detail == "misconfigured_path"
-
-    def test_derive_r2_key_team_accepts_legacy_nas_alias(self):
-        """Direct ``derive_r2_key`` call resolves a legacy NAS path to the canonical R2 key.
-
-        Mirrors the ACI image route's resolution step (`/api/images/{id}/aci`
-        and `colorized_variant_exists`), independent of the workspace
-        companion-file path.
-        """
-        legacy_path = (
-            "/nas/000_sherloc/data/loupe/sol_1810/line_1/"
-            "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC2_1810_TEST.PNG"
-        )
-        team_strip = r2_reader.TIER_TO_STRIP_PREFIX["team"]
-        key = r2_reader.derive_r2_key(legacy_path, team_strip)
-        assert key == (
-            "sherloc-aci/loupe/sol_1810/line_1/"
-            "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC2_1810_TEST.PNG"
-        )
-
-    def test_derive_r2_key_explicit_active_tier_overrides_inference(self):
-        """``active_tier`` kwarg lets callers bypass strip-prefix-based tier inference.
-
-        Regression guard — when the canonical prefix doesn't match, the
-        active-tier scope determines which alias set to consult. Explicit
-        ``active_tier="public"`` MUST NOT consult team aliases even when
-        the strip-prefix value happens to match team's.
-        """
-        legacy_team_path = (
-            "/nas/000_sherloc/data/loupe/sol_1810/line_1/img/aci.PNG"
-        )
-        team_strip = r2_reader.TIER_TO_STRIP_PREFIX["team"]
-        # Implicit (back-compat) call: inference finds team via strip-prefix
-        # match → team aliases consulted → resolves.
-        key = r2_reader.derive_r2_key(legacy_team_path, team_strip)
-        assert key.startswith("sherloc-aci/loupe/sol_1810/")
-        # Explicit active_tier="public" → only public aliases (empty by
-        # default) → no alias matches → misconfigured_path.
-        with pytest.raises(HTTPException) as excinfo:
-            r2_reader.derive_r2_key(legacy_team_path, team_strip, active_tier="public")
-        assert excinfo.value.status_code == 500
-        assert excinfo.value.detail == "misconfigured_path"
-
-    def test_legacy_alias_env_var_appends_not_replaces_default(self, monkeypatch):
-        """Setting ``PHASE_TEAM_LEGACY_STRIP_ALIASES`` MUST NOT drop the built-in default.
-
-        Regression guard — the env var is additive (colon-separated,
-        $PATH-style). The built-in alias (the in-tree default per
-        ``_DEFAULT_TEAM_LEGACY_ALIASES``) stays in scope regardless.
-        """
-        import importlib
-
-        monkeypatch.setenv("PHASE_TEAM_LEGACY_STRIP_ALIASES", "/some/other/legacy/root/")
-        # Reimport the module so the env-var-derived constant rebuilds.
-        from sherloc_pipeline.core import r2_keys as r2_keys_mod
-        importlib.reload(r2_keys_mod)
-        try:
-            team_aliases = r2_keys_mod.TIER_TO_LEGACY_STRIP_ALIASES["team"]
-            # Built-in default still present
-            assert any("000_sherloc" in p for p in team_aliases)
-            # Plus the env-provided extra
-            assert "/some/other/legacy/root/" in team_aliases
-        finally:
-            # Restore module state so subsequent tests don't see the override.
-            monkeypatch.delenv("PHASE_TEAM_LEGACY_STRIP_ALIASES", raising=False)
-            importlib.reload(r2_keys_mod)
 
     def test_get_working_file_timeout_504(self):
         """boto3 ReadTimeoutError → 504 upstream_timeout per spec §3.9.4."""
@@ -354,7 +277,7 @@ class TestGetWorkingFile:
         r2_reader.set_r2_client_for_tests(client_mock, "team")
         try:
             with pytest.raises(HTTPException) as excinfo:
-                r2_reader.get_working_file(_TEAM_FILE_PATH, "spatial.csv")
+                r2_reader.get_working_file(_TEAM_LOCATOR, "spatial.csv")
             assert excinfo.value.status_code == 504
             assert excinfo.value.detail == "upstream_timeout"
         finally:
@@ -437,8 +360,8 @@ class TestColorizeSolSegment:
     """Pure ``sol_NNNN → sol_NNNN_colorized`` swap (issue #8).
 
     Shared by ``find_colorized_key`` (image key) and the coordinate
-    resolver (workspace spatial.csv/loupe.csv path), so it must swap only
-    the bare ``sol_NNNN`` segment regardless of the surrounding path.
+    resolver (workspace spatial.csv/loupe.csv locator), so it must swap
+    only the bare ``sol_NNNN`` segment regardless of the surrounding path.
     """
 
     def test_swaps_first_bare_sol_segment(self):
@@ -449,14 +372,14 @@ class TestColorizeSolSegment:
             == "sherloc-aci/loupe/sol_1213_colorized/ws/img/a.PNG"
         )
 
-    def test_swaps_in_absolute_file_path(self):
+    def test_swaps_in_relative_locator(self):
         from sherloc_pipeline.core.r2_keys import colorize_sol_segment
 
         assert (
             colorize_sol_segment(
-                "/data/sherloc/data/loupe/sol_0921/d1/ws/img/SC3_0921_T.PNG"
+                "loupe/sol_0921/d1/ws/img/SC3_0921_T.PNG"
             )
-            == "/data/sherloc/data/loupe/sol_0921_colorized/d1/ws/img/SC3_0921_T.PNG"
+            == "loupe/sol_0921_colorized/d1/ws/img/SC3_0921_T.PNG"
         )
 
     def test_does_not_touch_sol_substring_in_filename(self):
@@ -482,3 +405,71 @@ class TestColorizeSolSegment:
             colorize_sol_segment("a/sol_1/b/sol_2/c")
             == "a/sol_1_colorized/b/sol_2/c"
         )
+
+
+class TestDeriveRelLocator:
+    """Structural locator derivation for go-forward ingestion writers.
+
+    ``derive_rel_locator`` anchors on the ``sol_NNNN`` segment so the
+    locator is derivable from the path shape regardless of which machine
+    or mount ingestion read from. The cases mirror every file_path shape
+    observed in the production databases at migration time.
+    """
+
+    def test_canonical_loupe_tree(self):
+        from sherloc_pipeline.core.r2_keys import derive_rel_locator
+
+        assert derive_rel_locator(
+            "/data/sherloc/data/loupe/sol_0921/detail_1/ws/img/a.PNG"
+        ) == "loupe/sol_0921/detail_1/ws/img/a.PNG"
+
+    def test_legacy_nas_loupe_tree(self):
+        from sherloc_pipeline.core.r2_keys import derive_rel_locator
+
+        assert derive_rel_locator(
+            "/nas/000_sherloc/data/loupe/sol_1810/line_1/ws/img/b.PNG"
+        ) == "loupe/sol_1810/line_1/ws/img/b.PNG"
+
+    def test_relocated_loupe_tree_still_derives(self):
+        """Any mount point works — the anchor is structural, not a prefix."""
+        from sherloc_pipeline.core.r2_keys import derive_rel_locator
+
+        assert derive_rel_locator(
+            "/mnt/elsewhere/loupe/sol_0100/survey_1/ws/img/c.PNG"
+        ) == "loupe/sol_0100/survey_1/ws/img/c.PNG"
+
+    def test_colorized_loupe_tree(self):
+        from sherloc_pipeline.core.r2_keys import derive_rel_locator
+
+        assert derive_rel_locator(
+            "/data/sherloc/data/loupe/sol_1213_colorized/ws/img/d.PNG"
+        ) == "loupe/sol_1213_colorized/ws/img/d.PNG"
+
+    def test_pds_cache_tree(self):
+        from sherloc_pipeline.core.r2_keys import derive_rel_locator
+
+        assert derive_rel_locator(
+            "/data/sherloc/pds/sol_0712/data_aci/e.IMG"
+        ) == "sol_0712/data_aci/e.IMG"
+
+    def test_unknown_layout_returns_none(self):
+        from sherloc_pipeline.core.r2_keys import derive_rel_locator
+
+        assert derive_rel_locator("/somewhere/else/entirely/f.PNG") is None
+        # sol segment present but neither loupe- nor data_aci-shaped
+        assert derive_rel_locator("/backup/sol_0921/raw/g.PNG") is None
+
+    def test_traversal_after_anchor_returns_none(self):
+        """A locator serving would reject must never be persisted.
+
+        Mirrors the migration backfill's traversal exclusion for the
+        go-forward ingestion writers (review F2).
+        """
+        from sherloc_pipeline.core.r2_keys import derive_rel_locator
+
+        assert derive_rel_locator(
+            "/data/sherloc/data/loupe/sol_0921/../../../etc/passwd"
+        ) is None
+        assert derive_rel_locator(
+            "/data/sherloc/pds/sol_0712/data_aci/..\\evil.IMG"
+        ) is None

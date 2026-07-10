@@ -1,146 +1,73 @@
 """Pure R2 key-derivation primitives for the m2020-phase v1.0-beta deployment.
 
-Extracted from ``web/r2_reader.py`` at v4.1.9-fix so that ``core/coordinates.py``
-can derive the canonical R2 key for a missing Loupe-workspace file (spec
-§3.9.8.3 — the 400 ``/api/map/layers`` response MUST name the expected
-key) without violating the
-``cli/ -> api/ -> services/ -> core/ -> models/`` layering rule enforced by
-``tests/architecture/test_layering.py``.
+The object identity of a context image is its **relative locator**
+(``context_images.r2_rel_key``): a POSIX-style relative path that is the
+image's position in the tier's data tree. Physical locations derive from
+it at the edges:
 
-This module is **pure** — no boto3, no I/O, no module-level side effects
-beyond reading ``PHASE_*_STRIP_PREFIX`` env vars at import time (identical
-to the original behavior in ``web/r2_reader.py``).
+- R2 key   = ``sherloc-aci/`` + locator (:func:`derive_r2_key`)
+- disk path = ``<data_root>/`` + locator (processing side; deployment
+  config, not this module)
 
-Contract: m2020-phase platform spec §3.9
-(ACI bytes; key derivation table) + §3.9.8 (Loupe workspace files).
-Tier isolation remains dual-enforced: code-side (per-tier strip-prefix
-table + ``sherloc-aci/`` re-root) + credential-side (R2 bucket-scoped
-read tokens; slot 1 team / slot 3 public).
+Unresolved PDS references carry the ``pds:<lidvid>`` scheme in the same
+column (one scheme in the relative-locator family); they have no R2 key
+until the download step resolves them, so :func:`derive_r2_key` rejects
+them exactly like the pre-locator serve path did.
 
-Consumers:
+This module is **pure** — no boto3, no I/O, no env reads. That also
+makes :func:`derive_workspace_key` usable from ``core/coordinates.py``
+for the R2-404 diagnostic key (spec §3.9.8.3) without violating the
+``cli/ -> api/ -> services/ -> core/ -> models/`` layering rule enforced
+by ``tests/architecture/test_layering.py``.
 
-- ``web/r2_reader.py`` — re-exports these symbols so existing
-  ``from sherloc_pipeline.web.r2_reader import ...`` imports keep
-  resolving (back-compat with v4.1.9 surface; no public-API churn).
-- ``core/coordinates.py`` — calls :func:`derive_workspace_key` and
-  :func:`get_strip_prefix_for_current_tier` directly to build the
-  diagnostic key in the ``CoordinatesUnavailableError`` raised on
-  R2-404 of ``spatial.csv`` / ``loupe.csv``.
+History: through v5.3.x, ``file_path`` stored a machine-specific
+absolute path and this module carried a per-tier strip-prefix table,
+``PHASE_*_STRIP_PREFIX`` env fallbacks, legacy-ingestion aliases, and
+tier inference to undo that at serve time. The stored-locator model
+replaces all of it; the one-time translation now lives in the Alembic
+backfill migration.
+
+Contract: m2020-phase platform spec §3.9 (ACI bytes; key derivation)
++ §3.9.8 (Loupe workspace files). Tier isolation is credential-side
+(R2 bucket-scoped read tokens; per-tier team/public credentials) plus
+per-tier databases — the locator itself is tier-neutral.
 """
 
 from __future__ import annotations
 
-import os
 import re
-from pathlib import Path
+from pathlib import PurePath, PurePosixPath
 
-from fastapi import HTTPException
+# NOTE: fastapi is imported lazily inside the raising functions.
+# This module sits on the ingestion import path (services/ingestion.py
+# imports derive_rel_locator), which must work in installs without the
+# ``web`` extra — e.g. the contract-smoke workflow's host-side
+# ``pip install -e '.[dev]'``.
 
-# R2 strip-prefix + bucket per tier (spec §3.9.3).
-# Strip prefix is hardcoded per tier — not derived solely from
-# PHASE_TIER — so a misclassified ingestion is rejected as
-# misconfigured_path before any R2 call. Override via the
-# PHASE_{TEAM,PUBLIC}_STRIP_PREFIX env vars when an alternative
-# deployment layout is in use; the defaults below match the canonical
-# ingestion layout.
-_DEFAULT_TEAM_STRIP = "/data/sherloc/data/"
-_DEFAULT_PUBLIC_STRIP = "/data/sherloc/pds/"
-TIER_TO_STRIP_PREFIX = {
-    "team": os.environ.get("PHASE_TEAM_STRIP_PREFIX", _DEFAULT_TEAM_STRIP),
-    "public": os.environ.get("PHASE_PUBLIC_STRIP_PREFIX", _DEFAULT_PUBLIC_STRIP),
-}
-TIER_TO_BUCKET = {
-    "team": "phase-team",
-    "public": "phase-public",
-}
 R2_KEY_PREFIX = "sherloc-aci/"
-
-# Legacy-ingestion path aliases per tier. Some `context_images.file_path`
-# rows were ingested with the pre-v4.1.9 NAS-mount convention and never
-# re-normalized to the canonical `$PHASE_TEAM_STRIP_PREFIX` (default
-# `_DEFAULT_TEAM_STRIP` above) layout. Their R2 byte layout under
-# `sherloc-aci/` is the same relative tree once the legacy prefix is
-# stripped, so the right semantics is to treat the legacy prefix as an
-# *alias* of the canonical one: same `sherloc-aci/<rel>` re-root, no
-# behavior change for the canonical happy path.
-#
-# `PHASE_{TEAM,PUBLIC}_LEGACY_STRIP_ALIASES` env vars APPEND to the per-
-# tier defaults (colon-separated, same shape as `$PATH`). Setting the env
-# var does NOT replace the in-tree default — the known-in-flight
-# alias stays in scope regardless. To retire the default, remove the
-# literal below and ship a code change, not an env override (the env
-# override can ONLY add aliases). An additive deployment knob must not be
-# able to regress already-working paths.
-_DEFAULT_TEAM_LEGACY_ALIASES: tuple[str, ...] = (
-    "/nas/000_sherloc/data/",
-)
-_DEFAULT_PUBLIC_LEGACY_ALIASES: tuple[str, ...] = ()
-_team_extra_env = os.environ.get("PHASE_TEAM_LEGACY_STRIP_ALIASES", "")
-_public_extra_env = os.environ.get("PHASE_PUBLIC_LEGACY_STRIP_ALIASES", "")
-TIER_TO_LEGACY_STRIP_ALIASES: dict[str, tuple[str, ...]] = {
-    "team": _DEFAULT_TEAM_LEGACY_ALIASES + tuple(
-        p for p in _team_extra_env.split(":") if p
-    ),
-    "public": _DEFAULT_PUBLIC_LEGACY_ALIASES + tuple(
-        p for p in _public_extra_env.split(":") if p
-    ),
-}
-
-
-def _resolve_strip_prefix(
-    file_path: str,
-    strip_prefix: str,
-    *,
-    active_tier: str | None = None,
-) -> str | None:
-    """Return the prefix `file_path` matches (canonical or known alias), or None.
-
-    The canonical `strip_prefix` is tried first. If the path doesn't match
-    it, the legacy aliases for the active tier are tried.
-
-    ``active_tier``: if the caller knows which tier this resolution
-    belongs to (e.g. it pulled the prefix from a cached tier config),
-    pass it explicitly — that's the SAFE path. Otherwise the function
-    falls back to inferring the tier by inverting the
-    ``TIER_TO_STRIP_PREFIX`` table; that inference is ambiguous when
-    two tiers happen to share a strip-prefix value (e.g. dev override
-    sets both to the same path) and would let one tier's aliases be
-    consulted by the other's call. Explicit tier is preferred for
-    production callers; implicit fallback is kept for the back-compat
-    ``derive_r2_key(file_path, strip_prefix)`` surface.
-    """
-    if file_path.startswith(strip_prefix):
-        return strip_prefix
-    if active_tier is None:
-        active_tier = next(
-            (t for t, p in TIER_TO_STRIP_PREFIX.items() if p == strip_prefix),
-            None,
-        )
-    if active_tier is None:
-        return None
-    for alias in TIER_TO_LEGACY_STRIP_ALIASES.get(active_tier, ()):
-        if file_path.startswith(alias):
-            return alias
-    return None
 
 # Matches a bare ``sol_NNNN`` path segment (the colorized variant appends
 # ``_colorized``: ``sol_1213`` → ``sol_1213_colorized``).
 _SOL_SEGMENT_RE = re.compile(r"^sol_\d+$")
 
+# Matches ``sol_NNNN`` or ``sol_NNNN_colorized`` when anchoring a
+# relative locator inside an absolute ingestion path.
+_SOL_ANCHOR_RE = re.compile(r"^sol_\d+(_colorized)?$")
+
 
 def colorize_sol_segment(path: str) -> str | None:
     """Swap the first ``sol_NNNN`` path segment to ``sol_NNNN_colorized``.
 
-    Pure string transform on a ``/``-delimited path (an R2 key *or* an
-    absolute ``file_path`` — both carry the ``sol_NNNN`` workspace
-    segment). Returns the rewritten path, or ``None`` when no bare
-    ``sol_NNNN`` segment is present (so callers can treat "no colorized
-    variant derivable" distinctly from a successful swap).
+    Pure string transform on a ``/``-delimited path (an R2 key *or* a
+    relative locator — both carry the ``sol_NNNN`` workspace segment).
+    Returns the rewritten path, or ``None`` when no bare ``sol_NNNN``
+    segment is present (so callers can treat "no colorized variant
+    derivable" distinctly from a successful swap).
 
     The colorized Loupe workspace mirrors the grayscale tree exactly with
     only this one segment renamed, so the same swap derives both the
     colorized image key (see :func:`web.r2_reader.find_colorized_key`) and
-    the colorized ``spatial.csv`` / ``loupe.csv`` workspace path (see
+    the colorized ``spatial.csv`` / ``loupe.csv`` workspace locator (see
     :func:`core.coordinates._resolve_scanner_workspace`).
     """
     parts = path.split("/")
@@ -159,74 +86,41 @@ def colorize_sol_segment(path: str) -> str | None:
 WORKSPACE_FILENAMES = frozenset({"spatial.csv", "loupe.csv"})
 
 
-def get_strip_prefix_for_current_tier() -> str:
-    """Return the per-tier R2 strip prefix from ``PHASE_TIER``.
+def _misconfigured_path() -> Exception:
+    """The serve path's 500 for an unusable locator (lazy fastapi import)."""
+    from fastapi import HTTPException
 
-    Pure env lookup; does NOT initialize the boto3 client. Matches the
-    failure mode of :func:`web.r2_reader.get_r2_client_and_config` per
-    spec §3.9.4 — invalid tier raises ``HTTPException(500, "tier_unset")``.
-
-    Raises:
-        HTTPException(500, "tier_unset"): if ``PHASE_TIER`` is unset,
-            empty, or not in :data:`TIER_TO_STRIP_PREFIX`.
-    """
-    tier = os.environ.get("PHASE_TIER", "").strip().lower()
-    if tier not in TIER_TO_STRIP_PREFIX:
-        raise HTTPException(status_code=500, detail="tier_unset")
-    return TIER_TO_STRIP_PREFIX[tier]
+    return HTTPException(status_code=500, detail="misconfigured_path")
 
 
-def derive_r2_key(
-    file_path: str,
-    strip_prefix: str,
-    *,
-    active_tier: str | None = None,
-) -> str:
-    """Strip the per-tier prefix from ``file_path`` and re-root under ``sherloc-aci/``.
-
-    Pure function. ``strip_prefix`` is supplied by the caller (typically
-    from :func:`get_strip_prefix_for_current_tier` or from the cached
-    ``_r2_config`` in :mod:`web.r2_reader`).
-
-    Accepts ``file_path`` under either the canonical ``strip_prefix`` OR
-    one of the per-tier legacy aliases declared in
-    :data:`TIER_TO_LEGACY_STRIP_ALIASES`. Legacy-alias rows resolve to the
-    same ``sherloc-aci/<rel>`` key as their canonical-prefix siblings
-    would, because the rclone of NAS → R2 preserves the post-prefix
-    relative tree. This unblocks pre-v4.1.9 ingested rows whose
-    ``file_path`` was never re-normalized without requiring a DB
-    migration.
-
-    ``active_tier`` (kwarg-only): pass when the caller knows which tier
-    the resolution belongs to (e.g. ``cfg["tier"]`` from the cached
-    R2 config). When omitted, the function infers tier by inverting
-    ``TIER_TO_STRIP_PREFIX``; the inference is ambiguous when two tiers
-    share a strip-prefix value. Production callers should pass
-    ``active_tier`` for the safer path.
-
-    Raises ``HTTPException(500, "misconfigured_path")`` if ``file_path``
-    does not begin with the canonical prefix OR any legacy alias (e.g.,
-    a team-tier DB row carrying a public-tier path), or if the resulting
-    key fails the path-traversal guard.
-    """
-    matched = _resolve_strip_prefix(file_path, strip_prefix, active_tier=active_tier)
-    if matched is None:
-        raise HTTPException(status_code=500, detail="misconfigured_path")
-    rel = file_path[len(matched):]
-    key = R2_KEY_PREFIX + rel
+def _validate_key(key: str) -> str:
+    """Shared path-traversal guard for derived R2 keys."""
     if ".." in key or key.startswith("/") or "\\" in key:
-        raise HTTPException(status_code=500, detail="misconfigured_path")
+        raise _misconfigured_path()
     return key
 
 
-def derive_workspace_key(
-    file_path: str,
-    filename: str,
-    *,
-    strip_prefix: str | None = None,
-    active_tier: str | None = None,
-) -> str:
-    """Return the R2 key for ``filename`` inside the Loupe workspace of ``file_path``.
+def derive_r2_key(rel_locator: str | None) -> str:
+    """Return the R2 object key for a stored relative locator.
+
+    Single concatenation: ``sherloc-aci/`` + locator. Raises
+    ``HTTPException(500, "misconfigured_path")`` when the locator is
+    missing (row predates the backfill or matched no known layout),
+    carries the unresolved ``pds:`` scheme (broken ingestion at serve
+    time, same rejection as pre-locator behavior), is absolute, or fails
+    the path-traversal guard.
+    """
+    if (
+        not rel_locator
+        or rel_locator.startswith("pds:")
+        or rel_locator.startswith("/")
+    ):
+        raise _misconfigured_path()
+    return _validate_key(R2_KEY_PREFIX + rel_locator)
+
+
+def derive_workspace_key(rel_locator: str | None, filename: str) -> str:
+    """Return the R2 key for ``filename`` inside the Loupe workspace of a locator.
 
     Pure key derivation — no R2 client work. Callers use this to:
 
@@ -236,46 +130,60 @@ def derive_workspace_key(
       the fetch (spec §3.9.8.3 — the missing-workspace 400 response from
       ``/api/map/layers`` MUST name the R2 key).
 
-    The Loupe workspace directory is ``Path(file_path).parent.parent``
+    The Loupe workspace directory is the locator's grandparent
     (drops the ``img/<aci-product>.{PNG,IMG}`` suffix).
 
-    Two strip-prefix sources, in priority order:
-
-    1. ``strip_prefix`` keyword argument — used by
-       :mod:`web.r2_reader` when the cached tier config is available
-       (``set_r2_client_for_tests`` injected client during tests, or
-       runtime ``get_r2_client_and_config()`` cache in production).
-    2. ``PHASE_TIER`` env via :func:`get_strip_prefix_for_current_tier`
-       — used by :mod:`core.coordinates` in the 404-diagnostic
-       fallback where the caller doesn't have a cached cfg in scope.
-
-    Raises ``HTTPException`` for: disallowed ``filename``,
-    ``file_path`` not under the per-tier strip prefix, derived-key
-    path-traversal — all ``misconfigured_path``; or
-    ``tier_unset`` if ``strip_prefix`` is None AND ``PHASE_TIER`` is
-    unset / invalid.
+    Raises ``HTTPException(500, "misconfigured_path")`` for: disallowed
+    ``filename``, a missing / ``pds:``-schemed / absolute locator, a
+    locator too shallow to contain a ``<workspace>/img/<file>`` tree, or
+    a derived key failing the path-traversal guard.
     """
     if filename not in WORKSPACE_FILENAMES:
-        raise HTTPException(status_code=500, detail="misconfigured_path")
+        raise _misconfigured_path()
+    if (
+        not rel_locator
+        or rel_locator.startswith("pds:")
+        or rel_locator.startswith("/")
+    ):
+        raise _misconfigured_path()
+    working_rel = PurePosixPath(rel_locator).parent.parent
+    if str(working_rel) in (".", "/", ""):
+        raise _misconfigured_path()
+    return _validate_key(f"{R2_KEY_PREFIX}{working_rel}/{filename}")
 
-    if strip_prefix is None:
-        strip_prefix = get_strip_prefix_for_current_tier()
-        if active_tier is None:
-            # We just looked up the current tier inside
-            # get_strip_prefix_for_current_tier — make the same answer
-            # available to the alias resolver so it doesn't have to
-            # re-infer.
-            active_tier = os.environ.get("PHASE_TIER", "").strip().lower() or None
-    # Accept legacy aliases for the same tier (mirror of derive_r2_key).
-    matched = _resolve_strip_prefix(file_path, strip_prefix, active_tier=active_tier)
-    if matched is None:
-        raise HTTPException(status_code=500, detail="misconfigured_path")
-    file_path_obj = Path(file_path)
-    try:
-        working_rel = file_path_obj.parent.parent.relative_to(Path(matched))
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail="misconfigured_path") from exc
-    key = f"{R2_KEY_PREFIX}{working_rel}/{filename}"
-    if ".." in key or key.startswith("/") or "\\" in key:
-        raise HTTPException(status_code=500, detail="misconfigured_path")
-    return key
+
+def derive_rel_locator(file_path: str | PurePath) -> str | None:
+    """Derive the relative locator from an absolute ingestion path, or None.
+
+    Structural anchor on the ``sol_NNNN`` segment — the R2 tree layout is
+    a platform convention, so the locator is derivable from the path
+    shape regardless of which machine or mount the ingestion read from:
+
+    - Loupe workspace tree (team tier):
+      ``…/loupe/sol_NNNN/<scan>/<workspace>/img/<file>`` →
+      ``loupe/sol_NNNN/<scan>/<workspace>/img/<file>``
+    - PDS ACI cache tree (public tier):
+      ``…/sol_NNNN/data_aci/<file>`` → ``sol_NNNN/data_aci/<file>``
+
+    Returns ``None`` when the path matches neither convention (the row
+    then has no derivable R2 identity; serving it fails the same way an
+    unrecognized absolute path always has), or when the derived locator
+    would fail :func:`derive_r2_key`'s traversal guard — a locator that
+    cannot serve must not be persisted.
+    """
+    parts = PurePath(file_path).parts
+    for i, part in enumerate(parts):
+        if not _SOL_ANCHOR_RE.match(part):
+            continue
+        if i > 0 and parts[i - 1] == "loupe":
+            rel = "/".join(("loupe", *parts[i:]))
+        elif i + 1 < len(parts) and parts[i + 1] == "data_aci":
+            rel = "/".join(parts[i:])
+        else:
+            continue
+        # Mirror _validate_key: never persist a locator serving would
+        # reject (same conservative substring semantics).
+        if ".." in rel or "\\" in rel:
+            return None
+        return rel
+    return None

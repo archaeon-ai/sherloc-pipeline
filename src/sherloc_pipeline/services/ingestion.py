@@ -42,6 +42,7 @@ from sherloc_pipeline.database import (
     ContextImageORM,
     RegionOfInterestORM,
 )
+from sherloc_pipeline.core.r2_keys import derive_rel_locator
 from sherloc_pipeline.models.ingestion import (
     LoupeWorkspaceParser,
     LoupeWorkspaceResult,
@@ -540,8 +541,11 @@ class IngestionService:
             roi_orm = RegionOfInterestORM.from_pydantic(roi)
             session.add(roi_orm)
 
-        # Add context images
+        # Add context images (dual-write: absolute file_path for
+        # processing-side disk reads, relative locator for R2 serving)
         for img in result.context_images:
+            if img.r2_rel_key is None:
+                img.r2_rel_key = derive_rel_locator(img.file_path)
             img_orm = ContextImageORM.from_pydantic(img)
             session.add(img_orm)
 
