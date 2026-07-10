@@ -34,9 +34,13 @@ from sherloc_pipeline.database.models import (
 )
 from tests.unit.web.conftest import SCAN_UUID
 
-# Same per-tier file_path convention as test_r2_reader.py / test_coordinates.py.
+# Same canonical shapes as test_r2_reader.py / test_coordinates.py.
 _TEAM_FILE_PATH = (
     "/data/sherloc/data/loupe/sol_0921/detail_1/"
+    "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
+)
+_TEAM_REL_KEY = (
+    "loupe/sol_0921/detail_1/"
     "SrlcSpecSpecSohRaw_TEST_Loupe_working/img/SC3_0921_TEST.PNG"
 )
 
@@ -65,6 +69,7 @@ def scanner_workspace_scan(test_engine):
                 scan_id=SCAN_UUID,
                 image_type="ACI",
                 file_path=_TEAM_FILE_PATH,
+                r2_rel_key=_TEAM_REL_KEY,
             )
         )
         session.commit()

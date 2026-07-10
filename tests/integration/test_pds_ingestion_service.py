@@ -750,12 +750,15 @@ class TestACIContextImageAssociation:
                 )
 
     def test_file_path_format(self, service_with_sol921):
-        """All context images have file_path='pds:{lidvid}'."""
+        """All context images have file_path='pds:{lidvid}' and a matching locator."""
         service, _ = service_with_sol921
         with get_session(service.pds_engine) as session:
             images = session.query(ContextImageORM).all()
             for img in images:
                 assert img.file_path == f"pds:{img.pds_lidvid}"
+                # The locator round-trips the pds: scheme until the
+                # download step resolves the product to a cached file.
+                assert img.r2_rel_key == f"pds:{img.pds_lidvid}"
 
     def test_lidvid_format(self, service_with_sol921):
         """LIDVIDs are lowercase with ::VID suffix."""

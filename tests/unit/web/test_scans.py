@@ -307,6 +307,7 @@ def _seed_aci_context_image(test_engine, file_path: str) -> None:
     """
     import uuid as _uuid
 
+    from sherloc_pipeline.core.r2_keys import derive_rel_locator
     from sherloc_pipeline.database.connection import get_session_factory
     from sherloc_pipeline.database.models import ContextImageORM
 
@@ -319,6 +320,8 @@ def _seed_aci_context_image(test_engine, file_path: str) -> None:
                 scan_id=SCAN_UUID,
                 image_type="ACI",
                 file_path=file_path,
+                # Same rule the production ingestion writer applies.
+                r2_rel_key=derive_rel_locator(file_path),
             )
         )
         session.commit()
@@ -408,6 +411,7 @@ async def test_get_scan_colorized_probe_targets_base_aci_not_angle_range(
                     "/work/sherloc/PHASE-data/loupe/sol_0921/"
                     "Amherst_Point_aci_145-185.png"
                 ),
+                r2_rel_key="loupe/sol_0921/Amherst_Point_aci_145-185.png",
             )
         )
         session.add(
@@ -419,13 +423,14 @@ async def test_get_scan_colorized_probe_targets_base_aci_not_angle_range(
                     "/work/sherloc/PHASE-data/loupe/sol_0921/"
                     "Amherst_Point_aci.png"
                 ),
+                r2_rel_key="loupe/sol_0921/Amherst_Point_aci.png",
             )
         )
         session.commit()
     finally:
         session.close()
 
-    # Capture which file_path the probe actually receives so we can
+    # Capture which locator the probe actually receives so we can
     # assert against the route's selection, not just the boolean
     # result. A naive ``.first()`` would invoke us with the
     # ``_145-185`` filename; the helper must invoke us with the base.

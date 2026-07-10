@@ -88,6 +88,13 @@ class ContextImage(IdentifiableModel):
         min_length=1,
         description="Path to image file"
     )
+    r2_rel_key: Optional[str] = Field(
+        default=None,
+        description="Relative locator of the image in the tier's data "
+        "tree (the string after 'sherloc-aci/' in its R2 key), e.g. "
+        "'loupe/sol_0921/.../img/x.PNG'. Unresolved PDS references carry "
+        "the 'pds:<lidvid>' scheme. None when no locator is derivable."
+    )
     product_id: Optional[str] = Field(
         default=None,
         description="PDS product ID"

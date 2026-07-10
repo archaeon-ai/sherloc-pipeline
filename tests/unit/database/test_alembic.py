@@ -164,3 +164,82 @@ class TestAlembicMigrations:
         cr_mask_fks = inspector.get_foreign_keys("cosmic_ray_masks")
         assert len(cr_mask_fks) == 1
         assert cr_mask_fks[0]["referred_table"] == "spectra"
+
+
+class TestR2RelKeyBackfill:
+    """Migration 931df60632cb: r2_rel_key column + file_path backfill."""
+
+    # (id, file_path, expected r2_rel_key) covering every file_path shape
+    # observed in the production team + public databases at migration
+    # time, plus the no-match case.
+    CASES = [
+        (
+            "img-team-canonical",
+            "/data/sherloc/data/loupe/sol_0921/detail_1/ws/img/a.PNG",
+            "loupe/sol_0921/detail_1/ws/img/a.PNG",
+        ),
+        (
+            "img-team-legacy-nas",
+            "/nas/000_sherloc/data/loupe/sol_0852/detail_1/ws/img/b.PNG",
+            "loupe/sol_0852/detail_1/ws/img/b.PNG",
+        ),
+        (
+            "img-public-cache",
+            "/data/sherloc/pds/sol_0712/data_aci/c.IMG",
+            "sol_0712/data_aci/c.IMG",
+        ),
+        (
+            "img-pds-sentinel",
+            "pds:urn:nasa:pds:mars2020_imgops:data_aci_imgops:x::1.0",
+            "pds:urn:nasa:pds:mars2020_imgops:data_aci_imgops:x::1.0",
+        ),
+        ("img-unknown-layout", "/somewhere/else/entirely/d.PNG", None),
+        (
+            "img-traversal",
+            "/data/sherloc/data/loupe/../../../etc/passwd",
+            None,
+        ),
+    ]
+
+    def test_backfill_transforms(self, alembic_config):
+        config, db_path = alembic_config
+
+        # Build the schema as it existed before the locator migration.
+        command.upgrade(config, "9b2e7c4a1f08")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.begin() as conn:
+            from sqlalchemy import text
+
+            for row_id, file_path, _ in self.CASES:
+                conn.execute(
+                    text(
+                        "INSERT INTO context_images "
+                        "(id, scan_id, image_type, file_path, created_at) "
+                        "VALUES (:id, :scan_id, 'ACI', :file_path, "
+                        "'2026-01-01 00:00:00')"
+                    ),
+                    {
+                        "id": row_id,
+                        "scan_id": "scan-under-test",
+                        "file_path": file_path,
+                    },
+                )
+
+        # Apply the locator migration.
+        command.upgrade(config, "head")
+
+        with engine.connect() as conn:
+            from sqlalchemy import text
+
+            for row_id, _, expected in self.CASES:
+                got = conn.execute(
+                    text(
+                        "SELECT r2_rel_key FROM context_images "
+                        "WHERE id = :id"
+                    ),
+                    {"id": row_id},
+                ).scalar()
+                assert got == expected, (
+                    f"{row_id}: expected {expected!r}, got {got!r}"
+                )

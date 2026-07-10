@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.0] - 2026-07-10
+
+Context images are now identified by a stored **relative locator**
+(`context_images.r2_rel_key`) — the string after `sherloc-aci/` in the
+object's R2 key — instead of translating a machine-specific absolute
+`file_path` at serve time. Closes #7.
+
+### Added
+- **`context_images.r2_rel_key` column + backfill** (migration
+  `931df60632cb`): idempotent one-time translation of existing
+  `file_path` rows using exactly the strip logic the serve path ran
+  through v5.3.x (canonical per-tier roots + the known legacy team
+  alias + any env-var overrides). `pds:<lidvid>` sentinel rows
+  round-trip; rows matching no known layout stay NULL (they were not
+  servable before either) and are logged.
+- **`core.r2_keys.derive_rel_locator`** — structural locator derivation
+  (anchored on the `sol_NNNN` segment) used by all ingestion writers
+  going forward; no deployment paths in source.
+
+### Changed
+- **R2 key derivation is a single concatenation** (`sherloc-aci/` +
+  locator). The per-tier strip-prefix table, `PHASE_*_STRIP_PREFIX`
+  env fallbacks, legacy-ingestion aliases, and tier inference are
+  deleted from `core/r2_keys.py`; `derive_workspace_key` is now a pure
+  locator transform (no `PHASE_TIER` lookup). Tier isolation remains
+  credential-side (bucket-scoped tokens) + per-tier databases.
+- **Ingestion dual-writes** `file_path` (absolute, kept transitionally
+  for processing-side disk reads and old-code rollback) and
+  `r2_rel_key`. The PDS download step records the locator relative to
+  the cache root when it resolves a `pds:` reference.
+- **Env vars retired** (§5.5): `PHASE_TEAM_STRIP_PREFIX`,
+  `PHASE_PUBLIC_STRIP_PREFIX`, `PHASE_TEAM_LEGACY_STRIP_ALIASES`,
+  `PHASE_PUBLIC_LEGACY_STRIP_ALIASES` — no effect on a migrated
+  database (the backfill migration alone consults them for parity).
+
+### Notes
+- **Schema + migration change**: deploys must run `alembic upgrade
+  head` (the boot sequence does this) and then **re-sync both tier
+  databases** to the VPS per the established DB-sync pattern. Web ACI
+  serving and Map Mode read `r2_rel_key` exclusively — serving from a
+  pre-migration database fails with `misconfigured_path` 500s.
+- `file_path` semantics are unchanged for processing-side disk reads;
+  dropping the column (and converting those readers to
+  `data_root + locator`) is deferred until the locator is proven on
+  both tiers.
+
 ## [5.3.0] - 2026-06-27
 
 Widens the name-authoritative `scan_type` resolver's calibration vocabulary so

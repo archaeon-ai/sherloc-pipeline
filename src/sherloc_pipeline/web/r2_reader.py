@@ -2,18 +2,18 @@
 
 Extracts the R2 client + per-tier config machinery from
 ``web/routes/images.py`` (v4.1.5–v4.1.8) into a shared module so non-image
-consumers can reuse the same per-tier strip-prefix + bucket scoping +
-error mapping. Current consumers:
+consumers can reuse the same bucket scoping + error mapping. Current
+consumers:
 
 - ``web/routes/images.py`` — ACI image bytes (existing since v4.1.5;
   refactored at v4.1.9 to import from this module).
 - ``core/coordinates.py`` — Loupe-workspace ``spatial.csv`` / ``loupe.csv``
   (unblocks ``/api/map/layers/<id>`` on R2-backed deployments).
 
-Contract: hierarchical R2 key derivation — ACI image bytes + Loupe
-companion files. Tier isolation is dual-enforced: code-side (per-tier
-strip-prefix table + sherloc-aci/ re-root) + credential-side (R2
-bucket-scoped read tokens; per-tier team/public credentials).
+Contract: R2 keys derive from the stored relative locator
+(``context_images.r2_rel_key``) — see :mod:`core.r2_keys`. Tier isolation
+is credential-side (R2 bucket-scoped read tokens; per-tier team/public
+credentials) plus per-tier databases.
 """
 
 from __future__ import annotations
@@ -24,25 +24,27 @@ from typing import Any, Optional
 
 from fastapi import HTTPException
 
-# Pure key-derivation primitives + tier-config constants live in core/ so
-# core/coordinates.py can derive diagnostic R2 keys (spec §3.9.8.3) without
-# violating the cli/->api/->services/->core/->models/ layering rule. These
-# names are re-exported here for backward compat with existing importers
+# Pure key-derivation primitives live in core/ so core/coordinates.py can
+# derive diagnostic R2 keys (spec §3.9.8.3) without violating the
+# cli/->api/->services/->core/->models/ layering rule. These names are
+# re-exported here for backward compat with existing importers
 # (web/routes/{images,map}.py, tests/unit/web/test_r2_reader.py).
 from sherloc_pipeline.core.r2_keys import (
     R2_KEY_PREFIX,
-    TIER_TO_BUCKET,
-    TIER_TO_STRIP_PREFIX,
     WORKSPACE_FILENAMES,
     colorize_sol_segment,
     derive_r2_key,
-    get_strip_prefix_for_current_tier,
-)
-from sherloc_pipeline.core.r2_keys import (
-    derive_workspace_key as _derive_workspace_key_core,
+    derive_workspace_key,
 )
 
 logger = logging.getLogger(__name__)
+
+# R2 bucket per tier (spec §3.9.3). Bucket selection is the web layer's
+# concern (client config); key derivation is tier-neutral.
+TIER_TO_BUCKET = {
+    "team": "phase-team",
+    "public": "phase-public",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -58,9 +60,8 @@ _r2_init_error: Optional[str] = None
 def get_r2_client_and_config() -> tuple[Any, dict]:
     """Return ``(boto3 S3 client, tier config dict)`` — lazily initialized.
 
-    Tier config: ``{"tier", "strip_prefix", "bucket"}``. Boto3 client is
-    cached after first build. Tests inject via
-    :func:`set_r2_client_for_tests`.
+    Tier config: ``{"tier", "bucket"}``. Boto3 client is cached after
+    first build. Tests inject via :func:`set_r2_client_for_tests`.
 
     Raises ``HTTPException(500, "tier_unset")`` if ``PHASE_TIER`` or the
     ``AWS_*`` env vars are not set (defense-in-depth; container startup
@@ -74,7 +75,7 @@ def get_r2_client_and_config() -> tuple[Any, dict]:
     _r2_init_attempted = True
 
     tier = os.environ.get("PHASE_TIER", "").strip().lower()
-    if tier not in TIER_TO_STRIP_PREFIX:
+    if tier not in TIER_TO_BUCKET:
         _r2_init_error = "tier_unset"
         raise HTTPException(status_code=500, detail="tier_unset")
 
@@ -104,7 +105,6 @@ def get_r2_client_and_config() -> tuple[Any, dict]:
     )
     _r2_config = {
         "tier": tier,
-        "strip_prefix": TIER_TO_STRIP_PREFIX[tier],
         "bucket": TIER_TO_BUCKET[tier],
     }
     return _r2_client, _r2_config
@@ -142,12 +142,11 @@ def is_r2_mode() -> bool:
 def set_r2_client_for_tests(client: Any, tier: str) -> None:
     """Test-only: inject a pre-built boto3 (or moto-backed) S3 client + tier."""
     global _r2_client, _r2_config, _r2_init_attempted, _r2_init_error
-    if tier not in TIER_TO_STRIP_PREFIX:
+    if tier not in TIER_TO_BUCKET:
         raise ValueError(f"invalid tier: {tier!r}")
     _r2_client = client
     _r2_config = {
         "tier": tier,
-        "strip_prefix": TIER_TO_STRIP_PREFIX[tier],
         "bucket": TIER_TO_BUCKET[tier],
     }
     _r2_init_attempted = True
@@ -257,21 +256,20 @@ def find_colorized_key(base_key: str) -> Optional[str]:
     return None
 
 
-def colorized_variant_exists(file_path: str) -> bool:
+def colorized_variant_exists(rel_locator: Optional[str]) -> bool:
     """Public predicate: True if R2 has a ``sol_NNNN_colorized/`` variant.
 
     Used by ``routes/map.py`` to decide whether to advertise the
-    ``aci_colorized`` URL in the layer list. Returns False on any
-    R2-side error (the result is opportunistic — a missing variant
-    just hides the URL).
+    ``aci_colorized`` URL in the layer list. Takes the stored relative
+    locator (``context_images.r2_rel_key``); an unresolved ``pds:``
+    reference or missing locator has no R2 identity, so the variant
+    probe is False by definition. Returns False on any R2-side error
+    (the result is opportunistic — a missing variant just hides the URL).
     """
-    if not file_path or file_path.startswith("pds:"):
+    if not rel_locator or rel_locator.startswith("pds:"):
         return False
     try:
-        _, cfg = get_r2_client_and_config()
-        base_key = derive_r2_key(
-            file_path, cfg["strip_prefix"], active_tier=cfg.get("tier")
-        )
+        base_key = derive_r2_key(rel_locator)
     except HTTPException:
         return False
     return find_colorized_key(base_key) is not None
@@ -281,18 +279,16 @@ def colorized_variant_exists(file_path: str) -> bool:
 # High-level fetchers (spec §3.9.3 + §3.9.8.2)
 # ---------------------------------------------------------------------------
 
-def get_working_file(file_path: str, filename: str) -> bytes:
+def get_working_file(rel_locator: Optional[str], filename: str) -> bytes:
     """Fetch a Loupe-workspace companion file from R2 (spec §3.9.8).
 
-    The Loupe workspace directory is ``Path(file_path).parent.parent``
-    (drops the ``img/<aci-product>.{PNG,IMG}`` suffix). The R2 key is
-    constructed by :func:`derive_workspace_key` (re-exported from
-    :mod:`core.r2_keys`) using the per-tier strip-prefix from the cached
-    R2 config.
+    The Loupe workspace directory is the locator's grandparent (drops the
+    ``img/<aci-product>.{PNG,IMG}`` suffix). The R2 key is constructed by
+    :func:`core.r2_keys.derive_workspace_key` — a pure locator transform.
 
     Args:
-        file_path: ``ContextImageORM.file_path`` value (absolute path to
-            the ACI product under the per-tier strip-prefix root).
+        rel_locator: ``ContextImageORM.r2_rel_key`` value (relative
+            locator of the ACI product).
         filename: companion-file name within the workspace directory.
             MUST be one of :data:`WORKSPACE_FILENAMES` (``spatial.csv``
             or ``loupe.csv``) — anything else is rejected as
@@ -305,37 +301,11 @@ def get_working_file(file_path: str, filename: str) -> bytes:
         HTTPException per spec §3.9.4 + §3.9.8.3 failure-mode table.
         Notable rows:
         - 500 ``misconfigured_path`` if ``filename`` is not in
-          :data:`WORKSPACE_FILENAMES`, if ``file_path`` does not begin
-          with the per-tier strip prefix, or if the derived key fails
-          the path-traversal guard.
+          :data:`WORKSPACE_FILENAMES`, if the locator is missing or
+          carries the unresolved ``pds:`` scheme, or if the derived key
+          fails the path-traversal guard.
         - 404 ``not_found`` if R2 has no object at the derived key.
         - 502 ``upstream_credential_error`` on R2 403 (cross-tier creds).
     """
-    key = derive_workspace_key(file_path, filename)
+    key = derive_workspace_key(rel_locator, filename)
     return r2_get_bytes(key)
-
-
-def derive_workspace_key(file_path: str, filename: str) -> str:
-    """Backward-compat wrapper around :func:`core.r2_keys.derive_workspace_key`.
-
-    Uses the per-tier strip-prefix from the cached R2 config (initialized
-    via :func:`get_r2_client_and_config` or
-    :func:`set_r2_client_for_tests`). This matches the v4.1.9 surface
-    that ``web/routes/{images,map}.py`` and ``tests/unit/web/test_r2_reader.py``
-    target — they don't pass ``strip_prefix`` explicitly.
-
-    :mod:`core.coordinates` calls ``core.r2_keys.derive_workspace_key``
-    directly (without going through this web-layer wrapper) so it can
-    derive a diagnostic key in the R2-404 fallback without violating
-    layering. That code path uses the env-based ``PHASE_TIER`` lookup
-    (no cached cfg available in core/).
-    """
-    if filename not in WORKSPACE_FILENAMES:
-        raise HTTPException(status_code=500, detail="misconfigured_path")
-    _, cfg = get_r2_client_and_config()
-    return _derive_workspace_key_core(
-        file_path,
-        filename,
-        strip_prefix=cfg["strip_prefix"],
-        active_tier=cfg.get("tier"),
-    )
