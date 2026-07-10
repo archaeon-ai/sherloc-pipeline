@@ -75,6 +75,24 @@ def test_project_version_parseable():
     assert _semver_tuple(version), f"unparseable version {version!r}"
 
 
+def test_dunder_version_matches_project_version():
+    """``sherloc_pipeline.__version__`` equals ``pyproject.toml::project.version``.
+
+    The dunder is what ``/api/health`` reports as ``pipeline_version`` and
+    what processing stamps into scan provenance — a pyproject bump that
+    misses it ships an image that misreports its own version (happened at
+    v5.4.0: the deployed image answered health checks as 5.3.0).
+    """
+    import sherloc_pipeline
+
+    assert sherloc_pipeline.__version__ == _project_version(), (
+        "src/sherloc_pipeline/__init__.py::__version__ "
+        f"({sherloc_pipeline.__version__!r}) does not match "
+        f"pyproject.toml::project.version ({_project_version()!r}) — "
+        "bump both together"
+    )
+
+
 def test_tag_push_strict_equality():
     """When a tag is pushed (GITHUB_REF_TYPE=tag with a v* ref), the tag
     name MUST equal f"v{project.version}". This is the publish-gate."""
