@@ -135,6 +135,8 @@ class TestSentinelAndNullAndUnknown:
 
 
 class TestTraversalGuard:
+    # Explicit ids keep the absolute-path VALUES out of the collected test
+    # IDs — the CI absolute-local-path guard greps `--collect-only` output.
     @pytest.mark.parametrize(
         "locator",
         [
@@ -143,6 +145,7 @@ class TestTraversalGuard:
             "loupe\\sol_0059\\img\\x.PNG",  # backslash
             "sol_0059/data_aci/../../../etc/passwd",  # traversal, pds tree
         ],
+        ids=["parent-traversal", "absolute-path", "backslash", "pds-tree-traversal"],
     )
     def test_traversal_or_absolute_returns_none(self, locator):
         # Mirrors derive_r2_key's misconfigured_path rejection: a locator
@@ -160,12 +163,14 @@ class TestRoundTripAgainstLiveShapes:
     ingestion-time derive_rel_locator(file_path) reproduces the locator —
     the two edges compose to identity for both live tier shapes."""
 
+    # Explicit ids: see TestTraversalGuard note (CI absolute-path guard).
     @pytest.mark.parametrize(
         "file_path, locator, data_root, pds_cache_dir",
         [
             (_TEAM_FILE_PATH, _TEAM_LOCATOR, _DATA_ROOT, _PDS_CACHE_DIR),
             (_PUBLIC_FILE_PATH, _PUBLIC_LOCATOR, _DATA_ROOT, _PDS_CACHE_DIR),
         ],
+        ids=["team-loupe", "public-pds-cache"],
     )
     def test_resolve_reproduces_absolute_path(
         self, file_path, locator, data_root, pds_cache_dir
@@ -175,12 +180,14 @@ class TestRoundTripAgainstLiveShapes:
         )
         assert str(resolved) == file_path
 
+    # Explicit ids: see TestTraversalGuard note (CI absolute-path guard).
     @pytest.mark.parametrize(
         "file_path, locator",
         [
             (_TEAM_FILE_PATH, _TEAM_LOCATOR),
             (_PUBLIC_FILE_PATH, _PUBLIC_LOCATOR),
         ],
+        ids=["team-loupe", "public-pds-cache"],
     )
     def test_derive_then_resolve_is_identity(self, file_path, locator):
         # ingestion edge: file_path → locator
