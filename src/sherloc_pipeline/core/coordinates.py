@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 # Type alias: a Loupe-workspace companion-file reader.
 # Signature: ``r2_reader(file_path: str, filename: str) -> bytes``.
 # Production implementation: ``sherloc_pipeline.web.r2_reader.get_working_file``.
-# Tests inject a moto-backed callable. Legacy local ``main`` worktree
-# passes None and falls back to local-FS reads.
+# Tests inject a moto-backed callable. Legacy local-filesystem dev
+# installs (no R2) pass None and fall back to local-FS reads.
 #
 # NOTE: the diagnostic re-derivation of the missing key on 404 imports
 # from ``sherloc_pipeline.core.r2_keys`` (not ``web.r2_reader``) to
@@ -100,10 +100,10 @@ def resolve_display_coordinates(
         Loupe workspace companion files (``spatial.csv``, ``loupe.csv``)
         from a non-FS source (v1.0-beta production: R2 via
         ``web/r2_reader.get_working_file``; tests: moto-backed mock).
-        When ``None``, the legacy local-FS read path is used (local dev
-        worktree at branch ``main`` v3.0.0; production containers have
-        NO local SHERLOC data mount
-        per m2020-phase spec §3.9.6).
+        When ``None``, the legacy local-FS read path is used
+        (local-filesystem dev installs without R2; production containers
+        have NO local SHERLOC data mount and always supply an R2-backed
+        reader).
     colorized:
         When ``True``, resolve coordinates against the **colorized** Loupe
         workspace (``sol_NNNN_colorized/``) instead of the grayscale base.
@@ -320,8 +320,8 @@ def _resolve_scanner_workspace(
       from the reader (e.g., ``HTTPException(404, "not_found")``) are
       converted to ``CoordinatesUnavailableError`` so the route layer's
       existing 400 mapping (``map.py:get_map_layers``) applies.
-    - ``workspace_reader=None``: legacy local-FS read (local dev
-      worktree at branch ``main``).
+    - ``workspace_reader=None``: legacy local-FS read (local-filesystem
+      dev installs without R2).
 
     When ``colorized`` is ``True`` the ACI ``file_path`` is rewritten
     ``sol_NNNN → sol_NNNN_colorized`` (via
@@ -404,8 +404,8 @@ def _resolve_scanner_workspace(
                     f"{scan_id!r} (file_path={workspace_file_path!r}): {exc}"
                 ) from exc
     else:
-        # Legacy FS path: local dev runtime + the `main` worktree's v3.0.0
-        # service. Production VPS containers do NOT take this branch.
+        # Legacy FS path: local-filesystem dev runtime without R2.
+        # Production containers do NOT take this branch.
         working_dir = Path(workspace_file_path).parent.parent
 
         # Validate workspace files exist before calling load_spatial_table

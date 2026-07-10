@@ -11,7 +11,7 @@ Example:
     >>> from sherloc_pipeline.services.pixl_ingestion import PixliseIngestionService
     >>>
     >>> service = PixliseIngestionService()
-    >>> result = service.ingest_directory("/nas/000_pixl")
+    >>> result = service.ingest_directory("/path/to/pixl-exports")
     >>> print(result.summary)
     "Ingested 52 targets (99,503 points)"
 """
@@ -110,7 +110,7 @@ class PixliseIngestionService:
 
     Example:
         >>> service = PixliseIngestionService()
-        >>> result = service.ingest_directory(Path("/nas/000_pixl"))
+        >>> result = service.ingest_directory(Path("/path/to/pixl-exports"))
         >>> print(result.summary)
     """
 

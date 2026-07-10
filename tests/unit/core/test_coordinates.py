@@ -3,8 +3,7 @@
 v4.1.9 added the optional ``workspace_reader`` injection to
 ``resolve_display_coordinates()`` so the production runtime can fetch
 ``spatial.csv`` / ``loupe.csv`` from R2 instead of the local filesystem
-(per m2020-phase platform spec §3.9.8; unblocks ``/api/map/layers/<id>``
-on the v1.0-beta VPS deployment).
+(unblocks ``/api/map/layers/<id>`` on R2-backed deployments).
 
 Exercises:
 
@@ -12,12 +11,11 @@ Exercises:
   verify the resolver materializes them through a temp dir and produces
   ``DisplayCoordinate`` rows.
 - FS path (legacy): no reader → resolver reads ``spatial.csv`` /
-  ``loupe.csv`` from a real temp dir (mirrors local dev
-  worktree at branch ``main`` v3.0.0).
+  ``loupe.csv`` from a real temp dir (mirrors local-filesystem dev
+  installs without R2).
 - 404 path: reader raises ``HTTPException(404)`` → resolver wraps as
   ``CoordinatesUnavailableError`` with a clear message; the route layer
-  (``web/routes/map.py:get_map_layers``) re-raises this as HTTP 400 per
-  spec §3.9.8.3.
+  (``web/routes/map.py:get_map_layers``) re-raises this as HTTP 400.
 
 The R2-key-derivation logic lives in ``web/r2_reader.py`` and is covered
 by ``tests/unit/web/test_r2_reader.py``; these tests only exercise the
@@ -297,9 +295,8 @@ def test_resolve_legacy_fs_path(scan_session, tmp_path, monkeypatch):
     """workspace_reader=None → resolver reads spatial.csv/loupe.csv from FS.
 
     The ACI file_path is rewritten to point at tmp_path so the parent.parent
-    derivation lands in a real directory we control. Mirrors local dev
-    worktree on branch ``main`` v3.0.0
-    (no PHASE_TIER set; no R2 mode).
+    derivation lands in a real directory we control. Mirrors
+    local-filesystem dev installs (no PHASE_TIER set; no R2 mode).
     """
     workspace = tmp_path / "loupe" / "sol_0921" / "detail_1" / "ws"
     workspace.mkdir(parents=True)

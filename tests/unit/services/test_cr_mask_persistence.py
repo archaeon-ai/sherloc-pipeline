@@ -1,6 +1,5 @@
 """CRMaskService persistence: round-trip, idempotency, skip path,
-provenance equality (MLD-SYS-008, MLD-SYS-012 AC2, MLD-SYS-006 AC2 DB
-leg).
+provenance equality.
 """
 
 import pytest
@@ -110,7 +109,7 @@ def _stored_masks(engine, method=None):
 
 class TestRoundTrip:
     def test_exact_mask_round_trip(self, all_regions_db, tmp_path):
-        """MLD-SYS-008 AC1/AC2: every (point, region) mask — including
+        """Every (point, region) mask — including
         empty ones — reconstructs exactly from the stored records."""
         db_path, engine = all_regions_db
         result = CRMaskService().persist_masks(
@@ -130,7 +129,7 @@ class TestRoundTrip:
         }
 
     def test_provenance_equality_on_rows(self, all_regions_db):
-        """MLD-SYS-012 AC2: identity/digest/threshold equal the
+        """Identity/digest/threshold equal the
         ServiceResult-level provenance on every persisted row."""
         db_path, engine = all_regions_db
         metadata = _metadata(MASKS_3REGION)
@@ -193,7 +192,7 @@ class TestRoundTrip:
 
 
 class TestGetMasksForScan:
-    """Scan-addressed read path for plot (MLD-IFC-007)."""
+    """Scan-addressed read path for plot."""
 
     def test_reconstructs_masks_by_region_and_point(self, all_regions_db):
         db_path, _ = all_regions_db
@@ -225,7 +224,7 @@ class TestGetMasksForScan:
 
     def test_premigration_database_returns_empty(self, tmp_path):
         """A database from before the cosmic_ray_masks migration must read
-        as "no stored masks", never error (MLD-IFC-007) — the default
+        as "no stored masks", never error — the default
         SHERLOC_DB_PATH may point at such a file during upgrades."""
         import sqlite3
 
@@ -304,7 +303,7 @@ class TestIdempotency:
 
 class TestSkipPath:
     def test_persistence_follows_parent_row_existence(self, r1_only_db):
-        """MLD-SYS-008 AC3: full-region masks against an R1_only-ingested
+        """Full-region masks against an R1_only-ingested
         DB persist R1 only; R2/R3 are skipped with a count, never
         partially written."""
         db_path, engine = r1_only_db
@@ -322,7 +321,7 @@ class TestSkipPath:
         assert {row["region"] for row in rows} == {"R1"}
 
     def test_r1_alone_metadata_produces_r1_rows_only(self, all_regions_db):
-        """MLD-SYS-006 AC2 (DB leg): an R1-alone run's metadata yields
+        """An R1-alone run's metadata yields
         zero R2/R3 mask rows even when parent rows exist for them."""
         db_path, engine = all_regions_db
         CRMaskService().persist_masks(

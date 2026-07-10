@@ -146,7 +146,7 @@ export interface SpectrumResponse {
   n_channels: number;
   photodiode_mean?: number;
   provenance: SpectrumProvenance;
-  // Despike provenance (spec §4.6, MLD-IFC-003; method selector issue #6).
+  // Despike provenance (spec §4.6; method selector issue #6).
   // All optional + defaulted server-side, so legacy clients are unaffected.
   // Present meaningfully when the request carried `despike_method=ml` (or the
   // legacy `despike=true`). For `despike_method=modz` the server returns the

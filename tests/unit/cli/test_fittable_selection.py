@@ -1,7 +1,7 @@
 """DB-level regression tests for fittable scan selection.
 
 Covers the two production scan-selection surfaces that must agree with
-is_fittable() (SCAN_CLASSIFICATION_SPEC §4.2.2 + K6):
+is_fittable():
 
 1. ``process-new`` Step 3 — the candidate query (target_type ∈ {mars,cal})
    filtered through ``is_fittable`` (cli/app.py:process_new_cmd).

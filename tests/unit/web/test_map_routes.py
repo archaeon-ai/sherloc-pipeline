@@ -2,7 +2,7 @@
 
 v4.1.9 adds the Loupe-workspace R2 reader; ``get_map_layers`` +
 ``start_map_fit`` inject ``r2_reader.get_working_file`` when
-``is_r2_mode()``. Per m2020-phase platform spec §3.9.8.3, the
+``is_r2_mode()``. The
 ``CoordinatesUnavailableError → 400`` mapping in the route handler
 applies ONLY to R2-404 (the resolver wraps it as a coords-unavailable
 error with the "Loupe workspace files not found in R2" message). All

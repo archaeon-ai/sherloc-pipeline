@@ -1,19 +1,18 @@
 """ACI context image endpoints.
 
-v1.0-beta deploys SHERLOC ACI bytes from R2 (per m2020-phase platform
-spec §3.9 — hierarchical-key model). The route
-handler does its existing DB-driven file_path resolution + colorized /
-enhanced / VICAR pipeline; the storage layer changes from local FS to
-R2 via per-tier strip-prefix + bucket selection.
+R2-backed deployments serve SHERLOC ACI bytes from R2 (hierarchical-key
+model). The route handler does its existing DB-driven file_path
+resolution + colorized / enhanced / VICAR pipeline; the storage layer
+changes from local FS to R2 via per-tier strip-prefix + bucket selection.
 
 PHASE_TIER drives the strip prefix + bucket:
 
 - team:   <team-data-root>/<rest>  → phase-team/sherloc-aci/<rest>
 - public: <public-pds-root>/<rest> → phase-public/sherloc-aci/<rest>
 
-v4.1.9 refactor (m2020-phase spec §3.9.8): the R2 client +
-per-tier config machinery moved to ``web/r2_reader``; this module
-imports the shared primitives. Behavior is unchanged.
+v4.1.9 refactor: the R2 client + per-tier config machinery moved to
+``web/r2_reader``; this module imports the shared primitives. Behavior
+is unchanged.
 
 VICAR ``.IMG`` files are converted in-process at request time (via the
 existing ``read_aci_image()`` path through a ``NamedTemporaryFile``
@@ -272,7 +271,7 @@ def get_aci_image(
     # ref (legacy on-demand-fetch path) does not begin with the per-tier
     # strip prefix, so it surfaces as `misconfigured_path` 500 per spec
     # §3.9.4 — an unresolved `pds:` ref in production IS broken ingestion
-    # (the rclone in ARCHITECTURE_LOCKED §14 D3.4 should have resolved
+    # (the ingestion-time rclone should have resolved
     # LIDVIDs to absolute paths before R2 population). v1.1 may revisit
     # the on-demand path; v1.0-beta rejects.
     _, cfg = get_r2_client_and_config()

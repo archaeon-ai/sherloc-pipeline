@@ -1,10 +1,10 @@
 """ML despike service path on the fixture workspace with the stub model.
 
-Covers detection-on-raw-planes (MLD-SYS-004), per-region taus and
-R1-alone scope (MLD-SYS-006), replacement via the shared helper
-(MLD-SYS-007 AC1), provenance metadata (MLD-SYS-012 AC1), the
-``cr_masks.json`` artifact, certified-window confinement
-(MLD-SYS-015 AC3), and the fail-loud paths (MLD-IFC-008).
+Covers detection-on-raw-planes, per-region taus and
+R1-alone scope, replacement via the shared helper,
+provenance metadata, the
+``cr_masks.json`` artifact, certified-window confinement,
+and the fail-loud paths.
 """
 
 import json
@@ -59,7 +59,7 @@ def _run(service, ingestion, workspace, normalized_spectra):
 
 
 class TestProvenanceMetadata:
-    """MLD-SYS-012 AC1: the four run-level provenance fields, exact."""
+    """The four run-level provenance fields, exact."""
 
     def test_provenance_fields(
         self, preprocessing_service_with_stub, stub_manifest,
@@ -119,7 +119,7 @@ class TestProvenanceMetadata:
 
 
 class TestDetectionInputs:
-    """MLD-SYS-004 AC1/AC2: detection consumes the raw planes, paired per
+    """Detection consumes the raw planes, paired per
     point and region — not any normalized representation."""
 
     def test_detector_receives_raw_plane_values(
@@ -177,7 +177,7 @@ class TestScopeAndWindows:
         self, preprocessing_service_with_stub, ingestion, workspace,
         normalized_spectra,
     ):
-        """MLD-SYS-006 AC2 (service leg): an R1-alone run featurizes and
+        """An R1-alone run featurizes and
         infers R1 only — no R2/R3 entries anywhere in metadata or
         cr_masks.json."""
         r1_only = {"R1": normalized_spectra["R1"]}
@@ -205,7 +205,7 @@ class TestScopeAndWindows:
         self, preprocessing_service_with_stub, ingestion, workspace,
         normalized_spectra,
     ):
-        """MLD-SYS-006 AC1: three-region run yields per-region masks, each
+        """Three-region run yields per-region masks, each
         thresholded with its region's tau (R1 vs fluor differ)."""
         meta = _run(
             preprocessing_service_with_stub, ingestion, workspace,
@@ -219,7 +219,7 @@ class TestScopeAndWindows:
         self, preprocessing_service_with_stub, stub_manifest,
         ingestion, workspace, normalized_spectra,
     ):
-        """MLD-SYS-015 AC3: no flags outside [lo, hi) per region."""
+        """No flags outside [lo, hi) per region."""
         meta = _run(
             preprocessing_service_with_stub, ingestion, workspace,
             normalized_spectra,
@@ -235,7 +235,7 @@ class TestReplacement:
         self, preprocessing_service_with_stub, ingestion, workspace,
         normalized_spectra,
     ):
-        """MLD-SYS-007 AC1 at the service level: the despiked R1 column
+        """At the service level: the despiked R1 column
         equals apply_mask_replacement applied to the same mask."""
         from sherloc_pipeline.config import get_config
         from sherloc_pipeline.core.mask_application import (
@@ -272,7 +272,7 @@ class TestReplacement:
         self, preprocessing_service_with_stub, ingestion, workspace,
         normalized_spectra,
     ):
-        """MLD-SYS-013 AC1: the fluorescence (and R123) frames follow
+        """The fluorescence (and R123) frames follow
         despike_method=ml — replaced in the carried dict."""
         fluor_before = normalized_spectra["fluorescence"].copy()
         r123_before = normalized_spectra["R123"].copy()
@@ -290,7 +290,7 @@ class TestFailLoud:
     def test_missing_raw_planes_fails_with_remedy(
         self, preprocessing_service_with_stub, workspace, tmp_path,
     ):
-        """MLD-IFC-008/MLD-SYS-004 AC3: missing planes name the
+        """Missing planes name the
         alternative methods; no substitute input."""
         partial = tmp_path / "no_dark_workspace"
         partial.mkdir()
@@ -319,7 +319,7 @@ class TestFailLoud:
     def test_missing_extra_preserves_install_remedy(
         self, ingestion, workspace, normalized_spectra, monkeypatch,
     ):
-        """MLD-IFC-008 AC1: ImportError from the lazy onnxruntime import
+        """ImportError from the lazy onnxruntime import
         surfaces as PreprocessingError with the exact install command."""
         from sherloc_pipeline.ml_despike.detector import _INSTALL_HINT
         from sherloc_pipeline.services.preprocessing import (

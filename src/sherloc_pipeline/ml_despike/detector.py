@@ -1,13 +1,13 @@
 """ONNX inference for the certified ML CR detector (v1.1).
 
-Executes the certified numeric path exactly (MLD-DET-004): CPU execution
+Executes the certified numeric path exactly: CPU execution
 provider in the certified session configuration, probabilities as the
 float64 sigmoid of the model logits, and flags as the channels within the
 region's certified window ``[lo, hi)`` whose probability strictly exceeds
 the region's frozen tau — returned as absolute channel indices (0–2147).
 
-``onnxruntime`` is imported lazily at detector construction
-(MLD-DET-005); importing this module never imports the runtime, so the
+``onnxruntime`` is imported lazily at detector construction;
+importing this module never imports the runtime, so the
 package stays importable without the ``[ml-despike]`` extra.
 """
 
@@ -82,8 +82,7 @@ class MLCRDetector:
         self.artifact_path = path
         self.intra_op_threads = intra_op_threads
         self.inter_op_threads = 1
-        #: Installed runtime version, recorded in run provenance
-        #: (MLD-SYS-012/MLD-QUA-009 attribution path).
+        #: Installed runtime version, recorded in run provenance.
         self.ort_version: str = ort.__version__
 
     def detect(
@@ -95,7 +94,7 @@ class MLCRDetector:
         """Flag CR channels for a batch of raw ACTIVE/DARK frame pairs.
 
         Frames may belong to any mix of regions; a call carrying only R1
-        frames is a first-class path (MLD-SYS-006). Frames are featurized
+        frames is a first-class path. Frames are featurized
         with the certified 8-channel representation and processed through
         the session in internal batches.
 

@@ -1,6 +1,6 @@
 """Tests for is_fittable() — fit-eligibility decoupled from target_type.
 
-Covers SCAN_CLASSIFICATION_SPEC §4.2.2 + Key Decision K6:
+Covers is_fittable() fit-eligibility:
 - mars_target is always fit-eligible
 - the cal-target meteorite (SaU 008) is fit-eligible — identified by either
   scan_name (mixed cal sol) or target (dedicated meteorite sol)

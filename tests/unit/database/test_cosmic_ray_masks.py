@@ -1,13 +1,13 @@
 """
 Tests for the cosmic_ray_masks satellite table (ML despike, spec §4.4).
 
-Covers (per MLD-SYS-008/009, MLD-IFC-005):
+Covers:
 - ORM <-> pydantic round-trip equality (incl. exact channel_indices).
 - Pydantic validation: range / sorted / duplicate / n_flagged mismatch /
   extra-field rejection.
 - DB-level FK CASCADE from scan and from spectrum deletion.
 - Unique constraint on (spectrum_id, method).
-- Re-ingest CASCADE leaves zero orphaned mask rows (MLD-SYS-009 AC1).
+- Re-ingest CASCADE leaves zero orphaned mask rows.
 """
 
 import uuid
@@ -326,7 +326,7 @@ class TestUniqueConstraint:
 
 
 # ---------------------------------------------------------------------------
-# (e) Re-ingest CASCADE (MLD-SYS-009 AC1)
+# (e) Re-ingest CASCADE
 # ---------------------------------------------------------------------------
 
 

@@ -44,24 +44,23 @@ from .runtime import RuntimeContext
 
 logger = logging.getLogger(__name__)
 
-#: Closed set of despike methods (MLD-SYS-001). ``ml`` is the certified
+#: Closed set of despike methods. ``ml`` is the certified
 #: ML CR detector, ``modz`` the legacy rolling-median/MAD method, ``none``
 #: disables the step entirely.
 VALID_DESPIKE_METHODS = ("ml", "modz", "none")
 
-#: Default effective method when neither CLI nor config selects one
-#: (MLD-SYS-002).
+#: Default effective method when neither CLI nor config selects one.
 DEFAULT_DESPIKE_METHOD = "ml"
 
 
 def resolve_despike_method(cli_value: Optional[str], cfg) -> str:
     """Resolve the effective despike method: CLI > config > ``"ml"``.
 
-    Precedence (MLD-SYS-003): an explicit CLI/service-level value wins;
+    Precedence: an explicit CLI/service-level value wins;
     otherwise ``cfg.preprocessing['despike']['method']``; otherwise the
     default ``"ml"``. Invalid values at either layer raise
     ``PreprocessingError`` listing all valid values, before any processing
-    side effects (MLD-IFC-002 AC2).
+    side effects.
 
     Args:
         cli_value: Explicit method override (CLI flag or direct service
@@ -226,7 +225,7 @@ class PreprocessingService:
         cfg = run_context.config
 
         # Resolve the effective despike method up front, before any
-        # processing side effects (MLD-IFC-002 AC2: invalid values fail
+        # processing side effects (invalid values fail
         # at validation time, not mid-run).
         effective_despike_method = resolve_despike_method(despike_method, cfg)
 
@@ -338,8 +337,7 @@ class PreprocessingService:
                     raise enrich(error, sol=sol, target=target, scan=scan)
                 
                 # Step 4: Despiking (method-dispatched; "none" skips the
-                # step entirely — the former despike_r1=False behavior,
-                # MLD-SYS-011)
+                # step entirely — the former despike_r1=False behavior)
                 if effective_despike_method == "ml":
                     task3a = progress.add_task("Applying ML cosmic-ray despiking...", total=None)
                     try:
@@ -559,10 +557,10 @@ class PreprocessingService:
                 task5 = progress.add_task("Generating statistical analysis...", total=None)
                 try:
                     # Under ml, the in-run frames (fluorescence/R123
-                    # despiked in place — MLD-SYS-013 AC1) proceed through
+                    # despiked in place) proceed through
                     # the averaging chain instead of being re-loaded from
                     # disk. modz/none keep the legacy re-load behavior
-                    # byte-identical (MLD-SYS-010/011).
+                    # byte-identical.
                     stats_spectra = None
                     if effective_despike_method == "ml":
                         stats_spectra = {
@@ -647,7 +645,7 @@ class PreprocessingService:
         stub-manifest detector — the rest of the ml path (featurize,
         inference session, thresholding, replacement, provenance) runs
         unchanged. The import lives here, not at module level, so no ML
-        runtime is touched unless the ml branch executes (MLD-QUA-002).
+        runtime is touched unless the ml branch executes.
         """
         from sherloc_pipeline.ml_despike import MLCRDetector
         return MLCRDetector()
@@ -668,13 +666,13 @@ class PreprocessingService:
         """Detect on raw planes, replace on the normalized frames (ml path).
 
         Implements spec §4.3 (`ml` rows): detection runs on the raw paired
-        ACTIVE/DARK planes from the workspace (the certified observable,
-        MLD-SYS-004); replacement applies the resulting channel-index masks
+        ACTIVE/DARK planes from the workspace (the certified observable);
+        replacement applies the resulting channel-index masks
         to the representations the chain already carries via the shared
-        legacy interpolation (MLD-SYS-007). Detection scope follows
+        legacy interpolation. Detection scope follows
         processing scope (§3.4): regions are featurized and inferred only
         if a frame that consumes them is present, and no out-of-scope
-        entries appear in metadata or ``cr_masks.json`` (MLD-SYS-006 AC2).
+        entries appear in metadata or ``cr_masks.json``.
 
         Mutates ``normalized_spectra`` in place: adds ``R1_despiked`` and
         replaces ``fluorescence``/``R123`` with their despiked frames.
@@ -695,8 +693,8 @@ class PreprocessingService:
             derive_winning_region_map,
         )
 
-        # Replacement honors the existing interpolation_method semantics
-        # (MLD-SYS-007 AC2) — same config key the modz path reads.
+        # Replacement honors the existing interpolation_method semantics —
+        # same config key the modz path reads.
         pre = getattr(config, 'preprocessing', None)
         dsp = pre.get('despike', None) if isinstance(pre, dict) else (
             getattr(pre, 'despike', None) if pre is not None else None
@@ -706,8 +704,7 @@ class PreprocessingService:
         else:
             interpolation_method = getattr(dsp, 'interpolation_method', 'linear') if dsp else 'linear'
 
-        # Step 1: load raw planes — fail loud, no substitute input
-        # (MLD-IFC-008 / MLD-SYS-004 AC3).
+        # Step 1: load raw planes — fail loud, no substitute input.
         try:
             planes = ingestion.load_active_dark_planes(working_dir)
         except FileNotFoundError as e:
@@ -740,7 +737,7 @@ class PreprocessingService:
         try:
             detector = self._build_ml_detector()
         except ImportError as e:
-            # Preserve the install remedy text verbatim (MLD-IFC-008 AC1).
+            # Preserve the install remedy text verbatim.
             error = PreprocessingError(str(e), exit_code=1,
                                        context={"despike_method": "ml"})
             raise enrich(error, sol=sol, target=target, scan=scan)
@@ -834,9 +831,9 @@ class PreprocessingService:
                 interpolation_method,
             )
 
-        # Step 4: run-level provenance (MLD-SYS-012 AC1) — keys restricted
+        # Step 4: run-level provenance — keys restricted
         # to regions in scope so an R1-alone run carries no R2/R3 entries
-        # anywhere (MLD-SYS-006 AC2). Channel indices only — no DN values.
+        # anywhere. Channel indices only — no DN values.
         despike_metadata: Dict[str, Any] = {
             "method": manifest.provenance_label,
             "model_sha256": manifest.sha256,

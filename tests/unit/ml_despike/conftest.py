@@ -3,7 +3,7 @@
 The stub honors the certified I/O contract — input ``"x"``
 ``(N, 8, 2148)`` float32, output ``"logits"`` ``(N, 2148)`` float32 — so
 it can flow through the real artifact-resolution and detector chain
-(MLD-QUA-003 AC2, MLD-SEC-001 AC2: no binary in git).
+(no binary in git).
 
 Graph: ``logits = x[:, 0, :] + w`` with deterministic seeded weights
 ``w ~ N(-4, 0.1)``. The −4 baseline keeps unspiked channels far below

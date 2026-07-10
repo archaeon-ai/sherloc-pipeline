@@ -1,8 +1,7 @@
 """sha256-pinned fetch-and-cache of the ML CR detector ONNX artifact.
 
 The fetch path crosses a trust boundary: it downloads executable-adjacent
-content (an ONNX graph) over the network. Controls (MLD-DET-003,
-MLD-SEC-002):
+content (an ONNX graph) over the network. Controls:
 
 - the expected digest is pinned in tracked code (``ModelManifest.sha256``);
 - every artifact — explicit path, cache hit, or fresh download — is
@@ -38,7 +37,7 @@ logger = logging.getLogger(__name__)
 _CHUNK_BYTES = 1024 * 1024
 
 #: Finite fetch timeout (connect and per-read) so an unreachable or
-#: stalled host fails actionably (MLD-IFC-008 AC2) instead of hanging on
+#: stalled host fails actionably instead of hanging on
 #: the stdlib default socket timeout.
 _FETCH_TIMEOUT_SECONDS = 60.0
 

@@ -1,6 +1,6 @@
 """Behavior-preserving extraction proof for ``apply_mask_replacement``.
 
-MLD-SYS-007 AC3: the legacy replacement block of ``despike_r1_spectrum``
+The legacy replacement block of ``despike_r1_spectrum``
 was extracted into ``apply_mask_replacement``; this battery proves the
 extraction is behavior-preserving against vectors **pinned from the
 pre-extraction legacy arithmetic** (computed at commit ccb4d27's

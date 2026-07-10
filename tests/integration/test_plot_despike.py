@@ -1,4 +1,4 @@
-"""Plot despike integration (spec §4.7, MLD-IFC-007, review F8).
+"""Plot despike integration (spec §4.7, review F8).
 
 ``plot`` never runs inference: ``ml`` applies stored DB masks via the
 pipeline's own mask-application helpers; ``modz`` computes the legacy
@@ -120,7 +120,7 @@ def _run_plot(
 
 
 class TestStoredMaskApplication:
-    """MLD-IFC-007 AC1: ml renders mask-replaced intensities; none raw."""
+    """ml renders mask-replaced intensities; none raw."""
 
     def test_ml_point_render_equals_mask_replacement(
         self, fixtures_path, tmp_path, monkeypatch, mask_db

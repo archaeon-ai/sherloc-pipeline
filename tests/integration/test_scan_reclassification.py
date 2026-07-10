@@ -1,12 +1,12 @@
-"""Integration tests for the WS-1 scan-classification source fix.
+"""Integration tests for the scan-classification source fix.
 
 Covers (value-blind throughout — names / counts / ids only):
   * the product_role DB CHECK rejects invalid (role, class, parent, sources)
-    tuples and accepts valid ones (ARC-M2P-311 AC5);
+    tuples and accepts valid ones;
   * `reclassify-scan-types/-classes/-product-roles` re-derive all three axes to
     the locked truth table, are idempotent, and do not mutate measurement
-    tables (ARC-M2P-312);
-  * the value-blind classification invariants (ARC-M2P-315) hold on the
+    tables;
+  * the value-blind classification invariants hold on the
     corrected corpus: composite non-empty sources, exactly-one-canonical-per-
     raw, sources resolve to an in-group raw, role couplings, and non-NULL role
     ⇒ recognized multishot pattern.
@@ -291,7 +291,7 @@ class TestReclassifyTruthTable:
 
 
 # ---------------------------------------------------------------------------
-# Value-blind invariants on the corrected corpus (ARC-M2P-315)
+# Value-blind invariants on the corrected corpus
 # ---------------------------------------------------------------------------
 
 class TestValueBlindInvariants:
@@ -338,7 +338,7 @@ class TestValueBlindInvariants:
                 assert role is None
 
     def test_exactly_one_canonical_per_tagged_raw_group(self, corrected):
-        # ARC-M2P-311/-315: every TAGGED raw group has EXACTLY one canonical
+        # Invariant: every TAGGED raw group has EXACTLY one canonical
         # (not merely <= 1 — a zero-canonical group must never be tagged).
         by_name, _ = corrected
         reductions_by_base = {}
@@ -383,7 +383,7 @@ class TestValueBlindInvariants:
 
     def test_no_incomplete_multishot_groups(self, corrected):
         # Every multishot group in the corrected corpus has exactly one canonical
-        # (the relational invariant the DB CHECK cannot express; ARC-M2P-315).
+        # (the relational invariant the DB CHECK cannot express).
         from sherloc_pipeline.services.scan_reclassification import (
             multishot_groups_missing_canonical,
         )
@@ -613,7 +613,7 @@ class TestCodexRound2Findings:
     def test_f8_invariant_catches_incomplete_multishot_group(self):
         """The value-blind invariant flags a multishot group lacking its
         canonical (raw + alternate, no canonical) — the synthetic invalid case
-        the V&V suite must reject (ARC-M2P-315)."""
+        the V&V suite must reject."""
         from sherloc_pipeline.services.scan_reclassification import (
             multishot_groups_missing_canonical,
         )
@@ -632,7 +632,7 @@ class TestCodexRound2Findings:
     def test_f10_invariant_is_sol_target_group_scoped(self):
         """A raw base that recurs across sol/target groups cannot mask an
         incomplete group: an alternate-only group is flagged even when another
-        group with the same raw base name has a canonical (Codex F10)."""
+        group with the same raw base name has a canonical."""
         from sherloc_pipeline.services.scan_reclassification import (
             multishot_groups_missing_canonical,
         )

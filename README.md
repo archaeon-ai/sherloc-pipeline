@@ -97,8 +97,8 @@ Edit `src/sherloc_pipeline/config.yaml` before first use:
 
 ```yaml
 paths:
-  data_root: "../data/loupe"      # Path to your Loupe data directory
-  results_root: "../results"       # Where to save pipeline outputs
+  data_root: "./data"          # Loupe data directory (override: SHERLOC_DATA_DIR)
+  results_root: "./results"    # Pipeline outputs (override: SHERLOC_RESULTS_DIR)
 ```
 
 The pipeline relies on Loupe v5.1.5 format data. See [the Loupe repository](https://github.com/nasa/Loupe).
@@ -378,7 +378,7 @@ data/loupe/
 ```
 src/sherloc_pipeline/
 ├── cli/
-│   └── app.py                  # Command-line interface (17 commands)
+│   └── app.py                  # Command-line interface (20 commands)
 ├── services/
 │   ├── pipeline.py             # Full 7-step workflow orchestration
 │   ├── review.py               # Review propagation and overlay regeneration

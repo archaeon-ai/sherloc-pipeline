@@ -108,10 +108,10 @@ def get_map_layers(request: Request, scan_id: str) -> MapLayersResponse:
         raise HTTPException(status_code=404, detail="Scan not found")
     _get_data_access(request).validate_scan_access(scan)
 
-    # Resolve display coordinates (raises 400 if unavailable). In v1.0-beta
+    # Resolve display coordinates (raises 400 if unavailable). In R2-backed
     # production, inject the R2-backed Loupe-workspace reader so the resolver
-    # can fetch spatial.csv + loupe.csv from R2 (spec §3.9.8). Legacy local
-    # dev worktree (no PHASE_TIER set) falls
+    # can fetch spatial.csv + loupe.csv from R2. Legacy local-filesystem dev
+    # installs (no PHASE_TIER set) fall
     # back to FS reads via the None-reader branch in coordinates.py.
     reader = get_working_file if is_r2_mode() else None
     try:

@@ -1,4 +1,4 @@
-// Coverage for the Map Mode image/point-set pairing (issue #8, Codex F1).
+// Coverage for the Map Mode image/point-set pairing (issue #8).
 // The colorized point set must only be drawn when the colorized image is
 // actually active — never merely because `useColorized` is true while the
 // colorized image is still loading or failed to load.

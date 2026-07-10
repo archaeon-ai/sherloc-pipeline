@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""ML despike integration parity harness (MLD-QUA-003 AC1 — hard gate).
+"""ML despike integration parity harness (hard gate).
 
 Proves that the integrated despike path (``ml_despike.featurize_batch``
 → ``MLCRDetector``) reproduces the validated detector behavior exactly:
@@ -206,8 +206,7 @@ def main() -> int:
 
     # Verify the supplied artifact against the pinned digest
     # BEFORE any ONNX session is created on it, in either path — the
-    # explicit-path no-bypass rule applies to the gate itself
-    # (MLD-DET-003 (a), MLD-SEC-002).
+    # explicit-path no-bypass rule applies to the gate itself.
     print("verifying artifact digest against the pinned manifest ...", flush=True)
     artifact_sha256 = hashlib.sha256(args.artifact.read_bytes()).hexdigest()
     if artifact_sha256 != DEFAULT_MANIFEST.sha256:
@@ -215,7 +214,7 @@ def main() -> int:
             f"ARTIFACT DIGEST MISMATCH: expected {DEFAULT_MANIFEST.sha256}, "
             f"got {artifact_sha256} for {args.artifact}. No session was "
             "created. The parity gate must run against the validated "
-            "artifact — stop and diagnose (MLD-QUA-003).",
+            "artifact — stop and diagnose.",
             file=sys.stderr,
         )
         return 1
@@ -307,7 +306,7 @@ def main() -> int:
     print(f"mark written to {args.out}")
     if not parity:
         print(
-            "PARITY FAILURE: stop and diagnose (MLD-QUA-003). The next "
+            "PARITY FAILURE: stop and diagnose. The next "
             "integration phase must not start and the change must not merge.",
             file=sys.stderr,
         )

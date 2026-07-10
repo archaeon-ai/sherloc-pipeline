@@ -1,4 +1,4 @@
-"""Shared R2 reader for v1.0-beta m2020-phase deployment.
+"""Shared R2 reader for R2-backed container deployments.
 
 Extracts the R2 client + per-tier config machinery from
 ``web/routes/images.py`` (v4.1.5–v4.1.8) into a shared module so non-image
@@ -8,13 +8,12 @@ error mapping. Current consumers:
 - ``web/routes/images.py`` — ACI image bytes (existing since v4.1.5;
   refactored at v4.1.9 to import from this module).
 - ``core/coordinates.py`` — Loupe-workspace ``spatial.csv`` / ``loupe.csv``
-  (NEW at v4.1.9; unblocks ``/api/map/layers/<id>`` on the v1.0-beta VPS
-  deployment per m2020-phase platform spec §3.9.8).
+  (unblocks ``/api/map/layers/<id>`` on R2-backed deployments).
 
-Contract: m2020-phase platform spec §3.9
-(ACI bytes) + §3.9.8 (companion files). Tier isolation is dual-enforced:
-code-side (per-tier strip-prefix table + sherloc-aci/ re-root) +
-credential-side (R2 bucket-scoped read tokens; slot 1 team / slot 3 public).
+Contract: hierarchical R2 key derivation — ACI image bytes + Loupe
+companion files. Tier isolation is dual-enforced: code-side (per-tier
+strip-prefix table + sherloc-aci/ re-root) + credential-side (R2
+bucket-scoped read tokens; per-tier team/public credentials).
 """
 
 from __future__ import annotations
@@ -114,9 +113,8 @@ def get_r2_client_and_config() -> tuple[Any, dict]:
 def is_r2_mode() -> bool:
     """Return True iff ``PHASE_TIER`` is set in the environment.
 
-    Per m2020-phase spec §3.9.6 + §3.9.8.5 the legacy FS fallback path is
-    permitted only when ``PHASE_TIER`` is unset (local dev runtime /
-    ``main`` worktree v3.0.0). A
+    The legacy FS fallback path is permitted only when ``PHASE_TIER`` is
+    unset (local-filesystem dev runtime without R2). A
     container that has ``PHASE_TIER`` set is a production / staging
     deployment and MUST route through the R2 resolver.
 

@@ -60,11 +60,10 @@ def _main_callback(
 
 
 class DespikeMethod(str, Enum):
-    """Closed CLI choice set for --despike-method (MLD-SYS-001).
+    """Closed CLI choice set for --despike-method.
 
     Mirrors ``services.preprocessing.VALID_DESPIKE_METHODS``; Typer rejects
-    any other value at parse time with a nonzero exit and the choice list
-    (MLD-IFC-002 AC1).
+    any other value at parse time with a nonzero exit and the choice list.
     """
 
     ml = "ml"
@@ -75,8 +74,8 @@ class DespikeMethod(str, Enum):
 def _apply_despike_method_override(despike_method: Optional[DespikeMethod]) -> None:
     """Override config preprocessing.despike.method from CLI --despike-method.
 
-    None means "defer to config" (CLI > config > default "ml",
-    MLD-SYS-003). The mutation targets the shared config singleton, the
+    None means "defer to config" (CLI > config > default "ml").
+    The mutation targets the shared config singleton, the
     same mechanism as --trim-pct, so it propagates to every service the
     command constructs afterwards.
     """
@@ -102,8 +101,7 @@ def _apply_model_selection_override(model_selection: Optional[str]) -> None:
     """Override config parsimony.model_selection from CLI --model-selection flag.
 
     Default (config.yaml): "aicc". Override to "ftest" for sequential
-    F-test peak-count selection. See PUBLIC_TOOLKIT_ARCHITECTURE_SPEC and
-    fitting.py for the trade-off.
+    F-test peak-count selection. See fitting.py for the trade-off.
     """
     if model_selection is None:
         return
@@ -956,8 +954,7 @@ def _select_fittable_scans(session, sol_number: int):
     The mars_target ∪ cal_target candidate set, filtered through the
     single-source is_fittable() predicate (every mars_target scan plus the
     cal-target meteorite). Shared by process-new Step 3 so the production
-    selection surface is directly testable (SCAN_CLASSIFICATION_SPEC §4.2.2
-    + K6).
+    selection surface is directly testable.
     """
     from sherloc_pipeline.database.models import ScanORM
     from sherloc_pipeline.models.spectra import is_fittable
@@ -1139,7 +1136,7 @@ def process_new_cmd(
         # every mars_target scan plus the cal-target meteorite (SaU 008).
         # _select_fittable_scans is the single-source selector (widens the
         # query to the mars_target ∪ cal_target candidate set, then filters
-        # through is_fittable) — SCAN_CLASSIFICATION_SPEC §4.2.2 + K6.
+        # through is_fittable).
         from sherloc_pipeline.database.connection import get_engine, get_session
         from sherloc_pipeline.database.models import ScanORM
 
@@ -1826,7 +1823,7 @@ def pixl_ingest_cmd(
     ctx: typer.Context,
     source: Path = typer.Argument(
         ...,
-        help="Path to directory containing Pixlise export zip files (e.g., /nas/000_pixl)",
+        help="Path to directory containing Pixlise export zip files (e.g., /path/to/pixl-exports)",
     ),
     database: Optional[Path] = typer.Option(
         None, "--database", "-d",
@@ -1854,7 +1851,7 @@ def pixl_ingest_cmd(
         The source directory should contain Pixlise export zip files
         named "Pixlise Data Export YYYY-MM-DD (N).zip".
 
-        Default location: /nas/000_pixl (NAS mount point)
+        Example location: /path/to/pixl-exports
 
     WHAT'S INGESTED:
         - Target metadata (name, RTT, PIQUANT version)
@@ -1867,17 +1864,17 @@ def pixl_ingest_cmd(
         Re-ingesting the same data is a no-op. Use --force to re-ingest.
 
     Examples:
-        # Ingest all exports from NAS
-        sherloc pixl-ingest /nas/000_pixl
+        # Ingest all exports from a directory
+        sherloc pixl-ingest /path/to/pixl-exports
 
         # Ingest with custom database
-        sherloc pixl-ingest /nas/000_pixl --database /data/pixl/test.db
+        sherloc pixl-ingest /path/to/pixl-exports --database /data/pixl/test.db
 
         # Ingest first 5 for testing
-        sherloc pixl-ingest /nas/000_pixl --limit 5 --stats
+        sherloc pixl-ingest /path/to/pixl-exports --limit 5 --stats
 
         # Force re-ingest and show stats
-        sherloc pixl-ingest /nas/000_pixl --force --stats
+        sherloc pixl-ingest /path/to/pixl-exports --force --stats
     """
     json_mode = (ctx.obj or {}).get("json", False)
     if json_mode:
@@ -2025,8 +2022,7 @@ def _iter_all_scans(
             # meteorite sol whose sol-wide target is "ext cal meteorite" (which
             # would otherwise match `target contains meteorite`). ilike() makes
             # the case-insensitivity match is_fittable()'s .lower(). Keep in sync
-            # with that single-source predicate (SCAN_CLASSIFICATION_SPEC §4.2.2
-            # + K6).
+            # with that single-source predicate.
             query = query.filter(or_(
                 ScanORM.target_type == "mars_target",
                 and_(

@@ -37,7 +37,7 @@ ratchet.
 | Registry | `ghcr.io/archaeon-ai/sherloc-pipeline:<tag>` | `.github/workflows/publish.yml` |
 | Tag scheme | Semver `v<major>.<minor>.<patch>` matching `pyproject.toml` `project.version` | Convention; v4.1.6 was the first GHCR publish |
 | Visibility | Private during v1.0-beta; v1.0.1 sunset flips to public | `publish.yml` summary |
-| Platforms | `linux/amd64,linux/arm64` (multi-arch added at v4.1.16 per FOUNDATION §3.5 step 6) | `publish.yml` |
+| Platforms | `linux/amd64,linux/arm64` (multi-arch added at v4.1.16) | `publish.yml` |
 | Base | `python:3.12.12-slim-bookworm` (runtime stage) | `Dockerfile` stage 3 |
 | Runtime user | `sherloc` (uid 1000, gid 1000) | `Dockerfile` |
 
@@ -58,9 +58,9 @@ ratchet.
 |---|---|---|---|
 | `/data` | SQLite DB + any ephemeral state | yes | Must be writable by uid 1000 / gid 1000; bind-mount target must exist before first start |
 
-The host-side path is **consumer-owned** (e.g., the m2020-phase deploy
-uses `/var/lib/sherloc/internal` and `/var/lib/sherloc/public`). The
-contract only specifies the container-internal path and the writer.
+The host-side path is **consumer-owned** (e.g. `/srv/sherloc/internal`
+and `/srv/sherloc/public`). The contract only specifies the
+container-internal path and the writer.
 
 ## 5. Environment variables
 
@@ -180,7 +180,7 @@ None uniformly.
 
 | Resource | Recommendation | Rationale |
 |---|---|---|
-| Memory limit | 1 GB per service | Empirical from CCX13 deploy; spikes during fitting + image conversion |
+| Memory limit | 1 GB per service | Empirical from a small production VPS; spikes during fitting + image conversion |
 | CPU | 1.0–1.5 cores per service | uvicorn single worker; ThreadPoolExecutor for map fits |
 | Restart policy | `unless-stopped` | Standard for long-running web service |
 
@@ -194,7 +194,7 @@ Not enforced by the test suite. Present as commented defaults in
 - Backup schedule / paths (consumer-owned; the contract does not bundle
   a reference backup script — supply your own per host policy).
 - Auth-provider tenant config (Auth0 Action source, JWKS endpoint shape)
-  — that is the platform spec's job, not SHERLOC's contract.
+  — that is the consuming deployment's job, not SHERLOC's contract.
 - Orchestration (systemd vs Kubernetes vs raw `docker compose up` — all
   valid).
 - Secret-management mechanism (Infisical, sops, k8s Secrets, plain env
@@ -223,8 +223,7 @@ The contract is versioned with the image tag. The
 - `.github/workflows/publish.yml` `IMAGE_NAME` equals
   `ghcr.io/archaeon-ai/sherloc-pipeline`.
 - `.github/workflows/publish.yml` `platforms:` line equals
-  `linux/amd64,linux/arm64` (multi-arch added at v4.1.16 per
-  FOUNDATION §3.5 step 6).
+  `linux/amd64,linux/arm64` (multi-arch added at v4.1.16).
 
 ## 11. Two-tier deployment pattern
 

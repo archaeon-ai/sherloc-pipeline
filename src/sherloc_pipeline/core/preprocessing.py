@@ -61,11 +61,11 @@ def apply_mask_replacement(
     """Replace masked rows by interpolation — the legacy despike replacement.
 
     This is the replacement block extracted from ``despike_r1_spectrum``
-    (behavior-preserving, MLD-SYS-007 AC3): flagged rows are set to NaN and
+    (behavior-preserving): flagged rows are set to NaN and
     filled with ``Series.interpolate(method=..., limit_direction="both")``,
     so leading/trailing flags take the nearest valid value. Every despike
     method shares this helper, so identical masks produce identical
-    replacements regardless of how the mask was computed (MLD-SYS-007 AC1).
+    replacements regardless of how the mask was computed.
 
     Args:
         series: Intensity series (any numeric dtype; promoted to float).

@@ -1,6 +1,6 @@
 """Package-metadata tests for the ML despike dependency surface.
 
-MLD-QUA-001 AC1/AC2 and MLD-QUA-009 AC1: the base install stays lean
+The base install stays lean
 (no ML runtime, no torch), the ``[ml-despike]`` extra is exactly the
 bounded onnxruntime pin, the torch ``[ml]`` (SAM) extra is unchanged,
 and the stub-model builder dependency lives in ``[dev]`` only.
@@ -28,7 +28,7 @@ def test_base_dependencies_have_no_ml_runtime(pyproject):
 
 def test_ml_despike_extra_is_exactly_the_bounded_ort_pin(pyproject):
     extras = pyproject["project"]["optional-dependencies"]
-    # The exact bounded range is normative (MLD-QUA-009 AC1): certified
+    # The exact bounded range is normative: certified
     # at 1.26.0, later 1.x compatible-but-not-certified, no major jump.
     assert extras["ml-despike"] == ["onnxruntime>=1.26.0,<2.0"]
 

@@ -87,14 +87,14 @@ R123_CONTRIBUTORS = ("R1", "R2", "R3")
 
 
 # ---------------------------------------------------------------------------
-# Stored-mask despike toggle (spec §4.6, MLD-IFC-003/004, MLD-PER-002)
+# Stored-mask despike toggle (spec §4.6)
 #
 # The serving host never runs ML inference: ``?despike=true`` looks up the
 # masks the pipeline already persisted (``cosmic_ray_masks`` table) and
 # applies the *same* interpolation helper the pipeline uses. No onnxruntime
 # and no ``ml_despike`` package is imported at web module load — the only
 # ml_despike touch is a request-time import of the stdlib-only frozen
-# manifest, reached solely on the despike branch (MLD-QUA-002 AC2).
+# manifest, reached solely on the despike branch.
 # ---------------------------------------------------------------------------
 
 
@@ -103,7 +103,7 @@ def _despike_region_windows():
 
     Imported lazily (request-time) so importing the web app never imports
     ``ml_despike``; ``manifest.py`` is stdlib-only, so this never pulls
-    onnxruntime even here (MLD-QUA-002 AC2). The manifest is the single
+    onnxruntime even here. The manifest is the single
     source of truth for the windows — they are not re-hardcoded in ``web``.
     """
     from sherloc_pipeline.ml_despike.manifest import DEFAULT_MANIFEST

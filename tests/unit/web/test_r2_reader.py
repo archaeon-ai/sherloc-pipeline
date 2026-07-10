@@ -1,6 +1,6 @@
 """Tests for ``web/r2_reader.py`` — the shared R2-reader module (v4.1.9+).
 
-Exercises the m2020-phase platform spec §3.9.8 contract:
+Exercises the R2 companion-file contract:
 ``get_working_file(file_path, filename) → bytes`` for Loupe-workspace
 companion files (``spatial.csv``, ``loupe.csv``). Uses moto's in-process
 S3 mock (``mock_aws``) so the boto3 client exercises real serialization +
@@ -369,8 +369,8 @@ class TestIsR2Mode:
     """is_r2_mode() — spec-compliant predicate.
 
     The predicate gates FS-fallback vs R2-routing in the route layer.
-    Per m2020-phase spec §3.9.6 + §3.9.8.5 the FS fallback is permitted
-    ONLY when PHASE_TIER is unset (legacy dev / local main worktree).
+    The FS fallback is permitted
+    ONLY when PHASE_TIER is unset (legacy local-filesystem dev).
     Any container that has PHASE_TIER set is a production / staging
     deployment and MUST route through the R2 path, where invalid tier
     values + missing AWS_* credentials surface as

@@ -1,6 +1,6 @@
 """ACI image endpoint tests — R2-backed (v4.1.7+, refactored v4.1.9).
 
-Exercises the m2020-phase platform spec §3.9 contract: hierarchical-key
+Exercises the R2 hierarchical-key contract: hierarchical-key
 resolution from per-tier DB `context_images.file_path` → strip-prefix
 → `sherloc-aci/<rest>` in the per-tier R2 bucket.
 

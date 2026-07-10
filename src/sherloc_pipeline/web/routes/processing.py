@@ -352,9 +352,8 @@ def _load_background_standalone(
        Loaded via :mod:`importlib.resources` so editable installs +
        wheel installs both resolve.
     2. Legacy FS search (``./data/background/`` + ``../background/``)
-       — legacy local dev worktree and
-       dev runtimes where the operator may override with locally
-       customized references.
+       — legacy local-filesystem dev runtimes where the operator may
+       override with locally customized references.
 
     Args:
         config: Application config object (must have ``preprocessing`` dict).
@@ -402,8 +401,8 @@ def _load_background_standalone(
 
     bg_df = _read_packaged_background_csv(bg_filename)
     if bg_df is None:
-        # Legacy FS search retained for local dev worktree where the
-        # operator may symlink alternate references.
+        # Legacy FS search retained for local-filesystem dev installs
+        # where the operator may symlink alternate references.
         data_root = Path("./data")
         possible_paths = [
             data_root / "background" / bg_filename,

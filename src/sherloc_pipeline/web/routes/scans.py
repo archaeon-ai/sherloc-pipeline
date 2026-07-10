@@ -59,8 +59,8 @@ def _count_ml_masks(session: Session, scan_id: str) -> int:
     """COUNT stored cosmic-ray mask rows for a scan (issue #6).
 
     Single COUNT joined cosmic_ray_masks → spectra → scan_points; no mask
-    rows are loaded. Stored masks are optional at read time (MLD-IFC-003 /
-    §4.7): a pre-migration database (no ``cosmic_ray_masks`` table) or any
+    rows are loaded. Stored masks are optional at read time
+    (§4.7): a pre-migration database (no ``cosmic_ray_masks`` table) or any
     SQLite read error yields 0, never a 500 — mirroring the tolerance of the
     stored-mask read path the despike toggle uses. The frontend gates its
     "ML" despike selector option on this being > 0.

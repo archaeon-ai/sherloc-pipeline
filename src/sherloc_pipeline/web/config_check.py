@@ -5,8 +5,6 @@ uvicorn server start. Validates required environment variables and
 fails fast (exit code 1) with explicit ``missing required variable: NAME``
 messages so deployment misconfiguration is obvious in container logs.
 
-Per PUBLIC_TOOLKIT_ARCHITECTURE_SPEC §7.3 and §14.1.
-
 Variables validated:
     SHERLOC_DB         — must point to a writable path (or its parent
                          directory must exist and be writable so SQLite
@@ -134,8 +132,8 @@ def _check_access_mode(errors: List[str]) -> None:
 def _check_r2(errors: List[str]) -> None:
     """Validate R2 storage env vars when running under auth0 (production) mode.
 
-    Per m2020-phase platform spec §3.9.2, the SHERLOC backend reads ACI
-    bytes from R2; the per-tier env file MUST set PHASE_TIER + AWS_*.
+    In auth0/production mode the SHERLOC backend reads ACI bytes from R2;
+    the per-tier env file MUST set PHASE_TIER + AWS_*.
     A missing or mistyped PHASE_TIER will produce 500 'tier_unset' on
     every ACI request — fail loudly at boot instead.
 

@@ -326,7 +326,7 @@ class DataIngestion:
                 If None (the default — the legacy behavior), the frames are
                 re-loaded from the workspace. The ml despike path passes its
                 in-run frames here so despiked fluorescence/R123 products
-                proceed through the chain (MLD-SYS-013 AC1).
+                proceed through the chain.
 
         Returns:
             Dict with file counts by type
@@ -708,8 +708,8 @@ class DataIngestion:
         """Load raw ACTIVE and DARK planes per region from a Loupe workspace.
 
         Reads ``activeSpectra.csv`` and ``darkSpectra.csv`` (raw DN,
-        pre-normalization — the ML CR detector's certified observable,
-        MLD-SYS-004) using the same section layout as ``restructure_*``:
+        pre-normalization — the ML CR detector's certified observable)
+        using the same section layout as ``restructure_*``:
         R1 rows ``0:n``, repeated section header at ``n``, R2 rows
         ``n+1:2n+1``, header at ``2n+1``, R3 rows ``2n+2:3n+2``.
 
@@ -723,7 +723,7 @@ class DataIngestion:
         Raises:
             FileNotFoundError: If either raw plane file is missing (the
                 caller decides the remedy — no substitute input is ever
-                used, MLD-IFC-008).
+                used).
             ValueError: If a section does not yield the expected row count.
         """
         metadata = self.load_scan_metadata(working_dir)

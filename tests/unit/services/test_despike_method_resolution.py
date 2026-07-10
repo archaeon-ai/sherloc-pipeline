@@ -1,5 +1,4 @@
-"""Despike method selection and resolution (MLD-SYS-001/002/003,
-MLD-IFC-002).
+"""Despike method selection and resolution.
 
 The 4-cell precedence matrix {CLI set/unset} x {config set/unset}, the
 closed value set, and invalid-value rejection at both layers before any
@@ -32,7 +31,7 @@ class TestClosedSet:
 
 
 class TestPrecedenceMatrix:
-    """MLD-SYS-003 AC1: {CLI set/unset} x {config set/unset}."""
+    """{CLI set/unset} x {config set/unset}."""
 
     def test_cli_set_config_set_cli_wins(self):
         cfg = _cfg({"method": "modz"})
@@ -65,8 +64,7 @@ class TestPrecedenceMatrix:
 
 
 class TestShippedConfig:
-    """The packaged config.yaml carries the documented defaults
-    (MLD-SYS-002; MLD-SYS-013 AC2)."""
+    """The packaged config.yaml carries the documented defaults."""
 
     def test_shipped_default_method_is_ml(self):
         from sherloc_pipeline.config import load_config
@@ -85,7 +83,7 @@ class TestShippedConfig:
 
 
 class TestInvalidValues:
-    """MLD-IFC-002: rejection lists all valid values; nonzero exit code."""
+    """Rejection lists all valid values; nonzero exit code."""
 
     def test_invalid_cli_value_rejected(self):
         with pytest.raises(PreprocessingError) as excinfo:
@@ -109,7 +107,7 @@ class TestInvalidValues:
             resolve_despike_method("typo", _cfg({"method": "modz"}))
 
     def test_run_scan_rejects_invalid_method_before_side_effects(self, tmp_path):
-        """MLD-IFC-002 AC2: validation precedes any processing side
+        """Validation precedes any processing side
         effects — no results directory contents are created."""
         from sherloc_pipeline.services.preprocessing import PreprocessingService
 

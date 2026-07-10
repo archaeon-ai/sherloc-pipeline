@@ -374,7 +374,7 @@ def test_auth0_token_without_email_succeeds_on_user_route(
 def test_missing_token_401_includes_www_authenticate_header(
     monkeypatch, tmp_path
 ):
-    """Per m2020-phase Revised++ §2.6.1: a missing-credential 401 on a
+    """A missing-credential 401 on a
     protected endpoint MUST include ``WWW-Authenticate: Bearer
     realm="m2020-phase"`` (the contract literal). v4.1 retired the
     Phase A parallel-run ``sherloc`` realm default.

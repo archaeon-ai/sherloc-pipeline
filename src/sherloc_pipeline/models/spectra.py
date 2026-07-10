@@ -264,8 +264,6 @@ def is_fittable(
     sample, so the carve-out needs no general named-sample set. Should SHERLOC
     ever add another natural cal sample, extend this one predicate.
 
-    See ``SCAN_CLASSIFICATION_SPEC §4.2.2`` + Key Decision K6 (m2020-phase).
-
     Args:
         target_type: One of 'mars_target', 'cal_target', 'engineering'
             (as produced by :func:`classify_target_type`).
@@ -302,8 +300,8 @@ def classify_scan_class(scan_name: str) -> str:
       2. sub_scan — name ends with [a-c] after a digit or underscore
       3. primary — everything else
 
-    The bare trailing-underscore union (WS-1 spec §4.3, defect D2) is a
-    name-union composite that the substring patterns above miss — e.g.
+    The bare trailing-underscore union is a name-union composite that the
+    substring patterns above miss — e.g.
     ``line_`` (Aitkenodden) and ``detail_`` were stored ``primary`` at the
     source, which is why PHASE needed the ``COMPOSITE_BY_NAME_PRIMARIES``
     consumer band-aid.
@@ -362,7 +360,7 @@ def derive_parent_name(scan_name: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Scan type classification (name-authoritative; WS-1 spec §4.2)
+# Scan type classification (name-authoritative)
 # ---------------------------------------------------------------------------
 
 # Sentinel returned by classify_scan_type() for an informative-but-unrecognized
@@ -390,14 +388,14 @@ _SCAN_TYPE_PREFIX_RULES = (
     ("line", ScanType.LINE),
 )
 
-# HDR is the `*HDR*` map entry (ARC-M2P-308): a token-boundaried match
+# HDR is the `*HDR*` map entry: a token-boundaried match
 # ANYWHERE in the name (not just a prefix), at the LOWEST precedence so
 # "survey_HDR" still resolves to survey. The boundary guard means "hydration"
 # does not match (no standalone `hdr` token).
 _HDR_TOKEN_RE = re.compile(r"(?:^|[^a-z])hdr(?:[^a-z]|$)")
 
-# Named composite groupings whose scan_type INHERITS the constituent kind
-# (Key Decision K1). cross / asterisk are unions of `line` primaries.
+# Named composite groupings whose scan_type INHERITS the constituent kind.
+# cross / asterisk are unions of `line` primaries.
 _INHERITED_LINE_NAMES = frozenset({"cross", "asterisk"})
 
 # Calibration-target / engineering scan-name families (WS-1 §4.2, widened).
@@ -506,7 +504,7 @@ def classify_scan_type(
     sequence_code: Optional[str] = None,
     n_spectra: Optional[int] = None,
 ) -> "ScanType | str":
-    """Name-authoritative scan-type resolver (WS-1 spec §4.2).
+    """Name-authoritative scan-type resolver.
 
     Resolution order:
       1. **Calibration** — sequence code in {SRLC10000, SRLC16000} (first,
@@ -516,7 +514,7 @@ def classify_scan_type(
          :func:`_is_calibration_name`).
       2. **RECOGNIZED name** — token-boundaried ordered map (survey > detail >
          line > HDR; ``detailed``→detail, ``lines``→line; cross/asterisk inherit
-         line per K1).
+         line).
       3. **UNINFORMATIVE name** (empty / synthetic ``pds_*``) — spectrum-count
          fallback (> threshold ⇒ survey, else detail).
       4. **UNKNOWN name** (informative but unrecognized) — the
@@ -548,10 +546,10 @@ def classify_scan_type(
 
 
 # ---------------------------------------------------------------------------
-# Analytical product role classification (multishot; WS-1 spec §4.4)
+# Analytical product role classification (multishot)
 # ---------------------------------------------------------------------------
 
-# Multishot SNR-reduction product suffixes (WS-1 spec §4.4). Ordered
+# Multishot SNR-reduction product suffixes. Ordered
 # most-specific first so ``_median_all`` is matched before the bare ``_all``
 # SPATIAL union and ``_sum_active_median_dark`` before any ``_dark`` shorthand.
 # The analytical CANONICAL product is ``*_sum_active_median_dark`` (sums active
@@ -1102,7 +1100,7 @@ class CosmicRayMask(IdentifiableModel):
     One ``CosmicRayMask`` exists per (DARK_SUBTRACTED spectrum, method)
     pair: it records the absolute channel indices flagged as cosmic-ray
     contaminated by a despike method, together with the provenance trio
-    that makes the result auditable (per MLD-SYS-008): the method
+    that makes the result auditable: the method
     identity (e.g. ``ml_v1.3_tau_matched``), the model artifact's sha256
     digest, and the threshold ``tau`` applied to this region.
 

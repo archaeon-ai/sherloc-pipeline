@@ -5,11 +5,9 @@ region's 2148-channel plane (spec §3.3). This module maps those masks onto
 the three frames the despike stage carries — the R1 normalized frame, the
 fluorescence full-plane sum, and the masked-assignment R123 stitch — and
 replaces flagged rows via the shared legacy interpolation
-(:func:`~sherloc_pipeline.core.preprocessing.apply_mask_replacement`,
-MLD-SYS-007).
+(:func:`~sherloc_pipeline.core.preprocessing.apply_mask_replacement`).
 
-Two normative rules govern combined representations (spec §3.3,
-MLD-SYS-014/015):
+Two normative rules govern combined representations (spec §3.3):
 
 - **Contributor-set principle** — at each channel, apply the masks of
   exactly the regions that contribute to that channel under that
@@ -20,11 +18,11 @@ MLD-SYS-014/015):
   region's certified detection window ``[lo, hi)``. A contribution from a
   region outside its window is uncovered and retains legacy never-screened
   behavior; this module enforces the windows defensively even if a caller
-  supplies out-of-window indices (MLD-SYS-015 AC3).
+  supplies out-of-window indices.
 
 This module never imports onnxruntime or ``ml_despike`` — the certified
 region windows are passed in by the caller, keeping mask application usable
-for any mask source (MLD-QUA-002).
+for any mask source.
 """
 
 from typing import Dict, Mapping, Optional, Sequence, Tuple
@@ -105,7 +103,7 @@ def _in_window_channels(
     """Restrict mask channels to the region's certified window ``[lo, hi)``.
 
     Detector output is in-window by construction; this is the defensive
-    enforcement of MLD-SYS-015 AC3 for masks from any other source.
+    enforcement of the certified-window restriction for masks from any other source.
     """
     if channels is None or len(channels) == 0:
         return np.empty(0, dtype=np.int64)
@@ -180,7 +178,7 @@ def apply_masks_to_fluorescence_frame(
     The frame is the R2+R3 full-plane sum with identity row map (row *i* =
     channel *i*). Covered contributors: R2 in its certified window, R3 in
     its certified window; every other channel has no covered contributor
-    and retains legacy never-screened behavior (MLD-SYS-014 AC3).
+    and retains legacy never-screened behavior.
     """
     n_rows = len(fluor_df)
     despiked = fluor_df.copy()
@@ -211,7 +209,7 @@ def apply_stored_mask_to_array(
     This wraps the shared legacy interpolation
     (:func:`~sherloc_pipeline.core.preprocessing.apply_mask_replacement`) so
     the web route despikes exactly the way the pipeline does, with the same
-    certified-window restriction (MLD-SYS-015 AC3): channel indices outside
+    certified-window restriction: channel indices outside
     ``window`` are ignored.
 
     Args:
@@ -239,8 +237,8 @@ def apply_stored_mask_to_array(
 
 #: Per-channel contributor segments of the Loupe overlap-summation R123
 #: construction, *derived from* the boundary constants in
-#: ``core/r123_stitching.py`` (never hardcoded separately — spec §3.3,
-#: MLD-SYS-015 / review F1-R4). Each entry is ``(start, end, (regions...))``
+#: ``core/r123_stitching.py`` (never hardcoded separately — spec §3.3).
+#: Each entry is ``(start, end, (regions...))``
 #: with ``[start, end)`` half-open channel ranges.
 def _r123_summation_segments() -> Sequence[Tuple[int, int, Tuple[str, ...]]]:
     from sherloc_pipeline.core.r123_stitching import (
@@ -330,7 +328,7 @@ def apply_masks_to_r123_frame(
 
     Row *i* = channel *i*. A channel changes iff the region that won the
     assignment at that channel flags it; a flagged non-winning region
-    produces no change (MLD-SYS-014 AC1).
+    produces no change.
     """
     n_rows = len(r123_df)
     winner = np.asarray(winning_region_map, dtype="<U2")

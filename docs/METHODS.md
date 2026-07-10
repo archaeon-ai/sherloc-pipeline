@@ -536,14 +536,14 @@ def compute_aicc(n_samples: int, rss: float, num_params: int) -> float:
     return aic + correction
 ```
 
-For fluorescence fitting (`domain="fluorescence"`), AICc is used regardless of UI selection — see §3.5 of `docs/specs/FLUORESCENCE_FITTING_SPEC.md`.
+For fluorescence fitting (`domain="fluorescence"`), AICc is used for model selection regardless of the UI selection.
 
 **Quality Thresholds (defaults from `src/sherloc_pipeline/config.yaml`, minerals domain):**
 - **R²:** ≥ 0.25 (`r_squared_min`)
 - **SNR:** ≥ 3.0 (`min_snr`)
 - **FWHM:** initial-search lower bound 22 cm⁻¹ (`fit_fwhm_min_initial_cm1`), upper bound 90 cm⁻¹ (`fwhm_max_cm1`); post-fit filter ≥ 30 cm⁻¹ (`filter_fwhm_min_cm1`); reviewable/persist eligibility ≥ 25 cm⁻¹ (`reviewable_fwhm_min_cm1`)
 
-Domain overrides (organics, hydration, fluorescence) are defined in the same `fitting:` block of `config.yaml` and may relax or tighten these defaults. The fluorescence `posthoc_filters` block sets `r2_min: 0.0` and `fwhm_min_cm1: 0.0` — see §3.5 of `docs/specs/FLUORESCENCE_FITTING_SPEC.md` for the rationale.
+Domain overrides (organics, hydration, fluorescence) are defined in the same `fitting:` block of `config.yaml` and may relax or tighten these defaults. The fluorescence `posthoc_filters` block sets `r2_min: 0.0` and `fwhm_min_cm1: 0.0`, disabling those post-hoc R² and FWHM rejection gates for the fluorescence domain.
 
 **References:**
 - F-test for nested models: standard derivation; implementation in `core/fitting.py:_f_test_pvalue`.

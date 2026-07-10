@@ -746,7 +746,7 @@ class PipelineService:
         # Cosmic-Ray Mask Persistence (non-fatal, DB-gated) -----------------------
         # Mirrors the Raman-persistence precedent above: if the DB exists and
         # the despike step recorded ml masks, persist them; on error warn and
-        # continue; with no DB, debug-log the skip (spec §4.5, MLD-SYS-008).
+        # continue; with no DB, debug-log the skip (spec §4.5).
         despike_metadata = (metadata.get("preprocessing") or {}).get("despike") or {}
         if despike_metadata.get("masks"):
             if db_path.exists():
