@@ -70,9 +70,17 @@ def _backfill_prefixes() -> list[str]:
 
 def upgrade() -> None:
     """Add r2_rel_key and backfill it from file_path."""
-    op.execute("ALTER TABLE context_images ADD COLUMN r2_rel_key TEXT")
-
     bind = op.get_bind()
+
+    # Retry-safe DDL: if a prior partially-applied run added the column
+    # but did not stamp the revision (the known swap/stamp hazard), skip
+    # the ALTER instead of failing with "duplicate column name".
+    existing_cols = [
+        row[1]
+        for row in bind.exec_driver_sql("PRAGMA table_info(context_images)")
+    ]
+    if "r2_rel_key" not in existing_cols:
+        op.execute("ALTER TABLE context_images ADD COLUMN r2_rel_key TEXT")
 
     # Rule 1: pds: sentinel rows round-trip.
     bind.execute(sa.text(

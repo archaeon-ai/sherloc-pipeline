@@ -458,3 +458,18 @@ class TestDeriveRelLocator:
         assert derive_rel_locator("/somewhere/else/entirely/f.PNG") is None
         # sol segment present but neither loupe- nor data_aci-shaped
         assert derive_rel_locator("/backup/sol_0921/raw/g.PNG") is None
+
+    def test_traversal_after_anchor_returns_none(self):
+        """A locator serving would reject must never be persisted.
+
+        Mirrors the migration backfill's traversal exclusion for the
+        go-forward ingestion writers (review F2).
+        """
+        from sherloc_pipeline.core.r2_keys import derive_rel_locator
+
+        assert derive_rel_locator(
+            "/data/sherloc/data/loupe/sol_0921/../../../etc/passwd"
+        ) is None
+        assert derive_rel_locator(
+            "/data/sherloc/pds/sol_0712/data_aci/..\\evil.IMG"
+        ) is None

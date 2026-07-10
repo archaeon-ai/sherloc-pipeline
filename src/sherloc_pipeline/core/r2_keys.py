@@ -156,14 +156,23 @@ def derive_rel_locator(file_path: str | PurePath) -> str | None:
 
     Returns ``None`` when the path matches neither convention (the row
     then has no derivable R2 identity; serving it fails the same way an
-    unrecognized absolute path always has).
+    unrecognized absolute path always has), or when the derived locator
+    would fail :func:`derive_r2_key`'s traversal guard — a locator that
+    cannot serve must not be persisted.
     """
     parts = PurePath(file_path).parts
     for i, part in enumerate(parts):
         if not _SOL_ANCHOR_RE.match(part):
             continue
         if i > 0 and parts[i - 1] == "loupe":
-            return "/".join(("loupe", *parts[i:]))
-        if i + 1 < len(parts) and parts[i + 1] == "data_aci":
-            return "/".join(parts[i:])
+            rel = "/".join(("loupe", *parts[i:]))
+        elif i + 1 < len(parts) and parts[i + 1] == "data_aci":
+            rel = "/".join(parts[i:])
+        else:
+            continue
+        # Mirror _validate_key: never persist a locator serving would
+        # reject (same conservative substring semantics).
+        if ".." in rel or "\\" in rel:
+            return None
+        return rel
     return None

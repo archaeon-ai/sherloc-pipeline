@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Context images are now identified by a stored **relative locator**
 (`context_images.r2_rel_key`) — the string after `sherloc-aci/` in the
 object's R2 key — instead of translating a machine-specific absolute
-`file_path` at serve time. Closes #7.
+`file_path` at serve time. Part of #7 (the serve-path transition; the
+processing-side `data_root + locator` conversion and the `file_path`
+column drop remain tracked there).
 
 ### Added
 - **`context_images.r2_rel_key` column + backfill** (migration

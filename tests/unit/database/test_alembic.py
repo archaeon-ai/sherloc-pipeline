@@ -243,3 +243,47 @@ class TestR2RelKeyBackfill:
                 assert got == expected, (
                     f"{row_id}: expected {expected!r}, got {got!r}"
                 )
+
+    def test_retry_after_partial_application(self, alembic_config):
+        """Retrying after an interrupted run must not fail on duplicate column.
+
+        Simulates the known swap/stamp hazard: the column was added but
+        the revision was never stamped (e.g. deploy interrupted between
+        DDL and stamp). A retried `upgrade head` must skip the ALTER and
+        still complete the backfill (review F3).
+        """
+        config, db_path = alembic_config
+
+        command.upgrade(config, "9b2e7c4a1f08")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.begin() as conn:
+            from sqlalchemy import text
+
+            # Manually pre-add the column: the partially-applied state.
+            conn.execute(
+                text("ALTER TABLE context_images ADD COLUMN r2_rel_key TEXT")
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO context_images "
+                    "(id, scan_id, image_type, file_path, created_at) "
+                    "VALUES ('img-retry', 'scan-under-test', 'ACI', "
+                    "'/data/sherloc/data/loupe/sol_0921/ws/img/r.PNG', "
+                    "'2026-01-01 00:00:00')"
+                )
+            )
+
+        # Retried upgrade: must not raise, and must still backfill.
+        command.upgrade(config, "head")
+
+        with engine.connect() as conn:
+            from sqlalchemy import text
+
+            got = conn.execute(
+                text(
+                    "SELECT r2_rel_key FROM context_images "
+                    "WHERE id = 'img-retry'"
+                )
+            ).scalar()
+            assert got == "loupe/sol_0921/ws/img/r.PNG"
