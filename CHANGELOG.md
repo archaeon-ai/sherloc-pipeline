@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Processing-side half of #7: the disk-read sites now derive their path
+from the stored relative locator (`context_images.r2_rel_key`) via
+`<root> + locator`, exactly as the serve path derives R2 keys. `file_path`
+is now **write-only** — ingestion still dual-writes it, but no code reads
+it for disk access, so its column drop is the remaining #7 step.
+
+### Added
+- **`core.r2_keys.resolve_disk_path(rel_locator, *, data_root,
+  pds_cache_dir)`** — the disk-edge inverse of `derive_rel_locator`:
+  `loupe/…` locators resolve under `data_root`, `sol_NNNN/data_aci/…`
+  under `pds_cache_dir`. Returns `None` (caller raises its own
+  missing-file-equivalent error) for a missing / `pds:`-schemed /
+  unrecognized locator, a failed traversal guard (mirrors
+  `derive_r2_key`), or an unmounted (`None`) root. The `sol_NNNN` anchor
+  accepts the `_colorized` variant.
+
+### Changed
+- **Processing-side disk reads use the locator, not `file_path`:**
+  - `services/image_query.py` — `ImageInfo` gains `r2_rel_key` (populated
+    from the ORM; `to_dict()` output unchanged for API compat); the
+    service takes `data_root` / `pds_cache_dir` (config-derived defaults)
+    and resolves every disk read (`load_image`, export, VICAR-label
+    fallback) through `resolve_disk_path`. A `None` resolution raises the
+    site's existing error type naming the locator — no silent fallback.
+  - `services/segmentation.py` — the batch/single image queries select
+    `r2_rel_key` (no longer `file_path`); reads resolve through
+    `resolve_disk_path`. Service takes `data_root` / `pds_cache_dir`.
+  - `core/coordinates.py` — the legacy local-FS fallback derives the
+    Loupe workspace dir from `r2_rel_key` (colorized variant via
+    `colorize_sol_segment` on the locator) + `data_root`/`pds_cache_dir`
+    (threaded params, config-derived when unset). The R2 path is
+    untouched.
+
 ## [5.4.0] - 2026-07-10
 
 Context images are now identified by a stored **relative locator**

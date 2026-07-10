@@ -69,6 +69,8 @@ def resolve_display_coordinates(
     force_recompute: bool = False,
     workspace_reader: Optional[WorkspaceReader] = None,
     colorized: bool = False,
+    data_root: Optional[str] = None,
+    pds_cache_dir: Optional[str] = None,
 ) -> list[DisplayCoordinate]:
     """Resolve ACI pixel coordinates for all points in a scan.
 
@@ -107,6 +109,15 @@ def resolve_display_coordinates(
     colorized:
         When ``True``, resolve coordinates against the **colorized** Loupe
         workspace (``sol_NNNN_colorized/``) instead of the grayscale base.
+
+    data_root, pds_cache_dir:
+        Deployment data roots used **only** by the legacy local-FS
+        fallback (``workspace_reader is None``) to resolve the ACI
+        context image's stored relative locator (``r2_rel_key``) to a
+        disk path via :func:`core.r2_keys.resolve_disk_path`. Ignored on
+        the R2 path. When either is ``None`` the FS fallback derives it
+        from the runtime config (``paths.data_root`` / ``pds.cache_dir``),
+        matching the other config-reading helpers in ``core/``.
         The colorized ACI PNG is a pure crop of the grayscale image, and
         the colorized workspace ships its own ``spatial.csv`` / ``loupe.csv``
         whose per-point coordinates are re-solved for the cropped frame.
@@ -189,6 +200,8 @@ def resolve_display_coordinates(
             points,
             workspace_reader=workspace_reader,
             colorized=colorized,
+            data_root=data_root,
+            pds_cache_dir=pds_cache_dir,
         )
     else:
         raise CoordinatesUnavailableError(
@@ -308,6 +321,8 @@ def _resolve_scanner_workspace(
     *,
     workspace_reader: Optional[WorkspaceReader] = None,
     colorized: bool = False,
+    data_root: Optional[str] = None,
+    pds_cache_dir: Optional[str] = None,
 ) -> list[DisplayCoordinate]:
     """Transform scanner_workspace coordinates to ACI pixels via Loupe spatial table.
 
@@ -323,21 +338,22 @@ def _resolve_scanner_workspace(
       dev installs without R2).
 
     When ``colorized`` is ``True`` the workspace reference — the
-    ``r2_rel_key`` locator on the R2 path, the ACI ``file_path`` on the
-    FS fallback — is rewritten ``sol_NNNN → sol_NNNN_colorized`` (via
+    ``r2_rel_key`` locator on **both** paths — is rewritten
+    ``sol_NNNN → sol_NNNN_colorized`` (via
     :func:`core.r2_keys.colorize_sol_segment`) so the colorized
     workspace's own ``spatial.csv`` / ``loupe.csv`` drive the transform.
     The colorized workspace mirrors the grayscale tree with only that one
-    segment renamed, so the same path math (R2 key derivation or
-    ``Path(...).parent.parent`` for the FS fallback) resolves the
-    colorized companion files. A missing colorized workspace surfaces as
-    :class:`CoordinatesUnavailableError` (R2 404 or FS not-found), which
-    the route layer turns into "no colorized point set" rather than an
-    error — the grayscale overlay still renders.
+    segment renamed, so the same path math (R2 key derivation, or
+    :func:`core.r2_keys.resolve_disk_path` then ``.parent.parent`` for the
+    FS fallback) resolves the colorized companion files. A missing
+    colorized workspace surfaces as :class:`CoordinatesUnavailableError`
+    (R2 404 or FS not-found), which the route layer turns into "no
+    colorized point set" rather than an error — the grayscale overlay
+    still renders.
     """
     from fastapi import HTTPException
 
-    from sherloc_pipeline.core.r2_keys import colorize_sol_segment
+    from sherloc_pipeline.core.r2_keys import colorize_sol_segment, resolve_disk_path
     from sherloc_pipeline.database.models import ContextImageORM
     from sherloc_pipeline.core.spatial import load_spatial_table
 
@@ -403,20 +419,46 @@ def _resolve_scanner_workspace(
                 ) from exc
     else:
         # Legacy FS path: local-filesystem dev runtime without R2.
-        # Production containers do NOT take this branch. Disk reads stay
-        # on the absolute file_path (retained transitionally alongside
-        # the locator).
-        workspace_file_path = aci.file_path
+        # Production containers do NOT take this branch. Disk reads derive
+        # from the stored relative locator (r2_rel_key) + the deployment
+        # data root, NOT the transitional absolute file_path (#7).
+        if data_root is None or pds_cache_dir is None:
+            # Match the other config-reading helpers in core/ (spatial.py,
+            # data_ingestion.py): the top-level config module is not a
+            # forbidden layer, so this keeps the FS fallback usable from
+            # callers that don't thread deployment roots (e.g. the map
+            # route in non-R2 dev mode).
+            from sherloc_pipeline.config import get_config
+
+            cfg = get_config()
+            if data_root is None:
+                data_root = cfg.paths.get("data_root")
+            if pds_cache_dir is None:
+                pds_cache_dir = cfg.pds.cache_dir
+
+        workspace_locator = aci.r2_rel_key or ""
         if colorized:
-            colorized_file_path = colorize_sol_segment(aci.file_path or "")
-            if colorized_file_path is None:
+            colorized_locator = colorize_sol_segment(workspace_locator)
+            if colorized_locator is None:
                 raise CoordinatesUnavailableError(
                     f"Cannot derive a colorized workspace for scan "
-                    f"{scan_id!r}: ACI file_path {aci.file_path!r} has no "
+                    f"{scan_id!r}: ACI locator {aci.r2_rel_key!r} has no "
                     "'sol_NNNN' segment to rewrite to 'sol_NNNN_colorized'."
                 )
-            workspace_file_path = colorized_file_path
-        working_dir = Path(workspace_file_path).parent.parent
+            workspace_locator = colorized_locator
+
+        aci_disk_path = resolve_disk_path(
+            workspace_locator,
+            data_root=data_root,
+            pds_cache_dir=pds_cache_dir,
+        )
+        if aci_disk_path is None:
+            raise CoordinatesUnavailableError(
+                f"Cannot resolve a Loupe workspace disk path for scan "
+                f"{scan_id!r} from locator {workspace_locator!r}. "
+                "Cannot compute scanner_workspace transform."
+            )
+        working_dir = aci_disk_path.parent.parent
 
         # Validate workspace files exist before calling load_spatial_table
         # so we can give a clearer error than a raw exception.
