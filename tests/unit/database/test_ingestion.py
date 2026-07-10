@@ -11,6 +11,8 @@ Tests cover:
 - Error handling
 """
 
+import shutil
+
 import pytest
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from sherloc_pipeline.database import (
     SpectrumORM,
     InstrumentStateORM,
     CCDConfigurationORM,
+    ContextImageORM,
 )
 
 
@@ -148,6 +151,103 @@ class TestWorkspaceIngestion:
         result2 = service.ingest_workspace(workspace, force=True)
         assert result2.metadata["success"]
         assert result2.metadata["scans_ingested"] == 1
+
+    def test_ingest_workspace_context_images_without_locator_are_skipped(
+        self, fixtures_path, tmp_path
+    ):
+        """#7 F1: a context image with no derivable r2_rel_key must never
+        be persisted (it has no stable object identity — can't be served,
+        can't be disk-resolved).
+
+        Copies the fixture Loupe_working dir OUTSIDE any loupe/sol_NNNN
+        ancestor so ``derive_rel_locator`` finds no sol_NNNN anchor and
+        returns None for every image under img/. The rest of the
+        ingestion (scan, points) must still succeed — only the
+        un-derivable context images are dropped.
+        """
+        src_workspace = (
+            fixtures_path / "loupe" / "sol_0921" / "detail_1" /
+            "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
+        )
+        # Deliberately NOT nested under a sol_NNNN/loupe ancestor.
+        workspace = tmp_path / "no_sol_anchor" / src_workspace.name
+        shutil.copytree(src_workspace, workspace)
+
+        db_path = tmp_path / "test.db"
+        service = IngestionService(
+            database_path=db_path,
+            include_spectra=False,
+        )
+
+        result = service.ingest_workspace(workspace)
+
+        # Scan/points still ingest normally.
+        assert result.metadata["success"]
+        assert result.metadata["scans_ingested"] == 1
+
+        # No context image was persisted — none had a derivable locator.
+        with get_session(service.engine) as session:
+            assert session.query(ContextImageORM).count() == 0
+
+        assert any("locator" in w.lower() for w in result.warnings), (
+            f"expected a locator-skip warning, got: {result.warnings!r}"
+        )
+
+    def test_ingest_workspace_pds_sentinel_locator_is_not_skipped(
+        self, fixtures_path, tmp_path, monkeypatch
+    ):
+        """#7 F1: a context image that already carries an explicit locator
+        (e.g. an unresolved ``pds:`` sentinel) must persist even with no
+        ``source_path`` — the skip only applies when NO locator is
+        derivable at all.
+        """
+        from sherloc_pipeline.models.ingestion import LoupeWorkspaceParser
+
+        workspace = (
+            fixtures_path / "loupe" / "sol_0921" / "detail_1" /
+            "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
+        )
+        db_path = tmp_path / "test.db"
+        service = IngestionService(
+            database_path=db_path,
+            include_spectra=False,
+        )
+
+        # Parse the real fixture workspace, then reshape its context
+        # images: one carries an explicit pds: sentinel locator with no
+        # source_path (the shape an unresolved PDS reference has); the
+        # rest carry neither locator nor source_path (un-derivable, must
+        # be skipped) so the test isolates what it's asserting.
+        real_result = LoupeWorkspaceParser(workspace, sol_number=921).parse()
+        assert len(real_result.context_images) >= 1, (
+            "fixture workspace must have at least one context image"
+        )
+        sentinel = "pds:urn:nasa:pds:mars2020_imgops:data_aci_imgops:test::1.0"
+        real_result.context_images[0].r2_rel_key = sentinel
+        real_result.context_images[0].source_path = None
+        for img in real_result.context_images[1:]:
+            img.r2_rel_key = None
+            img.source_path = None
+
+        class _StubParser:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def parse(self):
+                return real_result
+
+        monkeypatch.setattr(
+            "sherloc_pipeline.services.ingestion.LoupeWorkspaceParser",
+            _StubParser,
+        )
+
+        result = service.ingest_workspace(workspace)
+        assert result.metadata["success"]
+
+        with get_session(service.engine) as session:
+            images = session.query(ContextImageORM).all()
+            assert len(images) == 1
+            assert images[0].r2_rel_key == sentinel
 
     def test_ingest_workspace_not_found(self, tmp_path):
         """Test error when workspace not found."""

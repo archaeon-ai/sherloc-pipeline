@@ -203,6 +203,39 @@ class TestImageIngestion:
         assert stats["total"] == 0
 
 
+class TestUnderivableLocatorSkipped:
+    """#7 F1: a row with no derivable r2_rel_key must never be persisted.
+
+    Without a locator, a context image has no stable object identity — it
+    can't be served (web/routes/images.py) and can't be disk-resolved on
+    the processing side (core/r2_keys.resolve_disk_path). Ingestion must
+    fail closed: skip the row and record an error, before any metadata
+    read or DB insert.
+    """
+
+    def test_no_derivable_locator_is_not_persisted(self, tmp_path):
+        """A path with no sol_NNNN anchor derives no locator; the image
+        must be skipped (no context_images row, no scan/metadata read)."""
+        db_path = tmp_path / "test.db"
+        service = ImageIngestionService(database_path=db_path)
+        create_all_tables(service.engine)
+
+        # No sol_NNNN segment anywhere in this path -> derive_rel_locator
+        # returns None. The path need not exist: the fail-closed check
+        # runs before any file I/O (read_aci_image, get_raw_vicar_label).
+        bad_path = Path("/somewhere/unrecognized/img/x.IMG")
+
+        stats = service._ingest_single_image(bad_path, force=False)
+
+        assert stats.images_ingested == 0
+        assert stats.images_scanned == 1
+        assert len(stats.errors) == 1
+        assert "locator" in stats.errors[0].lower()
+
+        with get_session(service.engine) as session:
+            assert session.query(ContextImageORM).count() == 0
+
+
 class TestScanLinkage:
     """Tests for SCLK-based scan linkage."""
 

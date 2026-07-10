@@ -362,18 +362,25 @@ class ImageIngestionService:
         stats = ImageIngestionStats(images_scanned=1)
 
         with get_session(self.engine) as session:
-            # Check if image already exists by its derived relative locator.
-            # A path that derives no locator has no stable identity to
-            # dedup against — treat it as not-existing rather than risk an
-            # IS NULL match against every other un-derivable row.
-            existing = None
+            # A row with no derivable locator has no stable object identity
+            # (#7): it cannot be served and cannot be disk-resolved on the
+            # processing side, so it must never be persisted. Fail closed
+            # here, before any metadata read or insert.
             loc = derive_rel_locator(img_path)
-            if loc is not None:
-                existing = session.execute(
-                    select(ContextImageORM).where(
-                        ContextImageORM.r2_rel_key == loc
-                    )
-                ).scalar_one_or_none()
+            if loc is None:
+                stats.errors.append(
+                    f"No derivable R2 locator for {img_path}; skipping — a "
+                    f"context image requires a stable relative locator "
+                    f"identity (#7)."
+                )
+                return stats
+
+            # Check if image already exists by its derived relative locator.
+            existing = session.execute(
+                select(ContextImageORM).where(
+                    ContextImageORM.r2_rel_key == loc
+                )
+            ).scalar_one_or_none()
 
             if existing and not force:
                 stats.images_skipped = 1
