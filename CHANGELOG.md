@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-07-10
+
 Closes #7: the transitional `context_images.file_path` column is
 dropped. Ingestion, the web serve path, and the processing-side disk
 resolver now use `r2_rel_key` exclusively — `file_path` carried no
