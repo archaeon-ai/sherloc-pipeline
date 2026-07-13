@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Optional atomic delivery handoff.** A successful `full-pipeline` run now
+  records an explicit `not_configured` skip by default. When
+  `SHERLOC_HANDOFF_DIR` is set, it inventories the completed scan's raw ACI
+  PNGs, any mirrored colorized workspace PNGs, and required `spatial.csv` /
+  `loupe.csv` companions, then atomically publishes a versioned
+  `<run_id>.ready` manifest with portable locators and byte evidence. Invalid
+  sources or an unwritable destination fail the run; no existing serving,
+  ingestion, or database behavior is changed when the variable is absent.
+
 ## [5.5.0] - 2026-07-10
 
 Closes #7: the transitional `context_images.file_path` column is

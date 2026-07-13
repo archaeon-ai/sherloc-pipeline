@@ -722,6 +722,15 @@ The web UI is served by `scripts/serve.sh` (uvicorn → FastAPI). Common environ
 - `SHERLOC_CORS_ALLOWED_ORIGINS` — comma-separated list of origins permitted to make cross-origin requests (default: empty, i.e. no cross-origin requests).
 - `SHERLOC_AUTH_MODE` — `dev` bypasses JWT validation and resolves every request to a local identity (**local development only**); the production modes (`auth0`, `cf-access`) validate JWTs behind an authenticating IdP or proxy.
 
+`full-pipeline` also supports an optional neutral delivery handoff. By default it
+records `handoff.status=skipped` with `reason=not_configured` in result metadata.
+Set `SHERLOC_HANDOFF_DIR` to a writable directory to publish a versioned
+`<run_id>.ready` manifest after all seven stages succeed. The manifest contains
+the exact ACI product cohort, portable raw/colorized workspace locators,
+dimensions, hashes, byte sizes, mtimes, and required colorized sidecars. A
+configured invalid source or destination fails the run; existing ready files are
+never overwritten.
+
 For the full production environment surface (JWT auth, identity claims, R2 storage), see [`DEPLOYMENT_CONTRACT.md`](DEPLOYMENT_CONTRACT.md) and [`SECURITY.md`](SECURITY.md).
 
 Example:

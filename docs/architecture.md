@@ -45,7 +45,7 @@ package). They form three rough layers:
 | `cli/` | Typer entry point exposing every batch command. | `app.py` — 17 commands: `apply-review`, `backfill`, `backfill-masks`, `db-stats`, `extract-training`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`, `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`, `reclassify-targets`, `serve`. |
 | `api/` | Notebook-friendly functional API. Stateless wrappers around services and core, intended for Jupyter use. | `spectral.py` — `process_scan_average`, `process_subset_average`, `process_point`, `load_point_spectrum`, `load_reference_spectrum`, `plot_spectrum`, `plot_overlay`. |
 | `web/` | FastAPI app + Svelte frontend. Read-mostly exploration UI. | `app.py` (factory + middlewares), `auth.py` (CF Access JWT validation), `routes/` (11 modules), `frontend/` (Svelte). |
-| `services/` | Orchestrators that compose `core` primitives and persist results. | `pipeline.py` (the 7-step run), `ingestion.py` / `pds_ingestion.py` / `pixl_ingestion.py`, `spectral.py`, `map_fitting.py`, `spectrogram.py`, `classification.py`, `preprocessing.py`. |
+| `services/` | Orchestrators that compose `core` primitives and persist results. | `pipeline.py` (the 7-step run), `handoff.py` (optional atomic delivery manifest), `ingestion.py` / `pds_ingestion.py` / `pixl_ingestion.py`, `spectral.py`, `map_fitting.py`, `spectrogram.py`, `classification.py`, `preprocessing.py`. |
 | `core/` | Pure algorithmic primitives. Should not depend on `services/`. | `preprocessing.py`, `baseline.py`, `fitting.py` (Raman cm⁻¹), `fluor_fitting.py` / `fluor_id.py` / `fluor_detection.py` (fluorescence in nm), `calibration.py`, `r1_extraction.py`, `r123_stitching.py`, `mineral_id.py`, `pds_client.py`, `pds_parsers.py`. |
 | `models/` | Pydantic DTOs + a small type registry. Shared between CLI/API/web/services. | `spectra.py`, `fitting.py`, `instrument.py`, `pds.py`, `pixl.py`, `spectrogram.py`. |
 | `database/` | SQLAlchemy ORM, connection management, Alembic glue. | `models.py` (17 ORMs), `connection.py` (`get_engine`, `init_pds_database`), `pixl_models.py`. |
@@ -107,6 +107,16 @@ canonical batch path. Seven steps:
    type — line scans 4 %, detail scans 2 %).
 6. **Spatial overlay rendering** on ACI context images.
 7. **Summary** — companion JSON / Markdown report.
+
+After step 7 succeeds, the pipeline records an explicit delivery-handoff skip
+unless `SHERLOC_HANDOFF_DIR` is configured. A configured run inventories all
+raw ACI PNGs in that scan workspace and any mirrored colorized PNGs plus their
+`spatial.csv` and `loupe.csv` companions. It hashes the source bytes, records
+portable locators and dimensions, and publishes `<run_id>.tmp` to
+`<run_id>.ready` with one atomic rename. Per-scan manifests select the exact
+product IDs they contain, rather than claiming every product from the sol.
+Publication failure is fatal; the hook does not write a database or alter the
+web-serving path.
 
 Steps 2 and 3 each run their per-point fits in a `ProcessPoolExecutor`.
 Worker count is resolved by `core.utils.resolve_parallel_workers()`:

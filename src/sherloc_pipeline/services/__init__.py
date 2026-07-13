@@ -37,6 +37,7 @@ __all__ = [
     "ScanContext",
     "SherlocServiceError",
     "PipelineRunError",
+    "HandoffError",
     "PreprocessingError",
     "FittingError",
     "SpatialError",
@@ -51,6 +52,7 @@ __all__ = [
     "ReviewService",
     "SpatialService",
     "PipelineService",
+    "HandoffService",
     "SpectralService",
     "SpectralPlotRequest",
     "SpectrogramService",
@@ -69,6 +71,7 @@ from .paths import resolve_scan_context, ScanContext
 from .errors import (
     SherlocServiceError,
     PipelineRunError,
+    HandoffError,
     PreprocessingError,
     FittingError,
     SpatialError,
@@ -80,10 +83,10 @@ from .fitting import FittingService
 from .review import ReviewService
 from .spatial import SpatialService
 from .pipeline import PipelineService
+from .handoff import HandoffService
 from .spectral import SpectralService, SpectralPlotRequest, SpectralPlotError
 from .spectrogram import SpectrogramService, SpectrogramRequest, SpectrogramResult
 from .ingestion import IngestionService, IngestionError
 from .image_ingestion import ImageIngestionService, ImageIngestionError
 from .image_query import ImageQueryService, ImageQueryError
 from .metadata import RunMetadata, StageMetadata
-
