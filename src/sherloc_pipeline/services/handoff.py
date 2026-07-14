@@ -17,6 +17,7 @@ from .errors import HandoffError
 
 _PRODUCT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,191}$")
 _ACI_PRODUCT_PREFIX_RE = re.compile(r"^SC[0-3]_")
+_ANGLE_RANGE_RENDER_RE = re.compile(r"_\d{1,3}-\d{1,3}$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SOL_SEGMENT_RE = re.compile(r"^sol_\d+$")
 
@@ -132,15 +133,20 @@ def _pngs(working_dir: Path) -> list[Path]:
 
 
 def _product_pngs(working_dir: Path) -> list[Path]:
-    return [
+    candidates = [
         path
         for path in _pngs(working_dir)
         if _ACI_PRODUCT_PREFIX_RE.match(path.stem)
-        and (
-            path.with_suffix(".CSV").is_file()
-            or path.with_suffix(".csv").is_file()
-        )
+        and not _ANGLE_RANGE_RENDER_RE.search(path.stem)
     ]
+    products = [
+        path for path in candidates
+        if path.with_suffix(".CSV").is_file()
+        or path.with_suffix(".csv").is_file()
+    ]
+    if len(products) != len(candidates):
+        raise HandoffError("handoff ACI product is missing same-stem metadata")
+    return products
 
 
 def _colorized_working_dir(working_dir: Path, source_root: Path) -> Path:

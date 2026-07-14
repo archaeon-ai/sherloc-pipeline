@@ -178,6 +178,23 @@ def test_auxiliary_range_pngs_are_not_handoff_products(tmp_path: Path) -> None:
     assert all(item["product_id"] == PRODUCT for item in document["entries"])
 
 
+def test_aci_product_without_same_stem_metadata_fails_closed(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    other = "SC2_1806_0000000000_000ECM_N0000000SRLC00000_0000LMJ01"
+    _write_png(working / "img" / f"{other}.PNG", (1648, 1200), 200)
+
+    with pytest.raises(HandoffError, match="missing same-stem metadata"):
+        HandoffService().publish_if_configured(
+            output_dir=tmp_path / "handoff",
+            run_id=RUN_ID,
+            source_root=source,
+            working_dir=working,
+        )
+
+
 def test_watson_png_with_metadata_is_not_an_aci_handoff_product(
     tmp_path: Path,
 ) -> None:
