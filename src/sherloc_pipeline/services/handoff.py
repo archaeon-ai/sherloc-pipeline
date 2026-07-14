@@ -146,8 +146,12 @@ def _pngs(working_dir: Path, source_root: Path) -> list[Path]:
 
 def _has_valid_image_metadata(path: Path, source_root: Path) -> bool:
     for candidate in (path.with_suffix(".CSV"), path.with_suffix(".csv")):
-        if not candidate.is_symlink() and not candidate.exists():
+        try:
+            candidate.lstat()
+        except FileNotFoundError:
             continue
+        except OSError as exc:
+            raise HandoffError("handoff source cannot be read") from exc
         resolved, _locator = _resolved_portable_source(candidate, source_root)
         if resolved.is_file():
             return True
