@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from sherloc_pipeline.services import handoff
 from sherloc_pipeline.services.errors import HandoffError
 from sherloc_pipeline.services.handoff import HandoffService
 from sherloc_pipeline.services.pipeline import PipelineService
@@ -113,10 +114,23 @@ def test_raw_only_workspace_is_valid(tmp_path: Path) -> None:
     assert [entry["role"] for entry in document["entries"]] == ["raw_grayscale"]
 
 
-def test_rgb_raw_image_fails_closed(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("mode", "size"),
+    [
+        ("RGB", (1648, 1200)),
+        ("RGB", (1544, 1156)),
+        ("L", (1544, 1156)),
+    ],
+)
+def test_noncanonical_raw_image_fails_closed(
+    tmp_path: Path,
+    mode: str,
+    size: tuple[int, int],
+) -> None:
     source = tmp_path / "source"
     working = _workspace(source, colorized=False)
-    Image.new("RGB", (1648, 1200), color=(1, 2, 3)).save(
+    color: int | tuple[int, int, int] = 1 if mode == "L" else (1, 2, 3)
+    Image.new(mode, size, color=color).save(
         working / "img" / f"{PRODUCT}.PNG"
     )
     with pytest.raises(HandoffError, match="full frame"):
@@ -341,6 +355,35 @@ def test_source_outside_data_root_fails(tmp_path: Path) -> None:
             source_root=source,
             working_dir=working,
         )
+
+
+def test_symlinked_source_outside_data_root_is_rejected_before_hashing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    product = working / "img" / f"{PRODUCT}.PNG"
+    outside = tmp_path / "outside.PNG"
+    product.replace(outside)
+    product.symlink_to(outside)
+    hash_calls = 0
+
+    def record_hash(path: Path) -> str:
+        nonlocal hash_calls
+        hash_calls += 1
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(handoff, "_sha256", record_hash)
+    with pytest.raises(HandoffError, match="escapes"):
+        HandoffService().publish_if_configured(
+            output_dir=tmp_path / "handoff",
+            run_id=RUN_ID,
+            source_root=source,
+            working_dir=working,
+        )
+
+    assert hash_calls == 0
 
 
 def test_colorized_product_without_raw_counterpart_fails(tmp_path: Path) -> None:

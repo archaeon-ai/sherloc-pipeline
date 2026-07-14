@@ -43,12 +43,15 @@ def _fingerprint(stat: os.stat_result) -> tuple[int, int, int, int]:
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
 
 
-def _portable_locator(path: Path, source_root: Path) -> str:
+def _resolved_portable_source(path: Path, source_root: Path) -> tuple[Path, str]:
     try:
-        locator = path.resolve(strict=True).relative_to(
-            source_root.resolve(strict=True)
-        ).as_posix()
-    except (OSError, ValueError) as exc:
+        resolved = path.resolve(strict=True)
+        root = source_root.resolve()
+    except OSError as exc:
+        raise HandoffError("handoff source cannot be read") from exc
+    try:
+        locator = resolved.relative_to(root).as_posix()
+    except ValueError as exc:
         raise HandoffError("handoff source escapes the configured data root") from exc
     pure = PurePosixPath(locator)
     if (
@@ -58,7 +61,11 @@ def _portable_locator(path: Path, source_root: Path) -> str:
         or "\\" in locator
     ):
         raise HandoffError("handoff source locator is not portable")
-    return locator
+    return resolved, locator
+
+
+def _portable_locator(path: Path, source_root: Path) -> str:
+    return _resolved_portable_source(path, source_root)[1]
 
 
 def _product_id(path: Path) -> str:
@@ -75,15 +82,15 @@ def _product_id(path: Path) -> str:
 def _image_evidence(
     path: Path, source_root: Path
 ) -> tuple[dict, tuple[int, int], bool]:
-    evidence, fingerprint = _stable_file_evidence(path, source_root)
+    evidence, fingerprint, resolved = _stable_file_evidence(path, source_root)
     try:
-        with Image.open(path) as image:
+        with Image.open(resolved) as image:
             dimensions = image.size
             single_channel = len(image.getbands()) == 1
             if image.format != "PNG":
                 raise HandoffError("handoff image is not a valid PNG")
             image.verify()
-        if _fingerprint(path.stat()) != fingerprint:
+        if _fingerprint(resolved.stat()) != fingerprint:
             raise HandoffError("handoff source changed during inventory")
     except OSError as exc:
         raise HandoffError("handoff image is not a valid PNG") from exc
@@ -92,33 +99,36 @@ def _image_evidence(
 
 def _stable_file_evidence(
     path: Path, source_root: Path
-) -> tuple[dict, tuple[int, int, int, int]]:
+) -> tuple[dict, tuple[int, int, int, int], Path]:
+    resolved, locator = _resolved_portable_source(path, source_root)
     try:
-        before = path.stat()
+        before = resolved.stat()
     except OSError as exc:
         raise HandoffError("handoff source cannot be read") from exc
-    if not path.is_file() or before.st_size <= 0:
+    if not resolved.is_file() or before.st_size <= 0:
         raise HandoffError("handoff source is missing or empty")
     try:
-        digest = _sha256(path)
+        digest = _sha256(resolved)
     except OSError as exc:
         raise HandoffError("handoff source cannot be read") from exc
     try:
-        after = path.stat()
+        after = resolved.stat()
     except OSError as exc:
         raise HandoffError("handoff source cannot be read") from exc
     if _fingerprint(before) != _fingerprint(after):
         raise HandoffError("handoff source changed during inventory")
     return {
-        "source_rel_locator": _portable_locator(path, source_root),
+        "source_rel_locator": locator,
         "byte_size": after.st_size,
         "sha256": digest,
         "mtime": _timestamp(after.st_mtime),
-    }, _fingerprint(after)
+    }, _fingerprint(after), resolved
 
 
 def _file_evidence(path: Path, source_root: Path) -> dict:
-    evidence, _fingerprint_value = _stable_file_evidence(path, source_root)
+    evidence, _fingerprint_value, _resolved = _stable_file_evidence(
+        path, source_root
+    )
     return evidence
 
 
