@@ -58,6 +58,8 @@ def test_pipeline_publishes_only_after_summary_and_before_success() -> None:
     assert source.index('os.environ.get("SHERLOC_HANDOFF_DIR")') < source.index(
         "Full pipeline completed successfully."
     )
+    assert "resolve_scan_context(" in source
+    assert "ingestion.find_working_directory(sol, scan)" not in source
 
 
 def test_configured_handoff_publishes_closed_evidence_atomically(
@@ -118,6 +120,22 @@ def test_rgb_raw_image_fails_closed(tmp_path: Path) -> None:
         working / "img" / f"{PRODUCT}.PNG"
     )
     with pytest.raises(HandoffError, match="full frame"):
+        HandoffService().publish_if_configured(
+            output_dir=tmp_path / "handoff",
+            run_id=RUN_ID,
+            source_root=source,
+            working_dir=working,
+        )
+
+
+def test_renamed_non_png_image_fails_closed(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    Image.new("L", (1648, 1200), color=100).save(
+        working / "img" / f"{PRODUCT}.PNG",
+        format="JPEG",
+    )
+    with pytest.raises(HandoffError, match="valid PNG"):
         HandoffService().publish_if_configured(
             output_dir=tmp_path / "handoff",
             run_id=RUN_ID,

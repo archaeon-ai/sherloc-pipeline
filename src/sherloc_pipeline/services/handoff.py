@@ -74,6 +74,8 @@ def _image_evidence(
         with Image.open(path) as image:
             dimensions = image.size
             single_channel = len(image.getbands()) == 1
+            if image.format != "PNG":
+                raise HandoffError("handoff image is not a valid PNG")
             image.verify()
         if _fingerprint(path.stat()) != fingerprint:
             raise HandoffError("handoff source changed during inventory")

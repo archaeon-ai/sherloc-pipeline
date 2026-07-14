@@ -28,6 +28,7 @@ from .review import ReviewService
 from .spatial import SpatialService
 from .runtime import RuntimeContext
 from .metadata import RunMetadata, StageMetadata
+from .paths import resolve_scan_context
 from ..core.data_ingestion import DataIngestion
 
 logger = logging.getLogger(__name__)
@@ -900,7 +901,12 @@ class PipelineService:
             run_id=run_context.run_id,
             source_root=resolved_data_dir,
             working_dir=(
-                ingestion.find_working_directory(sol, scan)
+                resolve_scan_context(
+                    sol,
+                    target,
+                    scan,
+                    context=run_context,
+                ).working_dir
                 if handoff_dir
                 else None
             ),
