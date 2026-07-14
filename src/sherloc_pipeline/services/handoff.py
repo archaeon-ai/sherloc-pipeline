@@ -132,8 +132,10 @@ def _file_evidence(path: Path, source_root: Path) -> dict:
     return evidence
 
 
-def _pngs(working_dir: Path) -> list[Path]:
-    image_dir = working_dir / "img"
+def _pngs(working_dir: Path, source_root: Path) -> list[Path]:
+    image_dir, _locator = _resolved_portable_source(
+        working_dir / "img", source_root
+    )
     if not image_dir.is_dir():
         raise HandoffError("handoff workspace has no image directory")
     return sorted(
@@ -142,10 +144,10 @@ def _pngs(working_dir: Path) -> list[Path]:
     )
 
 
-def _product_pngs(working_dir: Path) -> list[Path]:
+def _product_pngs(working_dir: Path, source_root: Path) -> list[Path]:
     candidates = [
         path
-        for path in _pngs(working_dir)
+        for path in _pngs(working_dir, source_root)
         if _ACI_PRODUCT_PREFIX_RE.match(path.stem)
         and not _ANGLE_RANGE_RENDER_RE.search(path.stem)
     ]
@@ -172,7 +174,7 @@ def _colorized_working_dir(working_dir: Path, source_root: Path) -> Path:
 def _raw_entries(working_dir: Path, source_root: Path) -> tuple[list[dict], set[str]]:
     entries: list[dict] = []
     products: set[str] = set()
-    images = _product_pngs(working_dir)
+    images = _product_pngs(working_dir, source_root)
     if not images:
         raise HandoffError("handoff workspace has no product PNG images")
     for path in images:
@@ -205,7 +207,7 @@ def _colorized_entries(
     colorized_dir = _colorized_working_dir(working_dir, source_root)
     if not colorized_dir.exists():
         return []
-    images = _product_pngs(colorized_dir)
+    images = _product_pngs(colorized_dir, source_root)
     if not images:
         raise HandoffError("colorized handoff workspace has no product PNG images")
     sidecars = [

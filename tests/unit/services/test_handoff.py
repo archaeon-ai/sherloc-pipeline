@@ -386,6 +386,25 @@ def test_symlinked_source_outside_data_root_is_rejected_before_hashing(
     assert hash_calls == 0
 
 
+def test_symlinked_image_directory_outside_data_root_is_rejected_before_listing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    working = source / "sol_1806" / "detail" / "workspace"
+    working.mkdir(parents=True)
+    outside = tmp_path / "outside-img"
+    outside.mkdir()
+    (working / "img").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(HandoffError, match="escapes"):
+        HandoffService().publish_if_configured(
+            output_dir=tmp_path / "handoff",
+            run_id=RUN_ID,
+            source_root=source,
+            working_dir=working,
+        )
+
+
 def test_colorized_product_without_raw_counterpart_fails(tmp_path: Path) -> None:
     source = tmp_path / "source"
     working = _workspace(source)
