@@ -28,9 +28,11 @@ def _write_png(path: Path, size: tuple[int, int], color: int) -> None:
 def _workspace(source_root: Path, *, colorized: bool = True) -> Path:
     working = source_root / "sol_1806" / "detail" / "workspace"
     _write_png(working / "img" / f"{PRODUCT}.PNG", (1648, 1200), 100)
+    working.joinpath("img", f"{PRODUCT}.CSV").write_text("image metadata\n")
     if colorized:
         color = source_root / "sol_1806_colorized" / "detail" / "workspace"
         _write_png(color / "img" / f"{PRODUCT}.PNG", (800, 600), 150)
+        color.joinpath("img", f"{PRODUCT}.CSV").write_text("image metadata\n")
         color.joinpath("spatial.csv").write_text("x,y\n")
         color.joinpath("loupe.csv").write_text("points,1\n")
     return working
@@ -123,6 +125,24 @@ def test_rgb_raw_image_fails_closed(tmp_path: Path) -> None:
         )
 
 
+def test_auxiliary_range_pngs_are_not_handoff_products(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source)
+    auxiliary = working / "img" / f"{PRODUCT}_145-185.png"
+    Image.new("RGB", (320, 240), color=(1, 2, 3)).save(auxiliary)
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    document = json.loads(result.artifacts[0].read_text())
+    assert document["selector"] == {"product_ids": [PRODUCT]}
+    assert all(item["product_id"] == PRODUCT for item in document["entries"])
+
+
 def test_configured_invalid_destination_fails_loudly(tmp_path: Path) -> None:
     source = tmp_path / "source"
     working = _workspace(source)
@@ -202,6 +222,7 @@ def test_colorized_product_without_raw_counterpart_fails(tmp_path: Path) -> None
     other = "SC2_1806_0000000000_000ECM_N0000000SRLC00000_0000LMJ01"
     color = source / "sol_1806_colorized" / "detail" / "workspace"
     _write_png(color / "img" / f"{other}.PNG", (640, 480), 200)
+    color.joinpath("img", f"{other}.CSV").write_text("image metadata\n")
     with pytest.raises(HandoffError, match="no raw product"):
         HandoffService().publish_if_configured(
             output_dir=tmp_path / "handoff",
@@ -215,7 +236,7 @@ def test_existing_empty_colorized_workspace_fails(tmp_path: Path) -> None:
     source = tmp_path / "source"
     working = _workspace(source, colorized=False)
     (source / "sol_1806_colorized/detail/workspace/img").mkdir(parents=True)
-    with pytest.raises(HandoffError, match="no PNG images"):
+    with pytest.raises(HandoffError, match="no product PNG images"):
         HandoffService().publish_if_configured(
             output_dir=tmp_path / "handoff",
             run_id=RUN_ID,

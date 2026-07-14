@@ -124,6 +124,14 @@ def _pngs(working_dir: Path) -> list[Path]:
     )
 
 
+def _product_pngs(working_dir: Path) -> list[Path]:
+    return [
+        path
+        for path in _pngs(working_dir)
+        if path.with_suffix(".CSV").is_file() or path.with_suffix(".csv").is_file()
+    ]
+
+
 def _colorized_working_dir(working_dir: Path, source_root: Path) -> Path:
     locator = PurePosixPath(_portable_locator(working_dir, source_root))
     parts = list(locator.parts)
@@ -137,9 +145,9 @@ def _colorized_working_dir(working_dir: Path, source_root: Path) -> Path:
 def _raw_entries(working_dir: Path, source_root: Path) -> tuple[list[dict], set[str]]:
     entries: list[dict] = []
     products: set[str] = set()
-    images = _pngs(working_dir)
+    images = _product_pngs(working_dir)
     if not images:
-        raise HandoffError("handoff workspace has no PNG images")
+        raise HandoffError("handoff workspace has no product PNG images")
     for path in images:
         product_id = _product_id(path)
         if product_id in products:
@@ -170,9 +178,9 @@ def _colorized_entries(
     colorized_dir = _colorized_working_dir(working_dir, source_root)
     if not colorized_dir.exists():
         return []
-    images = _pngs(colorized_dir)
+    images = _product_pngs(colorized_dir)
     if not images:
-        raise HandoffError("colorized handoff workspace has no PNG images")
+        raise HandoffError("colorized handoff workspace has no product PNG images")
     sidecars = [
         {"role": role, **_file_evidence(colorized_dir / filename, source_root)}
         for role, filename in (("spatial", "spatial.csv"), ("loupe", "loupe.csv"))
