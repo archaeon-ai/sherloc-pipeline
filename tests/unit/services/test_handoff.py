@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -201,6 +202,38 @@ def test_ready_created_during_publish_is_never_overwritten(
             working_dir=working,
         )
     assert ready.read_text() == "competing publisher\n"
+    assert not (output / f"{RUN_ID}.tmp").exists()
+
+
+def test_post_link_directory_fsync_failure_removes_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source)
+    output = tmp_path / "handoff"
+    original_fsync = os.fsync
+    directory_calls = 0
+
+    def fail_second_directory_fsync(fd: int) -> None:
+        nonlocal directory_calls
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directory_calls += 1
+            if directory_calls == 2:
+                raise OSError("injected directory durability failure")
+        original_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_second_directory_fsync)
+    with pytest.raises(HandoffError, match="could not be published"):
+        HandoffService().publish_if_configured(
+            output_dir=output,
+            run_id=RUN_ID,
+            source_root=source,
+            working_dir=working,
+        )
+
+    assert directory_calls >= 2
+    assert not (output / f"{RUN_ID}.ready").exists()
     assert not (output / f"{RUN_ID}.tmp").exists()
 
 

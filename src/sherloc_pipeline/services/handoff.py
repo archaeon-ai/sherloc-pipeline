@@ -246,6 +246,8 @@ def build_handoff_manifest(
 def _publish_atomic(output_dir: Path, run_id: str, document: dict) -> Path:
     temporary = output_dir / f"{run_id}.tmp"
     ready = output_dir / f"{run_id}.ready"
+    directory_fd: int | None = None
+    published = False
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         if temporary.exists() or ready.exists():
@@ -258,21 +260,32 @@ def _publish_atomic(output_dir: Path, run_id: str, document: dict) -> Path:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        directory_fd = os.open(output_dir, os.O_RDONLY)
+        # Probe directory durability before exposing a ready name. Filesystems
+        # that cannot fsync directories fail while the manifest is still hidden.
+        os.fsync(directory_fd)
         # Linking exposes the complete file atomically and fails if another
         # publisher won the run ID, closing the check-then-rename race.
         os.link(temporary, ready)
+        published = True
         temporary.unlink()
-        directory_fd = os.open(output_dir, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        os.fsync(directory_fd)
     except OSError as exc:
+        if published:
+            try:
+                ready.unlink()
+                if directory_fd is not None:
+                    os.fsync(directory_fd)
+            except OSError:
+                pass
         try:
             temporary.unlink()
         except OSError:
             pass
         raise HandoffError("configured handoff could not be published") from exc
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
     return ready
 
 
