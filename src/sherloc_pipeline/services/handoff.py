@@ -16,6 +16,7 @@ from .errors import HandoffError
 
 
 _PRODUCT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,191}$")
+_ACI_PRODUCT_PREFIX_RE = re.compile(r"^SC[0-3]_")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SOL_SEGMENT_RE = re.compile(r"^sol_\d+$")
 
@@ -61,7 +62,11 @@ def _portable_locator(path: Path, source_root: Path) -> str:
 
 def _product_id(path: Path) -> str:
     product_id = path.stem
-    if path.suffix != ".PNG" or not _PRODUCT_ID_RE.fullmatch(product_id):
+    if (
+        path.suffix != ".PNG"
+        or not _PRODUCT_ID_RE.fullmatch(product_id)
+        or not _ACI_PRODUCT_PREFIX_RE.match(product_id)
+    ):
         raise HandoffError("handoff image has an invalid product identity")
     return product_id
 
@@ -130,7 +135,11 @@ def _product_pngs(working_dir: Path) -> list[Path]:
     return [
         path
         for path in _pngs(working_dir)
-        if path.with_suffix(".CSV").is_file() or path.with_suffix(".csv").is_file()
+        if _ACI_PRODUCT_PREFIX_RE.match(path.stem)
+        and (
+            path.with_suffix(".CSV").is_file()
+            or path.with_suffix(".csv").is_file()
+        )
     ]
 
 

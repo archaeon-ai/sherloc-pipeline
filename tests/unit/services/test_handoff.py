@@ -178,6 +178,29 @@ def test_auxiliary_range_pngs_are_not_handoff_products(tmp_path: Path) -> None:
     assert all(item["product_id"] == PRODUCT for item in document["entries"])
 
 
+def test_watson_png_with_metadata_is_not_an_aci_handoff_product(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    watson = "SI1_1806_0827295848_123ECM_N0870000SRLC11470_0000LMJ01"
+    Image.new("RGB", (1600, 1200), color=(1, 2, 3)).save(
+        working / "img" / f"{watson}.PNG"
+    )
+    working.joinpath("img", f"{watson}.CSV").write_text("image metadata\n")
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    document = json.loads(result.artifacts[0].read_text())
+    assert document["selector"] == {"product_ids": [PRODUCT]}
+    assert all(item["product_id"] == PRODUCT for item in document["entries"])
+
+
 def test_configured_invalid_destination_fails_loudly(tmp_path: Path) -> None:
     source = tmp_path / "source"
     working = _workspace(source)
