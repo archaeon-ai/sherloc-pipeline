@@ -61,7 +61,7 @@ def _portable_locator(path: Path, source_root: Path) -> str:
 
 def _product_id(path: Path) -> str:
     product_id = path.stem
-    if path.suffix.lower() != ".png" or not _PRODUCT_ID_RE.fullmatch(product_id):
+    if path.suffix != ".PNG" or not _PRODUCT_ID_RE.fullmatch(product_id):
         raise HandoffError("handoff image has an invalid product identity")
     return product_id
 

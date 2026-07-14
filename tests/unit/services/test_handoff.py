@@ -144,6 +144,22 @@ def test_renamed_non_png_image_fails_closed(tmp_path: Path) -> None:
         )
 
 
+def test_lowercase_png_product_name_fails_closed(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    uppercase = working / "img" / f"{PRODUCT}.PNG"
+    lowercase = uppercase.with_suffix(".png")
+    uppercase.rename(lowercase)
+
+    with pytest.raises(HandoffError, match="invalid product identity"):
+        HandoffService().publish_if_configured(
+            output_dir=tmp_path / "handoff",
+            run_id=RUN_ID,
+            source_root=source,
+            working_dir=working,
+        )
+
+
 def test_auxiliary_range_pngs_are_not_handoff_products(tmp_path: Path) -> None:
     source = tmp_path / "source"
     working = _workspace(source)
