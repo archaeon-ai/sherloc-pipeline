@@ -209,6 +209,25 @@ def test_aci_product_without_same_stem_metadata_fails_closed(
         )
 
 
+def test_same_stem_metadata_outside_data_root_fails_closed(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    metadata = working / "img" / f"{PRODUCT}.CSV"
+    outside = tmp_path / "outside.CSV"
+    metadata.replace(outside)
+    metadata.symlink_to(outside)
+
+    with pytest.raises(HandoffError, match="escapes"):
+        HandoffService().publish_if_configured(
+            output_dir=tmp_path / "handoff",
+            run_id=RUN_ID,
+            source_root=source,
+            working_dir=working,
+        )
+
+
 def test_watson_png_with_metadata_is_not_an_aci_handoff_product(
     tmp_path: Path,
 ) -> None:

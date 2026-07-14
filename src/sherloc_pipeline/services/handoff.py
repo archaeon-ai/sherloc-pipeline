@@ -140,8 +140,18 @@ def _pngs(working_dir: Path, source_root: Path) -> list[Path]:
         raise HandoffError("handoff workspace has no image directory")
     return sorted(
         path for path in image_dir.iterdir()
-        if path.is_file() and path.suffix.lower() == ".png"
+        if path.suffix.lower() == ".png"
     )
+
+
+def _has_valid_image_metadata(path: Path, source_root: Path) -> bool:
+    for candidate in (path.with_suffix(".CSV"), path.with_suffix(".csv")):
+        if not candidate.is_symlink() and not candidate.exists():
+            continue
+        resolved, _locator = _resolved_portable_source(candidate, source_root)
+        if resolved.is_file():
+            return True
+    return False
 
 
 def _product_pngs(working_dir: Path, source_root: Path) -> list[Path]:
@@ -153,8 +163,7 @@ def _product_pngs(working_dir: Path, source_root: Path) -> list[Path]:
     ]
     products = [
         path for path in candidates
-        if path.with_suffix(".CSV").is_file()
-        or path.with_suffix(".csv").is_file()
+        if _has_valid_image_metadata(path, source_root)
     ]
     if len(products) != len(candidates):
         raise HandoffError("handoff ACI product is missing same-stem metadata")
