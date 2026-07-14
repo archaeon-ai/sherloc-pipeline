@@ -253,6 +253,26 @@ def test_existing_ready_manifest_is_never_overwritten(tmp_path: Path) -> None:
     assert first.artifacts[0].read_bytes() == before
 
 
+def test_existing_temporary_manifest_is_never_removed(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source)
+    output = tmp_path / "handoff"
+    output.mkdir()
+    temporary = output / f"{RUN_ID}.tmp"
+    temporary.write_text("competing publisher\n")
+
+    with pytest.raises(HandoffError, match="could not be published"):
+        HandoffService().publish_if_configured(
+            output_dir=output,
+            run_id=RUN_ID,
+            source_root=source,
+            working_dir=working,
+        )
+
+    assert temporary.read_text() == "competing publisher\n"
+    assert not (output / f"{RUN_ID}.ready").exists()
+
+
 def test_ready_created_during_publish_is_never_overwritten(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

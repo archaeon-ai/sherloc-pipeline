@@ -265,6 +265,7 @@ def _publish_atomic(output_dir: Path, run_id: str, document: dict) -> Path:
     ready = output_dir / f"{run_id}.ready"
     directory_fd: int | None = None
     published = False
+    temporary_created = False
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         if temporary.exists() or ready.exists():
@@ -273,6 +274,7 @@ def _publish_atomic(output_dir: Path, run_id: str, document: dict) -> Path:
             "utf-8"
         )
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        temporary_created = True
         with os.fdopen(fd, "wb") as handle:
             handle.write(payload)
             handle.flush()
@@ -286,6 +288,7 @@ def _publish_atomic(output_dir: Path, run_id: str, document: dict) -> Path:
         os.link(temporary, ready)
         published = True
         temporary.unlink()
+        temporary_created = False
         os.fsync(directory_fd)
     except OSError as exc:
         if published:
@@ -295,10 +298,11 @@ def _publish_atomic(output_dir: Path, run_id: str, document: dict) -> Path:
                     os.fsync(directory_fd)
             except OSError:
                 pass
-        try:
-            temporary.unlink()
-        except OSError:
-            pass
+        if temporary_created:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
         raise HandoffError("configured handoff could not be published") from exc
     finally:
         if directory_fd is not None:
