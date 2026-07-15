@@ -77,6 +77,10 @@ class PipelineRunError(SherlocServiceError):
     pass
 
 
+class HandoffError(SherlocServiceError):
+    """A configured delivery handoff could not be published safely."""
+
+
 class PreprocessingError(SherlocServiceError):
     """Error during data preprocessing operations.
     
@@ -183,4 +187,3 @@ def enrich(
         exit_code=error.exit_code,
         context=new_context,
     )
-

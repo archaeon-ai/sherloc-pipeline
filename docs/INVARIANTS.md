@@ -183,6 +183,24 @@ the integrity chain established by the pinned digest.
 
 ---
 
+## 12. Optional delivery handoff is atomic and fail-closed
+
+**Constraint.** Delivery handoff is dormant unless `SHERLOC_HANDOFF_DIR` is
+configured. An unconfigured run records an explicit skip. A configured run must
+publish a closed versioned manifest atomically through `<run_id>.tmp` to
+`<run_id>.ready` without replacing an existing ready file, use only portable
+source locators, bind the exact product-ID
+cohort, and include image/sidecar size, SHA-256, mtime, and dimensions. It never
+overwrites an existing run. Missing, malformed, ambiguous, out-of-root, or
+unwritable input/output fails the pipeline rather than shrinking the manifest.
+
+**Where defined.** `services/handoff.py`; invoked only after the summary stage
+in `PipelineService.run_full_pipeline()`.
+
+**How to verify.** `pytest tests/unit/services/test_handoff.py`.
+
+---
+
 ## When to update this document
 
 Update INVARIANTS.md in the same commit when:

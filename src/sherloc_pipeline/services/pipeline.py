@@ -22,11 +22,13 @@ from rich.console import Console
 from .base import ServiceResult
 from .errors import PipelineRunError, SherlocServiceError, enrich
 from .fitting import FittingService
+from .handoff import HandoffService
 from .preprocessing import PreprocessingService
 from .review import ReviewService
 from .spatial import SpatialService
 from .runtime import RuntimeContext
 from .metadata import RunMetadata, StageMetadata
+from .paths import resolve_scan_context
 from ..core.data_ingestion import DataIngestion
 
 logger = logging.getLogger(__name__)
@@ -893,6 +895,25 @@ class PipelineService:
             metadata["fit_summary"] = fit_counts
             run_metadata.extra["fit_summary"] = fit_counts
 
+        handoff_dir = os.environ.get("SHERLOC_HANDOFF_DIR")
+        handoff_result = HandoffService().publish_if_configured(
+            output_dir=handoff_dir,
+            run_id=run_context.run_id,
+            source_root=resolved_data_dir,
+            working_dir=(
+                resolve_scan_context(
+                    sol,
+                    target,
+                    scan,
+                    context=run_context,
+                ).working_dir
+                if handoff_dir
+                else None
+            ),
+        )
+        metadata["handoff"] = handoff_result.metadata
+        artifacts.extend(handoff_result.artifacts)
+
         self.console.print("[bold green]Full pipeline completed successfully.[/bold green]")
 
         summary = f"Full pipeline completed successfully for {sol}/{target}/{scan}"
@@ -972,4 +993,3 @@ __all__ = [
     "aggregate_co_occurrences",
     "summarize_findings",
 ]
-
