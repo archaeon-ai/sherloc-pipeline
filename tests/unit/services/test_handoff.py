@@ -42,6 +42,25 @@ def _write_vicar(
     )
 
 
+def _write_pds3(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record_bytes = 1648
+    image_record = 3
+    header = (
+        "PDS_VERSION_ID = PDS3\r\n"
+        f"RECORD_BYTES = {record_bytes}\r\n"
+        f"^IMAGE = {image_record}\r\n"
+        "LINES = 1200\r\n"
+        "LINE_SAMPLES = 1648\r\n"
+        "SAMPLE_BITS = 8\r\n"
+        "END\r\n"
+    ).encode("ascii")
+    offset = (image_record - 1) * record_bytes
+    path.write_bytes(
+        header.ljust(offset, b" ") + bytes([100]) * (1648 * 1200)
+    )
+
+
 def _workspace(source_root: Path, *, colorized: bool = True) -> Path:
     working = source_root / "sol_1806" / "detail" / "workspace"
     _write_png(working / "img" / f"{PRODUCT}.PNG", (1648, 1200), 100)
@@ -172,6 +191,13 @@ def test_multiband_vicar_source_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(HandoffError, match="not single-band"):
         handoff._canonical_png_bytes(source)
+
+
+def test_single_band_pds3_without_bands_field_is_accepted(tmp_path: Path) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    _write_pds3(source)
+
+    assert handoff._canonical_png_bytes(source).startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_raw_only_workspace_is_valid(tmp_path: Path) -> None:

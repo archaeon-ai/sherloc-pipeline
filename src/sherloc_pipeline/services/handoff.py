@@ -110,7 +110,7 @@ def _image_evidence(
 
 def _canonical_png_bytes(path: Path) -> bytes:
     label = get_raw_vicar_label(path)
-    band_count = label.get("NB", label.get("BANDS"))
+    band_count = label.get("NB", label.get("BANDS", 1))
     if band_count != 1:
         raise HandoffError("raw ACI image is not single-band")
     image, _metadata = read_aci_image(path)
