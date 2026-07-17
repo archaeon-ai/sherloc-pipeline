@@ -110,14 +110,23 @@ def _image_evidence(
 
 def _canonical_png_bytes(path: Path) -> bytes:
     label = get_raw_vicar_label(path)
-    band_count = label.get("NB", label.get("BANDS", 1))
-    if band_count != 1:
-        raise HandoffError("raw ACI image is not single-band")
     is_pds3 = "ODL_VERSION_ID" in label or "PDS_VERSION_ID" in label
-    if not is_pds3:
+    if is_pds3:
+        if label.get("BANDS", 1) != 1:
+            raise HandoffError("raw ACI image is not single-band")
+        if (
+            label.get("LINES") != 1200
+            or label.get("LINE_SAMPLES") != 1648
+        ):
+            raise HandoffError("raw ACI image is not in the full frame")
+    else:
+        if label.get("NB") != 1:
+            raise HandoffError("raw ACI image is not single-band")
+        if label.get("NL") != 1200 or label.get("NS") != 1648:
+            raise HandoffError("raw ACI image is not in the full frame")
         if str(label.get("FORMAT", "")).upper() != "BYTE":
             raise HandoffError("raw ACI image is not byte-encoded")
-    else:
+    if is_pds3:
         sample_bits = label.get("SAMPLE_BITS")
         sample_type = str(
             label.get("SAMPLE_TYPE", "UNSIGNED_INTEGER")
@@ -252,13 +261,14 @@ def _raw_entries(working_dir: Path, source_root: Path) -> tuple[list[dict], set[
     entries: list[dict] = []
     products: set[str] = set()
     images = _product_pngs(working_dir, source_root)
-    acquisition_dir = working_dir.parent
-    img_sources = sorted(
-        path for path in acquisition_dir.iterdir()
+    img_sources = sorted({
+        path
+        for directory in (working_dir / "img", working_dir.parent)
+        for path in directory.iterdir()
         if path.suffix.upper() == ".IMG"
         and _ACI_PRODUCT_PREFIX_RE.match(path.stem)
         and not _ANGLE_RANGE_RENDER_RE.search(path.stem)
-    )
+    })
     png_products = {path.stem for path in images}
     images.extend(path for path in img_sources if path.stem not in png_products)
     if not images:
@@ -270,10 +280,13 @@ def _raw_entries(working_dir: Path, source_root: Path) -> tuple[list[dict], set[
         if path.suffix.upper() == ".PNG":
             evidence, dimensions, single_channel = _image_evidence(path, source_root)
             if dimensions != (1648, 1200) or not single_channel:
-                fallback = working_dir.parent / f"{product_id}.IMG"
-                if not fallback.is_file():
+                fallbacks = [
+                    candidate for candidate in img_sources
+                    if candidate.stem == product_id
+                ]
+                if len(fallbacks) != 1:
                     raise HandoffError("raw ACI image is not in the full frame")
-                evidence = _vicar_evidence(fallback, source_root)
+                evidence = _vicar_evidence(fallbacks[0], source_root)
                 dimensions = (1648, 1200)
         else:
             evidence = _vicar_evidence(path, source_root)

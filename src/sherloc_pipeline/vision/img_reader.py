@@ -454,11 +454,19 @@ def _read_pds3_image(img_path: Path) -> Tuple[NDArray, Dict[str, Any], int]:
     # include an IMAGE_HEADER object between the label and pixels, so
     # LABEL_RECORDS is not a valid substitute for ^IMAGE.
     image_record = label.get('^IMAGE')
-    image_offset = (
-        (image_record - 1) * record_bytes
-        if isinstance(image_record, int) and image_record > 0
-        else label_size
-    )
+    if image_record is None:
+        image_offset = label_size
+    elif isinstance(image_record, int) and image_record > 0:
+        image_offset = (image_record - 1) * record_bytes
+    elif isinstance(image_record, str):
+        byte_pointer = re.fullmatch(
+            r'\s*(\d+)\s*<\s*BYTES\s*>\s*', image_record, re.IGNORECASE
+        )
+        if byte_pointer is None or int(byte_pointer.group(1)) <= 0:
+            raise ValueError(f"Unsupported PDS3 ^IMAGE pointer in {img_path}")
+        image_offset = int(byte_pointer.group(1)) - 1
+    else:
+        raise ValueError(f"Unsupported PDS3 ^IMAGE pointer in {img_path}")
 
     # Read image data
     image_data = np.frombuffer(

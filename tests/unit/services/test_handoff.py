@@ -212,11 +212,44 @@ def test_mixed_workspace_includes_img_only_sibling_product(tmp_path: Path) -> No
     } == {PRODUCT, sibling}
 
 
+def test_workspace_image_directory_includes_img_only_product(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    sibling = "SC2_1806_0000000000_000ECM_N0000000SRLC00000_0000LMJ01"
+    _write_vicar(working / "img" / f"{sibling}.IMG")
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    document = json.loads(result.artifacts[0].read_text())
+    assert document["selector"] == {"product_ids": sorted([PRODUCT, sibling])}
+
+
 def test_multiband_vicar_source_is_rejected(tmp_path: Path) -> None:
     source = tmp_path / f"{PRODUCT}.IMG"
     _write_vicar(source, bands=3)
 
     with pytest.raises(HandoffError, match="not single-band"):
+        handoff._canonical_png_bytes(source)
+
+
+@pytest.mark.parametrize("missing", ["NB", "NL", "NS"])
+def test_vicar_source_requires_explicit_geometry(
+    tmp_path: Path, missing: str
+) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    fields = {"NB": "NB=1", "NL": "NL=1200", "NS": "NS=1648"}
+    fields.pop(missing)
+    label = (
+        "LBLSIZE=512 FORMAT='BYTE' " + " ".join(fields.values()) + " "
+    ).encode("ascii")
+    source.write_bytes(label.ljust(512, b" ") + bytes(1648 * 1200))
+
+    with pytest.raises(HandoffError, match="single-band|full frame"):
         handoff._canonical_png_bytes(source)
 
 
