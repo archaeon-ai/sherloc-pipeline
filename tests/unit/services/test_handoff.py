@@ -27,6 +27,46 @@ def _write_png(path: Path, size: tuple[int, int], color: int) -> None:
     Image.new("L", size, color=color).save(path)
 
 
+def _write_vicar(
+    path: Path, *, size: tuple[int, int] = (1648, 1200), bands: int = 1
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = size
+    label_size = 512
+    label = (
+        f"LBLSIZE={label_size} FORMAT='BYTE' NL={height} NS={width} NB={bands} "
+    ).encode("ascii")
+    path.write_bytes(
+        label.ljust(label_size, b" ")
+        + bytes([100]) * (width * height * bands)
+    )
+
+
+def _write_pds3(path: Path, *, embedded_vicar_label: bool = False) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record_bytes = 1648
+    image_record = 3
+    header = (
+        "PDS_VERSION_ID = PDS3\r\n"
+        f"RECORD_BYTES = {record_bytes}\r\n"
+        f"^IMAGE = {image_record}\r\n"
+        "LINES = 1200\r\n"
+        "LINE_SAMPLES = 1648\r\n"
+        "SAMPLE_BITS = 8\r\n"
+        + (
+            'LBLSIZE = "16480 FORMAT=\'BYTE\' NL=1200 NS=1648"\r\n'
+            if embedded_vicar_label
+            else ""
+        )
+        +
+        "END\r\n"
+    ).encode("ascii")
+    offset = (image_record - 1) * record_bytes
+    path.write_bytes(
+        header.ljust(offset, b" ") + bytes([100]) * (1648 * 1200)
+    )
+
+
 def _workspace(source_root: Path, *, colorized: bool = True) -> Path:
     working = source_root / "sol_1806" / "detail" / "workspace"
     _write_png(working / "img" / f"{PRODUCT}.PNG", (1648, 1200), 100)
@@ -86,7 +126,7 @@ def test_configured_handoff_publishes_closed_evidence_atomically(
         "schema_version", "producer", "run_id", "created_at", "epoch",
         "selector", "entries",
     }
-    assert document["schema_version"] == "aci-handoff-manifest.v1"
+    assert document["schema_version"] == "aci-handoff-manifest.v2"
     assert document["selector"] == {"product_ids": [PRODUCT]}
     assert len(document["entries"]) == 2
     raw = next(item for item in document["entries"] if item["role"] == "raw_grayscale")
@@ -98,7 +138,154 @@ def test_configured_handoff_publishes_closed_evidence_atomically(
     assert {item["role"] for item in color["sidecars"]} == {"spatial", "loupe"}
     for entry in document["entries"]:
         source_path = source.joinpath(*Path(entry["source_rel_locator"]).parts)
-        assert entry["sha256"] == hashlib.sha256(source_path.read_bytes()).hexdigest()
+        assert entry["source_sha256"] == hashlib.sha256(
+            source_path.read_bytes()
+        ).hexdigest()
+
+
+def test_rgb_workspace_falls_back_to_full_frame_vicar_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    Image.new("RGB", (1648, 1200), color=(1, 2, 3)).save(
+        working / "img" / f"{PRODUCT}.PNG"
+    )
+    vicar = working.parent / f"{PRODUCT}.IMG"
+    _write_vicar(vicar)
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    raw = json.loads(result.artifacts[0].read_text())["entries"][0]
+    assert raw["source_rel_locator"] == f"sol_1806/detail/{PRODUCT}.IMG"
+    assert raw["source_format"] == "vicar_img"
+    assert raw["source_sha256"] == hashlib.sha256(vicar.read_bytes()).hexdigest()
+    assert raw["sha256"] == hashlib.sha256(
+        handoff._canonical_png_bytes(vicar)
+    ).hexdigest()
+
+
+def test_img_only_workspace_publishes_full_frame_vicar_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    working = source / "sol_1806" / "detail" / "workspace"
+    (working / "img").mkdir(parents=True)
+    vicar = working.parent / f"{PRODUCT}.IMG"
+    _write_vicar(vicar)
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    raw = json.loads(result.artifacts[0].read_text())["entries"][0]
+    assert raw["source_format"] == "vicar_img"
+    assert (raw["width_px"], raw["height_px"]) == (1648, 1200)
+
+
+def test_mixed_workspace_includes_img_only_sibling_product(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    sibling = "SC2_1806_0000000000_000ECM_N0000000SRLC00000_0000LMJ01"
+    _write_vicar(working.parent / f"{sibling}.IMG")
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    document = json.loads(result.artifacts[0].read_text())
+    assert document["selector"] == {"product_ids": sorted([PRODUCT, sibling])}
+    assert {
+        entry["product_id"] for entry in document["entries"]
+        if entry["role"] == "raw_grayscale"
+    } == {PRODUCT, sibling}
+
+
+def test_workspace_image_directory_includes_img_only_product(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    sibling = "SC2_1806_0000000000_000ECM_N0000000SRLC00000_0000LMJ01"
+    _write_vicar(working / "img" / f"{sibling}.IMG")
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    document = json.loads(result.artifacts[0].read_text())
+    assert document["selector"] == {"product_ids": sorted([PRODUCT, sibling])}
+
+
+def test_multiband_vicar_source_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    _write_vicar(source, bands=3)
+
+    with pytest.raises(HandoffError, match="not single-band"):
+        handoff._canonical_png_bytes(source)
+
+
+@pytest.mark.parametrize("missing", ["NB", "NL", "NS"])
+def test_vicar_source_requires_explicit_geometry(
+    tmp_path: Path, missing: str
+) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    fields = {"NB": "NB=1", "NL": "NL=1200", "NS": "NS=1648"}
+    fields.pop(missing)
+    label = (
+        "LBLSIZE=512 FORMAT='BYTE' " + " ".join(fields.values()) + " "
+    ).encode("ascii")
+    source.write_bytes(label.ljust(512, b" ") + bytes(1648 * 1200))
+
+    with pytest.raises(HandoffError, match="single-band|full frame"):
+        handoff._canonical_png_bytes(source)
+
+
+def test_single_band_pds3_without_bands_field_is_accepted(tmp_path: Path) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    _write_pds3(source)
+
+    assert handoff._canonical_png_bytes(source).startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_pds3_with_embedded_vicar_label_is_classified_as_pds3(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    _write_pds3(source, embedded_vicar_label=True)
+
+    assert handoff._canonical_png_bytes(source).startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        b"LBLSIZE=512 FORMAT=HALF NL=1200 NS=1648 NB=1 ",
+        (
+            b"PDS_VERSION_ID=PDS3\r\nRECORD_BYTES=1648\r\n^IMAGE=3\r\n"
+            b"LINES=1200\r\nLINE_SAMPLES=1648\r\nSAMPLE_BITS=16\r\n"
+            b"BANDS=1\r\nEND\r\n"
+        ),
+    ],
+)
+def test_non_byte_vicar_source_is_rejected(tmp_path: Path, label: bytes) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    source.write_bytes(label.ljust(512, b" ") + bytes(1648 * 1200 * 2))
+
+    with pytest.raises(HandoffError, match="not byte-encoded"):
+        handoff._canonical_png_bytes(source)
 
 
 def test_raw_only_workspace_is_valid(tmp_path: Path) -> None:

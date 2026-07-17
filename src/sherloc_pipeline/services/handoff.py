@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -10,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from PIL import Image
+
+from sherloc_pipeline.vision.img_reader import get_raw_vicar_label, read_aci_image
 
 from .base import ServiceResult
 from .errors import HandoffError
@@ -71,7 +74,7 @@ def _portable_locator(path: Path, source_root: Path) -> str:
 def _product_id(path: Path) -> str:
     product_id = path.stem
     if (
-        path.suffix != ".PNG"
+        path.suffix not in (".PNG", ".IMG")
         or not _PRODUCT_ID_RE.fullmatch(product_id)
         or not _ACI_PRODUCT_PREFIX_RE.match(product_id)
     ):
@@ -94,7 +97,77 @@ def _image_evidence(
             raise HandoffError("handoff source changed during inventory")
     except OSError as exc:
         raise HandoffError("handoff image is not a valid PNG") from exc
-    return evidence, dimensions, single_channel
+    return {
+        "source_rel_locator": evidence["source_rel_locator"],
+        "source_format": "png",
+        "source_byte_size": evidence["byte_size"],
+        "source_sha256": evidence["sha256"],
+        "byte_size": evidence["byte_size"],
+        "sha256": evidence["sha256"],
+        "mtime": evidence["mtime"],
+    }, dimensions, single_channel
+
+
+def _canonical_png_bytes(path: Path) -> bytes:
+    label = get_raw_vicar_label(path)
+    is_pds3 = "ODL_VERSION_ID" in label or "PDS_VERSION_ID" in label
+    if is_pds3:
+        if label.get("BANDS", 1) != 1:
+            raise HandoffError("raw ACI image is not single-band")
+        if (
+            label.get("LINES") != 1200
+            or label.get("LINE_SAMPLES") != 1648
+        ):
+            raise HandoffError("raw ACI image is not in the full frame")
+    else:
+        if label.get("NB") != 1:
+            raise HandoffError("raw ACI image is not single-band")
+        if label.get("NL") != 1200 or label.get("NS") != 1648:
+            raise HandoffError("raw ACI image is not in the full frame")
+        if str(label.get("FORMAT", "")).upper() != "BYTE":
+            raise HandoffError("raw ACI image is not byte-encoded")
+    if is_pds3:
+        sample_bits = label.get("SAMPLE_BITS")
+        sample_type = str(
+            label.get("SAMPLE_TYPE", "UNSIGNED_INTEGER")
+        ).upper()
+        if sample_bits != 8 or sample_type not in {
+            "BYTE",
+            "UNSIGNED_INTEGER",
+            "MSB_UNSIGNED_INTEGER",
+            "LSB_UNSIGNED_INTEGER",
+        }:
+            raise HandoffError("raw ACI image is not byte-encoded")
+    image, _metadata = read_aci_image(path)
+    if image.shape != (1200, 1648) or image.dtype.name != "uint8":
+        raise HandoffError("raw ACI image is not in the full frame")
+    output = io.BytesIO()
+    Image.fromarray(image, mode="L").save(
+        output,
+        format="PNG",
+        optimize=False,
+        compress_level=6,
+    )
+    return output.getvalue()
+
+
+def _vicar_evidence(path: Path, source_root: Path) -> dict:
+    evidence, fingerprint, resolved = _stable_file_evidence(path, source_root)
+    try:
+        canonical = _canonical_png_bytes(resolved)
+        if _fingerprint(resolved.stat()) != fingerprint:
+            raise HandoffError("handoff source changed during inventory")
+    except (OSError, ValueError) as exc:
+        raise HandoffError("handoff VICAR source cannot be decoded") from exc
+    return {
+        "source_rel_locator": evidence["source_rel_locator"],
+        "source_format": "vicar_img",
+        "source_byte_size": evidence["byte_size"],
+        "source_sha256": evidence["sha256"],
+        "byte_size": len(canonical),
+        "sha256": hashlib.sha256(canonical).hexdigest(),
+        "mtime": evidence["mtime"],
+    }
 
 
 def _stable_file_evidence(
@@ -188,15 +261,36 @@ def _raw_entries(working_dir: Path, source_root: Path) -> tuple[list[dict], set[
     entries: list[dict] = []
     products: set[str] = set()
     images = _product_pngs(working_dir, source_root)
+    img_sources = sorted({
+        path
+        for directory in (working_dir / "img", working_dir.parent)
+        for path in directory.iterdir()
+        if path.suffix.upper() == ".IMG"
+        and _ACI_PRODUCT_PREFIX_RE.match(path.stem)
+        and not _ANGLE_RANGE_RENDER_RE.search(path.stem)
+    })
+    png_products = {path.stem for path in images}
+    images.extend(path for path in img_sources if path.stem not in png_products)
     if not images:
-        raise HandoffError("handoff workspace has no product PNG images")
+        raise HandoffError("handoff workspace has no raw ACI source")
     for path in images:
         product_id = _product_id(path)
         if product_id in products:
             raise HandoffError("handoff workspace has duplicate product identities")
-        evidence, dimensions, single_channel = _image_evidence(path, source_root)
-        if dimensions != (1648, 1200) or not single_channel:
-            raise HandoffError("raw ACI image is not in the full frame")
+        if path.suffix.upper() == ".PNG":
+            evidence, dimensions, single_channel = _image_evidence(path, source_root)
+            if dimensions != (1648, 1200) or not single_channel:
+                fallbacks = [
+                    candidate for candidate in img_sources
+                    if candidate.stem == product_id
+                ]
+                if len(fallbacks) != 1:
+                    raise HandoffError("raw ACI image is not in the full frame")
+                evidence = _vicar_evidence(fallbacks[0], source_root)
+                dimensions = (1648, 1200)
+        else:
+            evidence = _vicar_evidence(path, source_root)
+            dimensions = (1648, 1200)
         products.add(product_id)
         entries.append({
             "product_id": product_id,
@@ -210,6 +304,28 @@ def _raw_entries(working_dir: Path, source_root: Path) -> tuple[list[dict], set[
             "sidecars": [],
         })
     return entries, products
+
+
+def build_raw_handoff_entry(path: Path, source_root: Path) -> dict:
+    """Build one verified v2 raw entry for bounded migration preparation."""
+    product_id = _product_id(path)
+    if path.suffix.upper() == ".IMG":
+        evidence = _vicar_evidence(path, source_root)
+    else:
+        evidence, dimensions, single_channel = _image_evidence(path, source_root)
+        if dimensions != (1648, 1200) or not single_channel:
+            raise HandoffError("raw ACI image is not in the full frame")
+    return {
+        "product_id": product_id,
+        "role": "raw_grayscale",
+        "provenance": "sherloc_delivery",
+        "rendition_key": "product",
+        **evidence,
+        "coordinate_frame": "aci_full_frame",
+        "width_px": 1648,
+        "height_px": 1200,
+        "sidecars": [],
+    }
 
 
 def _colorized_entries(
@@ -270,7 +386,7 @@ def build_handoff_manifest(
     colorized = _colorized_entries(working_dir, source_root, products)
     stamp = completed_at or _timestamp()
     return {
-        "schema_version": "aci-handoff-manifest.v1",
+        "schema_version": "aci-handoff-manifest.v2",
         "producer": "sherloc-pipeline",
         "run_id": run_id,
         "created_at": stamp,
