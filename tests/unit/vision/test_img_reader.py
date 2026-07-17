@@ -138,14 +138,6 @@ class TestDtypeMapping:
         dtype = _get_dtype_for_format('HALF')
         assert dtype == np.dtype(np.int16)
 
-
-def test_pds3_reader_honors_image_record_pointer(tmp_path: Path) -> None:
-    path, expected = create_test_pds3_file(tmp_path)
-
-    image, _metadata = read_aci_image(path, validate_dimensions=False)
-
-    assert np.array_equal(image, expected)
-
     def test_full_format(self):
         """Test FULL format maps to int32."""
         dtype = _get_dtype_for_format('FULL')
@@ -160,6 +152,14 @@ def test_pds3_reader_honors_image_record_pointer(tmp_path: Path) -> None:
         """Test that unknown format raises ValueError."""
         with pytest.raises(ValueError, match="Unknown VICAR format"):
             _get_dtype_for_format('UNKNOWN')
+
+
+def test_pds3_reader_honors_image_record_pointer(tmp_path: Path) -> None:
+    path, expected = create_test_pds3_file(tmp_path)
+
+    image, _metadata = read_aci_image(path, validate_dimensions=False)
+
+    assert np.array_equal(image, expected)
 
 
 class TestACIImageMetadata:
