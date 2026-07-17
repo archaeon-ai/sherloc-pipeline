@@ -27,14 +27,19 @@ def _write_png(path: Path, size: tuple[int, int], color: int) -> None:
     Image.new("L", size, color=color).save(path)
 
 
-def _write_vicar(path: Path, *, size: tuple[int, int] = (1648, 1200)) -> None:
+def _write_vicar(
+    path: Path, *, size: tuple[int, int] = (1648, 1200), bands: int = 1
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     width, height = size
     label_size = 512
     label = (
-        f"LBLSIZE={label_size} FORMAT=BYTE NL={height} NS={width} "
+        f"LBLSIZE={label_size} FORMAT=BYTE NL={height} NS={width} NB={bands} "
     ).encode("ascii")
-    path.write_bytes(label.ljust(label_size, b" ") + bytes([100]) * (width * height))
+    path.write_bytes(
+        label.ljust(label_size, b" ")
+        + bytes([100]) * (width * height * bands)
+    )
 
 
 def _workspace(source_root: Path, *, colorized: bool = True) -> Path:
@@ -159,6 +164,14 @@ def test_img_only_workspace_publishes_full_frame_vicar_source(
     raw = json.loads(result.artifacts[0].read_text())["entries"][0]
     assert raw["source_format"] == "vicar_img"
     assert (raw["width_px"], raw["height_px"]) == (1648, 1200)
+
+
+def test_multiband_vicar_source_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    _write_vicar(source, bands=3)
+
+    with pytest.raises(HandoffError, match="not single-band"):
+        handoff._canonical_png_bytes(source)
 
 
 def test_raw_only_workspace_is_valid(tmp_path: Path) -> None:

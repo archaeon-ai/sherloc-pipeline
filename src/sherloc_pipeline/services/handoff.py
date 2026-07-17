@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 
 from PIL import Image
 
-from sherloc_pipeline.vision.img_reader import read_aci_image
+from sherloc_pipeline.vision.img_reader import get_raw_vicar_label, read_aci_image
 
 from .base import ServiceResult
 from .errors import HandoffError
@@ -109,6 +109,10 @@ def _image_evidence(
 
 
 def _canonical_png_bytes(path: Path) -> bytes:
+    label = get_raw_vicar_label(path)
+    band_count = label.get("NB", label.get("BANDS"))
+    if band_count != 1:
+        raise HandoffError("raw ACI image is not single-band")
     image, _metadata = read_aci_image(path)
     if image.shape != (1200, 1648) or image.dtype.name != "uint8":
         raise HandoffError("raw ACI image is not in the full frame")
