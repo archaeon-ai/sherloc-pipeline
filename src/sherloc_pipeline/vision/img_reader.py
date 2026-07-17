@@ -450,14 +450,24 @@ def _read_pds3_image(img_path: Path) -> Tuple[NDArray, Dict[str, Any], int]:
     if not isinstance(samples, int):
         samples = ACI_WIDTH
 
-    # Look for ^IMAGE pointer to find data offset
-    image_offset = label_size  # Default: data starts after label records
+    # PDS3 object pointers are one-indexed record numbers. Some deliveries
+    # include an IMAGE_HEADER object between the label and pixels, so
+    # LABEL_RECORDS is not a valid substitute for ^IMAGE.
+    image_record = label.get('^IMAGE')
+    image_offset = (
+        (image_record - 1) * record_bytes
+        if isinstance(image_record, int) and image_record > 0
+        else label_size
+    )
 
     # Read image data
     image_data = np.frombuffer(
         content[image_offset:image_offset + lines * samples],
         dtype=np.uint8
     )
+
+    if image_data.size != lines * samples:
+        raise ValueError(f"PDS3 image payload is truncated in {img_path}")
 
     # Reshape to 2D array
     image = image_data.reshape((lines, samples))

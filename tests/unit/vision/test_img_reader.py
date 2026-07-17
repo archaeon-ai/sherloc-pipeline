@@ -59,6 +59,26 @@ def create_test_vicar_file(tmp_path: Path, width: int = 64, height: int = 48) ->
     return test_file
 
 
+def create_test_pds3_file(tmp_path: Path) -> tuple[Path, np.ndarray]:
+    """Create PDS3 bytes with an image-header gap before ^IMAGE."""
+    record_bytes = 128
+    image_record = 5
+    image = np.arange(8, dtype=np.uint8).reshape(2, 4)
+    label = (
+        "ODL_VERSION_ID = ODL3\n"
+        f"RECORD_BYTES = {record_bytes}\n"
+        "LABEL_RECORDS = 3\n"
+        f"^IMAGE = {image_record}\n"
+        "LINES = 2\n"
+        "LINE_SAMPLES = 4\n"
+        "END\n"
+    ).encode("ascii")
+    payload_offset = (image_record - 1) * record_bytes
+    path = tmp_path / "test_pds3.IMG"
+    path.write_bytes(label.ljust(payload_offset, b" ") + image.tobytes())
+    return path, image
+
+
 class TestVICARHeaderParsing:
     """Test VICAR header parsing functionality."""
 
@@ -117,6 +137,14 @@ class TestDtypeMapping:
         """Test HALF format maps to int16."""
         dtype = _get_dtype_for_format('HALF')
         assert dtype == np.dtype(np.int16)
+
+
+def test_pds3_reader_honors_image_record_pointer(tmp_path: Path) -> None:
+    path, expected = create_test_pds3_file(tmp_path)
+
+    image, _metadata = read_aci_image(path, validate_dimensions=False)
+
+    assert np.array_equal(image, expected)
 
     def test_full_format(self):
         """Test FULL format maps to int32."""

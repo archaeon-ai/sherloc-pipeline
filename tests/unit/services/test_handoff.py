@@ -27,6 +27,16 @@ def _write_png(path: Path, size: tuple[int, int], color: int) -> None:
     Image.new("L", size, color=color).save(path)
 
 
+def _write_vicar(path: Path, *, size: tuple[int, int] = (1648, 1200)) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = size
+    label_size = 512
+    label = (
+        f"LBLSIZE={label_size} FORMAT=BYTE NL={height} NS={width} "
+    ).encode("ascii")
+    path.write_bytes(label.ljust(label_size, b" ") + bytes([100]) * (width * height))
+
+
 def _workspace(source_root: Path, *, colorized: bool = True) -> Path:
     working = source_root / "sol_1806" / "detail" / "workspace"
     _write_png(working / "img" / f"{PRODUCT}.PNG", (1648, 1200), 100)
@@ -86,7 +96,7 @@ def test_configured_handoff_publishes_closed_evidence_atomically(
         "schema_version", "producer", "run_id", "created_at", "epoch",
         "selector", "entries",
     }
-    assert document["schema_version"] == "aci-handoff-manifest.v1"
+    assert document["schema_version"] == "aci-handoff-manifest.v2"
     assert document["selector"] == {"product_ids": [PRODUCT]}
     assert len(document["entries"]) == 2
     raw = next(item for item in document["entries"] if item["role"] == "raw_grayscale")
@@ -98,7 +108,57 @@ def test_configured_handoff_publishes_closed_evidence_atomically(
     assert {item["role"] for item in color["sidecars"]} == {"spatial", "loupe"}
     for entry in document["entries"]:
         source_path = source.joinpath(*Path(entry["source_rel_locator"]).parts)
-        assert entry["sha256"] == hashlib.sha256(source_path.read_bytes()).hexdigest()
+        assert entry["source_sha256"] == hashlib.sha256(
+            source_path.read_bytes()
+        ).hexdigest()
+
+
+def test_rgb_workspace_falls_back_to_full_frame_vicar_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    working = _workspace(source, colorized=False)
+    Image.new("RGB", (1648, 1200), color=(1, 2, 3)).save(
+        working / "img" / f"{PRODUCT}.PNG"
+    )
+    vicar = working.parent / f"{PRODUCT}.IMG"
+    _write_vicar(vicar)
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    raw = json.loads(result.artifacts[0].read_text())["entries"][0]
+    assert raw["source_rel_locator"] == f"sol_1806/detail/{PRODUCT}.IMG"
+    assert raw["source_format"] == "vicar_img"
+    assert raw["source_sha256"] == hashlib.sha256(vicar.read_bytes()).hexdigest()
+    assert raw["sha256"] == hashlib.sha256(
+        handoff._canonical_png_bytes(vicar)
+    ).hexdigest()
+
+
+def test_img_only_workspace_publishes_full_frame_vicar_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    working = source / "sol_1806" / "detail" / "workspace"
+    (working / "img").mkdir(parents=True)
+    vicar = working.parent / f"{PRODUCT}.IMG"
+    _write_vicar(vicar)
+
+    result = HandoffService().publish_if_configured(
+        output_dir=tmp_path / "handoff",
+        run_id=RUN_ID,
+        source_root=source,
+        working_dir=working,
+    )
+
+    raw = json.loads(result.artifacts[0].read_text())["entries"][0]
+    assert raw["source_format"] == "vicar_img"
+    assert (raw["width_px"], raw["height_px"]) == (1648, 1200)
 
 
 def test_raw_only_workspace_is_valid(tmp_path: Path) -> None:

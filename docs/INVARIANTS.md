@@ -193,6 +193,9 @@ source locators, bind the exact product-ID
 cohort, and include image/sidecar size, SHA-256, mtime, and dimensions. It never
 overwrites an existing run. Missing, malformed, ambiguous, out-of-root, or
 unwritable input/output fails the pipeline rather than shrinking the manifest.
+For a full-frame VICAR raw source, v2 also freezes the source hash and the
+deterministic `aci-vicar-to-png.v1` canonical PNG hash; non-full-frame sources
+remain inadmissible. Auxiliary angle-range renders never become product IDs.
 
 **Where defined.** `services/handoff.py`; invoked only after the summary stage
 in `PipelineService.run_full_pipeline()`.
