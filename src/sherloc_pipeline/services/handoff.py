@@ -113,6 +113,21 @@ def _canonical_png_bytes(path: Path) -> bytes:
     band_count = label.get("NB", label.get("BANDS", 1))
     if band_count != 1:
         raise HandoffError("raw ACI image is not single-band")
+    if "LBLSIZE" in label:
+        if str(label.get("FORMAT", "")).upper() != "BYTE":
+            raise HandoffError("raw ACI image is not byte-encoded")
+    else:
+        sample_bits = label.get("SAMPLE_BITS")
+        sample_type = str(
+            label.get("SAMPLE_TYPE", "UNSIGNED_INTEGER")
+        ).upper()
+        if sample_bits != 8 or sample_type not in {
+            "BYTE",
+            "UNSIGNED_INTEGER",
+            "MSB_UNSIGNED_INTEGER",
+            "LSB_UNSIGNED_INTEGER",
+        }:
+            raise HandoffError("raw ACI image is not byte-encoded")
     image, _metadata = read_aci_image(path)
     if image.shape != (1200, 1648) or image.dtype.name != "uint8":
         raise HandoffError("raw ACI image is not in the full frame")
@@ -236,14 +251,15 @@ def _raw_entries(working_dir: Path, source_root: Path) -> tuple[list[dict], set[
     entries: list[dict] = []
     products: set[str] = set()
     images = _product_pngs(working_dir, source_root)
-    if not images:
-        acquisition_dir = working_dir.parent
-        images = sorted(
-            path for path in acquisition_dir.iterdir()
-            if path.suffix.upper() == ".IMG"
-            and _ACI_PRODUCT_PREFIX_RE.match(path.stem)
-            and not _ANGLE_RANGE_RENDER_RE.search(path.stem)
-        )
+    acquisition_dir = working_dir.parent
+    img_sources = sorted(
+        path for path in acquisition_dir.iterdir()
+        if path.suffix.upper() == ".IMG"
+        and _ACI_PRODUCT_PREFIX_RE.match(path.stem)
+        and not _ANGLE_RANGE_RENDER_RE.search(path.stem)
+    )
+    png_products = {path.stem for path in images}
+    images.extend(path for path in img_sources if path.stem not in png_products)
     if not images:
         raise HandoffError("handoff workspace has no raw ACI source")
     for path in images:
