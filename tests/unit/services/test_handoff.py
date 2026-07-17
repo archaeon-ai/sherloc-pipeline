@@ -42,7 +42,7 @@ def _write_vicar(
     )
 
 
-def _write_pds3(path: Path) -> None:
+def _write_pds3(path: Path, *, embedded_vicar_label: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     record_bytes = 1648
     image_record = 3
@@ -53,6 +53,12 @@ def _write_pds3(path: Path) -> None:
         "LINES = 1200\r\n"
         "LINE_SAMPLES = 1648\r\n"
         "SAMPLE_BITS = 8\r\n"
+        + (
+            'LBLSIZE = "16480 FORMAT=\'BYTE\' NL=1200 NS=1648"\r\n'
+            if embedded_vicar_label
+            else ""
+        )
+        +
         "END\r\n"
     ).encode("ascii")
     offset = (image_record - 1) * record_bytes
@@ -217,6 +223,15 @@ def test_multiband_vicar_source_is_rejected(tmp_path: Path) -> None:
 def test_single_band_pds3_without_bands_field_is_accepted(tmp_path: Path) -> None:
     source = tmp_path / f"{PRODUCT}.IMG"
     _write_pds3(source)
+
+    assert handoff._canonical_png_bytes(source).startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_pds3_with_embedded_vicar_label_is_classified_as_pds3(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / f"{PRODUCT}.IMG"
+    _write_pds3(source, embedded_vicar_label=True)
 
     assert handoff._canonical_png_bytes(source).startswith(b"\x89PNG\r\n\x1a\n")
 

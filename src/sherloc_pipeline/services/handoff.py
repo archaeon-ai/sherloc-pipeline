@@ -113,7 +113,8 @@ def _canonical_png_bytes(path: Path) -> bytes:
     band_count = label.get("NB", label.get("BANDS", 1))
     if band_count != 1:
         raise HandoffError("raw ACI image is not single-band")
-    if "LBLSIZE" in label:
+    is_pds3 = "ODL_VERSION_ID" in label or "PDS_VERSION_ID" in label
+    if not is_pds3:
         if str(label.get("FORMAT", "")).upper() != "BYTE":
             raise HandoffError("raw ACI image is not byte-encoded")
     else:
