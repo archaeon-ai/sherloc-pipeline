@@ -75,6 +75,9 @@ def test_auth0_complete_config_is_accepted(clean_env, tmp_path):
     clean_env.setenv("SHERLOC_AUTH0_AUDIENCE", "https://example/api")
     clean_env.setenv("SHERLOC_AUTH0_SPA_CLIENT_ID", "spaclient_abc")
     clean_env.setenv("SHERLOC_AUTH0_IDENTITY_CLAIM_URI", "https://example/claims/identity")
+    clean_env.setenv(
+        "SHERLOC_ALEMBIC_TARGET", config_check.RETAINED_PATH_REVISION
+    )
     # auth0 mode also requires R2 wiring (v4.1.7+).
     clean_env.setenv("PHASE_TIER", "team")
     clean_env.setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")

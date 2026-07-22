@@ -287,3 +287,78 @@ class TestR2RelKeyBackfill:
                 )
             ).scalar()
             assert got == "loupe/sol_0921/ws/img/r.PNG"
+
+
+class TestRetainedPathCompatibilityEpoch:
+    """The bounded pre-cleanup epoch preserves values and admits new writes."""
+
+    REVISION = "b7e4f3a9c1d2"
+
+    def test_retains_values_and_makes_legacy_path_nullable(self, alembic_config):
+        config, db_path = alembic_config
+        command.upgrade(config, "931df60632cb")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        from sqlalchemy import text
+
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO context_images "
+                "(id,scan_id,image_type,file_path,r2_rel_key,created_at) "
+                "VALUES ('existing','scan','ACI','/legacy/a.PNG',"
+                "'loupe/a.PNG','2026-01-01 00:00:00')"
+            ))
+
+        command.upgrade(config, self.REVISION)
+
+        inspector = inspect(engine)
+        columns = {
+            column["name"]: column
+            for column in inspector.get_columns("context_images")
+        }
+        assert columns["file_path"]["nullable"] is True
+        with engine.begin() as conn:
+            assert conn.execute(text(
+                "SELECT file_path FROM context_images WHERE id='existing'"
+            )).scalar_one() == "/legacy/a.PNG"
+            conn.execute(text(
+                "INSERT INTO context_images "
+                "(id,scan_id,image_type,r2_rel_key,created_at) "
+                "VALUES ('new','scan','ACI','loupe/new.PNG',"
+                "'2026-01-01 00:00:00')"
+            ))
+            revision = conn.execute(text(
+                "SELECT version_num FROM alembic_version"
+            )).scalar_one()
+        assert revision == self.REVISION
+
+    def test_final_cleanup_remains_a_separate_successor(self, alembic_config):
+        config, db_path = alembic_config
+        command.upgrade(config, self.REVISION)
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "file_path" in {
+            column["name"]
+            for column in inspect(engine).get_columns("context_images")
+        }
+
+        command.upgrade(config, "17db1a1940d6")
+        assert "file_path" not in {
+            column["name"]
+            for column in inspect(engine).get_columns("context_images")
+        }
+
+    def test_downgrade_refuses_to_invent_missing_legacy_values(self, alembic_config):
+        config, db_path = alembic_config
+        command.upgrade(config, self.REVISION)
+        engine = create_engine(f"sqlite:///{db_path}")
+        from sqlalchemy import text
+
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO context_images "
+                "(id,scan_id,image_type,r2_rel_key,created_at) "
+                "VALUES ('new','scan','ACI','loupe/new.PNG',"
+                "'2026-01-01 00:00:00')"
+            ))
+        with pytest.raises(RuntimeError, match="byte-exact predecessor snapshot"):
+            command.downgrade(config, "931df60632cb")

@@ -22,6 +22,9 @@ Variables validated:
                          without rebuild — §13.4)
     SHERLOC_CF_TEAM_DOMAIN, SHERLOC_CF_AUDIENCE
                        — required when SHERLOC_AUTH_MODE=cf-access
+    SHERLOC_ALEMBIC_TARGET
+                       — required in auth0 mode and pinned to an exact reviewed
+                         retained-path or final migration revision
 
 Exit codes:
     0  all checks passed
@@ -41,6 +44,9 @@ logger = logging.getLogger("sherloc_pipeline.web.config_check")
 VALID_AUTH_MODES = {"auth0", "cf-access", "dev"}
 VALID_ACCESS_MODES = {"internal", "public"}
 VALID_PHASE_TIERS = {"team", "public"}
+RETAINED_PATH_REVISION = "b7e4f3a9c1d2"
+FINAL_PATH_REVISION = "17db1a1940d6"
+VALID_ALEMBIC_TARGETS = {RETAINED_PATH_REVISION, FINAL_PATH_REVISION}
 
 
 def _check_db_path(errors: List[str]) -> None:
@@ -129,6 +135,26 @@ def _check_access_mode(errors: List[str]) -> None:
         )
 
 
+def _check_alembic_target(errors: List[str]) -> None:
+    """Require an exact production migration epoch.
+
+    Development and legacy cf-access boots retain the historical ``head``
+    default when the variable is absent. Auth0 deployments must state an exact
+    reviewed revision so a restart cannot silently cross the destructive
+    cleanup boundary.
+    """
+    target = os.environ.get("SHERLOC_ALEMBIC_TARGET")
+    if not target:
+        if os.environ.get("SHERLOC_AUTH_MODE", "cf-access") == "auth0":
+            errors.append("missing required variable: SHERLOC_ALEMBIC_TARGET")
+        return
+    if target not in VALID_ALEMBIC_TARGETS:
+        errors.append(
+            f"SHERLOC_ALEMBIC_TARGET has unrecognized value: {target!r} "
+            f"(expected one of {sorted(VALID_ALEMBIC_TARGETS)})"
+        )
+
+
 def _check_r2(errors: List[str]) -> None:
     """Validate R2 storage env vars when running under auth0 (production) mode.
 
@@ -165,6 +191,7 @@ def validate() -> List[str]:
     _check_db_path(errors)
     _check_auth(errors)
     _check_access_mode(errors)
+    _check_alembic_target(errors)
     _check_r2(errors)
     return errors
 

@@ -50,6 +50,13 @@ def test_valid_phase_tiers_pin():
     assert config_check.VALID_PHASE_TIERS == {"team", "public"}
 
 
+def test_valid_alembic_targets_are_exact_reviewed_revisions():
+    assert config_check.VALID_ALEMBIC_TARGETS == {
+        "b7e4f3a9c1d2",
+        "17db1a1940d6",
+    }
+
+
 def test_empty_env_reports_required_set(clean_env):
     """With nothing set, the validator must surface every always-required
     error: SHERLOC_DB plus the cf-access mode defaults (the validator
@@ -80,6 +87,7 @@ def test_default_auth_mode_is_cf_access(clean_env, tmp_path):
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_ENDPOINT_URL",
+        "SHERLOC_ALEMBIC_TARGET",
     ],
 )
 def test_auth0_mode_required_vars(clean_env, missing_var):
@@ -95,6 +103,7 @@ def test_auth0_mode_required_vars(clean_env, missing_var):
         "AWS_ACCESS_KEY_ID": "AKIA-test",
         "AWS_SECRET_ACCESS_KEY": "secret-test",
         "AWS_ENDPOINT_URL": "https://account.r2.cloudflarestorage.com",
+        "SHERLOC_ALEMBIC_TARGET": config_check.RETAINED_PATH_REVISION,
     }
     auth0_set.pop(missing_var)
     for k, v in auth0_set.items():
@@ -156,6 +165,7 @@ def test_auth0_mode_requires_identity_claim_uri(clean_env):
         "AWS_ACCESS_KEY_ID": "AKIA-test",
         "AWS_SECRET_ACCESS_KEY": "secret-test",
         "AWS_ENDPOINT_URL": "https://account.r2.cloudflarestorage.com",
+        "SHERLOC_ALEMBIC_TARGET": config_check.RETAINED_PATH_REVISION,
     }.items():
         clean_env.setenv(k, v)
     # IDENTITY_CLAIM_URI deliberately unset.
@@ -178,9 +188,38 @@ def test_auth0_mode_with_identity_claim_uri_validates(clean_env):
         "AWS_ACCESS_KEY_ID": "AKIA-test",
         "AWS_SECRET_ACCESS_KEY": "secret-test",
         "AWS_ENDPOINT_URL": "https://account.r2.cloudflarestorage.com",
+        "SHERLOC_ALEMBIC_TARGET": config_check.RETAINED_PATH_REVISION,
     }.items():
         clean_env.setenv(k, v)
     assert config_check.validate() == []
+
+
+def test_auth0_mode_requires_exact_alembic_target(clean_env):
+    for k, v in {
+        "SHERLOC_AUTH_MODE": "auth0",
+        "SHERLOC_DB": ":memory:",
+        "SHERLOC_AUTH0_DOMAIN": "tenant.auth0.com",
+        "SHERLOC_AUTH0_AUDIENCE": "https://api.example.com",
+        "SHERLOC_AUTH0_SPA_CLIENT_ID": "spa-client-id",
+        "SHERLOC_AUTH0_IDENTITY_CLAIM_URI": "https://example.com/claims/identity",
+        "PHASE_TIER": "team",
+        "AWS_ACCESS_KEY_ID": "AKIA-test",
+        "AWS_SECRET_ACCESS_KEY": "secret-test",
+        "AWS_ENDPOINT_URL": "https://account.r2.cloudflarestorage.com",
+    }.items():
+        clean_env.setenv(k, v)
+    assert "missing required variable: SHERLOC_ALEMBIC_TARGET" in config_check.validate()
+
+
+@pytest.mark.parametrize("target", ["head", "931df60632cb", "typo"])
+def test_unreviewed_alembic_target_is_rejected(clean_env, target):
+    clean_env.setenv("SHERLOC_AUTH_MODE", "dev")
+    clean_env.setenv("SHERLOC_DB", ":memory:")
+    clean_env.setenv("SHERLOC_ALEMBIC_TARGET", target)
+    assert any(
+        "SHERLOC_ALEMBIC_TARGET has unrecognized value" in error
+        for error in config_check.validate()
+    )
 
 
 # --- Q1 (v4.1.14): PHASE_DATABASE_PATH mismatch fail-fast ---

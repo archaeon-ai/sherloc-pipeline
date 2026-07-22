@@ -65,7 +65,7 @@ container-internal path and the writer.
 ## 5. Environment variables
 
 Authoritative source: `src/sherloc_pipeline/web/config_check.py`. The
-validator runs at container boot (before `alembic upgrade head` and the
+validator runs at container boot (before the exact-target Alembic upgrade and the
 uvicorn launch) and exits 1 on any error.
 
 ### 5.1 Always required
@@ -93,6 +93,7 @@ When `SHERLOC_AUTH_MODE=auth0`, these are required:
 | `SHERLOC_AUTH0_AUDIENCE` | non-empty |
 | `SHERLOC_AUTH0_SPA_CLIENT_ID` | non-empty (surfaced via `/api/config`) |
 | `SHERLOC_AUTH0_IDENTITY_CLAIM_URI` | non-empty namespace URI (validated by `config_check` since v4.1.14) |
+| `SHERLOC_ALEMBIC_TARGET` | exact `b7e4f3a9c1d2` retained-path revision or exact `17db1a1940d6` final revision; symbolic `head` is rejected in auth0 mode |
 | `PHASE_TIER` | ∈ `{team, public}` |
 | `AWS_ACCESS_KEY_ID` | non-empty |
 | `AWS_SECRET_ACCESS_KEY` | non-empty |
@@ -174,8 +175,15 @@ deliberate decision rather than silent drift. See
 | Element | Value |
 |---|---|
 | Current head | `17db1a1940d6` (`drop_file_path_from_context_images`) |
-| Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade head` → uvicorn |
+| Activation-compatible retained-path revision | `b7e4f3a9c1d2` (`prepare_context_images_retained_path_epoch`) |
+| Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade "$SHERLOC_ALEMBIC_TARGET"` → uvicorn |
 | Contract guarantee | Single head (no fork); migrations idempotent |
+
+Auth0 deployments must set `SHERLOC_ALEMBIC_TARGET` to one of the two exact
+reviewed revisions above. The retained-path revision preserves legacy values
+while admitting `r2_rel_key`-only writers. Selecting `17db1a1940d6` is the
+separate destructive cleanup action. Missing, symbolic (`head`), stale, or
+unknown targets fail startup validation in auth0 mode.
 
 A consumer who pins a SHERLOC tag pins a migration head. Downgrade across
 major migrations is not part of the contract — the v1.0 line is

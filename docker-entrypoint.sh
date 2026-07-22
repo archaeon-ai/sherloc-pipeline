@@ -13,8 +13,11 @@ export PHASE_DATABASE_PATH="${PHASE_DATABASE_PATH:-${SHERLOC_DB:-}}"
 # 1. Validate required config (fails fast with clear messages)
 python -m sherloc_pipeline.web.config_check
 
-# 2. Run migrations (idempotent — Alembic stamps current head)
-alembic upgrade head
+# 2. Run migrations to the exact reviewed target. Non-production/legacy boots
+# retain the historical `head` default; auth0 production config_check requires
+# SHERLOC_ALEMBIC_TARGET to be an exact allowed revision.
+ALEMBIC_TARGET="${SHERLOC_ALEMBIC_TARGET:-head}"
+alembic upgrade "$ALEMBIC_TARGET"
 
 # 3. Dispatch
 case "$1" in
