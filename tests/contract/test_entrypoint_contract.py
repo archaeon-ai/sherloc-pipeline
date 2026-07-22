@@ -37,13 +37,19 @@ def test_strict_mode_first_non_comment_line():
 def test_boot_order_config_check_then_alembic_then_dispatch():
     text = _text()
     config_check_idx = text.find("python -m sherloc_pipeline.web.config_check")
-    alembic_idx = text.find("alembic upgrade head")
+    alembic_idx = text.find('alembic upgrade "$ALEMBIC_TARGET"')
     web_case_idx = re.search(r"^\s*web\)\s*", text, re.MULTILINE)
     assert config_check_idx != -1, "missing `python -m sherloc_pipeline.web.config_check`"
-    assert alembic_idx != -1, "missing `alembic upgrade head`"
+    assert alembic_idx != -1, "missing exact-target Alembic upgrade"
     assert web_case_idx is not None, "missing `web)` case dispatch"
     assert config_check_idx < alembic_idx, "config_check must run before alembic"
     assert alembic_idx < web_case_idx.start(), "alembic must run before case dispatch"
+
+
+def test_entrypoint_defaults_nonproduction_to_head_but_accepts_exact_target():
+    text = _text()
+    assert 'ALEMBIC_TARGET="${SHERLOC_ALEMBIC_TARGET:-head}"' in text
+    assert 'alembic upgrade "$ALEMBIC_TARGET"' in text
 
 
 def test_web_case_dispatches_uvicorn_with_factory():

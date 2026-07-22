@@ -31,7 +31,7 @@ lying about data that no longer exists — the honest reverse of an
 irreversible drop.
 
 Revision ID: 17db1a1940d6
-Revises: 931df60632cb
+Revises: b7e4f3a9c1d2
 Create Date: 2026-07-10 13:14:35.625861
 
 """
@@ -43,7 +43,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '17db1a1940d6'
-down_revision: Union[str, Sequence[str], None] = '931df60632cb'
+down_revision: Union[str, Sequence[str], None] = 'b7e4f3a9c1d2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
