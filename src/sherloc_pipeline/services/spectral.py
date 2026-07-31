@@ -820,12 +820,21 @@ class SpectralService:
         # `--fit-range 1000,1200` under a 700-1200 companion), so rendering it
         # unchanged would annotate the plot with an R² for a window the reader
         # is not looking at.
+        #
+        # The metric is computed against the model `_generate_plot` actually
+        # DRAWS — the Gaussians reconstructed from the fitted peaks across the
+        # whole plotting domain — not against `model_array`, which the fitting
+        # API zero-pads outside the fit ROI. Under a fit range narrower than the
+        # companion window those zeros would score the visible Gaussian tails
+        # against nothing.
         y = spectrum_df["intensity"].to_numpy(float)
-        model = np.asarray(model_array, dtype=float)
+        y_model_drawn = np.zeros_like(x, dtype=float)
+        for peak in fit_result.peaks:
+            y_model_drawn += gaussian(x, peak.m_cm1, peak.a, peak.fwhm)
         zoom_result = FitResult(
             peaks=fit_result.peaks,
-            r2=float(compute_r2(y[mask], model[mask])),
-            rss=float(np.sum((y[mask] - model[mask]) ** 2)),
+            r2=float(compute_r2(y[mask], y_model_drawn[mask])),
+            rss=float(np.sum((y[mask] - y_model_drawn[mask]) ** 2)),
             dof=max(0, int(mask.sum()) - 3 * len(fit_result.peaks)),
             warnings=list(fit_result.warnings or []),
         )

@@ -253,7 +253,7 @@ def test_averaged_mode_companion_r2_describes_its_own_window(test_context):
 
     from sherloc_pipeline.visualization import fitting_plots
 
-    captured: list[float] = []
+    captured: list[tuple] = []
     original = fitting_plots.plot_fit_overlay  # unused here; guard against drift
 
     from sherloc_pipeline.services import spectral as spectral_mod
@@ -262,24 +262,49 @@ def test_averaged_mode_companion_r2_describes_its_own_window(test_context):
 
     def spy(self, spectrum_df, request, fit_result=None, model_array=None):
         if fit_result is not None:
-            captured.append((request.xlim, float(fit_result.r2)))
+            captured.append(
+                (request.xlim, float(fit_result.r2), spectrum_df, list(fit_result.peaks))
+            )
         return real_generate(
             self, spectrum_df, request, fit_result=fit_result, model_array=model_array
         )
 
     spectral_mod.SpectralService._generate_plot = spy
     try:
-        result = _run_averaged(test_context, fit_range=(1000.0, 1200.0))
+        # A fit range whose LOWER edge sits on a peak: the drawn Gaussian
+        # tail extends well below it, where the API's model array is zero.
+        result = _run_averaged(test_context, fit_range=(1080.0, 1200.0))
     finally:
         spectral_mod.SpectralService._generate_plot = real_generate
 
     assert original is fitting_plots.plot_fit_overlay
-    full_xlim, full_r2 = captured[0]
-    zoom_xlim, zoom_r2 = captured[1]
+    full_xlim, full_r2, _, _ = captured[0]
+    zoom_xlim, zoom_r2, spectrum, peaks = captured[1]
     assert full_xlim is None and zoom_xlim == (700.0, 1200.0)
     # The companion's R² is computed over what it displays, not over the
     # narrower fit range the full-range render reported.
     assert zoom_r2 != pytest.approx(full_r2)
+
+    # …and it measures the model that is DRAWN (Gaussians reconstructed from
+    # the fitted peaks over the whole domain), not the fitting API's model
+    # array, which is zero-padded outside the 1000-1200 fit ROI. Recomputed
+    # here independently.
+    x = spectrum["raman_shift"].to_numpy(float)
+    y = spectrum["intensity"].to_numpy(float)
+    drawn = np.zeros_like(x)
+    for peak in peaks:
+        drawn += _gaussian(x, peak.m_cm1, peak.a, peak.fwhm)
+    mask = (x >= 700.0) & (x <= 1200.0)
+    ss_res = float(np.sum((y[mask] - drawn[mask]) ** 2))
+    ss_tot = float(np.sum((y[mask] - y[mask].mean()) ** 2))
+    assert zoom_r2 == pytest.approx(1.0 - ss_res / ss_tot, abs=1e-9)
+    # The peak's tail reaches below the 1080 fit edge, so scoring against the
+    # zero-padded array would have reported a materially worse value.
+    padded = np.zeros_like(x)
+    in_roi = (x >= 1080.0) & (x <= 1200.0)
+    padded[in_roi] = drawn[in_roi]
+    padded_r2 = 1.0 - float(np.sum((y[mask] - padded[mask]) ** 2)) / ss_tot
+    assert zoom_r2 - padded_r2 > 0.01, (zoom_r2, padded_r2)
 
     # And the JSON sidecar inventories the companion + its window (#30 F4).
     meta_path = next(p for p in result.artifacts if p.suffix == ".json")
