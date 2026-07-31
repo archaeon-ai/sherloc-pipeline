@@ -26,7 +26,7 @@ Usage:
     print(result.summary)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Literal, Tuple, Dict, Any
@@ -49,6 +49,10 @@ from .base import ServiceResult
 from .errors import SherlocServiceError, enrich
 from .runtime import RuntimeContext
 from sherloc_pipeline.visualization.plotting import configure_matplotlib, apply_plot_config
+from sherloc_pipeline.visualization.fitting_plots import (
+    resolve_fit_zoom_range,
+    zoomed_overlay_path,
+)
 
 from sherloc_pipeline.core.baseline import (
     BaselineParams,
@@ -730,6 +734,17 @@ class SpectralService:
         # Close figure to free memory
         plt.close(fig)
 
+        # Step 8: Companion zoomed R1 mineral-region overlay (#30)
+        zoom_png = self._export_zoomed_companion(
+            spectrum_df,
+            request,
+            artifacts,
+            fit_result=fit_result,
+            model_array=model_array,
+        )
+        if zoom_png is not None:
+            artifacts.append(zoom_png)
+
         # Build summary
         processing_parts = []
         processing_parts.append(self._format_avg_method(request))
@@ -739,7 +754,7 @@ class SpectralService:
             processing_parts.append("baselined")
         if request.fit and fit_result is not None:
             processing_parts.append(f"fit ({len(fit_result.peaks)} peaks)")
-        
+
         summary = (
             f"Processed averaged spectrum for {request.sol}/{request.target}/{request.scan} "
             f"({loupe_data.n_points} points, {loupe_data.ppp} PPP): "
@@ -753,6 +768,66 @@ class SpectralService:
             metadata=metadata,
         )
     
+    def _export_zoomed_companion(
+        self,
+        spectrum_df: pd.DataFrame,
+        request: SpectralPlotRequest,
+        artifacts: list[Path],
+        *,
+        fit_result: Optional[FitResult],
+        model_array: Optional[np.ndarray],
+    ) -> Optional[Path]:
+        """Write the zoomed R1 mineral-region companion of an average fit plot (#30).
+
+        The same fit, re-rendered over the configured `fitting.r1_fit_range` and
+        written as `<stem>_<lo>-<hi>.png` beside the full-range PNG, so an
+        average fit always ships with the mineral-region review view. No refit
+        and no new fit computation — only a second render.
+
+        Returns None (no companion) when there is nothing to zoom or when the
+        caller already chose a window:
+
+        - no fit was applied (a bare spectrum plot has no fit overlay);
+        - PNG export was not requested;
+        - an explicit `xlim` was given — that window governs, and a second
+          fixed-window plot beside it would contradict the caller's choice;
+        - the configured range is malformed or covers no channels.
+        """
+        if fit_result is None or model_array is None:
+            return None
+        if request.export not in ("png", "both") or request.xlim is not None:
+            return None
+
+        try:
+            fitting_config = self.context.config.fitting
+        except AttributeError:
+            fitting_config = {}
+        zoom_range = resolve_fit_zoom_range(fitting_config)
+        if zoom_range is None:
+            return None
+
+        x = spectrum_df["raman_shift"].to_numpy(float)
+        if int(((x >= zoom_range[0]) & (x <= zoom_range[1])).sum()) < 2:
+            return None
+
+        full_png = next((p for p in artifacts if p.suffix == ".png"), None)
+        if full_png is None:
+            return None
+
+        zoom_request = replace(request, xlim=zoom_range)
+        fig = self._generate_plot(
+            spectrum_df,
+            zoom_request,
+            fit_result=fit_result,
+            model_array=model_array,
+        )
+        try:
+            zoom_png = zoomed_overlay_path(full_png, zoom_range)
+            fig.savefig(zoom_png, dpi=300, bbox_inches="tight")
+        finally:
+            plt.close(fig)
+        return zoom_png
+
     def _process_subset(self, request: SpectralPlotRequest) -> ServiceResult:
         """Process subset-averaged spectrum from specified points.
         

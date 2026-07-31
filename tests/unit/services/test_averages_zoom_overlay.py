@@ -104,10 +104,13 @@ def test_both_overlays_emitted_per_average_kind(
 
 
 def test_zoom_range_follows_config(
-    test_context, fixtures_path: Path, tmp_path: Path, averages_tree: Path
+    test_context, fixtures_path: Path, tmp_path: Path, averages_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """A non-default `r1_fit_range` self-describes in the companion filename."""
-    test_context.config.fitting["r1_fit_range"] = [650, 1150]
+    # setitem, not assignment: RuntimeContext.bootstrap() shares one config
+    # object process-wide, so a bare mutation would leak into later tests.
+    monkeypatch.setitem(test_context.config.fitting, "r1_fit_range", [650, 1150])
 
     result = _fit_averages(test_context, fixtures_path, tmp_path)
 
@@ -127,7 +130,31 @@ def test_resolve_fit_zoom_range():
     # empty axis.
     assert resolve_fit_zoom_range({"r1_fit_range": [1200, 700]}) is None
     assert resolve_fit_zoom_range({"r1_fit_range": [700]}) is None
+    assert resolve_fit_zoom_range({"r1_fit_range": [700, 1000, 1200]}) is None
     assert resolve_fit_zoom_range({"r1_fit_range": "700,1200"}) is None
+    assert resolve_fit_zoom_range({"r1_fit_range": None}) is None
+    # Non-finite bounds order fine but matplotlib rejects them as axis limits.
+    assert resolve_fit_zoom_range({"r1_fit_range": [700, float("inf")]}) is None
+    assert resolve_fit_zoom_range({"r1_fit_range": [float("-inf"), 1200]}) is None
+    assert resolve_fit_zoom_range({"r1_fit_range": [float("nan"), 1200]}) is None
+
+
+def test_malformed_range_skips_companion_without_failing(
+    test_context, fixtures_path: Path, tmp_path: Path, averages_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A bad configured range must not fail the run after artifacts are written."""
+    monkeypatch.setitem(
+        test_context.config.fitting, "r1_fit_range", [700, float("inf")]
+    )
+
+    result = _fit_averages(test_context, fixtures_path, tmp_path)
+
+    out_dir = averages_tree / "averages_fit"
+    for stem in AVERAGE_STEMS:
+        assert (out_dir / f"{stem}_fit.png").exists()  # full-range still emitted
+    assert not list(out_dir.glob("*_fit_*.png"))
+    assert result.metadata["averages_fitted"] == 2
 
 
 def test_range_token_and_path_naming(tmp_path: Path):
@@ -167,6 +194,80 @@ def test_zoomed_overlay_is_render_only(tmp_path: Path):
     assert result.peaks == [peak]
     # No full-range plot is written by the companion call.
     assert not full_range.exists()
+
+
+# --- averaged-mode spectral plot path (the second emission site) ------------ #
+
+
+def _averaged_request(**kw):
+    from sherloc_pipeline.services.spectral import SpectralPlotRequest
+
+    params = dict(
+        sol=SOL,
+        target=TARGET,
+        scan=SCAN,
+        mode="averaged",
+        avg_method="mean",
+        background=None,
+        baseline=True,
+        fit=True,
+        export="both",
+    )
+    params.update(kw)
+    return SpectralPlotRequest(**params)
+
+
+def _run_averaged(test_context, **kw):
+    from sherloc_pipeline.services.spectral import SpectralService
+
+    return SpectralService(context=test_context).process(_averaged_request(**kw))
+
+
+def test_averaged_mode_fit_emits_zoomed_companion(test_context):
+    """An averaged-mode fit plot ships with the mineral-region companion."""
+    result = _run_averaged(test_context)
+
+    pngs = [p for p in result.artifacts if p.suffix == ".png"]
+    assert len(pngs) == 2
+    full_range = next(p for p in pngs if not p.stem.endswith("_700-1200"))
+    zoomed = next(p for p in pngs if p.stem.endswith("_700-1200"))
+    assert zoomed == full_range.with_name(f"{full_range.stem}_700-1200.png")
+    assert zoomed.exists() and full_range.exists()
+
+
+def test_averaged_mode_zoom_follows_config(
+    test_context, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setitem(test_context.config.fitting, "r1_fit_range", [650, 1150])
+
+    result = _run_averaged(test_context)
+
+    pngs = {p.name for p in result.artifacts if p.suffix == ".png"}
+    assert any(name.endswith("_650-1150.png") for name in pngs)
+    assert not any(name.endswith("_700-1200.png") for name in pngs)
+
+
+def test_averaged_mode_no_companion_without_a_fit(test_context):
+    """A bare spectrum plot has no fit overlay to zoom."""
+    result = _run_averaged(test_context, fit=False)
+
+    pngs = [p for p in result.artifacts if p.suffix == ".png"]
+    assert len(pngs) == 1
+
+
+def test_averaged_mode_explicit_xlim_governs(test_context):
+    """An explicit window is the caller's choice — no second fixed-window plot."""
+    result = _run_averaged(test_context, xlim=(900.0, 1400.0))
+
+    pngs = [p for p in result.artifacts if p.suffix == ".png"]
+    assert len(pngs) == 1
+    assert not pngs[0].stem.endswith("_700-1200")
+
+
+def test_averaged_mode_csv_only_export_writes_no_companion(test_context):
+    result = _run_averaged(test_context, export="csv")
+
+    assert not [p for p in result.artifacts if p.suffix == ".png"]
 
 
 def test_zoomed_overlay_skips_empty_window(tmp_path: Path):

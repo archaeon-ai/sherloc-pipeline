@@ -7,7 +7,9 @@ as part of the core/visualization layer separation (Public Release v3).
 from __future__ import annotations
 
 import json
+import math
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -62,9 +64,15 @@ def resolve_fit_zoom_range(
     caller skips the companion plot rather than rendering an empty axis.
     """
     raw = (fit_cfg or {}).get("r1_fit_range", default)
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence) or len(raw) != 2:
+        return None
     try:
-        lo, hi = float(raw[0]), float(raw[1])  # type: ignore[index]
-    except (TypeError, ValueError, IndexError, KeyError):
+        lo, hi = float(raw[0]), float(raw[1])
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        # Non-finite bounds pass an ordering check but matplotlib rejects them
+        # as axis limits — skip the companion rather than fail mid-emission.
         return None
     return (lo, hi) if hi > lo else None
 
