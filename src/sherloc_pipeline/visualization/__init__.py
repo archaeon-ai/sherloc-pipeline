@@ -28,7 +28,10 @@ from .spectrograms import (
 
 from .fitting_plots import (
     plot_fit_overlay,
+    plot_fit_overlay_zoomed,
     plot_fluor_fit_overlay,
+    resolve_fit_zoom_range,
+    zoomed_overlay_path,
     GROUP_COLORS,
 )
 
@@ -50,7 +53,10 @@ __all__ = [
     "SpectrogramVisualizationPipeline",
     "SpatialSpectralData",
     "plot_fit_overlay",
+    "plot_fit_overlay_zoomed",
     "plot_fluor_fit_overlay",
+    "resolve_fit_zoom_range",
+    "zoomed_overlay_path",
     "GROUP_COLORS",
     "overlay_points_on_aci",
     "render_pointloc_full",
