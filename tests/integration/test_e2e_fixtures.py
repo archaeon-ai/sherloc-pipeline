@@ -53,7 +53,9 @@ class TestAmherstPointE2E:
         png_files = list(plots_dir.glob("*.png"))
         
         assert len(csv_files) == 1, f"Expected 1 CSV, found {len(csv_files)}"
-        assert len(png_files) == 1, f"Expected 1 PNG, found {len(png_files)}"
+        # A fitted plot ships with its zoomed mineral-region companion (#30).
+        assert len(png_files) == 2, f"Expected 2 PNGs, found {len(png_files)}"
+        assert sum(p.stem.endswith("_700-1200") for p in png_files) == 1
         
         # Verify CSV structure
         df = pd.read_csv(csv_files[0])
@@ -148,7 +150,9 @@ class TestLakeHaiyahaE2E:
         png_files = list(plots_dir.glob("*.png"))
         
         assert len(csv_files) == 1
-        assert len(png_files) == 1
+        # A fitted plot ships with its zoomed mineral-region companion (#30).
+        assert len(png_files) == 2
+        assert sum(p.stem.endswith("_700-1200") for p in png_files) == 1
         
         # Verify CSV structure
         df = pd.read_csv(csv_files[0])
@@ -227,7 +231,9 @@ class TestStigbreenE2E:
         png_files = list(plots_dir.glob("*.png"))
         
         assert len(csv_files) == 1
-        assert len(png_files) == 1
+        # A fitted plot ships with its zoomed mineral-region companion (#30).
+        assert len(png_files) == 2
+        assert sum(p.stem.endswith("_700-1200") for p in png_files) == 1
         
         # Verify CSV structure
         df = pd.read_csv(csv_files[0])

@@ -1399,9 +1399,13 @@ class FittingService:
         try:
             from sherloc_pipeline.core.data_ingestion import DataIngestion
             from sherloc_pipeline.core.fitting import fit_spectrum, save_peak_table, compute_r2
-            from sherloc_pipeline.visualization.fitting_plots import plot_fit_overlay
+            from sherloc_pipeline.visualization.fitting_plots import (
+                plot_fit_overlay,
+                plot_fit_overlay_zoomed,
+                resolve_fit_zoom_range,
+            )
             from sherloc_pipeline.models.fitting import FitResult
-            
+
             ingestion = DataIngestion(
                 base_data_dir=context.base_data_dir,
                 results_dir=context.results_dir,
@@ -1464,7 +1468,11 @@ class FittingService:
                 fit_cfg['slit_pref_weight'] = float(slit_pref_weight)
             if max_peaks is not None and max_peaks > 0:
                 fit_cfg['max_peaks'] = int(max_peaks)
-            
+
+            # R1 mineral-region zoom window for the companion overlays (#30).
+            # None only for a malformed/degenerate configured range.
+            zoom_range = resolve_fit_zoom_range(fit_cfg)
+
             artifacts: List[Path] = []
             warnings: List[str] = []
             summary_rows = []
@@ -1553,7 +1561,8 @@ class FittingService:
                 artifacts.append(peaks_csv)
                 
                 png_path = out_dir / f"{sol}_{target}_{scan}_{region}_avg-{kind_token}{suffix}_fit.png"
-                title = f"sol {sol} {target} {scan} R1 avg {kind_token} 500–4000 cm⁻¹ (R²={r2_full:.3f})"
+                title_stem = f"sol {sol} {target} {scan} R1 avg {kind_token}"
+                title = f"{title_stem} 500–4000 cm⁻¹ (R²={r2_full:.3f})"
                 plot_mask = full_mask
                 plot_fit_overlay(
                     x, y, plot_mask, result, y_model_total, str(png_path),
@@ -1561,7 +1570,21 @@ class FittingService:
                     sol=sol, target=target, scan=scan, point=None, roi=full_plot
                 )
                 artifacts.append(png_path)
-                
+
+                # Companion zoomed overlay of the R1 mineral fit region (#30) —
+                # the review plot previously produced by hand for every new
+                # dataset. Render-only: same peaks, same model array, no refit.
+                # The window (and so the filename token) comes from the
+                # configured r1_fit_range, so a non-default range self-describes.
+                if zoom_range is not None:
+                    zoom_png = plot_fit_overlay_zoomed(
+                        x, y, result, y_model_total, png_path, zoom_range,
+                        title_stem=title_stem,
+                        sol=sol, target=target, scan=scan, point=None,
+                    )
+                    if zoom_png is not None:
+                        artifacts.append(zoom_png)
+
                 # Accepted peaks rows
                 for p in (result.peaks or []):
                     if p.pass_snr and p.pass_fwhm and p.pass_r2 and p.pass_sharpness:

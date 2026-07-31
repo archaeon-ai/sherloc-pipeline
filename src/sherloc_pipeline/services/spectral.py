@@ -26,7 +26,7 @@ Usage:
     print(result.summary)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Literal, Tuple, Dict, Any
@@ -49,6 +49,10 @@ from .base import ServiceResult
 from .errors import SherlocServiceError, enrich
 from .runtime import RuntimeContext
 from sherloc_pipeline.visualization.plotting import configure_matplotlib, apply_plot_config
+from sherloc_pipeline.visualization.fitting_plots import (
+    resolve_fit_zoom_range,
+    zoomed_overlay_path,
+)
 
 from sherloc_pipeline.core.baseline import (
     BaselineParams,
@@ -56,7 +60,7 @@ from sherloc_pipeline.core.baseline import (
     build_weight_vector_from_windows,
 )
 from sherloc_pipeline.core.preprocessing import baseline_aspls
-from sherloc_pipeline.core.fitting import fit_spectrum, gaussian
+from sherloc_pipeline.core.fitting import compute_r2, fit_spectrum, gaussian
 from sherloc_pipeline.core.utils import resolve_trim_proportion, format_trim_label
 from sherloc_pipeline.models.fitting import FitResult, PeakFit
 
@@ -716,7 +720,16 @@ class SpectralService:
             model_array=model_array,
         )
         
-        # Step 7: Export outputs
+        # Step 7: Companion zoomed R1 mineral-region overlay (#30). Written
+        # BEFORE the export so the JSON sidecar's file inventory can name it.
+        zoom_png = self._export_zoomed_companion(
+            spectrum_df,
+            request,
+            fit_result=fit_result,
+            model_array=model_array,
+        )
+
+        # Step 8: Export outputs
         artifacts = self._export(
             spectrum_df,
             fig,
@@ -725,10 +738,14 @@ class SpectralService:
             loupe_data=loupe_data,
             bg_scale_used=bg_scale_used,
             despike=despike_state,
+            companion_png=zoom_png,
         )
 
         # Close figure to free memory
         plt.close(fig)
+
+        if zoom_png is not None:
+            artifacts.append(zoom_png)
 
         # Build summary
         processing_parts = []
@@ -739,7 +756,7 @@ class SpectralService:
             processing_parts.append("baselined")
         if request.fit and fit_result is not None:
             processing_parts.append(f"fit ({len(fit_result.peaks)} peaks)")
-        
+
         summary = (
             f"Processed averaged spectrum for {request.sol}/{request.target}/{request.scan} "
             f"({loupe_data.n_points} points, {loupe_data.ppp} PPP): "
@@ -753,6 +770,100 @@ class SpectralService:
             metadata=metadata,
         )
     
+    def _export_zoomed_companion(
+        self,
+        spectrum_df: pd.DataFrame,
+        request: SpectralPlotRequest,
+        *,
+        fit_result: Optional[FitResult],
+        model_array: Optional[np.ndarray],
+    ) -> Optional[Path]:
+        """Write the zoomed R1 mineral-region companion of an average fit plot (#30).
+
+        The same fit, re-rendered over the configured `fitting.r1_fit_range` and
+        written as `<stem>_<lo>-<hi>.png` beside the full-range PNG, so an
+        average fit always ships with the mineral-region review view. No refit
+        and no new fit computation — only a second render, with R² rescoped to
+        the displayed window so the legend describes what is actually shown
+        (matching the `fit_averages` companion). The caller's `FitResult` is
+        never mutated.
+
+        Returns None (no companion) when there is nothing to zoom or when the
+        caller already chose a window:
+
+        - no fit was applied (a bare spectrum plot has no fit overlay);
+        - PNG export was not requested;
+        - an explicit `xlim` was given — that window governs, and a second
+          fixed-window plot beside it would contradict the caller's choice;
+        - the configured range is malformed or covers no channels.
+        """
+        if fit_result is None or model_array is None:
+            return None
+        if request.export not in ("png", "both") or request.xlim is not None:
+            return None
+
+        try:
+            fitting_config = self.context.config.fitting
+        except AttributeError:
+            fitting_config = {}
+        zoom_range = resolve_fit_zoom_range(fitting_config)
+        if zoom_range is None:
+            return None
+
+        x = spectrum_df["raman_shift"].to_numpy(float)
+        mask = (x >= zoom_range[0]) & (x <= zoom_range[1])
+        if int(mask.sum()) < 2:
+            return None
+
+        # Window-scoped view of the SAME fit. `fit_result.r2` was computed over
+        # the fit range, which need not be the companion's window (e.g.
+        # `--fit-range 1000,1200` under a 700-1200 companion), so rendering it
+        # unchanged would annotate the plot with an R² for a window the reader
+        # is not looking at.
+        #
+        # The metric is computed against the model `_generate_plot` actually
+        # DRAWS — the Gaussians reconstructed from the fitted peaks across the
+        # whole plotting domain — not against `model_array`, which the fitting
+        # API zero-pads outside the fit ROI. Under a fit range narrower than the
+        # companion window those zeros would score the visible Gaussian tails
+        # against nothing.
+        y = spectrum_df["intensity"].to_numpy(float)
+        y_model_drawn = np.zeros_like(x, dtype=float)
+        for peak in fit_result.peaks:
+            y_model_drawn += gaussian(x, peak.m_cm1, peak.a, peak.fwhm)
+        zoom_result = FitResult(
+            peaks=fit_result.peaks,
+            r2=float(compute_r2(y[mask], y_model_drawn[mask])),
+            rss=float(np.sum((y[mask] - y_model_drawn[mask]) ** 2)),
+            dof=max(0, int(mask.sum()) - 3 * len(fit_result.peaks)),
+            warnings=list(fit_result.warnings or []),
+        )
+
+        output_dir, base_filename = self._plot_output_target(request, fit_result)
+        zoom_request = replace(request, xlim=zoom_range)
+        fig = self._generate_plot(
+            spectrum_df,
+            zoom_request,
+            fit_result=zoom_result,
+            model_array=model_array,
+        )
+        try:
+            zoom_png = zoomed_overlay_path(output_dir / f"{base_filename}.png", zoom_range)
+            zoom_png.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(zoom_png, dpi=300, bbox_inches="tight")
+        finally:
+            plt.close(fig)
+        return zoom_png
+
+    def _plot_output_target(
+        self, request: SpectralPlotRequest, fit_result: Optional[FitResult]
+    ) -> Tuple[Path, str]:
+        """The `plots/` directory and base filename this request exports under."""
+        return (
+            self.context.results_root / request.target / "plots",
+            self._build_filename(request, fit_result),
+        )
+
     def _process_subset(self, request: SpectralPlotRequest) -> ServiceResult:
         """Process subset-averaged spectrum from specified points.
         
@@ -2917,6 +3028,7 @@ class SpectralService:
         output_dir: Optional[Path] = None,
         base_filename: Optional[str] = None,
         despike: Optional[DespikeApplication] = None,
+        companion_png: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Build comprehensive metadata dictionary for JSON export.
         
@@ -3116,6 +3228,16 @@ class SpectralService:
                 outputs["files"]["csv"] = f"{base_filename}.csv"
             if request.export in ("png", "both"):
                 outputs["files"]["png"] = f"{base_filename}.png"
+            # The zoomed mineral-region companion (#30) is written beside the
+            # PNG; inventory it (and its effective window) so the record is
+            # complete for a non-default configured range too.
+            if companion_png is not None:
+                outputs["files"]["png_zoomed"] = companion_png.name
+                companion_xlim = resolve_fit_zoom_range(
+                    getattr(self.context.config, "fitting", {})
+                )
+                if companion_xlim is not None:
+                    plot_info["zoomed_xlim"] = list(companion_xlim)
             if not request.no_metadata:
                 outputs["files"]["json"] = f"{base_filename}.json"
             metadata["outputs"] = outputs
@@ -3131,6 +3253,7 @@ class SpectralService:
         loupe_data: Optional[LoupeData] = None,
         bg_scale_used: Optional[float] = None,
         despike: Optional[DespikeApplication] = None,
+        companion_png: Optional[Path] = None,
     ) -> list[Path]:
         """Export spectrum data, plot, and metadata to files.
         
@@ -3227,6 +3350,7 @@ class SpectralService:
                     output_dir=output_dir,
                     base_filename=base_filename,
                     despike=despike,
+                    companion_png=companion_png,
                 )
                 json_path = output_dir / f"{base_filename}.json"
                 with open(json_path, 'w', encoding='utf-8') as f:

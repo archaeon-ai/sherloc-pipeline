@@ -200,7 +200,9 @@ class TestCLIPlotAveragedMode:
         csv_files = list(plots_dir.glob("*.csv"))
         png_files = list(plots_dir.glob("*.png"))
         assert len(csv_files) == 1
-        assert len(png_files) == 1
+        # A fitted plot ships with its zoomed mineral-region companion (#30).
+        assert len(png_files) == 2
+        assert sum(p.stem.endswith("_700-1200") for p in png_files) == 1
 
     def test_different_averaging_methods(self, fixtures_path, tmp_path):
         """Test different averaging methods via CLI."""

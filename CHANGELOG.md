@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Zoomed mineral-region companion plot for average fits (#30).** Every
+  average-spectrum fit overlay `fit-averages` (and so `process-new`) emits now
+  has a companion `<stem>_fit_<lo>-<hi>.png` beside the full-range 500–4000
+  cm⁻¹ plot, for both average kinds. The window is the configured
+  `fitting.r1_fit_range` (default `[700, 1200]`, reproducing the historical
+  `_700-1200` naming) and the filename tokens derive from it, so a non-default
+  range self-describes. Render-only: same peaks, same model array, no refit —
+  only R² is rescoped to the displayed window. No new flags.
 - **Optional atomic delivery handoff.** A successful `full-pipeline` run now
   records an explicit `not_configured` skip by default. When
   `SHERLOC_HANDOFF_DIR` is set, it inventories the completed scan's raw ACI

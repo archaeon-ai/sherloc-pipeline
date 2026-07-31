@@ -130,11 +130,14 @@ class TestAveragedWorkflowIntegration:
         )
         
         result = service.process(request)
-        
-        # Verify result structure
+
+        # Verify result structure. A fitted PNG ships with its zoomed
+        # mineral-region companion by default (#30).
         assert isinstance(result, ServiceResult)
-        assert len(result.artifacts) == 3  # CSV, PNG, and JSON metadata
-        
+        assert len(result.artifacts) == 4  # CSV, PNG, zoomed PNG, JSON metadata
+        pngs = sorted(p.name for p in result.artifacts if p.suffix == ".png")
+        assert len(pngs) == 2 and pngs[1].endswith("_700-1200.png")
+
         # Verify fit metadata
         assert result.metadata["fit"] is True
         assert "n_peaks" in result.metadata

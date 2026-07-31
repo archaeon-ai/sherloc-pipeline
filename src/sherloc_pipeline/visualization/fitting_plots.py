@@ -7,7 +7,9 @@ as part of the core/visualization layer separation (Public Release v3).
 from __future__ import annotations
 
 import json
+import math
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -27,6 +29,129 @@ GROUP_COLORS = {
     "group3": "#7E57C2",  # violet
     "unidentified": "#9E9E9E",  # gray
 }
+
+
+# Config default for the R1 mineral fit ROI (config.yaml → fitting.r1_fit_range).
+# Used only when a caller's fitting config carries no explicit range.
+DEFAULT_R1_FIT_RANGE: Tuple[float, float] = (700.0, 1200.0)
+
+
+def _format_bound(value: float) -> str:
+    """Render a range bound without a trailing ``.0`` for integral values."""
+    bound = float(value)
+    return str(int(bound)) if bound.is_integer() else f"{bound:g}"
+
+
+def format_range_token(zoom_range: Tuple[float, float]) -> str:
+    """Filename token for a plot range: ``(700.0, 1200.0)`` → ``700-1200``."""
+    lo, hi = zoom_range
+    return f"{_format_bound(lo)}-{_format_bound(hi)}"
+
+
+def format_range_label(zoom_range: Tuple[float, float]) -> str:
+    """Title label for a plot range: ``(700.0, 1200.0)`` → ``700–1200`` (en dash)."""
+    lo, hi = zoom_range
+    return f"{_format_bound(lo)}–{_format_bound(hi)}"
+
+
+def resolve_fit_zoom_range(
+    fit_cfg: Optional[Dict[str, object]],
+    default: Tuple[float, float] = DEFAULT_R1_FIT_RANGE,
+) -> Optional[Tuple[float, float]]:
+    """The configured R1 mineral-region zoom window (``fitting.r1_fit_range``).
+
+    Returns None for a malformed or degenerate (hi <= lo) configured range so the
+    caller skips the companion plot rather than rendering an empty axis.
+    """
+    raw = (fit_cfg or {}).get("r1_fit_range", default)
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence) or len(raw) != 2:
+        return None
+    try:
+        lo, hi = float(raw[0]), float(raw[1])
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        # Non-finite bounds pass an ordering check but matplotlib rejects them
+        # as axis limits — skip the companion rather than fail mid-emission.
+        return None
+    return (lo, hi) if hi > lo else None
+
+
+def zoomed_overlay_path(
+    full_range_png_path: str | Path, zoom_range: Tuple[float, float]
+) -> Path:
+    """Companion filename beside a full-range overlay: ``<stem>_<lo>-<hi>.png``."""
+    path = Path(full_range_png_path)
+    return path.with_name(
+        f"{path.stem}_{format_range_token(zoom_range)}{path.suffix}"
+    )
+
+
+def plot_fit_overlay_zoomed(
+    x_cm1: np.ndarray,
+    y: np.ndarray,
+    result: FitResult,
+    y_model_full: np.ndarray,
+    full_range_png_path: str | Path,
+    zoom_range: Tuple[float, float],
+    *,
+    title_stem: Optional[str] = None,
+    sol: Optional[str] = None,
+    target: Optional[str] = None,
+    scan: Optional[str] = None,
+    point: Optional[int] = None,
+) -> Optional[Path]:
+    """Render the zoomed companion of a full-range fit overlay (render-only).
+
+    Re-renders the SAME fit — same peaks, same model — restricted to
+    ``zoom_range``, beside the full-range PNG as ``<stem>_<lo>-<hi>.png``. No
+    refit happens here; only R² is recomputed, over the displayed window and
+    against the model actually drawn there, so the title/legend describe what
+    is shown (the full-range R² is diluted by the out-of-window channels).
+    Returns the written path, or None when the window holds fewer than two
+    channels.
+    """
+    from sherloc_pipeline.core.fitting import compute_r2, gaussian
+
+    x = np.asarray(x_cm1, dtype=float)
+    lo, hi = zoom_range
+    mask = (x >= lo) & (x <= hi)
+    if int(mask.sum()) < 2:
+        return None
+
+    y_arr = np.asarray(y, dtype=float)
+    # Score the model that is DRAWN, not `y_model_full`. Callers assemble that
+    # array from per-segment fits, so it is zero outside each segment's own ROI
+    # — while `plot_fit_overlay` ignores it and recomputes every peak's Gaussian
+    # across the window. A broad component fitted elsewhere (a wide hydration
+    # band, the G band) therefore contributes a visible tail inside the zoom
+    # that the array scores as nothing.
+    y_model_drawn = np.zeros_like(x, dtype=float)
+    for peak in result.peaks:
+        y_model_drawn += gaussian(x, peak.m_cm1, peak.a, peak.fwhm)
+    r2_zoom = float(compute_r2(y_arr[mask], y_model_drawn[mask]))
+    zoom_result = FitResult(
+        peaks=result.peaks,
+        r2=r2_zoom,
+        rss=float(np.sum((y_arr[mask] - y_model_drawn[mask]) ** 2)),
+        dof=max(0, int(mask.sum()) - 3 * len(result.peaks)),
+        warnings=list(result.warnings or []),
+    )
+
+    title = None
+    if title_stem:
+        title = (
+            f"{title_stem} {format_range_label(zoom_range)} cm⁻¹ "
+            f"(R²={r2_zoom:.3f})"
+        )
+    output_path = zoomed_overlay_path(full_range_png_path, zoom_range)
+    plot_fit_overlay(
+        x, y_arr, mask, zoom_result, np.asarray(y_model_full, dtype=float),
+        str(output_path),
+        title=title, xlim=zoom_range,
+        sol=sol, target=target, scan=scan, point=point, roi=zoom_range,
+    )
+    return output_path
 
 
 def plot_fit_overlay(
