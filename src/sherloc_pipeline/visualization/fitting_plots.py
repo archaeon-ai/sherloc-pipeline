@@ -103,14 +103,15 @@ def plot_fit_overlay_zoomed(
 ) -> Optional[Path]:
     """Render the zoomed companion of a full-range fit overlay (render-only).
 
-    Re-renders the SAME fit — same peaks, same model array — restricted to
+    Re-renders the SAME fit — same peaks, same model — restricted to
     ``zoom_range``, beside the full-range PNG as ``<stem>_<lo>-<hi>.png``. No
-    refit happens here; only R² is recomputed over the displayed window so the
-    title/legend describe what is actually shown (the full-range R² is diluted
-    by the out-of-window channels). Returns the written path, or None when the
-    window holds fewer than two channels.
+    refit happens here; only R² is recomputed, over the displayed window and
+    against the model actually drawn there, so the title/legend describe what
+    is shown (the full-range R² is diluted by the out-of-window channels).
+    Returns the written path, or None when the window holds fewer than two
+    channels.
     """
-    from sherloc_pipeline.core.fitting import compute_r2
+    from sherloc_pipeline.core.fitting import compute_r2, gaussian
 
     x = np.asarray(x_cm1, dtype=float)
     lo, hi = zoom_range
@@ -119,12 +120,20 @@ def plot_fit_overlay_zoomed(
         return None
 
     y_arr = np.asarray(y, dtype=float)
-    y_model = np.asarray(y_model_full, dtype=float)
-    r2_zoom = float(compute_r2(y_arr[mask], y_model[mask]))
+    # Score the model that is DRAWN, not `y_model_full`. Callers assemble that
+    # array from per-segment fits, so it is zero outside each segment's own ROI
+    # — while `plot_fit_overlay` ignores it and recomputes every peak's Gaussian
+    # across the window. A broad component fitted elsewhere (a wide hydration
+    # band, the G band) therefore contributes a visible tail inside the zoom
+    # that the array scores as nothing.
+    y_model_drawn = np.zeros_like(x, dtype=float)
+    for peak in result.peaks:
+        y_model_drawn += gaussian(x, peak.m_cm1, peak.a, peak.fwhm)
+    r2_zoom = float(compute_r2(y_arr[mask], y_model_drawn[mask]))
     zoom_result = FitResult(
         peaks=result.peaks,
         r2=r2_zoom,
-        rss=float(np.sum((y_arr[mask] - y_model[mask]) ** 2)),
+        rss=float(np.sum((y_arr[mask] - y_model_drawn[mask]) ** 2)),
         dof=max(0, int(mask.sum()) - 3 * len(result.peaks)),
         warnings=list(result.warnings or []),
     )
@@ -137,7 +146,8 @@ def plot_fit_overlay_zoomed(
         )
     output_path = zoomed_overlay_path(full_range_png_path, zoom_range)
     plot_fit_overlay(
-        x, y_arr, mask, zoom_result, y_model, str(output_path),
+        x, y_arr, mask, zoom_result, np.asarray(y_model_full, dtype=float),
+        str(output_path),
         title=title, xlim=zoom_range,
         sol=sol, target=target, scan=scan, point=point, roi=zoom_range,
     )

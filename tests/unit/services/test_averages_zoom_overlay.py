@@ -338,6 +338,52 @@ def test_averaged_mode_csv_only_export_writes_no_companion(test_context):
     assert not [p for p in result.artifacts if p.suffix == ".png"]
 
 
+def test_zoomed_overlay_scores_the_drawn_model(tmp_path: Path):
+    """A broad out-of-window peak is drawn inside the zoom, so it must be scored.
+
+    `fit_averages` assembles `y_model_total` from per-segment fits, so it is
+    zero outside each segment's ROI — while the renderer recomputes every peak's
+    Gaussian across the window. The companion must not score a visible tail as
+    nothing.
+    """
+    from sherloc_pipeline.core.fitting import compute_r2
+    from sherloc_pipeline.visualization import fitting_plots
+
+    x = np.arange(500.0, 4000.5, 2.0)
+    hydration = PeakFit(  # wide band fitted in 3000-4000, tail reaching the zoom
+        m_cm1=1400.0, a=50.0, fwhm=1200.0,
+        sigma=1200.0 / (2.0 * np.sqrt(2.0 * np.log(2.0))),
+        area=1.0, snr=10.0, pass_snr=True, pass_fwhm=True, pass_r2=True,
+    )
+    drawn = _gaussian(x, hydration.m_cm1, hydration.a, hydration.fwhm)
+    y = drawn + 5.0
+    # The caller's array is zero below 1300 — the segment ROI boundary.
+    segmented = np.where(x >= 1300.0, drawn, 0.0)
+    result = FitResult(peaks=[hydration], r2=0.9, rss=1.0, dof=1, warnings=[])
+
+    captured: dict = {}
+    real = fitting_plots.plot_fit_overlay
+
+    def spy(x_cm1, y_arr, mask, res, y_model_full, out, **kw):
+        captured["r2"] = float(res.r2)
+        return real(x_cm1, y_arr, mask, res, y_model_full, out, **kw)
+
+    fitting_plots.plot_fit_overlay = spy
+    try:
+        fitting_plots.plot_fit_overlay_zoomed(
+            x, y, result, segmented, tmp_path / "a_fit.png", (700.0, 1200.0)
+        )
+    finally:
+        fitting_plots.plot_fit_overlay = real
+
+    mask = (x >= 700.0) & (x <= 1200.0)
+    assert captured["r2"] == pytest.approx(
+        float(compute_r2(y[mask], drawn[mask])), abs=1e-9
+    )
+    # Scoring the zero-padded array instead would have been materially worse.
+    assert captured["r2"] - float(compute_r2(y[mask], segmented[mask])) > 0.1
+
+
 def test_zoomed_overlay_skips_empty_window(tmp_path: Path):
     x = np.arange(700.0, 1200.0, 2.0)
     y = np.zeros_like(x)
