@@ -247,6 +247,49 @@ def test_averaged_mode_zoom_follows_config(
     assert not any(name.endswith("_700-1200.png") for name in pngs)
 
 
+def test_averaged_mode_companion_r2_describes_its_own_window(test_context):
+    """A fit range narrower than the companion window must not annotate it."""
+    import json
+
+    from sherloc_pipeline.visualization import fitting_plots
+
+    captured: list[float] = []
+    original = fitting_plots.plot_fit_overlay  # unused here; guard against drift
+
+    from sherloc_pipeline.services import spectral as spectral_mod
+
+    real_generate = spectral_mod.SpectralService._generate_plot
+
+    def spy(self, spectrum_df, request, fit_result=None, model_array=None):
+        if fit_result is not None:
+            captured.append((request.xlim, float(fit_result.r2)))
+        return real_generate(
+            self, spectrum_df, request, fit_result=fit_result, model_array=model_array
+        )
+
+    spectral_mod.SpectralService._generate_plot = spy
+    try:
+        result = _run_averaged(test_context, fit_range=(1000.0, 1200.0))
+    finally:
+        spectral_mod.SpectralService._generate_plot = real_generate
+
+    assert original is fitting_plots.plot_fit_overlay
+    full_xlim, full_r2 = captured[0]
+    zoom_xlim, zoom_r2 = captured[1]
+    assert full_xlim is None and zoom_xlim == (700.0, 1200.0)
+    # The companion's R² is computed over what it displays, not over the
+    # narrower fit range the full-range render reported.
+    assert zoom_r2 != pytest.approx(full_r2)
+
+    # And the JSON sidecar inventories the companion + its window (#30 F4).
+    meta_path = next(p for p in result.artifacts if p.suffix == ".json")
+    outputs = json.loads(meta_path.read_text())
+    zoomed_name = outputs["outputs"]["files"]["png_zoomed"]
+    assert zoomed_name.endswith("_700-1200.png")
+    assert outputs["plot"]["zoomed_xlim"] == [700.0, 1200.0]
+    assert (meta_path.parent / zoomed_name).exists()
+
+
 def test_averaged_mode_no_companion_without_a_fit(test_context):
     """A bare spectrum plot has no fit overlay to zoom."""
     result = _run_averaged(test_context, fit=False)
