@@ -121,6 +121,29 @@ def test_fuzzy_match_does_not_resolve_to_distinct_sibling_index(tmp_path: Path) 
     assert resolved is None
 
 
+def test_fuzzy_match_does_not_resolve_to_distinct_sibling_reduction(tmp_path: Path) -> None:
+    """A close sole candidate with a different reduction suffix must not match.
+
+    ``quartz_sum_active_median_dark`` (canonical) and
+    ``quartz_sum_active_sum_dark`` (alternate) differ only in the reduction
+    token (``median`` vs ``sum``), which the composite-length threshold is
+    generous enough to absorb as if it were a typo -- but that token is
+    drawn from the pipeline's own controlled reduction vocabulary, never
+    freehand-transcribed by Loupe, so a mismatch there means a genuinely
+    different composite reduction, not a misspelling. Requesting the
+    canonical reduction when only the alternate exists on disk must refuse
+    to guess rather than silently resolving to the wrong composite.
+    """
+    sol_dir = tmp_path / "sol_3000"
+    _make_working_dir(sol_dir, "quartz_sum_active_sum_dark", "quartz_sum_active_sum_dark")
+
+    resolved = resolve_manifest_working_directory(
+        base_data_dir=tmp_path, sol="3000", scan="quartz_sum_active_median_dark"
+    )
+
+    assert resolved is None
+
+
 def test_ambiguous_fuzzy_match_refuses_to_guess(tmp_path: Path) -> None:
     """Two equally-close misspellings must not be silently disambiguated."""
     sol_dir = tmp_path / "sol_9999"

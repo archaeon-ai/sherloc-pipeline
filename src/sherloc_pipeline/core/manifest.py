@@ -102,6 +102,15 @@ def _edit_distance(a: str, b: str) -> int:
     return previous_row[-1]
 
 
+# Composite reduction vocabulary (mirrors the recognized multishot reduction
+# suffixes, e.g. ``_sum_active_median_dark``, ``_sum_active_sum_dark``,
+# ``_median_all``). These tokens are drawn from the pipeline's own controlled
+# naming, never freehand-transcribed by Loupe, so a mismatch here means two
+# genuinely different composite reductions -- not a typo -- and must not be
+# corrected by edit distance.
+_STRUCTURAL_TOKENS = frozenset({"sum", "active", "median", "dark", "all", "mean"})
+
+
 def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
     """Edit distance restricted to the free-text root of underscore-delimited names.
 
@@ -109,11 +118,12 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
     tokens -- a repeat index (``detail_1`` vs ``detail_2``) or a composite
     reduction method (``..._sum_active_median_dark``). Those tokens
     distinguish genuinely different sibling scans, not a misspelling of the
-    same one, so they must match exactly; only a non-numeric token (the
-    scan/target root, e.g. sol 1521's ``meteroite`` for ``meteorite``) may be
-    corrected by edit distance. Returns ``None`` when the two names aren't
-    structurally comparable (different token count, or a numeric token that
-    doesn't match verbatim) rather than a candidate for typo correction.
+    same one, so they must match exactly; only a non-numeric, non-structural
+    token (the scan/target root, e.g. sol 1521's ``meteroite`` for
+    ``meteorite``) may be corrected by edit distance. Returns ``None`` when
+    the two names aren't structurally comparable (different token count, or a
+    numeric/structural token that doesn't match verbatim) rather than a
+    candidate for typo correction.
     """
     scan_tokens = normalized_scan.split("_")
     workspace_tokens = workspace.split("_")
@@ -124,7 +134,12 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
     for scan_token, workspace_token in zip(scan_tokens, workspace_tokens):
         if scan_token == workspace_token:
             continue
-        if scan_token.isdigit() or workspace_token.isdigit():
+        if (
+            scan_token.isdigit()
+            or workspace_token.isdigit()
+            or scan_token in _STRUCTURAL_TOKENS
+            or workspace_token in _STRUCTURAL_TOKENS
+        ):
             return None
         total += _edit_distance(scan_token, workspace_token)
     return total
