@@ -119,6 +119,23 @@ _STRUCTURAL_TOKENS = frozenset({"sum", "active", "median", "dark", "all", "mean"
 # a root token that's simply a different word.
 _MAX_ROOT_TOKEN_EDIT_DISTANCE = 2
 
+# Root-token pairs that are VERIFIED Loupe transcription typos -- confirmed,
+# for each entry, that the on-disk manifest and the DB-corrected scan_name
+# refer to the *same physical scan* (not just a nearby edit distance). Edit
+# distance alone is not evidence of a typo: two genuinely different target
+# names (e.g. ``garde`` vs ``gardi``) can be one edit apart by coincidence,
+# and being the sole candidate present on disk does not make that guess
+# authoritative -- silently resolving to it would point the pipeline at an
+# unrelated target's spectral data. The fuzzy fallback therefore only
+# bridges a root-token mismatch when the pair is listed here; add an entry
+# only after confirming the identity out-of-band (e.g. against mission
+# planning records or the raw sequence metadata), never from distance alone.
+_VERIFIED_ROOT_ALIASES = frozenset(
+    {
+        frozenset({"meteorite", "meteroite"}),  # sol 1521 (issue #16)
+    }
+)
+
 # Sub-scan suffix letters, mirroring the sub-scan rule in
 # ``models.spectra.classify_scan_class``/``derive_parent_name`` (last char in
 # a/b/c preceded by a digit or the token boundary).
@@ -165,9 +182,10 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
     ``meteorite``) may be corrected by edit distance, and only up to
     ``_MAX_ROOT_TOKEN_EDIT_DISTANCE`` per token. Returns ``None`` when the
     two names aren't structurally comparable (different token count, an
-    index/structural token that doesn't match verbatim, or a root token
-    that drifts past the per-token cap) rather than a candidate for typo
-    correction.
+    index/structural token that doesn't match verbatim, a root-token
+    mismatch that isn't a verified alias (see ``_VERIFIED_ROOT_ALIASES``),
+    or a root token that drifts past the per-token cap) rather than a
+    candidate for typo correction.
     """
     scan_tokens = normalized_scan.split("_")
     workspace_tokens = workspace.split("_")
@@ -184,6 +202,8 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
             or scan_token in _STRUCTURAL_TOKENS
             or workspace_token in _STRUCTURAL_TOKENS
         ):
+            return None
+        if frozenset({scan_token, workspace_token}) not in _VERIFIED_ROOT_ALIASES:
             return None
         token_distance = _edit_distance(scan_token, workspace_token)
         if token_distance > _MAX_ROOT_TOKEN_EDIT_DISTANCE:
@@ -215,9 +235,14 @@ def _fuzzy_match_candidates(
     """Typo-tolerant fallback when no candidate's workspace matches exactly.
 
     Resolve by nearest typo distance (see ``_typo_distance``), but only when
-    exactly one candidate is unambiguously closest -- never guess between
-    two similarly-misspelled scans, since silently picking the wrong one
-    would point the pipeline at the wrong spectral data.
+    the mismatched root token is a VERIFIED alias (``_VERIFIED_ROOT_ALIASES``)
+    and exactly one candidate is unambiguously closest. Being the sole
+    candidate on disk is not, by itself, evidence of a typo -- a genuinely
+    different target name can coincidentally be a near edit-distance
+    neighbor -- so an unverified mismatch never matches here, and two
+    similarly-misspelled scans are never silently disambiguated either.
+    Either way, guessing wrong would point the pipeline at the wrong
+    spectral data.
     """
     threshold = max(1, round(_editable_root_length(normalized_scan) * 0.2))
     scored = []

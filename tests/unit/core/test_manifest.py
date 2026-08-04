@@ -6,6 +6,11 @@ field) are misspelled `meteroite` instead of `meteorite`, so exact-match
 manifest resolution never lands for the DB-corrected scan_name -- and the
 composite reductions (`meteroite_sum_active_median_dark`, etc.) inherit
 the same typo, so the canonical composite can't be fit either.
+
+The fallback only bridges root-token mismatches listed in the module's
+`_VERIFIED_ROOT_ALIASES` registry -- being the sole candidate on disk within
+edit-distance tolerance is not, by itself, treated as evidence of a typo,
+since a genuinely different target name can coincidentally land nearby.
 """
 from __future__ import annotations
 
@@ -226,6 +231,27 @@ def test_fuzzy_match_does_not_confuse_distinct_roots_sharing_long_suffix(tmp_pat
 
     resolved = resolve_manifest_working_directory(
         base_data_dir=tmp_path, sol="4000", scan="foo_sum_active_median_dark"
+    )
+
+    assert resolved is None
+
+
+def test_fuzzy_match_does_not_resolve_unverified_near_neighbor(tmp_path: Path) -> None:
+    """A sole near-neighbor that isn't a verified alias must not match.
+
+    ``garde`` and ``gardi`` are one edit apart -- within the generic typo
+    tolerance -- but they are two different, unrelated target names, not a
+    misspelling of each other, and neither is listed in
+    ``_VERIFIED_ROOT_ALIASES``. Being the only candidate present on disk is
+    not evidence of a typo: requesting ``garde`` when only ``gardi`` exists
+    must refuse to guess rather than silently resolving to the wrong
+    target's spectral data.
+    """
+    sol_dir = tmp_path / "sol_8000"
+    _make_working_dir(sol_dir, "gardi", "gardi")
+
+    resolved = resolve_manifest_working_directory(
+        base_data_dir=tmp_path, sol="8000", scan="garde"
     )
 
     assert resolved is None
