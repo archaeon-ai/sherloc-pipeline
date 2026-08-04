@@ -144,6 +144,48 @@ def test_fuzzy_match_does_not_resolve_to_distinct_sibling_reduction(tmp_path: Pa
     assert resolved is None
 
 
+def test_fuzzy_match_does_not_resolve_to_distinct_alphanumeric_sibling_index(
+    tmp_path: Path,
+) -> None:
+    """A close sole candidate with a different alphanumeric sub-scan index must not match.
+
+    ``detail_1a`` and ``detail_1b`` differ only in the trailing letter of an
+    alphanumeric repeat/sub-scan index, which is one edit apart -- within the
+    typo threshold -- but they are distinct sibling scans with distinct
+    spectral data, not a misspelling of each other. Requesting ``detail_1a``
+    when only ``detail_1b`` exists must refuse to guess rather than silently
+    resolving to the wrong sibling's data.
+    """
+    sol_dir = tmp_path / "sol_5000"
+    _make_working_dir(sol_dir, "detail_1b", "detail_1b")
+
+    resolved = resolve_manifest_working_directory(
+        base_data_dir=tmp_path, sol="5000", scan="detail_1a"
+    )
+
+    assert resolved is None
+
+
+def test_fuzzy_match_does_not_resolve_to_distinct_bare_letter_sibling_index(
+    tmp_path: Path,
+) -> None:
+    """A close sole candidate with a different bare-letter sub-scan suffix must not match.
+
+    ``HDR_a`` and ``HDR_b`` differ only in the sub-scan suffix letter itself
+    (no leading digit), which is one edit apart -- within the typo
+    threshold -- but they are distinct sibling scans with distinct spectral
+    data, not a misspelling of each other. Requesting ``HDR_a`` when only
+    ``HDR_b`` exists must refuse to guess rather than silently resolving to
+    the wrong sibling's data.
+    """
+    sol_dir = tmp_path / "sol_6000"
+    _make_working_dir(sol_dir, "HDR_b", "HDR_b")
+
+    resolved = resolve_manifest_working_directory(base_data_dir=tmp_path, sol="6000", scan="HDR_a")
+
+    assert resolved is None
+
+
 def test_fuzzy_match_does_not_confuse_distinct_roots_sharing_long_suffix(tmp_path: Path) -> None:
     """A long shared structural suffix must not inflate tolerance for the root.
 

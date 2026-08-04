@@ -118,22 +118,43 @@ _STRUCTURAL_TOKENS = frozenset({"sum", "active", "median", "dark", "all", "mean"
 # a root token that's simply a different word.
 _MAX_ROOT_TOKEN_EDIT_DISTANCE = 2
 
+# Sub-scan suffix letters, mirroring the sub-scan rule in
+# ``models.spectra.classify_scan_class``/``derive_parent_name`` (last char in
+# a/b/c preceded by a digit or the token boundary).
+_SUB_SCAN_SUFFIXES = ("a", "b", "c")
+
+
+def _is_index_token(token: str) -> bool:
+    """True when a token is a repeat- or sub-scan index, not free text.
+
+    Covers a bare repeat index (``1``, ``2``), an alphanumeric sub-scan
+    index (``1a``, ``500b``), and a bare sub-scan suffix (``a``, ``b``,
+    ``c``) -- all of which distinguish genuinely different sibling scans
+    with distinct spectral data, never a misspelling of one another.
+    """
+    if token.isdigit():
+        return True
+    if token in _SUB_SCAN_SUFFIXES:
+        return True
+    return token[-1:] in _SUB_SCAN_SUFFIXES and token[:-1].isdigit()
+
 
 def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
     """Edit distance restricted to the free-text root of underscore-delimited names.
 
     Loupe composite/repeat-scan names encode structure in ``_``-separated
-    tokens -- a repeat index (``detail_1`` vs ``detail_2``) or a composite
-    reduction method (``..._sum_active_median_dark``). Those tokens
-    distinguish genuinely different sibling scans, not a misspelling of the
-    same one, so they must match exactly; only a non-numeric, non-structural
-    token (the scan/target root, e.g. sol 1521's ``meteroite`` for
-    ``meteorite``) may be corrected by edit distance, and only up to
-    ``_MAX_ROOT_TOKEN_EDIT_DISTANCE`` per token. Returns ``None`` when the two
-    names aren't structurally comparable (different token count, a
-    numeric/structural token that doesn't match verbatim, or a root token
-    that drifts past the per-token cap) rather than a candidate for typo
-    correction.
+    tokens -- a repeat index (``detail_1`` vs ``detail_2``), an alphanumeric
+    or bare-letter sub-scan index (``detail_1a`` vs ``detail_1b``, ``HDR_a``
+    vs ``HDR_b``), or a composite reduction method
+    (``..._sum_active_median_dark``). Those tokens distinguish genuinely
+    different sibling scans, not a misspelling of the same one, so they must
+    match exactly; only a non-index, non-structural token (the scan/target
+    root, e.g. sol 1521's ``meteroite`` for ``meteorite``) may be corrected
+    by edit distance, and only up to ``_MAX_ROOT_TOKEN_EDIT_DISTANCE`` per
+    token. Returns ``None`` when the two names aren't structurally
+    comparable (different token count, an index/structural token that
+    doesn't match verbatim, or a root token that drifts past the per-token
+    cap) rather than a candidate for typo correction.
     """
     scan_tokens = normalized_scan.split("_")
     workspace_tokens = workspace.split("_")
@@ -145,8 +166,8 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
         if scan_token == workspace_token:
             continue
         if (
-            scan_token.isdigit()
-            or workspace_token.isdigit()
+            _is_index_token(scan_token)
+            or _is_index_token(workspace_token)
             or scan_token in _STRUCTURAL_TOKENS
             or workspace_token in _STRUCTURAL_TOKENS
         ):
@@ -159,17 +180,19 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
 
 
 def _editable_root_length(normalized_scan: str) -> int:
-    """Length of the free-text root tokens only, excluding structural/numeric ones.
+    """Length of the free-text root tokens only, excluding structural/index ones.
 
     Used to scale the fuzzy-match tolerance -- the invariant composite
-    suffix (``_sum_active_median_dark`` and friends) must match verbatim
-    (see ``_typo_distance``) and contributes nothing to the actual typo
-    budget, so it must not inflate the tolerance applied to the editable
-    root either.
+    suffix (``_sum_active_median_dark`` and friends) and repeat/sub-scan
+    index tokens (see ``_is_index_token``) must match verbatim (see
+    ``_typo_distance``) and contribute nothing to the actual typo budget, so
+    they must not inflate the tolerance applied to the editable root either.
     """
     tokens = normalized_scan.split("_")
     return sum(
-        len(token) for token in tokens if not token.isdigit() and token not in _STRUCTURAL_TOKENS
+        len(token)
+        for token in tokens
+        if not _is_index_token(token) and token not in _STRUCTURAL_TOKENS
     )
 
 
