@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -123,20 +124,31 @@ _MAX_ROOT_TOKEN_EDIT_DISTANCE = 2
 # a/b/c preceded by a digit or the token boundary).
 _SUB_SCAN_SUFFIXES = ("a", "b", "c")
 
+# A sub-scan suffix (one or more digits then a/b/c) trailing a token,
+# whether or not it's split into its own underscore token. Mirrors
+# ``classify_scan_class``'s rule, which checks the raw scan name's last
+# char rather than an underscore-delimited token -- so ``detail1a`` (a real
+# Loupe naming variant with no separator before the index) is a sub-scan
+# suffix glued onto free text just as much as the ``1a`` in ``detail_1a``,
+# and ``detail1a``/``detail1b`` are distinct sub-scans with distinct
+# spectral data, never edit-distance neighbors of each other.
+_SUB_SCAN_SUFFIX_PATTERN = re.compile(r"\d+[abc]$")
+
 
 def _is_index_token(token: str) -> bool:
-    """True when a token is a repeat- or sub-scan index, not free text.
+    """True when a token is, or ends with, a repeat- or sub-scan index.
 
     Covers a bare repeat index (``1``, ``2``), an alphanumeric sub-scan
-    index (``1a``, ``500b``), and a bare sub-scan suffix (``a``, ``b``,
-    ``c``) -- all of which distinguish genuinely different sibling scans
-    with distinct spectral data, never a misspelling of one another.
+    index (``1a``, ``500b``), a bare sub-scan suffix (``a``, ``b``, ``c``),
+    and a sub-scan suffix glued directly onto free text (``detail1a``) --
+    all of which distinguish genuinely different sibling scans with
+    distinct spectral data, never a misspelling of one another.
     """
     if token.isdigit():
         return True
     if token in _SUB_SCAN_SUFFIXES:
         return True
-    return token[-1:] in _SUB_SCAN_SUFFIXES and token[:-1].isdigit()
+    return bool(_SUB_SCAN_SUFFIX_PATTERN.search(token))
 
 
 def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
@@ -145,16 +157,17 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
     Loupe composite/repeat-scan names encode structure in ``_``-separated
     tokens -- a repeat index (``detail_1`` vs ``detail_2``), an alphanumeric
     or bare-letter sub-scan index (``detail_1a`` vs ``detail_1b``, ``HDR_a``
-    vs ``HDR_b``), or a composite reduction method
-    (``..._sum_active_median_dark``). Those tokens distinguish genuinely
-    different sibling scans, not a misspelling of the same one, so they must
-    match exactly; only a non-index, non-structural token (the scan/target
-    root, e.g. sol 1521's ``meteroite`` for ``meteorite``) may be corrected
-    by edit distance, and only up to ``_MAX_ROOT_TOKEN_EDIT_DISTANCE`` per
-    token. Returns ``None`` when the two names aren't structurally
-    comparable (different token count, an index/structural token that
-    doesn't match verbatim, or a root token that drifts past the per-token
-    cap) rather than a candidate for typo correction.
+    vs ``HDR_b``, or the glued ``detail1a`` vs ``detail1b``), or a composite
+    reduction method (``..._sum_active_median_dark``). Those tokens
+    distinguish genuinely different sibling scans, not a misspelling of the
+    same one, so they must match exactly; only a non-index, non-structural
+    token (the scan/target root, e.g. sol 1521's ``meteroite`` for
+    ``meteorite``) may be corrected by edit distance, and only up to
+    ``_MAX_ROOT_TOKEN_EDIT_DISTANCE`` per token. Returns ``None`` when the
+    two names aren't structurally comparable (different token count, an
+    index/structural token that doesn't match verbatim, or a root token
+    that drifts past the per-token cap) rather than a candidate for typo
+    correction.
     """
     scan_tokens = normalized_scan.split("_")
     workspace_tokens = workspace.split("_")

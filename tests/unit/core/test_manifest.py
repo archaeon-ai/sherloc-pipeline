@@ -186,6 +186,31 @@ def test_fuzzy_match_does_not_resolve_to_distinct_bare_letter_sibling_index(
     assert resolved is None
 
 
+def test_fuzzy_match_does_not_resolve_to_distinct_glued_sibling_index(
+    tmp_path: Path,
+) -> None:
+    """A close sole candidate with a different *glued* sub-scan suffix must not match.
+
+    ``detail1a`` and ``detail1b`` have no underscore separating the free-text
+    root from the sub-scan index -- a real Loupe naming variant -- but
+    ``classify_scan_class`` still treats the trailing digit-plus-letter as a
+    sub-scan suffix (last char in a/b/c preceded by a digit), regardless of
+    underscore tokenization. They are distinct sibling scans with distinct
+    spectral data, one edit apart, which must not be treated as edit-distance
+    neighbors of each other: requesting ``detail1a`` when only ``detail1b``
+    exists must refuse to guess rather than silently resolving to the wrong
+    sibling's data.
+    """
+    sol_dir = tmp_path / "sol_7000"
+    _make_working_dir(sol_dir, "detail1b", "detail1b")
+
+    resolved = resolve_manifest_working_directory(
+        base_data_dir=tmp_path, sol="7000", scan="detail1a"
+    )
+
+    assert resolved is None
+
+
 def test_fuzzy_match_does_not_confuse_distinct_roots_sharing_long_suffix(tmp_path: Path) -> None:
     """A long shared structural suffix must not inflate tolerance for the root.
 
