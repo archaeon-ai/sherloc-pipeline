@@ -80,6 +80,57 @@ def _build_manifest_candidates(sol_dir: Path) -> List[ManifestCandidate]:
     return candidates
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance between two strings."""
+    if a == b:
+        return 0
+    len_a, len_b = len(a), len(b)
+    if len_a == 0:
+        return len_b
+    if len_b == 0:
+        return len_a
+
+    previous_row = list(range(len_b + 1))
+    for i, char_a in enumerate(a, start=1):
+        current_row = [i]
+        for j, char_b in enumerate(b, start=1):
+            insert_cost = current_row[j - 1] + 1
+            delete_cost = previous_row[j] + 1
+            substitute_cost = previous_row[j - 1] + (char_a != char_b)
+            current_row.append(min(insert_cost, delete_cost, substitute_cost))
+        previous_row = current_row
+    return previous_row[-1]
+
+
+def _fuzzy_match_candidates(
+    candidates: List[ManifestCandidate], normalized_scan: str
+) -> List[ManifestCandidate]:
+    """Typo-tolerant fallback when no candidate's workspace matches exactly.
+
+    Loupe sometimes misspells a scan/target name identically in both the raw
+    directory name and the loupe.csv ``human_readable_workspace`` field
+    (e.g. sol 1521's ``meteroite`` for ``meteorite``), so an exact match
+    against the DB-corrected ``scan_name`` never lands even through the
+    manifest. Resolve by nearest edit distance instead, but only when
+    exactly one candidate is unambiguously closest -- never guess between
+    two similarly-misspelled scans, since silently picking the wrong one
+    would point the pipeline at the wrong spectral data.
+    """
+    threshold = max(1, round(len(normalized_scan) * 0.2))
+    scored = sorted(
+        (
+            (_edit_distance(normalized_scan, candidate.workspace.strip().casefold()), candidate)
+            for candidate in candidates
+        ),
+        key=lambda pair: pair[0],
+    )
+    if not scored or scored[0][0] > threshold:
+        return []
+    if len(scored) > 1 and scored[1][0] == scored[0][0]:
+        return []  # Ambiguous -- refuse to guess.
+    return [scored[0][1]]
+
+
 def resolve_manifest_working_directory(
     base_data_dir: Path,
     sol: str,
@@ -96,6 +147,9 @@ def resolve_manifest_working_directory(
         for candidate in manifest_candidates
         if candidate.workspace.strip().casefold() == normalized_scan
     ]
+
+    if not matches:
+        matches = _fuzzy_match_candidates(manifest_candidates, normalized_scan)
 
     if not matches:
         return None
