@@ -144,6 +144,26 @@ def test_fuzzy_match_does_not_resolve_to_distinct_sibling_reduction(tmp_path: Pa
     assert resolved is None
 
 
+def test_fuzzy_match_does_not_confuse_distinct_roots_sharing_long_suffix(tmp_path: Path) -> None:
+    """A long shared structural suffix must not inflate tolerance for the root.
+
+    ``foo_sum_active_median_dark`` and ``bar_sum_active_median_dark`` share a
+    long, verbatim-matching composite-reduction suffix, but ``foo`` and
+    ``bar`` are a wholly different root -- not a typo of each other. The
+    fuzzy threshold must be scaled from the editable root alone (``foo``,
+    3 chars) rather than the full composite name (26 chars), or the long
+    invariant suffix would buy enough slack to match anyway.
+    """
+    sol_dir = tmp_path / "sol_4000"
+    _make_working_dir(sol_dir, "bar_sum_active_median_dark", "bar_sum_active_median_dark")
+
+    resolved = resolve_manifest_working_directory(
+        base_data_dir=tmp_path, sol="4000", scan="foo_sum_active_median_dark"
+    )
+
+    assert resolved is None
+
+
 def test_ambiguous_fuzzy_match_refuses_to_guess(tmp_path: Path) -> None:
     """Two equally-close misspellings must not be silently disambiguated."""
     sol_dir = tmp_path / "sol_9999"

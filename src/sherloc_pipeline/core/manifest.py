@@ -110,6 +110,14 @@ def _edit_distance(a: str, b: str) -> int:
 # corrected by edit distance.
 _STRUCTURAL_TOKENS = frozenset({"sum", "active", "median", "dark", "all", "mean"})
 
+# Per-token cap on how far a single editable (root) token may drift under
+# edit distance before it's rejected as unrelated rather than a typo. Real
+# single-word Loupe typos observed so far (e.g. sol 1521's ``meteroite`` for
+# ``meteorite``) are 1-2 edits; this is deliberately tight -- it exists to
+# stop the aggregate, length-scaled threshold below from being satisfied by
+# a root token that's simply a different word.
+_MAX_ROOT_TOKEN_EDIT_DISTANCE = 2
+
 
 def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
     """Edit distance restricted to the free-text root of underscore-delimited names.
@@ -120,10 +128,12 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
     distinguish genuinely different sibling scans, not a misspelling of the
     same one, so they must match exactly; only a non-numeric, non-structural
     token (the scan/target root, e.g. sol 1521's ``meteroite`` for
-    ``meteorite``) may be corrected by edit distance. Returns ``None`` when
-    the two names aren't structurally comparable (different token count, or a
-    numeric/structural token that doesn't match verbatim) rather than a
-    candidate for typo correction.
+    ``meteorite``) may be corrected by edit distance, and only up to
+    ``_MAX_ROOT_TOKEN_EDIT_DISTANCE`` per token. Returns ``None`` when the two
+    names aren't structurally comparable (different token count, a
+    numeric/structural token that doesn't match verbatim, or a root token
+    that drifts past the per-token cap) rather than a candidate for typo
+    correction.
     """
     scan_tokens = normalized_scan.split("_")
     workspace_tokens = workspace.split("_")
@@ -141,8 +151,26 @@ def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
             or workspace_token in _STRUCTURAL_TOKENS
         ):
             return None
-        total += _edit_distance(scan_token, workspace_token)
+        token_distance = _edit_distance(scan_token, workspace_token)
+        if token_distance > _MAX_ROOT_TOKEN_EDIT_DISTANCE:
+            return None
+        total += token_distance
     return total
+
+
+def _editable_root_length(normalized_scan: str) -> int:
+    """Length of the free-text root tokens only, excluding structural/numeric ones.
+
+    Used to scale the fuzzy-match tolerance -- the invariant composite
+    suffix (``_sum_active_median_dark`` and friends) must match verbatim
+    (see ``_typo_distance``) and contributes nothing to the actual typo
+    budget, so it must not inflate the tolerance applied to the editable
+    root either.
+    """
+    tokens = normalized_scan.split("_")
+    return sum(
+        len(token) for token in tokens if not token.isdigit() and token not in _STRUCTURAL_TOKENS
+    )
 
 
 def _fuzzy_match_candidates(
@@ -155,7 +183,7 @@ def _fuzzy_match_candidates(
     two similarly-misspelled scans, since silently picking the wrong one
     would point the pipeline at the wrong spectral data.
     """
-    threshold = max(1, round(len(normalized_scan) * 0.2))
+    threshold = max(1, round(_editable_root_length(normalized_scan) * 0.2))
     scored = []
     for candidate in candidates:
         distance = _typo_distance(normalized_scan, candidate.workspace.strip().casefold())
