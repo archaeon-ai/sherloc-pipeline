@@ -102,6 +102,25 @@ def test_no_match_beyond_threshold_returns_none(tmp_path: Path) -> None:
     assert resolved is None
 
 
+def test_fuzzy_match_does_not_resolve_to_distinct_sibling_index(tmp_path: Path) -> None:
+    """A close sole candidate that is a genuinely different repeat scan must not match.
+
+    ``detail_1`` and ``detail_2`` differ only in their repeat-scan index, which
+    is one edit apart -- well within the typo threshold -- but they are
+    distinct scans with distinct spectral data, not a misspelling of each
+    other. Requesting ``detail_1`` when only ``detail_2`` exists must refuse
+    to guess rather than silently resolving to the wrong scan.
+    """
+    sol_dir = tmp_path / "sol_2000"
+    _make_working_dir(sol_dir, "detail_2", "detail_2")
+
+    resolved = resolve_manifest_working_directory(
+        base_data_dir=tmp_path, sol="2000", scan="detail_1"
+    )
+
+    assert resolved is None
+
+
 def test_ambiguous_fuzzy_match_refuses_to_guess(tmp_path: Path) -> None:
     """Two equally-close misspellings must not be silently disambiguated."""
     sol_dir = tmp_path / "sol_9999"

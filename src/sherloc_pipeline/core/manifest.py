@@ -102,28 +102,53 @@ def _edit_distance(a: str, b: str) -> int:
     return previous_row[-1]
 
 
+def _typo_distance(normalized_scan: str, workspace: str) -> Optional[int]:
+    """Edit distance restricted to the free-text root of underscore-delimited names.
+
+    Loupe composite/repeat-scan names encode structure in ``_``-separated
+    tokens -- a repeat index (``detail_1`` vs ``detail_2``) or a composite
+    reduction method (``..._sum_active_median_dark``). Those tokens
+    distinguish genuinely different sibling scans, not a misspelling of the
+    same one, so they must match exactly; only a non-numeric token (the
+    scan/target root, e.g. sol 1521's ``meteroite`` for ``meteorite``) may be
+    corrected by edit distance. Returns ``None`` when the two names aren't
+    structurally comparable (different token count, or a numeric token that
+    doesn't match verbatim) rather than a candidate for typo correction.
+    """
+    scan_tokens = normalized_scan.split("_")
+    workspace_tokens = workspace.split("_")
+    if len(scan_tokens) != len(workspace_tokens):
+        return None
+
+    total = 0
+    for scan_token, workspace_token in zip(scan_tokens, workspace_tokens):
+        if scan_token == workspace_token:
+            continue
+        if scan_token.isdigit() or workspace_token.isdigit():
+            return None
+        total += _edit_distance(scan_token, workspace_token)
+    return total
+
+
 def _fuzzy_match_candidates(
     candidates: List[ManifestCandidate], normalized_scan: str
 ) -> List[ManifestCandidate]:
     """Typo-tolerant fallback when no candidate's workspace matches exactly.
 
-    Loupe sometimes misspells a scan/target name identically in both the raw
-    directory name and the loupe.csv ``human_readable_workspace`` field
-    (e.g. sol 1521's ``meteroite`` for ``meteorite``), so an exact match
-    against the DB-corrected ``scan_name`` never lands even through the
-    manifest. Resolve by nearest edit distance instead, but only when
+    Resolve by nearest typo distance (see ``_typo_distance``), but only when
     exactly one candidate is unambiguously closest -- never guess between
     two similarly-misspelled scans, since silently picking the wrong one
     would point the pipeline at the wrong spectral data.
     """
     threshold = max(1, round(len(normalized_scan) * 0.2))
-    scored = sorted(
-        (
-            (_edit_distance(normalized_scan, candidate.workspace.strip().casefold()), candidate)
-            for candidate in candidates
-        ),
-        key=lambda pair: pair[0],
-    )
+    scored = []
+    for candidate in candidates:
+        distance = _typo_distance(normalized_scan, candidate.workspace.strip().casefold())
+        if distance is None:
+            continue
+        scored.append((distance, candidate))
+    scored.sort(key=lambda pair: pair[0])
+
     if not scored or scored[0][0] > threshold:
         return []
     if len(scored) > 1 and scored[1][0] == scored[0][0]:
