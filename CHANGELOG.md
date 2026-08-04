@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sources or an unwritable destination fail the run; no existing serving,
   ingestion, or database behavior is changed when the variable is absent.
 
+### Fixed
+- **Scan-context resolution now tolerates raw Loupe dir/manifest typos
+  (#16).** `process-new`/`full-pipeline` preprocessing could fail to
+  resolve a scan's working directory when the raw Loupe directory name
+  (and its `loupe.csv` `human_readable_workspace` field) is misspelled
+  relative to the DB-corrected `scan_name` — e.g. sol 1521's composite
+  reductions live under `meteroite_sum_active_median_dark` on disk while
+  the DB scan is `meteorite_sum_active_median_dark`. Manifest-based
+  resolution now falls back to a typo-tolerant (edit-distance) match when
+  no exact match is found, resolving only when a single candidate is
+  unambiguously closest — ambiguous or too-distant cases still fail with
+  the existing clear error rather than guessing.
+
 ## [5.5.0] - 2026-07-10
 
 Closes #7: the transitional `context_images.file_path` column is
