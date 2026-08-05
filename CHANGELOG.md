@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Map Mode fitting no longer looks frozen on slow or queued scans (#6).**
+  Map fitting runs on a single-threaded executor, so a job started while
+  another scan is still fitting waited its turn while the UI sat on an empty
+  progress panel; the WebSocket's only liveness signal was a contentless
+  `{"type": "heartbeat"}` the client ignored. The heartbeat frame now carries
+  the server-side job snapshot (`status`, `fitted`/`total`, `queue_position`,
+  `elapsed_s`, `since_last_message_s`, `stalled`) and is also sent once
+  immediately on connect, and a `job_started` frame is emitted when the job
+  actually leaves the executor queue. Map Mode surfaces both as progress-panel
+  status and log lines ("Queued behind N active fit jobs", "No new results for
+  Ns"). The client-message read is now a single long-lived receive instead of a
+  re-armed 10 ms `wait_for`, which could drop the frame it had just picked up —
+  including a user's `cancel`. `GET /api/map/jobs/{job_id}` reports fitted
+  points from an authoritative counter rather than counting messages in the
+  reconnect ring buffer, which undercounted once the buffer wrapped
+  (>2000 messages). Terminal jobs are reaped when a new fit starts.
+
+### Changed
+- **Map Mode fitting is faster on large scans (#6).** Despiking and the asPLS
+  baseline depend only on a point's R1 spectrum, but were recomputed inside
+  every requested Raman domain — three times per point for the default
+  minerals+organics+hydration selection. They now run once per point and are
+  shared across domains (fit results are unchanged; pinned by test).
+  Fluorescence fitting batch-loads R1/R2/R3 for the whole scan instead of
+  issuing three queries per point. Runs also log their scale up front
+  (`Fitting N points x M domain(s)`, flagged when N > 200, where the sequential
+  design stops being comfortable).
+
 ### Added
 - **Zoomed mineral-region companion plot for average fits (#30).** Every
   average-spectrum fit overlay `fit-averages` (and so `process-new`) emits now

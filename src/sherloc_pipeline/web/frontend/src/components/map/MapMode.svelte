@@ -777,6 +777,29 @@
     recalcColormapRanges();
   }
 
+  // Last heartbeat-derived log line, so a repeating condition (queued,
+  // stalled) is reported once instead of every 30 seconds.
+  let lastHeartbeatNote = '';
+
+  function heartbeatNote(
+    msg: import('../../lib/types/map').WSHeartbeat,
+  ): string {
+    if (msg.timed_out) {
+      return 'Fitting stream timed out; the job may still be running on the server.';
+    }
+    if (msg.status === 'queued') {
+      const ahead = msg.queue_position ?? 0;
+      return ahead > 0
+        ? `Queued behind ${ahead} active fit job${ahead === 1 ? '' : 's'} — fitting runs one scan at a time.`
+        : 'Queued — waiting for the fitting worker.';
+    }
+    if (msg.stalled) {
+      const silent = Math.round(msg.since_last_message_s ?? 0);
+      return `No new results for ${silent}s (${msg.fitted ?? 0}/${msg.total ?? 0} points) — this scan is fitting slowly.`;
+    }
+    return '';
+  }
+
   async function handleStartFit(e: CustomEvent<{ domains: string[] }>) {
     const { domains } = e.detail;
     try {
@@ -804,6 +827,7 @@
         etaSeconds: 0,
       });
       mapLogEntries.set([]);
+      lastHeartbeatNote = '';
 
       // Connect WebSocket
       ws = new MapWebSocket(data.ws_url, {
@@ -863,6 +887,30 @@
               j ? { ...j, status: 'cancelled' } : j,
             );
           },
+        onHeartbeat: (msg) => {
+          // Server-side liveness frame, sent every 30s of silence and once
+          // on connect. Without it a job waiting behind another scan's fit
+          // (the map executor runs one job at a time) is indistinguishable
+          // from a frozen UI.
+          const status = msg.status;
+          if (status === 'queued' || status === 'running') {
+            mapFitJob.update((j) =>
+              j
+                ? {
+                    ...j,
+                    status,
+                    fitted: msg.fitted ?? j.fitted,
+                    total: msg.total || j.total,
+                  }
+                : j,
+            );
+          }
+          const note = heartbeatNote(msg);
+          if (note && note !== lastHeartbeatNote) {
+            lastHeartbeatNote = note;
+            mapLogEntries.update((logs) => [...logs.slice(-499), note]);
+          }
+        },
         onDisconnect: () => {
           // Connection closed -- status remains as-is
         },

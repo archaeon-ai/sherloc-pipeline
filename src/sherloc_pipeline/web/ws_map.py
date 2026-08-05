@@ -30,6 +30,12 @@ TIMEOUT = 1800  # 30 minutes
 RECONNECT_BUFFER_SIZE = 2000  # max messages to retain for replay
 RECONNECT_BUFFER_SECONDS = 300  # 5 min buffer for resume
 
+# A running job that has emitted nothing for this long is reported as
+# stalled in the heartbeat frame. The fitting thread is NOT killed --
+# the flag exists so the UI can distinguish "slow/queued" from "frozen"
+# instead of showing a dead progress panel forever (issue #6).
+STALL_WARN_SECONDS = 120.0
+
 
 # ---------------------------------------------------------------------------
 # Map job context and registry
@@ -50,17 +56,57 @@ class MapJobContext:
     voronoi: Optional[dict] = None  # set by fitting thread after computation
     status: str = "queued"  # queued | running | complete | failed | cancelled
     n_points: int = 0
+    queue_position: int = 0  # jobs ahead of this one on the map executor
+    fitted: int = 0  # points streamed so far (authoritative progress counter)
+    started_at: Optional[float] = None  # monotonic time the fitting thread began
+    last_activity: float = 0.0  # monotonic time of the last emitted message
     _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def __post_init__(self) -> None:
+        if self.last_activity == 0.0:
+            self.last_activity = self.created_at
 
     def set_status(self, new_status: str) -> None:
         """Thread-safe status update."""
         with self._lock:
             self.status = new_status
+            if new_status == "running" and self.started_at is None:
+                self.started_at = time.monotonic()
 
     def get_status(self) -> str:
         """Thread-safe status read."""
         with self._lock:
             return self.status
+
+    def note_activity(self, *, point_fitted: bool = False) -> None:
+        """Record that the fitting thread produced output (thread-safe).
+
+        Called from the fitting thread on every emitted message so the
+        WebSocket heartbeat can report how long the job has been silent.
+        """
+        with self._lock:
+            self.last_activity = time.monotonic()
+            if point_fitted:
+                self.fitted += 1
+
+    def progress_snapshot(self) -> dict:
+        """Thread-safe progress/liveness snapshot for status frames."""
+        now = time.monotonic()
+        with self._lock:
+            status = self.status
+            fitted = self.fitted
+            silent_for = now - self.last_activity
+            elapsed = now - (self.started_at if self.started_at is not None else self.created_at)
+            queue_position = self.queue_position
+        return {
+            "status": status,
+            "fitted": fitted,
+            "total": self.n_points,
+            "queue_position": queue_position,
+            "elapsed_s": round(elapsed, 1),
+            "since_last_message_s": round(silent_for, 1),
+            "stalled": status == "running" and silent_for >= STALL_WARN_SECONDS,
+        }
 
 
 class MapJobRegistry:
@@ -101,6 +147,15 @@ class MapJobRegistry:
         """Remove a job from the registry."""
         with self._lock:
             self._jobs.pop(job_id, None)
+
+    def count_active(self) -> int:
+        """Number of jobs currently queued or running on the map executor."""
+        with self._lock:
+            return sum(
+                1
+                for ctx in self._jobs.values()
+                if ctx.get_status() in ("queued", "running")
+            )
 
     def find_active_for_scan(self, scan_id: str) -> Optional[MapJobContext]:
         """Find an active (queued/running) job for a given scan."""
@@ -155,6 +210,7 @@ def make_fitting_callbacks(
     def _enqueue(msg: dict) -> None:
         """Thread-safe push to the asyncio queue."""
         ctx.message_buffer.append(msg)
+        ctx.note_activity(point_fitted=msg.get("type") == "point_fitted")
         try:
             loop.call_soon_threadsafe(ctx.queue.put_nowait, msg)
         except RuntimeError:
@@ -189,6 +245,7 @@ def make_fitting_callbacks(
             "eta_s": round(eta, 1),
         }
         # Progress messages are not buffered for replay (transient)
+        ctx.note_activity()
         try:
             loop.call_soon_threadsafe(ctx.queue.put_nowait, msg)
         except RuntimeError:
@@ -201,6 +258,24 @@ def make_fitting_callbacks(
             "seq": seq_counter[0],
             "point_index": point_index,
             "message": message,
+        }
+        _enqueue(msg)
+
+    def send_job_started(domains: list[str]) -> None:
+        """Announce that the fitting thread actually started running.
+
+        Emitted when the job leaves the map executor queue, not when the
+        POST returns: a job submitted behind a long-running fit can sit
+        queued for minutes, and the UI needs to tell the two apart.
+        """
+        seq_counter[0] += 1
+        msg = {
+            "type": "job_started",
+            "seq": seq_counter[0],
+            "job_id": ctx.job_id,
+            "n_points": ctx.n_points,
+            "domains": list(domains),
+            "voronoi": ctx.voronoi,
         }
         _enqueue(msg)
 
@@ -224,7 +299,8 @@ def make_fitting_callbacks(
         }
         _enqueue(msg)
 
-    # Attach the terminal senders to the callbacks for use by the job runner
+    # Attach the lifecycle senders to the callbacks for use by the job runner
+    on_point_fitted.send_job_started = send_job_started  # type: ignore[attr-defined]
     on_point_fitted.send_complete = send_complete  # type: ignore[attr-defined]
     on_point_fitted.send_error = send_error  # type: ignore[attr-defined]
 
@@ -278,40 +354,60 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
                 except Exception:
                     return
 
-    last_heartbeat = time.monotonic()
     start_time = time.monotonic()
+
+    # Send an immediate status frame so a client that connects behind a
+    # long-running job sees "queued (N ahead)" instead of an empty panel.
+    await websocket.send_json({"type": "heartbeat", **ctx.progress_snapshot()})
+
+    # One long-lived receive task instead of re-arming a 10 ms
+    # ``wait_for(receive_text())`` every iteration: cancelling a pending
+    # Starlette receive can drop the frame it just picked up, which is how
+    # a user's "cancel" could vanish and leave the UI stuck on a job it
+    # could no longer stop.
+    receive_task: asyncio.Task = asyncio.create_task(websocket.receive_text())
+    queue_task: Optional[asyncio.Task] = None
 
     try:
         while True:
             # Check timeout
             if time.monotonic() - start_time > TIMEOUT:
+                await websocket.send_json({
+                    "type": "heartbeat",
+                    **ctx.progress_snapshot(),
+                    "timed_out": True,
+                })
                 await websocket.close(code=1000, reason="Timeout")
                 return
 
-            # Try to get message from queue (with timeout for heartbeat)
-            try:
-                msg = await asyncio.wait_for(
-                    ctx.queue.get(), timeout=HEARTBEAT_INTERVAL
-                )
+            if queue_task is None:
+                queue_task = asyncio.create_task(ctx.queue.get())
+
+            done, _pending = await asyncio.wait(
+                {queue_task, receive_task},
+                timeout=HEARTBEAT_INTERVAL,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if queue_task in done:
+                msg = queue_task.result()
+                queue_task = None
                 await websocket.send_json(msg)
-                last_heartbeat = time.monotonic()
 
                 # If terminal message, close cleanly
                 if msg.get("type") in ("complete", "error"):
                     await websocket.close()
                     return
 
-            except asyncio.TimeoutError:
-                # No message within heartbeat interval, send heartbeat
-                await websocket.send_json({"type": "heartbeat"})
-                last_heartbeat = time.monotonic()
-
-            # Check for client messages (cancel) non-blockingly
-            try:
-                raw = await asyncio.wait_for(
-                    websocket.receive_text(), timeout=0.01
-                )
-                client_msg = json.loads(raw)
+            if receive_task in done:
+                # Raises WebSocketDisconnect when the client goes away,
+                # which the handler below turns into a clean exit.
+                raw = receive_task.result()
+                receive_task = asyncio.create_task(websocket.receive_text())
+                try:
+                    client_msg = json.loads(raw)
+                except (ValueError, TypeError):
+                    client_msg = {}
                 if client_msg.get("type") == "cancel":
                     ctx.cancel_event.set()
                     ctx.set_status("cancelled")
@@ -321,10 +417,15 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
                     })
                     await websocket.close()
                     return
-            except asyncio.TimeoutError:
-                pass
-            except Exception:
-                pass
+
+            if not done:
+                # Nothing from either side within the heartbeat interval:
+                # report server-side job state so a silent job is
+                # distinguishable from a dead connection.
+                await websocket.send_json({
+                    "type": "heartbeat",
+                    **ctx.progress_snapshot(),
+                })
 
     except WebSocketDisconnect:
         logger.debug("Map WS client disconnected for job %s", job_id)
@@ -334,3 +435,7 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
             await websocket.close()
         except Exception:
             pass
+    finally:
+        for task in (queue_task, receive_task):
+            if task is not None and not task.done():
+                task.cancel()

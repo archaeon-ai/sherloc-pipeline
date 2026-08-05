@@ -139,6 +139,18 @@ export interface WSJobFailed {
   partial_results: number;
 }
 
+export interface WSHeartbeat {
+  type: 'heartbeat';
+  status?: string;
+  fitted?: number;
+  total?: number;
+  queue_position?: number;
+  elapsed_s?: number;
+  since_last_message_s?: number;
+  stalled?: boolean;
+  timed_out?: boolean;
+}
+
 export type WSServerMessage =
   | WSJobStarted
   | WSPointFitted
@@ -146,6 +158,7 @@ export type WSServerMessage =
   | WSLog
   | WSJobComplete
   | WSJobFailed
+  | WSHeartbeat
   | { type: 'job_queued'; seq: number }
   | { type: 'job_cancelled'; seq: number }
   | { type: 'point_fitted_batch'; seq: number; points: WSPointFitted[] }

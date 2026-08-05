@@ -53,6 +53,10 @@ _SNR_THRESHOLD = 3.0
 _PROGRESS_EVERY_N_POINTS = 5
 _PROGRESS_EVERY_SECONDS = 2.0
 
+# Point count above which a sequential run is expected to take minutes.
+# Matches the E1 design note above (sequential is comfortable to ~200 points).
+_LARGE_SCAN_POINTS = 200
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -144,6 +148,61 @@ def _load_point_spectra(
     return result
 
 
+def _load_point_spectra_multi(
+    session: Session,
+    scan_point_ids: list[str],
+    regions: tuple[str, ...] = ("R1", "R2", "R3"),
+) -> dict[str, dict[str, np.ndarray]]:
+    """Batch-load several detector regions for many scan points at once.
+
+    Fluorescence fitting needs R1+R2+R3 per point. Issuing three
+    single-row queries per point costs 3N round trips on a scan with N
+    points; one batched query per region keeps large scans (>500 points)
+    from spending most of their wall clock in SQLAlchemy.
+
+    Returns:
+        {scan_point_id: {region: intensity_array}} — points missing a
+        region simply lack that key.
+    """
+    result: dict[str, dict[str, np.ndarray]] = {}
+    for region in regions:
+        for sp_id, arr in _load_point_spectra(session, scan_point_ids, region=region).items():
+            result.setdefault(sp_id, {})[region] = arr
+    return result
+
+
+def _preprocess_r1_intensity(
+    wavenumber_r1: np.ndarray,
+    intensity_r1: np.ndarray,
+    baseline_params: BaselineParams | None = None,
+    baseline_weights: np.ndarray | None = None,
+) -> np.ndarray:
+    """Despike + baseline-correct one point's R1 intensity.
+
+    Both steps depend only on the point's spectrum (not on the fitting
+    domain), so the result is shared across minerals/organics/hydration
+    instead of being recomputed once per domain.
+    """
+    try:
+        despike_params = DespikeParams()
+        series = pd.Series(intensity_r1, index=wavenumber_r1)
+        despiked, _ = despike_r1_spectrum(series, despike_params, raman_shift=wavenumber_r1)
+        y = despiked.values.astype(np.float64)
+    except Exception:
+        # If despiking fails, use raw intensity
+        y = intensity_r1.astype(np.float64)
+
+    if baseline_params is not None:
+        try:
+            bl_series = pd.Series(y, index=wavenumber_r1.astype(np.float64))
+            corrected, _ = fit_baseline(bl_series, baseline_params, weights=baseline_weights)
+            y = corrected.values.astype(np.float64)
+        except Exception:
+            logger.debug("Baseline correction failed, using despiked data")
+
+    return y
+
+
 # ---------------------------------------------------------------------------
 # Domain fitting helpers
 # ---------------------------------------------------------------------------
@@ -157,6 +216,7 @@ def _fit_raman_domain(
     *,
     baseline_params: BaselineParams | None = None,
     baseline_weights: np.ndarray | None = None,
+    preprocessed: bool = False,
 ) -> DomainResult:
     """Fit a single Raman domain (minerals, organics, or hydration) for one point.
 
@@ -167,32 +227,23 @@ def _fit_raman_domain(
         domain: One of "minerals", "organics", "hydration".
         baseline_params: asPLS baseline parameters (or None to skip).
         baseline_weights: Weight vector for asPLS (protect peak windows).
+        preprocessed: When True, ``intensity_r1`` has already been
+            despiked + baseline-corrected by ``_preprocess_r1_intensity``
+            and both steps are skipped here. Callers fitting several
+            domains for the same point should preprocess once.
 
     Returns:
         DomainResult with fitted peaks or "missing"/"below_threshold" status.
     """
     fitting_cfg = config.get("fitting", {})
 
-    # Despike the R1 intensity
-    try:
-        despike_params = DespikeParams()
-        series = pd.Series(intensity_r1, index=wavenumber_r1)
-        despiked, _ = despike_r1_spectrum(series, despike_params, raman_shift=wavenumber_r1)
-        y = despiked.values.astype(np.float64)
-    except Exception:
-        # If despiking fails, use raw intensity
-        y = intensity_r1.astype(np.float64)
-
     x = wavenumber_r1.astype(np.float64)
-
-    # Baseline correction: asPLS removes broad spectral background
-    if baseline_params is not None:
-        try:
-            bl_series = pd.Series(y, index=x)
-            corrected, _ = fit_baseline(bl_series, baseline_params, weights=baseline_weights)
-            y = corrected.values.astype(np.float64)
-        except Exception:
-            logger.debug("Baseline correction failed for domain=%s, using despiked data", domain)
+    if preprocessed:
+        y = intensity_r1.astype(np.float64)
+    else:
+        y = _preprocess_r1_intensity(
+            wavenumber_r1, intensity_r1, baseline_params, baseline_weights
+        )
 
     # Build domain-specific config
     if domain == "minerals":
@@ -312,6 +363,7 @@ def _fit_fluorescence_domain(
     session: Session,
     scan_point_id: str,
     config: dict,
+    preloaded_parts: dict[str, np.ndarray] | None = None,
 ) -> DomainResult:
     """Fit fluorescence for a single scan point using R2+R3 spectra.
 
@@ -319,6 +371,8 @@ def _fit_fluorescence_domain(
         session: DB session for loading R2/R3 spectra.
         scan_point_id: UUID of the scan point.
         config: Full pipeline config dict.
+        preloaded_parts: ``{region: intensity}`` from a batched load; when
+            supplied the per-point queries are skipped entirely.
 
     Returns:
         DomainResult with fitted fluorescence peaks.
@@ -330,8 +384,14 @@ def _fit_fluorescence_domain(
     fluor_cfg = config.get("fluorescence_fitting", {})
 
     # Load R1, R2, R3 and stitch
-    parts = {}
+    parts: dict[str, np.ndarray] = {}
     for region in ("R1", "R2", "R3"):
+        if preloaded_parts is not None:
+            arr = preloaded_parts.get(region)
+            if arr is None:
+                return DomainResult(status="missing")
+            parts[region] = arr
+            continue
         sp = (
             session.query(SpectrumORM)
             .filter(
@@ -460,12 +520,32 @@ class MapFitService:
         if total == 0:
             return MapFitSummary(total_points=0, detections={}, elapsed_s=0.0)
 
+        # Announce the scale of the run up front. Fitting is sequential, so
+        # a large scan is minutes of work, not seconds — say so instead of
+        # letting the client guess whether anything is happening.
+        scale_msg = f"Fitting {total} points x {len(domains)} domain(s): {', '.join(domains)}"
+        if total > _LARGE_SCAN_POINTS:
+            scale_msg += (
+                f" — large scan (>{_LARGE_SCAN_POINTS} points), expect several minutes"
+            )
+        logger.info("[map-fit] %s", scale_msg)
+        try:
+            on_log(-1, scale_msg)
+        except Exception:
+            pass
+
         # Pre-load R1 spectra in batch for efficiency
         raman_domains = [d for d in domains if d in ("minerals", "organics", "hydration")]
+        sp_ids = [sp.id for sp in scan_points]
         r1_spectra: dict[str, np.ndarray] = {}
         if raman_domains:
-            sp_ids = [sp.id for sp in scan_points]
             r1_spectra = _load_point_spectra(session, sp_ids, region="R1")
+
+        # Same batching for fluorescence: R1+R2+R3 in three queries total
+        # rather than three queries per point.
+        fluor_spectra: dict[str, dict[str, np.ndarray]] = {}
+        if "fluorescence" in domains:
+            fluor_spectra = _load_point_spectra_multi(session, sp_ids)
 
         # Calibration: compute once
         wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
@@ -560,12 +640,26 @@ class MapFitService:
                 else:
                     intensity_r1 = raw_intensity
 
+                # Despike + asPLS baseline once per point. These depend
+                # only on the spectrum, so recomputing them inside each
+                # domain repeated the most expensive preprocessing step
+                # once per selected Raman domain (3x for the default
+                # minerals+organics+hydration selection).
+                try:
+                    prepped_r1 = _preprocess_r1_intensity(
+                        wavenumber_r1, intensity_r1, bl_params, bl_weights
+                    )
+                except Exception:
+                    logger.debug("Preprocessing failed for point %d", point_index)
+                    prepped_r1 = intensity_r1.astype(np.float64)
+
                 for domain in raman_domains:
                     try:
                         result = _fit_raman_domain(
-                            wavenumber_r1, intensity_r1, self.config, domain,
+                            wavenumber_r1, prepped_r1, self.config, domain,
                             baseline_params=bl_params,
                             baseline_weights=bl_weights,
+                            preprocessed=True,
                         )
                     except Exception as exc:
                         logger.debug(
@@ -587,7 +681,10 @@ class MapFitService:
             if "fluorescence" in domains:
                 try:
                     fluor_result = _fit_fluorescence_domain(
-                        session, sp.id, self.config
+                        session,
+                        sp.id,
+                        self.config,
+                        preloaded_parts=fluor_spectra.get(sp.id, {}),
                     )
                 except Exception as exc:
                     logger.debug(

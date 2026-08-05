@@ -5,6 +5,7 @@
 
 import type {
   WSServerMessage,
+  WSHeartbeat,
   WSJobStarted,
   WSPointFitted,
   WSProgress,
@@ -22,6 +23,8 @@ export interface MapWSHandlers {
   onFailed: (msg: WSJobFailed) => void;
   onCancelled: () => void;
   onDisconnect: () => void;
+  /** Server-side job liveness frame (status, queue position, stall flag). */
+  onHeartbeat?: (msg: WSHeartbeat) => void;
 }
 
 export class MapWebSocket {
@@ -92,6 +95,9 @@ export class MapWebSocket {
       case 'job_cancelled':
       case 'cancelled':
         this.handlers.onCancelled();
+        break;
+      case 'heartbeat':
+        this.handlers.onHeartbeat?.(msg as WSHeartbeat);
         break;
       case 'ping':
         this.ws?.send(JSON.stringify({ type: 'pong' }));

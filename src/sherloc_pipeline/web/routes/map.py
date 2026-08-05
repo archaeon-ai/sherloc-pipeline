@@ -510,8 +510,11 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
     # Build point_coords lookup: {point_index: (aci_x, aci_y)}
     point_coords = {c.point_index: (c.aci_x, c.aci_y) for c in coords}
 
-    # Check for active jobs for this scan via the map registry
+    # Check for active jobs for this scan via the map registry. Reap
+    # terminal jobs first so the registry (and its retained message
+    # buffers) doesn't grow without bound over a long-lived server.
     registry: MapJobRegistry = request.app.state.map_registry
+    registry.cleanup_stale()
     existing = registry.find_active_for_scan(body.scan_id)
     if existing is not None:
         return MapFitResponse(
@@ -520,7 +523,10 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
             ws_url=f"/ws/map/{existing.job_id}",
         )
 
-    # Create job
+    # Create job. The map executor is single-threaded, so a job submitted
+    # while another scan is still fitting waits its turn; record how many
+    # jobs are ahead of it so the WebSocket can report "queued" rather
+    # than leaving the UI on an empty progress panel (issue #6).
     job_id = f"mf_{secrets.token_hex(12)}"
     loop = request.app.state.event_loop
     ctx = registry.create(
@@ -529,6 +535,14 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
         loop=loop,
         n_points=n_points,
     )
+    ctx.queue_position = max(registry.count_active() - 1, 0)
+    if ctx.queue_position:
+        logger.info(
+            "Map fit job %s for scan %s queued behind %d active job(s)",
+            job_id,
+            body.scan_id,
+            ctx.queue_position,
+        )
 
     # Create callbacks that bridge fitting thread -> asyncio queue
     on_point_fitted, on_progress, on_log = make_fitting_callbacks(ctx)
@@ -548,6 +562,10 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
         fit_session = factory()
         try:
             ctx.set_status("running")
+            ctx.queue_position = 0
+            # Announce the real start: everything before this point was
+            # spent waiting for the single map-executor thread.
+            on_point_fitted.send_job_started(domains)  # type: ignore[attr-defined]
             service = MapFitService(config=config.to_dict() if hasattr(config, 'to_dict') else _config_to_dict(config))
             summary = service.run_map_fit(
                 session=fit_session,
@@ -613,11 +631,13 @@ def get_map_job_status(request: Request, job_id: str) -> MapJobStatusResponse:
                 "cancelled": "cancelled",
             }
             mapped_status = status_map.get(status, status)
-            total = ctx.n_points
-            # Estimate fitted from the message buffer (count point_fitted messages)
-            fitted = sum(
-                1 for m in ctx.message_buffer if m.get("type") == "point_fitted"
-            )
+            snapshot = ctx.progress_snapshot()
+            total = snapshot["total"]
+            # Authoritative counter maintained by the streaming callbacks.
+            # Counting point_fitted messages in the ring buffer undercounts
+            # once the buffer wraps (>2000 messages), which made long scans
+            # look like they had stopped making progress.
+            fitted = snapshot["fitted"]
             results_available = status == "complete"
             return MapJobStatusResponse(
                 job_id=job_id,
