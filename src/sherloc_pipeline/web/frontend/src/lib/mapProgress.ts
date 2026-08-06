@@ -106,6 +106,17 @@ export interface MapJobStatus extends MapJobLiveness {
    * `GET /api/map/jobs/{job_id}/results`.
    */
   results_retained?: number;
+  /**
+   * False while the fitting thread may still add a point to that store.
+   *
+   * A terminal `status` is not the same signal: a cancel is recorded when
+   * it is requested, but the fitting loop only notices between points, so
+   * the point it was on is retained afterwards. Reading the results in
+   * that window loses a finished measurement (issue #6). Absent on
+   * servers that predate the field, which is why the poller only waits on
+   * an explicit `false`.
+   */
+  results_final?: boolean;
 }
 
 export const TERMINAL_JOB_STATUSES = ['complete', 'failed', 'cancelled'] as const;
@@ -148,6 +159,19 @@ export const MAP_JOB_POLL_INTERVAL_MS = 5000;
  */
 export const MAP_JOB_POLL_MAX_ERRORS = 5;
 
+/**
+ * Extra polls allowed after a terminal status while the server still
+ * reports its retained results as not final.
+ *
+ * The gap is real but short: the fitting thread notices a cancel between
+ * points and finishes the one it is on. Waiting through it is what stops
+ * a finished measurement from being read past (issue #6). Bounded for the
+ * same reason as MAP_JOB_POLL_MAX_ERRORS — a wedged fitting thread must
+ * not keep this poller alive forever; the caller is handed the last
+ * status either way and can say the map may be a point short.
+ */
+export const MAP_JOB_POLL_MAX_SETTLE_POLLS = 3;
+
 export interface MapJobPollerHandlers {
   /** Called with each successful status read. */
   onStatus: (status: MapJobStatus) => void;
@@ -176,6 +200,7 @@ export class MapJobPoller {
   private stopped = false;
   private inFlight = false;
   private consecutiveErrors = 0;
+  private settlePolls = 0;
 
   constructor(
     private readonly jobId: string,
@@ -183,6 +208,7 @@ export class MapJobPoller {
     private readonly handlers: MapJobPollerHandlers,
     private readonly intervalMs: number = MAP_JOB_POLL_INTERVAL_MS,
     private readonly maxErrors: number = MAP_JOB_POLL_MAX_ERRORS,
+    private readonly maxSettlePolls: number = MAP_JOB_POLL_MAX_SETTLE_POLLS,
   ) {}
 
   /** Begin polling. Safe to call once; further calls are ignored. */
@@ -210,9 +236,16 @@ export class MapJobPoller {
       this.consecutiveErrors = 0;
       this.handlers.onStatus(status);
       if (isTerminalJobStatus(status.status)) {
-        this.stop();
-        this.handlers.onTerminal?.(status);
-        return;
+        // Terminal, but the fitting thread may still be finishing the
+        // point it was on when the job was stopped — reading the retained
+        // results now would read past it. Wait, briefly and boundedly.
+        if (status.results_final === false && this.settlePolls < this.maxSettlePolls) {
+          this.settlePolls++;
+        } else {
+          this.stop();
+          this.handlers.onTerminal?.(status);
+          return;
+        }
       }
     } catch (err) {
       if (this.stopped) return;

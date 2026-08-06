@@ -64,9 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them on every terminal status, whether it is observed on the socket or by a
   poll — on completion when a resumed socket delivered fewer points than the
   server fitted (the reconnect replay buffer is bounded and can wrap on a long
-  scan), and always on failure or cancellation, where the acknowledgement is
-  sent straight from the WebSocket handler and closes the socket ahead of the
-  point frames still queued behind it. Recovered points are merged by point
+  scan), and always on failure or cancellation, where the socket closes on the
+  terminal frame and anything not forwarded by then never arrives. Recovered
+  points are merged by point
   identity, so nothing is ingested or coloured twice, and the partial results
   of a cancelled or failed job — measurements that were finished before the
   job stopped — reach the map instead of leaving points that look unmeasured.
@@ -74,6 +74,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gone (the job was reaped, or outgrew the retention ceiling), Map Mode says so
   rather than showing a different run's peaks as if they were this fit's. The
   endpoint carries the same access gate as the fit that produced it.
+- **Cancelling a map fit no longer loses the point it was working on (#6).**
+  `run_map_fit` only tests the cancel flag between points, so a cancel that
+  arrives mid-point is noticed after that point has been fitted and retained.
+  The WebSocket handler used to acknowledge the cancel and close the socket
+  the moment it read the request, and Map Mode fetches the server's retained
+  results as soon as it is acknowledged — so a point still in flight landed in
+  the retention store *after* the client had already read it, and with no
+  terminal frame left to announce it, that finished measurement was gone for
+  good. The terminal `cancelled` frame is now emitted by the fitting thread
+  itself, alongside `complete` and `error`, which places it behind the last
+  point that thread retained; the handler holds the acknowledgement until it
+  arrives (or up to 30 seconds) and forwards the remaining point frames in the
+  meantime. Two cases short-circuit that wait: a job cancelled while still
+  queued never started, so its results are already final and it is
+  acknowledged at once rather than waiting on an executor that may be minutes
+  away; and a cancel that races the end of a job leaves the real
+  `complete`/`error` frame to close the stream instead of masking it. The
+  acknowledgement carries `results_final`, false only when the drain window
+  expired, and Map Mode says the map may be a point short rather than
+  presenting it as the whole measurement. `GET /api/map/jobs/{job_id}`
+  reports the same `results_final` flag (additive; `true` for any job that
+  has no fitting thread left to wait on), so the REST fallback waits for the
+  same barrier instead of recovering results the moment a status turns
+  terminal — bounded to three extra polls, after which it recovers anyway
+  and says the same thing.
 - **A cancelled map fit job can no longer be restarted (#6).** Cancelling a
   job that was still waiting its turn on the single-threaded executor only set
   a flag: when the executor eventually reached it, the fitting thread marked

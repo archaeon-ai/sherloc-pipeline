@@ -754,6 +754,12 @@ class MapJobStatusResponse(BaseModel):
     # from GET /api/map/jobs/{job_id}/results. Non-zero means a client
     # whose stream dropped can recover the frames it missed.
     results_retained: int = 0
+    # False while the fitting thread may still add a point to that store.
+    # A terminal status is not the same signal: a cancel is recorded when
+    # it is requested, but the fitting loop only notices between points,
+    # so the point it was on is retained afterwards. A client that reads
+    # the results in that window loses a finished measurement (issue #6).
+    results_final: bool = True
 
 
 class MapJobFitDomainDTO(BaseModel):

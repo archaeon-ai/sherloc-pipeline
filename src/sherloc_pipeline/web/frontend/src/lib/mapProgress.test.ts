@@ -211,6 +211,89 @@ describe('MapJobPoller', () => {
     expect(fetchStatus).toHaveBeenCalledTimes(3);
   });
 
+  it('waits for a stopped job to finish winding down before reporting it', async () => {
+    vi.useFakeTimers();
+    // A cancel is recorded when it is requested, but the fitting thread
+    // only notices between points and retains the one it was on
+    // afterwards. Reporting the job terminal on the first of these would
+    // send the caller to fetch results that are still a point short.
+    const responses = [
+      status({ status: 'running', fitted: 1 }),
+      status({ status: 'cancelled', fitted: 1, results_final: false }),
+      status({ status: 'cancelled', fitted: 1, results_final: false }),
+      status({ status: 'cancelled', fitted: 2, results_final: true }),
+    ];
+    const fetchStatus = vi.fn(async () => responses.shift()!);
+    const terminal: MapJobStatus[] = [];
+
+    const poller = new MapJobPoller(
+      'mf_settle',
+      fetchStatus,
+      { onStatus: () => {}, onTerminal: (s) => terminal.push(s) },
+      1000,
+    );
+    poller.start();
+
+    // First poll fires on start(), so 2000ms covers the running read and
+    // both not-yet-final ones.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(terminal).toHaveLength(0); // still winding down
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0].fitted).toBe(2); // the in-flight point is included
+    expect(terminal[0].results_final).toBe(true);
+  });
+
+  it('stops waiting for a fit that never finishes winding down', async () => {
+    vi.useFakeTimers();
+    // Bounded, like the failure budget: a wedged fitting thread must not
+    // keep this poller alive forever. The caller is handed the last status
+    // it saw, `results_final` false and all, so it can say the map may be
+    // a point short rather than implying a complete one.
+    const fetchStatus = vi.fn(async () =>
+      status({ status: 'cancelled', fitted: 1, results_final: false }),
+    );
+    const terminal: MapJobStatus[] = [];
+
+    const poller = new MapJobPoller(
+      'mf_wedged',
+      fetchStatus,
+      { onStatus: () => {}, onTerminal: (s) => terminal.push(s) },
+      1000,
+      5,
+      2, // maxSettlePolls
+    );
+    poller.start();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0].results_final).toBe(false);
+    // Two extra polls, then the third reports it: no unbounded loop.
+    expect(fetchStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports a terminal job at once when the server omits the settle flag', async () => {
+    vi.useFakeTimers();
+    // A server that predates `results_final` behaves as it always did.
+    const fetchStatus = vi.fn(async () => status({ status: 'complete', fitted: 10 }));
+    const terminal: MapJobStatus[] = [];
+
+    const poller = new MapJobPoller(
+      'mf_legacy',
+      fetchStatus,
+      { onStatus: () => {}, onTerminal: (s) => terminal.push(s) },
+      1000,
+    );
+    poller.start();
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(terminal).toHaveLength(1);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves the queued and stalled signals the WebSocket carries', async () => {
     vi.useFakeTimers();
     const responses = [

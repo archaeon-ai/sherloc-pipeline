@@ -838,6 +838,19 @@
   }
 
   /**
+   * Said when the server reports a stopped job whose fitting thread had
+   * not finished winding down.
+   *
+   * The thread notices a cancel between points and finishes the one it is
+   * on, so the results read at that moment can be one point short. Both
+   * terminal channels — the socket's acknowledgement and the REST poll —
+   * wait for it, and both give up eventually; this is what they say when
+   * they do, because a quietly incomplete map reads as a measured one.
+   */
+  const RESULTS_NOT_SETTLED_NOTE =
+    'The fit had not finished winding down when its results were read — the point it was working on may be missing from the map.';
+
+  /**
    * Fetch and ingest the per-point results this client missed.
    *
    * Fitting streams its results and never writes them to `fitted_peaks`,
@@ -891,13 +904,13 @@
   /**
    * Settle a job that has just reached a terminal status on the socket.
    *
-   * Every terminal status recovers, not only "complete". A cancel is
-   * acknowledged by the WebSocket handler itself and closes the socket at
-   * once, so the per-point frames still queued behind it are never sent;
-   * a failure can land the same way when a reconnect has already outrun
-   * the bounded replay buffer. Those points were fitted before the job
-   * stopped — they are real measurements the server still retains, and
-   * dropping them leaves blank map points that look unmeasured.
+   * Every terminal status recovers, not only "complete". A cancel closes
+   * the socket as soon as it is acknowledged, so any per-point frame that
+   * had not been forwarded by then is never sent; a failure can land the
+   * same way when a reconnect has already outrun the bounded replay
+   * buffer. Those points were fitted before the job stopped — they are
+   * real measurements the server still retains, and dropping them leaves
+   * blank map points that look unmeasured.
    *
    * `expectedPoints` is the server's own count of what the job produced,
    * which only the completion frame carries. When this client already
@@ -942,6 +955,9 @@
         if (s.status === 'complete') {
           logFit('Fit complete — recovering the results missed while disconnected.');
         }
+        // The poller waits for the fitting thread to wind down before it
+        // reports a job terminal; this only fires when that wait ran out.
+        if (s.results_final === false) logFit(RESULTS_NOT_SETTLED_NOTE);
         void recoverMissedResults(jobId);
       },
       onError: (err) => {
@@ -1060,12 +1076,15 @@
             // Whatever the job fitted before it failed still stands.
             settleTerminalFit(data.job_id);
           },
-          onCancelled: () => {
+          onCancelled: (msg) => {
             mapFitJob.update((j) =>
               j ? { ...j, status: 'cancelled' } : j,
             );
-            // The cancel acknowledgement overtakes the point frames still
-            // queued on the server, so recover them before the socket goes.
+            // The server holds this acknowledgement until the fitting
+            // thread stops, so everything it fitted is retained by the
+            // time it arrives. The flag is false only when it gave up
+            // waiting.
+            if (msg?.results_final === false) logFit(RESULTS_NOT_SETTLED_NOTE);
             settleTerminalFit(data.job_id);
           },
         onHeartbeat: (msg) => {

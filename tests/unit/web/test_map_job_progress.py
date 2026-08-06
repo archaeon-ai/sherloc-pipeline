@@ -25,6 +25,12 @@ These tests pin the observable signals that fix that:
   fitting thread that eventually picks it up.
 * The ``/ws/map/{job_id}`` handler itself: connect frame, resume replay,
   client cancel, and the two refusal paths.
+* A cancel is acknowledged only once the fitting thread has stopped, so a
+  point that was in flight when the cancel landed is retained before the
+  client goes looking for it -- bounded by a drain window, past which the
+  acknowledgement says the results are not final. ``results_final`` says
+  the same thing on the REST status, so a polling client waits on the
+  same barrier instead of reading a store the thread is still writing to.
 * ``GET /api/map/jobs/{job_id}``, the REST fallback, carries the same
   queued / stalled / progress signals rather than collapsing them.
 * ``GET /api/map/jobs/{job_id}/results`` hands back the per-point results
@@ -438,6 +444,19 @@ class _StubWebSocket:
             self.closed = (code, reason)
 
 
+async def _await_condition(predicate, what: str, timeout: float = 2.0) -> None:
+    """Wait until ``predicate()`` holds, or fail loudly.
+
+    Bounded for the same reason as ``_await_frames``: a regression must
+    surface as a failed assertion, never as a hung suite.
+    """
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"{what} did not happen within {timeout}s")
+        await asyncio.sleep(0.005)
+
+
 async def _await_frames(ws: _StubWebSocket, count: int, timeout: float = 2.0) -> None:
     """Wait until the handler has sent ``count`` frames, or fail loudly.
 
@@ -545,6 +564,13 @@ async def test_client_cancel_marks_the_job_and_closes():
     ``_run_fit`` checks ``cancel_event`` before it starts, so the event has
     to be set here — a status-only cancel would let the executor start the
     job anyway when it reached it.
+
+    A queued job is also the one case the handler may acknowledge on the
+    spot: the terminal status it now carries means the fitting thread can
+    never start, so nothing is in flight and the retained results are
+    already final. Waiting for the thread's own frame would mean holding
+    the socket open until the single map executor reached a job that is
+    only going to bail out — potentially minutes.
     """
     registry = MapJobRegistry()
     ctx = registry.create("mf_cancel", "scan-a", loop=_InlineLoop(), n_points=10)
@@ -556,8 +582,204 @@ async def test_client_cancel_marks_the_job_and_closes():
 
     assert ctx.cancel_event.is_set() is True
     assert ctx.get_status() == "cancelled"
-    assert ws.sent[-1] == {"type": "cancelled", "job_id": "mf_cancel"}
+    assert ws.sent[-1] == {
+        "type": "cancelled",
+        "job_id": "mf_cancel",
+        "fitted": 0,
+        "total": 10,
+        "results_final": True,
+    }
     assert ws.closed is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_waits_for_the_in_flight_point_before_acknowledging():
+    """A mid-point cancel must not be acknowledged before the point lands.
+
+    ``run_map_fit`` only tests the cancel event between points, so a cancel
+    that arrives mid-point is noticed *after* that point has been fitted
+    and retained. The client fetches the server's retained results the
+    moment it is acknowledged, and map fitting never writes results to the
+    database — acknowledging before the fitting thread stops loses that
+    point outright, with no later frame to announce it (issue #6).
+
+    A barrier holds the worker inside the in-flight point so the ordering
+    is pinned rather than raced.
+    """
+    loop = asyncio.get_running_loop()
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_midpoint", "scan-a", loop=loop, n_points=3)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+
+    release = threading.Event()  # test lets the worker finish the point
+
+    def _worker() -> None:
+        # Point 0 is fitted and streamed before the cancel arrives.
+        _fit_points(on_point_fitted, [0])
+        # Point 1 is in flight: fitted, but not yet handed to the callback
+        # that retains it, for as long as this barrier is held.
+        release.wait(timeout=10.0)
+        _fit_points(on_point_fitted, [1])
+        on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+
+    ws = _StubWebSocket(registry, client_messages=['{"type": "cancel"}'])
+    worker = threading.Thread(target=_worker, daemon=True)
+    worker.start()
+    try:
+        async with _connected(ws, "mf_midpoint") as task:
+            await _await_condition(
+                ctx.cancel_event.is_set, "handler observed the cancel"
+            )
+            # Barrier still held: the worker has not retained point 1, so
+            # an acknowledgement sent now would send the client to a store
+            # that is missing it.
+            assert ctx.get_status() == "cancelled"
+            retained_now, _ = ctx.results_snapshot()
+            assert [p["point_index"] for p in retained_now] == [0]
+            await asyncio.sleep(0.05)
+            assert not any(f["type"] == "cancelled" for f in ws.sent)
+            assert ws.closed is None
+
+            release.set()
+            await asyncio.wait_for(task, timeout=5.0)
+    finally:
+        release.set()
+        worker.join(timeout=5.0)
+
+    # The in-flight point reached the client ahead of the acknowledgement...
+    delivered = [f["point_index"] for f in ws.sent if f["type"] == "point_fitted"]
+    assert delivered == [0, 1]
+    ack = ws.sent[-1]
+    assert ack["type"] == "cancelled"
+    assert ack["results_final"] is True
+    assert ack["fitted"] == 2
+    # ...and is in the retention store the client reads next, which is the
+    # guarantee the acknowledgement is standing in for.
+    points, truncated = ctx.results_snapshot()
+    assert [p["point_index"] for p in points] == [0, 1]
+    assert truncated is False
+    assert ws.closed is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_is_acknowledged_when_the_worker_does_not_unwind(monkeypatch):
+    """Holding the acknowledgement is bounded, not open-ended.
+
+    A fitting thread wedged inside a point would otherwise leave the client
+    watching a job it has already cancelled — the frozen panel issue #6 is
+    about. Past the drain window the handler acknowledges anyway and says
+    the retained results are not final, so the UI can report a map that may
+    be a point short rather than implying a complete one.
+    """
+    monkeypatch.setattr(ws_map, "CANCEL_DRAIN_SECONDS", 0.05)
+    registry = MapJobRegistry()
+    ctx = registry.create(
+        "mf_stuck", "scan-a", loop=asyncio.get_running_loop(), n_points=4
+    )
+    ctx.set_status("running")
+
+    ws = _StubWebSocket(registry, client_messages=['{"type": "cancel"}'])
+    async with _connected(ws, "mf_stuck") as task:
+        await asyncio.wait_for(task, timeout=3.0)
+
+    assert ctx.get_status() == "cancelled"
+    assert ws.sent[-1] == {
+        "type": "cancelled",
+        "job_id": "mf_stuck",
+        "fitted": 0,
+        "total": 4,
+        "results_final": False,
+    }
+    assert ws.closed is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_racing_completion_lets_the_completion_frame_through():
+    """A cancel that lands after the job finished must not mask the result.
+
+    The job is already terminal, so there is nothing to cancel; sending an
+    acknowledgement and closing would drop the completion frame — and the
+    points still queued behind it — for a job that actually succeeded.
+    """
+    registry = MapJobRegistry()
+    ctx = registry.create(
+        "mf_race", "scan-a", loop=asyncio.get_running_loop(), n_points=1
+    )
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    ctx.set_status("complete")
+
+    ws = _StubWebSocket(registry, client_messages=['{"type": "cancel"}'])
+    async with _connected(ws, "mf_race") as task:
+        await _await_condition(
+            ctx.cancel_event.is_set, "handler observed the cancel"
+        )
+        assert ctx.get_status() == "complete"  # the cancel did not stick
+        assert not any(f["type"] == "cancelled" for f in ws.sent)
+        # Answered, though: the request gets the real state rather than
+        # silence until the handler's 30-minute cap.
+        assert ws.sent[-1]["type"] == "heartbeat"
+        assert ws.sent[-1]["status"] == "complete"
+
+        _fit_points(on_point_fitted, [0])
+        on_point_fitted.send_complete(  # type: ignore[attr-defined]
+            {"total_points": 1, "detections": {}, "elapsed_s": 0.1}
+        )
+        await asyncio.wait_for(task, timeout=3.0)
+
+    assert [f["type"] for f in ws.sent[-2:]] == ["point_fitted", "complete"]
+
+
+def test_the_fitting_thread_sends_its_own_terminal_cancelled_frame():
+    """``send_cancelled`` is sequenced and buffered like the other terminals.
+
+    It has to be emitted from the fitting thread, behind that thread's last
+    retained point, for the handler's mid-point wait to mean anything.
+    """
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_worker", "scan-a", loop=_InlineLoop(), n_points=5)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+
+    _fit_points(on_point_fitted, range(2))
+    ctx.set_status("cancelled")
+    on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+
+    frames = [ctx.queue.get_nowait() for _ in range(ctx.queue.qsize())]
+    assert [f["type"] for f in frames] == ["point_fitted", "point_fitted", "cancelled"]
+    tail = frames[-1]
+    assert tail["seq"] > frames[-2]["seq"]
+    assert tail["job_id"] == "mf_worker"
+    assert tail["fitted"] == 2
+    assert tail["total"] == 5
+    assert tail["results_final"] is True
+    # Replayed to a client that reconnects after the job ended, so it is
+    # told the job is over instead of waiting on a stream that never moves.
+    assert ctx.message_buffer[-1] is tail
+
+
+def test_request_cancel_reports_the_status_it_replaced():
+    """The handler's queued-vs-running decision rests on this being atomic."""
+    ctx = _make_ctx()
+
+    applied, previous = ctx.request_cancel()
+    assert (applied, previous) == (True, "queued")
+    assert ctx.get_status() == "cancelled"
+    assert ctx.terminal_at is not None
+
+    # Terminal states stay sticky: a second cancel changes nothing and
+    # reports the status already in force.
+    assert ctx.request_cancel() == (False, "cancelled")
+
+    running = _make_ctx()
+    running.set_status("running")
+    assert running.request_cancel() == (True, "running")
+
+    done = _make_ctx()
+    done.set_status("complete")
+    assert done.request_cancel() == (False, "complete")
+    assert done.get_status() == "complete"
     # And the executor, reaching it later, cannot put it back to work.
     assert ctx.set_status("running") is False
 
@@ -693,6 +915,67 @@ def test_rest_status_advertises_how_many_results_are_recoverable():
     resp = get_map_job_status(_status_request(registry), "mf_retained")
 
     assert resp.results_retained == 2
+
+
+def test_rest_status_holds_a_cancelled_job_open_until_the_thread_stops():
+    """A polling client needs the same barrier the WebSocket ack gives it.
+
+    Cancel is recorded as soon as it is requested, so a poller keying off
+    status alone would fetch the retained results while the fitting thread
+    is still finishing the point it was on — the same lost measurement the
+    WebSocket path guards against (issue #6).
+    """
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_poll_cancel", "scan-a", loop=_InlineLoop(), n_points=5)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    _fit_points(on_point_fitted, [0])
+
+    assert ctx.request_cancel() == (True, "running")
+    mid = get_map_job_status(_status_request(registry), "mf_poll_cancel")
+    assert mid.status == "cancelled"
+    assert mid.results_final is False  # the thread has not stopped yet
+
+    # The point that was in flight lands, then the thread's terminal frame.
+    _fit_points(on_point_fitted, [1])
+    on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+
+    settled = get_map_job_status(_status_request(registry), "mf_poll_cancel")
+    assert settled.results_final is True
+    assert settled.results_retained == 2
+
+
+def test_rest_status_reports_a_queued_cancel_as_settled_immediately():
+    """Nothing was in flight, so there is nothing for a poller to wait on."""
+    registry = MapJobRegistry()
+    registry.create("mf_poll_queued", "scan-a", loop=_InlineLoop(), n_points=5)
+
+    ctx = registry.get("mf_poll_queued")
+    assert ctx is not None
+    assert ctx.request_cancel() == (True, "queued")
+
+    resp = get_map_job_status(_status_request(registry), "mf_poll_queued")
+    assert resp.status == "cancelled"
+    assert resp.results_final is True
+    assert resp.results_retained == 0
+
+
+def test_completion_and_failure_settle_the_results_too():
+    """``results_final`` tracks the fitting thread, not the cancel path."""
+    registry = MapJobRegistry()
+    done = registry.create("mf_done_final", "scan-a", loop=_InlineLoop(), n_points=1)
+    done.set_status("running")
+    done_cb, _p, _l = make_fitting_callbacks(done)
+    assert done.results_are_final() is False
+    done_cb.send_complete({"total_points": 1, "detections": {}, "elapsed_s": 0.1})  # type: ignore[attr-defined]
+    assert done.results_are_final() is True
+
+    broken = registry.create("mf_failed_final", "scan-b", loop=_InlineLoop(), n_points=1)
+    broken.set_status("running")
+    broken_cb, _p2, _l2 = make_fitting_callbacks(broken)
+    assert broken.results_are_final() is False
+    broken_cb.send_error("fit worker died")  # type: ignore[attr-defined]
+    assert broken.results_are_final() is True
 
 
 # ---------------------------------------------------------------------------

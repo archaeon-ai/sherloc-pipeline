@@ -7,15 +7,20 @@
 // already pulled those back; failure and cancellation did not, which lost
 // valid measurements in two real cases:
 //
-//   * cancel — the WS handler acknowledges the cancel and closes the
-//     socket immediately, so every point frame still queued behind the
-//     acknowledgement is dropped; and
+//   * cancel — the socket closes as soon as the cancel is acknowledged,
+//     so any point frame not forwarded by then is dropped; and
 //   * failure after a reconnect that outran the bounded replay buffer,
 //     which leaves a hole nothing else fills.
 //
 // Both leave map points blank as though they were never measured. These
 // tests drive the WS handlers MapMode installs and assert the retained
 // results are fetched and ingested for every terminal status.
+//
+// The server holds a cancel acknowledgement until the fitting thread has
+// stopped, so by the time `onCancelled` fires the retention store is
+// complete. When it could not wait that long it says so on the frame
+// (`results_final: false`), and the UI has to pass that on rather than
+// presenting a possibly short map as the whole measurement.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, screen, waitFor } from '@testing-library/svelte';
@@ -29,7 +34,12 @@ import {
   resetMapState,
 } from '../../lib/stores/mapStore';
 import type { MapWSHandlers } from '../../lib/mapWebSocket';
-import type { MapJobFitPoint, MapJobResults, WSPointFitted } from '../../lib/types/map';
+import type {
+  MapJobFitPoint,
+  MapJobResults,
+  WSJobCancelled,
+  WSPointFitted,
+} from '../../lib/types/map';
 import type { ScanDetailResponse } from '../../lib/types';
 
 const SCAN_ID = 'ae5578c9-5a91-41c9-8431-190117be23b4';
@@ -83,6 +93,21 @@ function fitPoint(pointIndex: number, snr: number): MapJobFitPoint {
 
 function pointFrame(pointIndex: number, snr: number, seq: number): WSPointFitted {
   return { type: 'point_fitted', seq, ...fitPoint(pointIndex, snr) } as WSPointFitted;
+}
+
+/**
+ * The terminal cancel frame. `resultsFinal` false is the degraded case:
+ * the server gave up waiting for the fitting thread to stop.
+ */
+function cancelFrame(resultsFinal = true): WSJobCancelled {
+  return {
+    type: 'cancelled',
+    seq: 5,
+    job_id: JOB_ID,
+    fitted: 1,
+    total: 3,
+    results_final: resultsFinal,
+  };
 }
 
 function retained(points: MapJobFitPoint[], truncated = false): MapJobResults {
@@ -168,10 +193,10 @@ describe('MapMode — recovering results on terminal fit statuses (issue #6)', (
 
     const handlers = await startFit();
 
-    // One point streamed; the other two are still queued server-side when
-    // the cancel acknowledgement overtakes them.
+    // One point streamed; the other two were retained server-side but
+    // never reached this client before the socket closed.
     handlers.onPointFitted(pointFrame(0, 12, 1));
-    handlers.onCancelled();
+    handlers.onCancelled(cancelFrame());
 
     await waitFor(() => expect(results).toHaveBeenCalledWith(JOB_ID));
     await waitFor(() => expect(hiCarbValues()[2].status).toBe('measured'));
@@ -183,6 +208,40 @@ describe('MapMode — recovering results on terminal fit statuses (issue #6)', (
     expect(get(mapLogEntries)).toContain(
       'Recovered 2 results the fit stream did not deliver.',
     );
+  });
+
+  it('says so when the server could not wait for the fit to wind down', async () => {
+    vi.spyOn(api, 'getMapJobResults').mockResolvedValue(
+      retained([fitPoint(0, 12), fitPoint(1, 8)]),
+    );
+
+    const handlers = await startFit();
+    handlers.onPointFitted(pointFrame(0, 12, 1));
+    // The fitting thread had not stopped when the server gave up holding
+    // the acknowledgement, so the point it was on may never be retained.
+    handlers.onCancelled(cancelFrame(false));
+
+    await waitFor(() =>
+      expect(get(mapLogEntries)).toContain(
+        'The fit had not finished winding down when its results were read — the point it was working on may be missing from the map.',
+      ),
+    );
+    // Recovery still runs: what the server did retain is still valid.
+    await waitFor(() => expect(hiCarbValues()[1].status).toBe('measured'));
+    expect(get(mapFitJob)?.status).toBe('cancelled');
+  });
+
+  it('stays quiet when the cancel waited for the fit to wind down', async () => {
+    vi.spyOn(api, 'getMapJobResults').mockResolvedValue(
+      retained([fitPoint(0, 12), fitPoint(1, 8), fitPoint(2, 9)]),
+    );
+
+    const handlers = await startFit();
+    handlers.onPointFitted(pointFrame(0, 12, 1));
+    handlers.onCancelled(cancelFrame());
+
+    await waitFor(() => expect(hiCarbValues()[2].status).toBe('measured'));
+    expect(get(mapLogEntries).join('\n')).not.toContain('finished winding down');
   });
 
   it('recovers retained results when the job fails', async () => {
@@ -215,7 +274,7 @@ describe('MapMode — recovering results on terminal fit statuses (issue #6)', (
 
     const handlers = await startFit();
     handlers.onPointFitted(pointFrame(0, 12, 1));
-    handlers.onCancelled();
+    handlers.onCancelled(cancelFrame());
 
     await waitFor(() => expect(results).toHaveBeenCalledWith(JOB_ID));
     await waitFor(() =>
@@ -236,7 +295,7 @@ describe('MapMode — recovering results on terminal fit statuses (issue #6)', (
 
     const handlers = await startFit();
     handlers.onPointFitted(pointFrame(0, 12, 1));
-    handlers.onCancelled();
+    handlers.onCancelled(cancelFrame());
 
     await waitFor(() =>
       expect(get(mapLogEntries)).toContain(

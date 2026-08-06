@@ -173,6 +173,29 @@ export interface WSJobFailed {
   partial_results?: number;
 }
 
+/**
+ * Terminal acknowledgement of a cancel.
+ *
+ * Normally emitted by the fitting thread once it has stopped — carrying a
+ * `seq` like every other streamed frame, and landing behind the last point
+ * that thread retained. The client fetches the server's retained results
+ * as soon as it sees this, so that ordering is what stops the point the
+ * job was fitting when the cancel landed from being lost (issue #6).
+ *
+ * The WebSocket handler synthesises it (without a `seq`) in two cases: the
+ * job had not started, so nothing was in flight; or the fitting thread did
+ * not stop inside the drain window. `results_final` is false only in that
+ * second case — the retained results may still be one point short.
+ */
+export interface WSJobCancelled {
+  type: 'job_cancelled' | 'cancelled';
+  seq?: number;
+  job_id?: string;
+  fitted?: number;
+  total?: number;
+  results_final?: boolean;
+}
+
 export interface WSHeartbeat {
   type: 'heartbeat';
   status?: string;
@@ -194,9 +217,7 @@ export type WSServerMessage =
   | WSJobFailed
   | WSHeartbeat
   | { type: 'job_queued'; seq: number }
-  // The cancel acknowledgement is sent straight from the WS handler, not
-  // from the fitting thread's sequenced stream, so it carries no `seq`.
-  | { type: 'job_cancelled' | 'cancelled'; seq?: number; job_id?: string }
+  | WSJobCancelled
   | { type: 'point_fitted_batch'; seq: number; points: WSPointFitted[] }
   | { type: 'ping' };
 

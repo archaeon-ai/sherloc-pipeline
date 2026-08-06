@@ -567,6 +567,11 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
         if ctx.cancel_event.is_set():
             ctx.set_status("cancelled")
             logger.info("Map fit job %s cancelled before it started", job_id)
+            # Terminal frame from the thread that owns the results, like
+            # complete and error. Nothing was fitted here, but emitting it
+            # unconditionally is what lets the WebSocket handler treat
+            # "the fitting thread has stopped" as an observable event.
+            on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
             return
 
         factory = get_session_factory(engine)
@@ -577,12 +582,15 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
             # Terminal states are sticky, so a cancel that lands in the gap
             # above keeps the job cancelled rather than reactivating it.
             if not ctx.set_status("running"):
+                terminal_status = ctx.get_status()
                 logger.info(
                     "Map fit job %s reached a terminal state (%s) before it "
                     "could start",
                     job_id,
-                    ctx.get_status(),
+                    terminal_status,
                 )
+                if terminal_status == "cancelled":
+                    on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
                 return
             # Announce the real start: everything before this point was
             # spent waiting for the single map-executor thread.
@@ -601,6 +609,14 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
             )
             if ctx.cancel_event.is_set():
                 ctx.set_status("cancelled")
+                # Sent from here, not from the WebSocket handler that read
+                # the cancel: ``run_map_fit`` only notices the cancel
+                # between points, so the point it was on has been fitted
+                # and retained by now. Emitting the terminal frame here
+                # puts it behind that point, which is what stops a client
+                # from fetching the retained results too early and losing
+                # it (issue #6).
+                on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
             else:
                 ctx.set_status("complete")
                 on_point_fitted.send_complete({  # type: ignore[attr-defined]
@@ -666,6 +682,12 @@ def get_map_job_status(request: Request, job_id: str) -> MapJobStatusResponse:
                 # Tells a polling client whether the results it missed while
                 # its stream was down are still fetchable from this server.
                 results_retained=ctx.results_retained(),
+                # ...and whether they are worth fetching yet. A cancel is
+                # recorded as soon as it is requested, so a poller that
+                # treated the status alone as its cue would read the store
+                # while the point the fitting thread was on is still in
+                # flight, and lose it (issue #6).
+                results_final=ctx.results_are_final(),
             )
 
     # Fall back to general job queue

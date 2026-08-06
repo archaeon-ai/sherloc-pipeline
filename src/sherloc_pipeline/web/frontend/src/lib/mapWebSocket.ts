@@ -12,6 +12,7 @@ import type {
   WSLog,
   WSJobComplete,
   WSJobFailed,
+  WSJobCancelled,
 } from './types/map';
 
 /**
@@ -43,7 +44,11 @@ export interface MapWSHandlers {
   onLog: (msg: WSLog) => void;
   onComplete: (msg: WSJobComplete) => void;
   onFailed: (msg: WSJobFailed) => void;
-  onCancelled: () => void;
+  /**
+   * The job stopped at the client's request. The frame says whether the
+   * server's retained results were final when it was sent.
+   */
+  onCancelled: (msg: WSJobCancelled) => void;
   /** Called once, when reconnection has been abandoned or is not wanted. */
   onDisconnect: () => void;
   /** Server-side job liveness frame (status, queue position, stall flag). */
@@ -181,7 +186,7 @@ export class MapWebSocket {
       case 'job_cancelled':
       case 'cancelled':
         this.jobFinished = true;
-        this.handlers.onCancelled();
+        this.handlers.onCancelled(msg as WSJobCancelled);
         break;
       case 'heartbeat':
         this.handlers.onHeartbeat?.(msg as WSHeartbeat);

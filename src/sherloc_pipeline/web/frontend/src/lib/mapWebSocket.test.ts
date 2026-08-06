@@ -142,6 +142,32 @@ describe('MapWebSocket reconnect', () => {
     expect(handlers.onDisconnect).toHaveBeenCalledTimes(1);
   });
 
+  it('hands the cancel acknowledgement to the caller intact', async () => {
+    const handlers = makeHandlers();
+    new MapWebSocket('/ws/map/mf_cancel', handlers, 5, 10);
+
+    // Sent by the fitting thread once it has stopped, so it carries a seq
+    // like every other streamed frame. `results_final` is what tells the
+    // caller whether the retained results it fetches next are complete.
+    FakeWebSocket.instances[0].emit({
+      type: 'cancelled',
+      seq: 4,
+      job_id: 'mf_cancel',
+      fitted: 2,
+      total: 5,
+      results_final: true,
+    });
+    FakeWebSocket.instances[0].drop(1000);
+    await settleReconnects();
+
+    expect(handlers.onCancelled).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'cancelled', fitted: 2, results_final: true }),
+    );
+    // The job is over: the close behind the acknowledgement is expected.
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(handlers.onReconnecting).not.toHaveBeenCalled();
+  });
+
   it('does not retry a refusal the server will only repeat', async () => {
     const handlers = makeHandlers();
     new MapWebSocket('/ws/map/mf_gone', handlers, 5, 10);

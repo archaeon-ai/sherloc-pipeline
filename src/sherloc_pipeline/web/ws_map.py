@@ -57,6 +57,26 @@ STALL_WARN_SECONDS = 120.0
 TERMINAL_STATUSES = ("complete", "failed", "cancelled")
 ACTIVE_STATUSES = ("queued", "running")
 
+# Message types that end the stream. Each is emitted by the fitting thread
+# once it has unwound, so everything it produced is already on the queue
+# (and in the retention store) behind it.
+TERMINAL_MESSAGE_TYPES = ("complete", "error", "cancelled")
+
+# How long the handler holds a client's cancel acknowledgement while it
+# waits for the fitting thread's own ``cancelled`` frame.
+#
+# The thread checks the cancel event between points, so a cancel that
+# lands mid-point is only observed after that point has been fitted and
+# retained. Acknowledging before then loses it: the client fetches the
+# retained results as soon as it sees the acknowledgement, map fitting
+# never writes results to the database, and no later frame announces the
+# straggler (issue #6).
+#
+# Bounded, because an unacknowledged cancel is the same frozen panel this
+# change exists to remove: past the window the handler acknowledges anyway
+# and flags the results as not yet final.
+CANCEL_DRAIN_SECONDS = 30.0
+
 
 # ---------------------------------------------------------------------------
 # Map job context and registry
@@ -87,6 +107,9 @@ class MapJobContext:
     # disconnect (see MAX_RETAINED_RESULTS).
     results: dict[int, dict] = field(default_factory=dict)
     results_truncated: bool = False
+    # True once no fitting thread can add to ``results`` any more. See
+    # mark_results_final().
+    results_final: bool = False
     registry: Optional["MapJobRegistry"] = field(
         default=None, repr=False, compare=False
     )
@@ -123,6 +146,52 @@ class MapJobContext:
         """Thread-safe status read."""
         with self._lock:
             return self.status
+
+    def request_cancel(self) -> tuple[bool, str]:
+        """Mark the job cancelled, reporting the status it replaced.
+
+        Returns ``(applied, previous_status)``. ``applied`` is False when
+        the job was already terminal.
+
+        The previous status is read under the same lock as the write
+        because the caller acts on it: a job seen as ``queued`` here can
+        never start (the fitting thread's ``set_status("running")`` now
+        loses to this terminal state), so nothing is in flight and its
+        results are already final. Reading the status in a separate call
+        would leave exactly the gap that guarantee is meant to close.
+        """
+        with self._lock:
+            previous = self.status
+            if previous in TERMINAL_STATUSES:
+                return False, previous
+            self.status = "cancelled"
+            self.terminal_at = time.monotonic()
+            if previous == "queued":
+                # The fitting thread had not started, and this terminal
+                # status means it never will, so it can add nothing to the
+                # retention store.
+                self.results_final = True
+            return True, previous
+
+    def mark_results_final(self) -> None:
+        """Record that the fitting thread has stopped producing results.
+
+        Set as the thread emits its terminal message, which it does after
+        the last point it retained. Until then a job can *look* finished
+        while a point is still in flight -- a cancel is recorded the moment
+        it is requested, but ``run_map_fit`` only notices between points,
+        so the point it was on is retained afterwards. A client that reads
+        the retention store in that window silently loses that finished
+        measurement (issue #6), so both the WebSocket handler and the REST
+        status report this rather than status alone.
+        """
+        with self._lock:
+            self.results_final = True
+
+    def results_are_final(self) -> bool:
+        """Whether the retained results can no longer change."""
+        with self._lock:
+            return self.results_final
 
     def terminal_since(self) -> Optional[float]:
         """Monotonic time this job reached a terminal state, else ``None``.
@@ -345,6 +414,11 @@ def make_fitting_callbacks(
             # far AND, right behind it, the queued per-point frames it never
             # saw; counting those on top of the status frame would double.
             msg["fitted"] = fitted
+        if msg.get("type") in TERMINAL_MESSAGE_TYPES:
+            # Marked before the frame goes out, so a client that acts on it
+            # cannot observe the job as finished while the store it is
+            # about to read still says otherwise.
+            ctx.mark_results_final()
         ctx.message_buffer.append(msg)
         try:
             loop.call_soon_threadsafe(ctx.queue.put_nowait, msg)
@@ -438,10 +512,37 @@ def make_fitting_callbacks(
         }
         _enqueue(msg)
 
+    def send_cancelled() -> None:
+        """Send the terminal 'cancelled' message.
+
+        Emitted by the fitting thread once it has stopped, so it is
+        enqueued *behind* the last point that thread retained. The
+        WebSocket handler holds a client's cancel acknowledgement until
+        this frame arrives: the client fetches the server's retained
+        results the moment it is acknowledged, and a cancel that lands
+        mid-point is only noticed after that point has been fitted --
+        acknowledging any earlier drops it for good (issue #6).
+        """
+        seq_counter[0] += 1
+        snapshot = ctx.progress_snapshot()
+        msg = {
+            "type": "cancelled",
+            "seq": seq_counter[0],
+            "job_id": ctx.job_id,
+            "fitted": snapshot["fitted"],
+            "total": snapshot["total"],
+            # This frame follows the thread's last retained point, so the
+            # store the client is about to read is complete. ``_enqueue``
+            # records the same thing on the context for REST pollers.
+            "results_final": True,
+        }
+        _enqueue(msg)
+
     # Attach the lifecycle senders to the callbacks for use by the job runner
     on_point_fitted.send_job_started = send_job_started  # type: ignore[attr-defined]
     on_point_fitted.send_complete = send_complete  # type: ignore[attr-defined]
     on_point_fitted.send_error = send_error  # type: ignore[attr-defined]
+    on_point_fitted.send_cancelled = send_cancelled  # type: ignore[attr-defined]
 
     return on_point_fitted, on_progress, on_log
 
@@ -449,6 +550,26 @@ def make_fitting_callbacks(
 # ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
+
+
+def _cancel_ack(ctx: MapJobContext) -> dict:
+    """The handler's own cancel acknowledgement frame.
+
+    Carries no ``seq``: it is not part of the fitting thread's sequenced
+    stream. Used only where the handler has to answer without the thread's
+    own ``cancelled`` frame -- a job that never started, and a thread that
+    did not stop inside ``CANCEL_DRAIN_SECONDS``. ``results_final`` is read
+    from the context rather than asserted here, so it says what is
+    actually true of the store in both cases.
+    """
+    snapshot = ctx.progress_snapshot()
+    return {
+        "type": "cancelled",
+        "job_id": ctx.job_id,
+        "fitted": snapshot["fitted"],
+        "total": snapshot["total"],
+        "results_final": ctx.results_are_final(),
+    }
 
 
 @router.websocket("/ws/map/{job_id}")
@@ -506,6 +627,9 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
     # could no longer stop.
     receive_task: asyncio.Task = asyncio.create_task(websocket.receive_text())
     queue_task: Optional[asyncio.Task] = None
+    # Set when a client cancel is being drained: the deadline by which the
+    # fitting thread's own terminal frame has to arrive.
+    cancel_deadline: Optional[float] = None
 
     try:
         while True:
@@ -519,12 +643,27 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
                 await websocket.close(code=1000, reason="Timeout")
                 return
 
+            if cancel_deadline is not None and time.monotonic() >= cancel_deadline:
+                # The fitting thread did not unwind in time. Acknowledge
+                # anyway rather than leaving the client watching a job it
+                # has already cancelled, but say the retention store may
+                # still be missing the point that was in flight.
+                await websocket.send_json(_cancel_ack(ctx))
+                await websocket.close()
+                return
+
             if queue_task is None:
                 queue_task = asyncio.create_task(ctx.queue.get())
 
+            wait_timeout = HEARTBEAT_INTERVAL
+            if cancel_deadline is not None:
+                # Wake at the drain deadline so the acknowledgement above
+                # is not held for a whole heartbeat interval past it.
+                wait_timeout = max(0.0, min(wait_timeout, cancel_deadline - time.monotonic()))
+
             done, _pending = await asyncio.wait(
                 {queue_task, receive_task},
-                timeout=HEARTBEAT_INTERVAL,
+                timeout=wait_timeout,
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -533,8 +672,11 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
                 queue_task = None
                 await websocket.send_json(msg)
 
-                # If terminal message, close cleanly
-                if msg.get("type") in ("complete", "error"):
+                # If terminal message, close cleanly. "cancelled" is one of
+                # these: the fitting thread emits it once it has stopped,
+                # so it lands behind the last point it retained and is the
+                # signal a cancelling client is waiting on.
+                if msg.get("type") in TERMINAL_MESSAGE_TYPES:
                     await websocket.close()
                     return
 
@@ -549,18 +691,47 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
                     client_msg = {}
                 if client_msg.get("type") == "cancel":
                     ctx.cancel_event.set()
-                    ctx.set_status("cancelled")
-                    await websocket.send_json({
-                        "type": "cancelled",
-                        "job_id": job_id,
-                    })
-                    await websocket.close()
-                    return
+                    applied, previous_status = ctx.request_cancel()
+                    if not applied:
+                        # Already terminal -- a cancel racing the end of
+                        # the job. The fitting thread's own complete /
+                        # error / cancelled frame is on its way (or has
+                        # already been replayed); keep draining so it, and
+                        # the points ahead of it, still reach the client
+                        # instead of closing on an acknowledgement that
+                        # would contradict it. Answer with the real state
+                        # so the request is not met with silence either.
+                        await websocket.send_json({
+                            "type": "heartbeat",
+                            **ctx.progress_snapshot(),
+                        })
+                        continue
+                    if previous_status == "queued":
+                        # The fitting thread had not started, and the
+                        # terminal status it now carries means it never
+                        # will: nothing is in flight, so the retention
+                        # store is already final. Acknowledging here
+                        # matters because the single map executor may not
+                        # reach this job for minutes.
+                        await websocket.send_json(
+                            _cancel_ack(ctx)
+                        )
+                        await websocket.close()
+                        return
+                    # Running: the thread is mid-point and retains that
+                    # point *after* this message was received. Hold the
+                    # acknowledgement until its own terminal frame arrives
+                    # behind that point (issue #6).
+                    if cancel_deadline is None:
+                        cancel_deadline = time.monotonic() + CANCEL_DRAIN_SECONDS
 
-            if not done:
+            if not done and cancel_deadline is None:
                 # Nothing from either side within the heartbeat interval:
                 # report server-side job state so a silent job is
-                # distinguishable from a dead connection.
+                # distinguishable from a dead connection. Suppressed while
+                # a cancel is draining -- that wait ends in a terminal
+                # frame either way, and a heartbeat in front of it only
+                # reports a status the client already asked for.
                 await websocket.send_json({
                     "type": "heartbeat",
                     **ctx.progress_snapshot(),
