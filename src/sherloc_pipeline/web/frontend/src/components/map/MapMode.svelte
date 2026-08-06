@@ -848,9 +848,10 @@
    * had already received with them.
    *
    * Points already seen are skipped by identity, so this is safe to call
-   * whenever the client suspects a gap: after a poll-observed terminal
-   * status, or when a resumed socket delivered fewer points than the
-   * server fitted (the replay buffer is bounded and can wrap).
+   * whenever the client suspects a gap: on any terminal status, whether
+   * observed on the socket or by polling, and when a resumed socket
+   * delivered fewer points than the server fitted (the replay buffer is
+   * bounded and can wrap).
    */
   async function recoverMissedResults(jobId: string): Promise<void> {
     if (!jobId) return;
@@ -869,7 +870,7 @@
         recalcColormapRanges();
         mapFitJob.update((j) => (j ? { ...j, fitted: fitProgress.fitted } : j));
         logFit(
-          `Recovered ${recovered} result${recovered === 1 ? '' : 's'} missed while the fit stream was down.`,
+          `Recovered ${recovered} result${recovered === 1 ? '' : 's'} the fit stream did not deliver.`,
         );
       }
       if (data.truncated) {
@@ -882,9 +883,33 @@
       // would look like recovery while showing a different run's peaks.
       console.warn('Map fit result recovery failed:', err);
       logFit(
-        'Could not recover the results missed while disconnected — the server no longer holds them. Re-run the fit to see the full map.',
+        'Could not recover the results the fit stream did not deliver — the server no longer holds them. Re-run the fit to see the full map.',
       );
     }
+  }
+
+  /**
+   * Settle a job that has just reached a terminal status on the socket.
+   *
+   * Every terminal status recovers, not only "complete". A cancel is
+   * acknowledged by the WebSocket handler itself and closes the socket at
+   * once, so the per-point frames still queued behind it are never sent;
+   * a failure can land the same way when a reconnect has already outrun
+   * the bounded replay buffer. Those points were fitted before the job
+   * stopped — they are real measurements the server still retains, and
+   * dropping them leaves blank map points that look unmeasured.
+   *
+   * `expectedPoints` is the server's own count of what the job produced,
+   * which only the completion frame carries. When this client already
+   * holds that many there is nothing missing, so no request is made.
+   */
+  function settleTerminalFit(jobId: string, expectedPoints?: number): void {
+    flushPending();
+    recalcColormapRanges();
+    if (expectedPoints !== undefined && fitProgress.pointsReceived >= expectedPoints) {
+      return;
+    }
+    void recoverMissedResults(jobId);
   }
 
   /**
@@ -1011,9 +1036,6 @@
             mapLogEntries.update((logs) => [...logs.slice(-499), msg.message]);
           },
           onComplete: (msg) => {
-            // Flush any remaining pending results
-            flushPending();
-            recalcColormapRanges();
             fitProgress.noteServerCount(msg.summary.total_points);
             mapFitJob.update((j) =>
               j
@@ -1028,24 +1050,23 @@
             // long outage can still leave holes. Fill them from the
             // server's retention store rather than showing a map with
             // missing points and no sign that anything is absent.
-            if (fitProgress.pointsReceived < msg.summary.total_points) {
-              void recoverMissedResults(data.job_id);
-            }
+            settleTerminalFit(data.job_id, msg.summary.total_points);
           },
           onFailed: (msg) => {
-            flushPending();
-            recalcColormapRanges();
             mapFitJob.update((j) =>
               j ? { ...j, status: 'failed' } : j,
             );
             mapLogEntries.update((logs) => [...logs, `ERROR: ${msg.error}`]);
+            // Whatever the job fitted before it failed still stands.
+            settleTerminalFit(data.job_id);
           },
           onCancelled: () => {
-            flushPending();
-            recalcColormapRanges();
             mapFitJob.update((j) =>
               j ? { ...j, status: 'cancelled' } : j,
             );
+            // The cancel acknowledgement overtakes the point frames still
+            // queued on the server, so recover them before the socket goes.
+            settleTerminalFit(data.job_id);
           },
         onHeartbeat: (msg) => {
           // Server-side liveness frame, sent every 30s of silence and once

@@ -61,11 +61,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now retains its own per-point results, keyed by point index (so the store is
   bounded by the scan and dropped with the job an hour after it finishes), and
   a new `GET /api/map/jobs/{job_id}/results` serves them. Map Mode fetches
-  them when a poll observes a terminal status, and also when a resumed socket
-  delivered fewer points than the server fitted — the reconnect replay buffer
-  is bounded and can wrap on a long scan. Recovered points are merged by point
-  identity, so nothing is ingested or coloured twice, and partial results from
-  a cancelled or failed job are recoverable too. If the results are genuinely
+  them on every terminal status, whether it is observed on the socket or by a
+  poll — on completion when a resumed socket delivered fewer points than the
+  server fitted (the reconnect replay buffer is bounded and can wrap on a long
+  scan), and always on failure or cancellation, where the acknowledgement is
+  sent straight from the WebSocket handler and closes the socket ahead of the
+  point frames still queued behind it. Recovered points are merged by point
+  identity, so nothing is ingested or coloured twice, and the partial results
+  of a cancelled or failed job — measurements that were finished before the
+  job stopped — reach the map instead of leaving points that look unmeasured.
+  If the results are genuinely
   gone (the job was reaped, or outgrew the retention ceiling), Map Mode says so
   rather than showing a different run's peaks as if they were this fit's. The
   endpoint carries the same access gate as the fit that produced it.
