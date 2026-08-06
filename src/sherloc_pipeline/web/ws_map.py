@@ -76,20 +76,28 @@ class MapJobContext:
         if self.last_activity == 0.0:
             self.last_activity = self.created_at
 
-    def set_status(self, new_status: str) -> None:
-        """Thread-safe status update."""
+    def set_status(self, new_status: str) -> bool:
+        """Thread-safe status update. Returns True if it was applied.
+
+        Terminal states are sticky. A user can cancel a job while it is
+        still waiting its turn on the single map executor, and the fitting
+        thread only learns about that when it finally runs -- without
+        stickiness its ``set_status("running")`` would resurrect a job the
+        user already stopped, putting it back in the active set and
+        restarting its retention clock.
+        """
         with self._lock:
+            if self.status in TERMINAL_STATUSES:
+                # First terminal transition wins: a user cancel marks the job
+                # cancelled from the WebSocket handler, and the fitting thread
+                # re-marks it when it unwinds.
+                return False
             self.status = new_status
             if new_status == "running" and self.started_at is None:
                 self.started_at = time.monotonic()
             if new_status in TERMINAL_STATUSES:
-                # First terminal transition wins: a user cancel marks the job
-                # cancelled from the WebSocket handler, and the fitting thread
-                # re-marks it when it unwinds.
-                if self.terminal_at is None:
-                    self.terminal_at = time.monotonic()
-            else:
-                self.terminal_at = None
+                self.terminal_at = time.monotonic()
+            return True
 
     def get_status(self) -> str:
         """Thread-safe status read."""

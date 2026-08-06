@@ -29,6 +29,7 @@ import type {
 
 import { bootstrapAuthReady, getSession } from './auth';
 import type { DisplayPoint, VoronoiGeometry } from './types/map';
+import type { MapJobStatus } from './mapProgress';
 
 const API_BASE = '/api';
 
@@ -448,6 +449,18 @@ export async function startMapFit(
     method: 'POST',
     body: JSON.stringify({ scan_id: scanId, domains }),
   });
+}
+
+/**
+ * Authenticated read of a map fit job's status — the REST fallback used
+ * when the fit WebSocket is unavailable. Carries the same liveness signals
+ * as the WS heartbeat frame (status incl. `queued`, fitted/total, queue
+ * position, stall flag) so a client without a socket still knows whether a
+ * silent job is waiting its turn or genuinely slow (issue #6).
+ */
+export async function getMapJobStatus(jobId: string): Promise<MapJobStatus> {
+  await ensureAuthenticated();
+  return fetchJson<MapJobStatus>(`/map/jobs/${encodeURIComponent(jobId)}`);
 }
 
 export interface JobStatus {

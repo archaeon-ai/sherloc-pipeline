@@ -20,27 +20,36 @@ These tests pin the observable signals that fix that:
   fitting thread actually starts, keeps the liveness fields current, and
   stamps each ``point_fitted`` frame with the authoritative count so a
   late-connecting client can reconcile the backlog it is handed.
+* Terminal statuses are sticky, so a job cancelled while it waits its
+  turn on the single-threaded map executor cannot be restarted by the
+  fitting thread that eventually picks it up.
+* The ``/ws/map/{job_id}`` handler itself: connect frame, resume replay,
+  client cancel, and the two refusal paths.
+* ``GET /api/map/jobs/{job_id}``, the REST fallback, carries the same
+  queued / stalled / progress signals rather than collapsing them.
 """
 
 from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import threading
 import time
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from sherloc_pipeline.services.map_fitting import DomainResult, PointFitResult
+from sherloc_pipeline.web.routes.map import get_map_job_status
 from sherloc_pipeline.web.ws_map import (
     RECONNECT_BUFFER_SIZE,
     STALL_WARN_SECONDS,
     MapJobContext,
     MapJobRegistry,
     make_fitting_callbacks,
-    router as ws_map_router,
+    map_ws,
 )
 
 
@@ -324,19 +333,138 @@ async def test_point_fitted_frames_carry_the_authoritative_count():
 
 
 # ---------------------------------------------------------------------------
-# WebSocket endpoint: connecting after fitting has already started
+# Terminal statuses are sticky
 # ---------------------------------------------------------------------------
 
 
-def _ws_app(registry: MapJobRegistry) -> FastAPI:
-    app = FastAPI()
-    app.include_router(ws_map_router)
-    app.state.access_mode = "internal"
-    app.state.map_registry = registry
-    return app
+def test_a_cancelled_job_cannot_be_reactivated():
+    """A job cancelled while queued must stay cancelled.
+
+    The fitting thread only learns it was cancelled when the single map
+    executor finally reaches it. If its ``set_status("running")`` won, the
+    job would rejoin the active set, restart its retention clock, and hold
+    up every job behind it in the queue position count.
+    """
+    registry = MapJobRegistry()
+    loop = asyncio.new_event_loop()
+    try:
+        ctx = registry.create("mf_cancelled", "scan-a", loop=loop, n_points=10)
+        behind = registry.create("mf_behind", "scan-b", loop=loop, n_points=10)
+        assert behind.progress_snapshot()["queue_position"] == 1
+
+        ctx.cancel_event.set()
+        assert ctx.set_status("cancelled") is True
+        cancelled_at = ctx.terminal_at
+
+        # The fitting thread wakes up and tries to start.
+        assert ctx.set_status("running") is False
+
+        assert ctx.get_status() == "cancelled"
+        assert ctx.terminal_at == cancelled_at
+        assert ctx.started_at is None
+        assert behind.progress_snapshot()["queue_position"] == 0
+    finally:
+        loop.close()
 
 
-def test_late_connect_backlog_reconciles_to_the_status_frame_count():
+def test_terminal_status_survives_a_later_failure_report():
+    """The unwinding fitting thread must not overwrite the user's cancel."""
+    ctx = _make_ctx()
+    ctx.set_status("running")
+    ctx.set_status("cancelled")
+
+    assert ctx.set_status("failed") is False
+    assert ctx.get_status() == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint: connecting after fitting has already started
+#
+# The endpoint coroutine is driven directly against an in-process stub
+# rather than through ``TestClient.websocket_connect``. That harness runs
+# the ASGI app on a portal thread behind httpx and the ``websockets``
+# sans-io layer, and a blocking read on it has no test-side deadline: how
+# it behaves against a long-lived handler depends on which versions of
+# that stack are installed, and a failure mode there costs the whole suite
+# rather than one test. ``map_ws`` only calls accept / send_json /
+# receive_text / close, so a plain stub drives the same code on one event
+# loop with an explicit timeout on every wait -- and reaches the
+# client-cancel path, which needs a bidirectional exchange with a handler
+# that never returns on its own.
+# ---------------------------------------------------------------------------
+
+
+class _StubApp:
+    def __init__(self, registry: MapJobRegistry, access_mode: str = "internal"):
+        self.state = SimpleNamespace(map_registry=registry, access_mode=access_mode)
+
+
+class _StubWebSocket:
+    """Minimal stand-in for a Starlette WebSocket."""
+
+    def __init__(
+        self,
+        registry: MapJobRegistry,
+        *,
+        access_mode: str = "internal",
+        query_params: dict | None = None,
+        client_messages: list[str] | None = None,
+    ):
+        self.app = _StubApp(registry, access_mode)
+        self.query_params = query_params or {}
+        self.sent: list[dict] = []
+        self.accepted = False
+        self.closed: tuple[int, str] | None = None
+        self._inbound: asyncio.Queue = asyncio.Queue()
+        for raw in client_messages or []:
+            self._inbound.put_nowait(raw)
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def send_json(self, data: dict) -> None:
+        self.sent.append(data)
+
+    async def receive_text(self) -> str:
+        return await self._inbound.get()
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        if self.closed is None:
+            self.closed = (code, reason)
+
+
+async def _await_frames(ws: _StubWebSocket, count: int, timeout: float = 2.0) -> None:
+    """Wait until the handler has sent ``count`` frames, or fail loudly.
+
+    Bounded rather than open-ended: a regression that leaves the handler
+    silent must surface as a failed assertion, never as a hung suite.
+    """
+    deadline = time.monotonic() + timeout
+    while len(ws.sent) < count:
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"handler sent {len(ws.sent)}/{count} frames in {timeout}s: {ws.sent}"
+            )
+        await asyncio.sleep(0.005)
+
+
+@asynccontextmanager
+async def _connected(ws: _StubWebSocket, job_id: str):
+    """Run ``map_ws`` for the duration of the block, then always tear down."""
+    task = asyncio.create_task(map_ws(ws, job_id))
+    try:
+        yield task
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        # Let the handler's own cancelled child tasks settle before the
+        # test's event loop is torn down.
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_late_connect_backlog_reconciles_to_the_status_frame_count():
     """A client that connects mid-job gets a count *and* the frames behind it.
 
     The immediate status frame reports the authoritative fitted count, and
@@ -357,11 +485,12 @@ def test_late_connect_backlog_reconciles_to_the_status_frame_count():
     _fit_points(on_point_fitted, range(4))
     assert ctx.progress_snapshot()["fitted"] == 4
 
-    with TestClient(_ws_app(registry)) as client:
-        with client.websocket_connect("/ws/map/mf_late") as ws:
-            status_frame = ws.receive_json()
-            backlog = [ws.receive_json() for _ in range(4)]
+    ws = _StubWebSocket(registry)
+    async with _connected(ws, "mf_late"):
+        await _await_frames(ws, 5)
 
+    status_frame, *backlog = ws.sent[:5]
+    assert ws.accepted is True
     assert status_frame["type"] == "heartbeat"
     assert status_frame["status"] == "running"
     assert status_frame["fitted"] == 4
@@ -377,25 +506,172 @@ def test_late_connect_backlog_reconciles_to_the_status_frame_count():
     assert reconciled == status_frame["fitted"]  # 4, not 8
 
 
-def test_late_connect_to_a_queued_job_reports_live_queue_position():
+@pytest.mark.asyncio
+async def test_late_connect_to_a_queued_job_reports_live_queue_position():
     """The connect frame tells a waiting client it is queued, not frozen."""
     registry = MapJobRegistry()
     running = registry.create("mf_running", "scan-a", loop=_InlineLoop(), n_points=10)
     running.set_status("running")
     waiting = registry.create("mf_waiting", "scan-b", loop=_InlineLoop(), n_points=7)
 
-    app = _ws_app(registry)
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws/map/mf_waiting") as ws:
-            queued_frame = ws.receive_json()
+    first = _StubWebSocket(registry)
+    async with _connected(first, "mf_waiting"):
+        await _await_frames(first, 1)
 
-        # The job ahead finishes; a reconnecting client sees position 0.
-        running.set_status("complete")
-        with client.websocket_connect("/ws/map/mf_waiting") as ws:
-            after_frame = ws.receive_json()
+    # The job ahead finishes; a reconnecting client sees position 0.
+    running.set_status("complete")
+    second = _StubWebSocket(registry)
+    async with _connected(second, "mf_waiting"):
+        await _await_frames(second, 1)
 
+    queued_frame = first.sent[0]
+    after_frame = second.sent[0]
     assert queued_frame["status"] == "queued"
     assert queued_frame["queue_position"] == 1
     assert queued_frame["stalled"] is False  # waiting is not stalling
     assert after_frame["queue_position"] == 0
     assert waiting.get_status() == "queued"
+
+
+@pytest.mark.asyncio
+async def test_client_cancel_marks_the_job_and_closes():
+    """Cancelling a *queued* job must stop it, not merely flag it.
+
+    ``_run_fit`` checks ``cancel_event`` before it starts, so the event has
+    to be set here — a status-only cancel would let the executor start the
+    job anyway when it reached it.
+    """
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_cancel", "scan-a", loop=_InlineLoop(), n_points=10)
+
+    ws = _StubWebSocket(registry, client_messages=['{"type": "cancel"}'])
+    async with _connected(ws, "mf_cancel") as task:
+        await _await_frames(ws, 2)
+        await asyncio.wait_for(task, timeout=2.0)
+
+    assert ctx.cancel_event.is_set() is True
+    assert ctx.get_status() == "cancelled"
+    assert ws.sent[-1] == {"type": "cancelled", "job_id": "mf_cancel"}
+    assert ws.closed is not None
+    # And the executor, reaching it later, cannot put it back to work.
+    assert ctx.set_status("running") is False
+
+
+@pytest.mark.asyncio
+async def test_resume_replays_only_frames_after_last_seq():
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_resume", "scan-a", loop=_InlineLoop(), n_points=10)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    _fit_points(on_point_fitted, range(3))
+    # Drain the live queue so only the replay path can produce these.
+    while not ctx.queue.empty():
+        ctx.queue.get_nowait()
+
+    ws = _StubWebSocket(registry, query_params={"last_seq": "1"})
+    async with _connected(ws, "mf_resume"):
+        await _await_frames(ws, 3)
+
+    replayed = [f for f in ws.sent if f["type"] == "point_fitted"]
+    assert [f["seq"] for f in replayed] == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_unknown_job_is_refused_without_accepting():
+    ws = _StubWebSocket(MapJobRegistry())
+    await asyncio.wait_for(map_ws(ws, "mf_nope"), timeout=2.0)
+
+    assert ws.accepted is False
+    assert ws.closed == (4004, "Job not found")
+
+
+@pytest.mark.asyncio
+async def test_public_mode_refuses_the_socket():
+    registry = MapJobRegistry()
+    registry.create("mf_public", "scan-a", loop=_InlineLoop())
+    ws = _StubWebSocket(registry, access_mode="public")
+
+    await asyncio.wait_for(map_ws(ws, "mf_public"), timeout=2.0)
+
+    assert ws.accepted is False
+    assert ws.closed is not None and ws.closed[0] == 4003
+
+
+# ---------------------------------------------------------------------------
+# REST polling fallback: GET /api/map/jobs/{job_id}
+#
+# The route reads nothing but ``request.app.state``, so it is called
+# directly rather than through an HTTP stack.
+# ---------------------------------------------------------------------------
+
+
+def _status_request(registry: MapJobRegistry):
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(map_registry=registry, job_queue=None))
+    )
+
+
+def test_rest_status_reports_queued_with_its_queue_position():
+    """The fallback must not collapse "waiting" into "running".
+
+    A client polling because its WebSocket is unavailable is in exactly
+    the situation issue #6 describes; reporting a queued job as running
+    with 0/N points is the frozen-panel symptom, restated over REST.
+    """
+    registry = MapJobRegistry()
+    loop = asyncio.new_event_loop()
+    try:
+        running = registry.create("mf_a", "scan-a", loop=loop, n_points=10)
+        running.set_status("running")
+        registry.create("mf_b", "scan-b", loop=loop, n_points=7)
+
+        resp = get_map_job_status(_status_request(registry), "mf_b")
+
+        assert resp.status == "queued"
+        assert resp.queue_position == 1
+        assert resp.stalled is False
+        assert resp.total == 7
+        assert resp.fitted == 0
+        assert resp.results_available is False
+    finally:
+        loop.close()
+
+
+def test_rest_status_reports_a_stalled_running_job():
+    registry = MapJobRegistry()
+    loop = asyncio.new_event_loop()
+    try:
+        ctx = registry.create("mf_slow", "scan-a", loop=loop, n_points=500)
+        ctx.set_status("running")
+        ctx.note_activity(point_fitted=True)
+        ctx.last_activity = time.monotonic() - (STALL_WARN_SECONDS + 30)
+
+        resp = get_map_job_status(_status_request(registry), "mf_slow")
+
+        assert resp.status == "running"
+        assert resp.stalled is True
+        assert resp.since_last_message_s >= STALL_WARN_SECONDS
+        assert resp.fitted == 1
+        assert resp.queue_position == 0
+    finally:
+        loop.close()
+
+
+def test_rest_status_reports_completion_and_offers_results():
+    registry = MapJobRegistry()
+    loop = asyncio.new_event_loop()
+    try:
+        ctx = registry.create("mf_done", "scan-a", loop=loop, n_points=3)
+        ctx.set_status("running")
+        for _ in range(3):
+            ctx.note_activity(point_fitted=True)
+        ctx.set_status("complete")
+
+        resp = get_map_job_status(_status_request(registry), "mf_done")
+
+        assert resp.status == "complete"
+        assert resp.results_available is True
+        assert (resp.fitted, resp.total) == (3, 3)
+        assert resp.stalled is False
+    finally:
+        loop.close()

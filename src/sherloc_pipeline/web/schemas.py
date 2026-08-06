@@ -727,11 +727,26 @@ class MapDataResponse(BaseModel):
 
 
 class MapJobStatusResponse(BaseModel):
-    """Response from GET /api/map/jobs/{job_id}."""
+    """Response from GET /api/map/jobs/{job_id}.
+
+    The REST polling fallback carries the same liveness signals the fit
+    WebSocket sends in its heartbeat frame. Collapsing ``queued`` into
+    ``running`` and dropping the queue position left a client without a
+    WebSocket unable to tell "waiting behind another scan" from "frozen"
+    — the exact condition this endpoint exists to report.
+    """
 
     schema_version: str = API_SCHEMA_VERSION
     job_id: str
-    status: str  # "running" | "complete" | "failed" | "cancelled"
+    status: str  # "queued" | "running" | "complete" | "failed" | "cancelled"
     fitted: int
     total: int
     results_available: bool
+    # Active jobs submitted ahead of this one on the single-threaded map
+    # executor. 0 for a job that is running or already terminal.
+    queue_position: int = 0
+    # True when a running job has produced no output for longer than the
+    # server's stall threshold. Advisory: the job is not killed.
+    stalled: bool = False
+    since_last_message_s: Optional[float] = None
+    elapsed_s: Optional[float] = None

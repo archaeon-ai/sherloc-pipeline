@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { navigate } from '../../lib/stores';
   import MapCanvas from './MapCanvas.svelte';
   import FitControls from './FitControls.svelte';
@@ -8,7 +9,13 @@
   import ClassificationEditor from './ClassificationEditor.svelte';
   import MapSpectrumPanel from './MapSpectrumPanel.svelte';
   import { MapWebSocket } from '../../lib/mapWebSocket';
-  import { MapProgressTracker } from '../../lib/mapProgress';
+  import {
+    MapProgressTracker,
+    MapJobPoller,
+    isTerminalJobStatus,
+    jobLivenessNote,
+  } from '../../lib/mapProgress';
+  import type { MapJobLiveness } from '../../lib/mapProgress';
   import {
     mapPointSet,
     mapLayers,
@@ -36,6 +43,7 @@
     AuthRequiredError,
     fetchAciImage,
     getMapData,
+    getMapJobStatus,
     getMapLayers,
     getScan,
     startMapFit,
@@ -266,6 +274,7 @@
 
   onDestroy(() => {
     ws?.close();
+    stopFitPolling();
     // Persist local state to stores (don't reset — enables return)
     persistToStores();
     if (mapCanvas) {
@@ -778,31 +787,103 @@
     recalcColormapRanges();
   }
 
-  // Last heartbeat-derived log line, so a repeating condition (queued,
-  // stalled) is reported once instead of every 30 seconds.
+  // Last liveness-derived log line, so a repeating condition (queued,
+  // stalled) is reported once instead of on every heartbeat / poll.
   let lastHeartbeatNote = '';
 
   // Reconciles the per-point stream against the server's own fitted count
   // (see mapProgress.ts) — a client connecting mid-job receives both.
   const fitProgress = new MapProgressTracker();
 
-  function heartbeatNote(
-    msg: import('../../lib/types/map').WSHeartbeat,
-  ): string {
-    if (msg.timed_out) {
-      return 'Fitting stream timed out; the job may still be running on the server.';
+  // REST fallback, started only if the fit WebSocket drops before the job
+  // reaches a terminal state.
+  let fitPoller: MapJobPoller | null = null;
+
+  function noteLiveness(msg: MapJobLiveness): void {
+    const note = jobLivenessNote(msg);
+    if (note && note !== lastHeartbeatNote) {
+      lastHeartbeatNote = note;
+      mapLogEntries.update((logs) => [...logs.slice(-499), note]);
     }
-    if (msg.status === 'queued') {
-      const ahead = msg.queue_position ?? 0;
-      return ahead > 0
-        ? `Queued behind ${ahead} active fit job${ahead === 1 ? '' : 's'} — fitting runs one scan at a time.`
-        : 'Queued — waiting for the fitting worker.';
+  }
+
+  /** Apply a liveness payload (WS heartbeat or REST poll) to the job store. */
+  function applyLiveness(msg: MapJobLiveness): void {
+    const status = msg.status;
+    if (status === 'queued' || status === 'running') {
+      fitProgress.noteServerCount(msg.fitted);
+      mapFitJob.update((j) =>
+        j
+          ? {
+              ...j,
+              status,
+              fitted: fitProgress.fitted,
+              total: msg.total || j.total,
+            }
+          : j,
+      );
     }
-    if (msg.stalled) {
-      const silent = Math.round(msg.since_last_message_s ?? 0);
-      return `No new results for ${silent}s (${msg.fitted ?? 0}/${msg.total ?? 0} points) — this scan is fitting slowly.`;
-    }
-    return '';
+    noteLiveness(msg);
+  }
+
+  function stopFitPolling(): void {
+    fitPoller?.stop();
+    fitPoller = null;
+  }
+
+  /**
+   * Fall back to REST polling when the fit WebSocket closes on a job that
+   * has not finished. Without this the progress panel simply froze — the
+   * symptom issue #6 is about — because nothing else reports server-side
+   * state. Per-point results stop streaming, so the layers are reloaded
+   * from the database once the job reaches a terminal status.
+   */
+  function startFitPolling(jobId: string): void {
+    if (!jobId || fitPoller) return;
+    mapLogEntries.update((logs) => [
+      ...logs.slice(-499),
+      'Fit stream disconnected — falling back to status polling.',
+    ]);
+    fitPoller = new MapJobPoller(jobId, getMapJobStatus, {
+      onStatus: (s) => applyLiveness(s),
+      onTerminal: (s) => {
+        fitPoller = null;
+        mapFitJob.update((j) =>
+          j
+            ? {
+                ...j,
+                status: s.status as typeof j.status,
+                fitted: Math.max(j.fitted, s.fitted ?? 0),
+              }
+            : j,
+        );
+        if (s.status === 'complete') {
+          // The per-point frames missed while the socket was down live in
+          // the database, not in this client.
+          mapLogEntries.update((logs) => [
+            ...logs.slice(-499),
+            'Fit complete — reloading results.',
+          ]);
+          void refreshLayers();
+        }
+      },
+      onError: (err) => {
+        console.warn('Map fit status poll failed:', err);
+      },
+      onGiveUp: (err) => {
+        // Repeated failures mean this client can no longer observe the job
+        // at all. Say that, rather than leaving the panel reporting a
+        // progress it is no longer receiving.
+        fitPoller = null;
+        console.warn('Map fit status polling abandoned:', err);
+        mapLogEntries.update((logs) => [
+          ...logs.slice(-499),
+          'Lost contact with the fit job. It may still be running on the server — reload to check.',
+        ]);
+        mapFitJob.update((j) => (j ? { ...j, status: 'failed' } : j));
+      },
+    });
+    fitPoller.start();
   }
 
   async function handleStartFit(e: CustomEvent<{ domains: string[] }>) {
@@ -834,6 +915,7 @@
       mapLogEntries.set([]);
       lastHeartbeatNote = '';
       fitProgress.reset();
+      stopFitPolling();
 
       // Connect WebSocket
       ws = new MapWebSocket(data.ws_url, {
@@ -911,28 +993,18 @@
           // on connect. Without it a job waiting behind another scan's fit
           // (the map executor runs one job at a time) is indistinguishable
           // from a frozen UI.
-          const status = msg.status;
-          if (status === 'queued' || status === 'running') {
-            fitProgress.noteServerCount(msg.fitted);
-            mapFitJob.update((j) =>
-              j
-                ? {
-                    ...j,
-                    status,
-                    fitted: fitProgress.fitted,
-                    total: msg.total || j.total,
-                  }
-                : j,
-            );
-          }
-          const note = heartbeatNote(msg);
-          if (note && note !== lastHeartbeatNote) {
-            lastHeartbeatNote = note;
-            mapLogEntries.update((logs) => [...logs.slice(-499), note]);
-          }
+          applyLiveness(msg);
         },
         onDisconnect: () => {
-          // Connection closed -- status remains as-is
+          // The socket is the primary channel, but it can close while the
+          // job is still running (proxy idle timeout, the handler's own
+          // 30-minute cap, a flaky link). Leaving the panel untouched then
+          // reproduces exactly the stall this change is meant to remove,
+          // so hand over to the REST fallback until the job terminates.
+          const job = get(mapFitJob);
+          if (job && !isTerminalJobStatus(job.status)) {
+            startFitPolling(job.jobId);
+          }
         },
       });
     } catch (e) {
@@ -948,6 +1020,16 @@
   }
 
   function handleCancelFit() {
+    if (fitPoller) {
+      // Cancel travels over the fit socket only, and in polling mode that
+      // socket is gone. Say so rather than leaving the button silently
+      // inert — reporting state honestly is the point of this change.
+      mapLogEntries.update((logs) => [
+        ...logs.slice(-499),
+        'Cannot cancel: the fit stream is disconnected. The job continues on the server.',
+      ]);
+      return;
+    }
     ws?.sendCancel();
   }
 

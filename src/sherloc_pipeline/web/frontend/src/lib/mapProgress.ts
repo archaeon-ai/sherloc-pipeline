@@ -56,3 +56,158 @@ export class MapProgressTracker {
     this.serverFitted = 0;
   }
 }
+
+// ============================================================
+// Job liveness, shared by the WebSocket heartbeat and the REST fallback.
+//
+// Both surfaces carry the same fields, so both render the same sentence:
+// a user whose WebSocket dropped should not get a different (or worse, no)
+// explanation of why the progress bar is not moving.
+// ============================================================
+
+/** Liveness fields common to a WS heartbeat frame and a REST job status. */
+export interface MapJobLiveness {
+  status?: string;
+  fitted?: number;
+  total?: number;
+  queue_position?: number;
+  since_last_message_s?: number;
+  stalled?: boolean;
+  timed_out?: boolean;
+}
+
+/** Full REST payload from `GET /api/map/jobs/{job_id}`. */
+export interface MapJobStatus extends MapJobLiveness {
+  job_id?: string;
+  status: string;
+  fitted: number;
+  total: number;
+  results_available?: boolean;
+}
+
+export const TERMINAL_JOB_STATUSES = ['complete', 'failed', 'cancelled'] as const;
+
+export function isTerminalJobStatus(status: string | undefined): boolean {
+  return (TERMINAL_JOB_STATUSES as readonly string[]).includes(status ?? '');
+}
+
+/**
+ * One-line explanation of why a job is not producing results, or `''` when
+ * there is nothing to say (it is simply running normally).
+ */
+export function jobLivenessNote(msg: MapJobLiveness): string {
+  if (msg.timed_out) {
+    return 'Fitting stream timed out; the job may still be running on the server.';
+  }
+  if (msg.status === 'queued') {
+    const ahead = msg.queue_position ?? 0;
+    return ahead > 0
+      ? `Queued behind ${ahead} active fit job${ahead === 1 ? '' : 's'} — fitting runs one scan at a time.`
+      : 'Queued — waiting for the fitting worker.';
+  }
+  if (msg.stalled) {
+    const silent = Math.round(msg.since_last_message_s ?? 0);
+    return `No new results for ${silent}s (${msg.fitted ?? 0}/${msg.total ?? 0} points) — this scan is fitting slowly.`;
+  }
+  return '';
+}
+
+/** Default gap between REST status polls, in milliseconds. */
+export const MAP_JOB_POLL_INTERVAL_MS = 5000;
+
+/**
+ * Consecutive failed polls after which the fallback gives up.
+ *
+ * Bounded because the failure may be permanent — the job was reaped from
+ * the registry, or the server restarted and never knew about it — and an
+ * unbounded retry loop would keep a dead job's panel spinning forever,
+ * which is the same lie the fallback exists to stop telling.
+ */
+export const MAP_JOB_POLL_MAX_ERRORS = 5;
+
+export interface MapJobPollerHandlers {
+  /** Called with each successful status read. */
+  onStatus: (status: MapJobStatus) => void;
+  /** Called once when the job reaches a terminal status. */
+  onTerminal?: (status: MapJobStatus) => void;
+  /** Called when a poll fails; the poller keeps trying. */
+  onError?: (err: unknown) => void;
+  /** Called once when polling is abandoned after repeated failures. */
+  onGiveUp?: (err: unknown) => void;
+}
+
+/**
+ * REST polling fallback for a fit job whose WebSocket is unavailable.
+ *
+ * The fit WebSocket is the primary channel, but a dropped or blocked
+ * connection used to leave Map Mode with no signal at all — the progress
+ * panel simply froze, which is the symptom issue #6 is about. Polling
+ * `GET /api/map/jobs/{job_id}` recovers status, progress, queue position
+ * and the stall flag; only the per-point results stop flowing, so the map
+ * is refreshed from the database once the job finishes.
+ *
+ * `fetchStatus` is injected so the loop is testable without a network.
+ */
+export class MapJobPoller {
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
+  private inFlight = false;
+  private consecutiveErrors = 0;
+
+  constructor(
+    private readonly jobId: string,
+    private readonly fetchStatus: (jobId: string) => Promise<MapJobStatus>,
+    private readonly handlers: MapJobPollerHandlers,
+    private readonly intervalMs: number = MAP_JOB_POLL_INTERVAL_MS,
+    private readonly maxErrors: number = MAP_JOB_POLL_MAX_ERRORS,
+  ) {}
+
+  /** Begin polling. Safe to call once; further calls are ignored. */
+  start(): void {
+    if (this.stopped || this.timer !== null || this.inFlight) return;
+    void this.tick();
+  }
+
+  /** Stop polling. Idempotent, and safe to call from a handler. */
+  stop(): void {
+    this.stopped = true;
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  private async tick(): Promise<void> {
+    if (this.stopped) return;
+    this.timer = null;
+    this.inFlight = true;
+    try {
+      const status = await this.fetchStatus(this.jobId);
+      if (this.stopped) return;
+      this.consecutiveErrors = 0;
+      this.handlers.onStatus(status);
+      if (isTerminalJobStatus(status.status)) {
+        this.stop();
+        this.handlers.onTerminal?.(status);
+        return;
+      }
+    } catch (err) {
+      if (this.stopped) return;
+      // A transient failure (server restart, brief network loss) must not
+      // end the fallback — that would put the UI back in the frozen state
+      // this poller exists to prevent. A persistent one must, though:
+      // see MAP_JOB_POLL_MAX_ERRORS.
+      this.consecutiveErrors++;
+      this.handlers.onError?.(err);
+      if (this.consecutiveErrors >= this.maxErrors) {
+        this.stop();
+        this.handlers.onGiveUp?.(err);
+        return;
+      }
+    } finally {
+      this.inFlight = false;
+    }
+    if (this.stopped) return;
+    this.timer = setTimeout(() => void this.tick(), this.intervalMs);
+  }
+}

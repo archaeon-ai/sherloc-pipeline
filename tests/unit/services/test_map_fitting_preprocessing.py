@@ -267,3 +267,41 @@ def test_cancel_event_stops_the_run_early(fit_session):
     )
 
     assert summary.total_points == 0
+
+
+def test_cancel_before_start_skips_the_eager_spectrum_load(fit_session, monkeypatch):
+    """A job cancelled while queued must not pay for the whole-scan load.
+
+    Setup loads every point's spectra up front, which on a large scan is
+    the dominant cost. The only cancel check used to be inside the
+    per-point loop underneath it, so a job cancelled before the executor
+    reached it still read the entire scan before noticing.
+    """
+    loaded: list[str] = []
+
+    def spy(session, ids, region="R1"):
+        loaded.append(region)
+        return {}
+
+    monkeypatch.setattr(map_fitting, "_load_point_spectra", spy)
+
+    cancel = threading.Event()
+    cancel.set()
+    logged: list[tuple[int, str]] = []
+
+    summary = MapFitService(config=_CONFIG).run_map_fit(
+        session=fit_session,
+        scan_id=SCAN_UUID,
+        domains=["minerals", "fluorescence"],
+        point_indices=None,
+        point_coords={i: (float(i), float(i)) for i in range(N_POINTS)},
+        on_point_fitted=lambda r: None,
+        on_progress=lambda *a: None,
+        on_log=lambda idx, msg: logged.append((idx, msg)),
+        cancel_event=cancel,
+    )
+
+    assert loaded == []
+    assert logged == []
+    assert summary.total_points == 0
+    assert summary.detections == {"minerals": 0, "fluorescence": 0}

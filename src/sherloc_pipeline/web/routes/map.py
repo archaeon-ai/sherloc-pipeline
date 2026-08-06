@@ -558,12 +558,30 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
 
     def _run_fit() -> None:
         """Fitting thread entry point."""
+        # A queued job can be cancelled before the single map executor ever
+        # reaches it. Starting it anyway would announce job_started for a
+        # job the user already stopped and pay for the eager per-scan
+        # spectrum load to produce results nobody is listening for.
+        if ctx.cancel_event.is_set():
+            ctx.set_status("cancelled")
+            logger.info("Map fit job %s cancelled before it started", job_id)
+            return
+
         factory = get_session_factory(engine)
         fit_session = factory()
         try:
             # Position is derived from the registry (jobs still active ahead
             # of this one), so leaving "queued" is all it takes to clear it.
-            ctx.set_status("running")
+            # Terminal states are sticky, so a cancel that lands in the gap
+            # above keeps the job cancelled rather than reactivating it.
+            if not ctx.set_status("running"):
+                logger.info(
+                    "Map fit job %s reached a terminal state (%s) before it "
+                    "could start",
+                    job_id,
+                    ctx.get_status(),
+                )
+                return
             # Announce the real start: everything before this point was
             # spent waiting for the single map-executor thread.
             on_point_fitted.send_job_started(domains)  # type: ignore[attr-defined]
@@ -622,30 +640,27 @@ def get_map_job_status(request: Request, job_id: str) -> MapJobStatusResponse:
     if registry is not None:
         ctx = registry.get(job_id)
         if ctx is not None:
-            status = ctx.get_status()
-            # Map internal status to schema status
-            status_map = {
-                "queued": "running",
-                "running": "running",
-                "complete": "complete",
-                "failed": "failed",
-                "cancelled": "cancelled",
-            }
-            mapped_status = status_map.get(status, status)
             snapshot = ctx.progress_snapshot()
-            total = snapshot["total"]
+            status = snapshot["status"]
+            # "queued" is reported as-is rather than collapsed into
+            # "running": a client polling this endpoint because its
+            # WebSocket is unavailable needs the same queued/stalled
+            # distinction the heartbeat frame carries (issue #6).
+            #
             # Authoritative counter maintained by the streaming callbacks.
             # Counting point_fitted messages in the ring buffer undercounts
             # once the buffer wraps (>2000 messages), which made long scans
             # look like they had stopped making progress.
-            fitted = snapshot["fitted"]
-            results_available = status == "complete"
             return MapJobStatusResponse(
                 job_id=job_id,
-                status=mapped_status,
-                fitted=fitted,
-                total=total,
-                results_available=results_available,
+                status=status,
+                fitted=snapshot["fitted"],
+                total=snapshot["total"],
+                results_available=status == "complete",
+                queue_position=snapshot["queue_position"],
+                stalled=snapshot["stalled"],
+                since_last_message_s=snapshot["since_last_message_s"],
+                elapsed_s=snapshot["elapsed_s"],
             )
 
     # Fall back to general job queue

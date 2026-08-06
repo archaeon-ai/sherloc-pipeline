@@ -33,6 +33,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a new fit starts, retained for an hour after they *finish* rather than after
   they were created, so a fit that ran longer than the retention window is
   still readable over REST and reconnect once it completes.
+- **Map Mode falls back to REST polling when the fit WebSocket drops (#6).**
+  The socket can close mid-job (proxy idle timeout, the handler's own
+  30-minute cap, a flaky link), and Map Mode previously did nothing at all in
+  response — the progress panel simply froze, which is the same symptom from a
+  different cause. It now polls `GET /api/map/jobs/{job_id}` until the job
+  terminates, then reloads the results from the database. To make that
+  fallback equivalent, the endpoint no longer collapses `queued` into
+  `running` and now returns `queue_position`, `stalled`,
+  `since_last_message_s` and `elapsed_s` alongside the existing fields, so a
+  client without a socket can still tell "waiting behind another scan" from
+  "frozen". Response fields are additive; `status` gains the `queued` value
+  for map fit jobs. Polling gives up after five consecutive failures and says
+  so, rather than keeping a panel spinning on a job the server no longer
+  knows about.
+- **A cancelled map fit job can no longer be restarted (#6).** Cancelling a
+  job that was still waiting its turn on the single-threaded executor only set
+  a flag: when the executor eventually reached it, the fitting thread marked
+  it `running` again, announced `job_started` to a client that had already
+  stopped it, and paid for the whole-scan spectrum load to produce results
+  nobody was listening for — while every job behind it kept counting the
+  zombie as still ahead. Terminal statuses are now sticky, the fitting thread
+  checks for cancellation before it starts, and `run_map_fit` checks again
+  before the eager per-scan load rather than only inside the per-point loop.
 
 ### Changed
 - **Map Mode fitting is faster on large scans (#6).** Despiking and the asPLS

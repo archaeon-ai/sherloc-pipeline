@@ -520,6 +520,18 @@ class MapFitService:
         if total == 0:
             return MapFitSummary(total_points=0, detections={}, elapsed_s=0.0)
 
+        # Setup below eagerly loads every point's spectra for the whole
+        # scan, which on a large scan is the single most expensive step
+        # here. Check for cancellation before paying for it, not only in
+        # the per-point loop underneath it.
+        if cancel_event.is_set():
+            logger.info("Map fit cancelled before spectra load for scan %s", scan_id)
+            return MapFitSummary(
+                total_points=0,
+                detections={d: 0 for d in domains},
+                elapsed_s=round(time.monotonic() - t_start, 2),
+            )
+
         # Announce the scale of the run up front. Fitting is sequential, so
         # a large scan is minutes of work, not seconds — say so instead of
         # letting the client guess whether anything is happening.
