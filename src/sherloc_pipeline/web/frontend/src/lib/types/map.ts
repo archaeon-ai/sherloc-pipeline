@@ -94,6 +94,8 @@ export interface WSPointFitted {
   x: number;
   y: number;
   results: Record<string, { status: string; peaks: WSPeakResult[] }>;
+  /** Authoritative server-side fitted count at the time this point completed. */
+  fitted?: number;
 }
 
 export interface WSPeakResult {

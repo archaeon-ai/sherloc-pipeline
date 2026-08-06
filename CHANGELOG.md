@@ -18,12 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immediately on connect, and a `job_started` frame is emitted when the job
   actually leaves the executor queue. Map Mode surfaces both as progress-panel
   status and log lines ("Queued behind N active fit jobs", "No new results for
-  Ns"). The client-message read is now a single long-lived receive instead of a
-  re-armed 10 ms `wait_for`, which could drop the frame it had just picked up —
-  including a user's `cancel`. `GET /api/map/jobs/{job_id}` reports fitted
-  points from an authoritative counter rather than counting messages in the
-  reconnect ring buffer, which undercounted once the buffer wrapped
-  (>2000 messages). Terminal jobs are reaped when a new fit starts.
+  Ns"). `queue_position` is recomputed on every frame from the jobs still
+  active ahead of this one, so a client waiting behind two fits watches its
+  position fall as they finish instead of being told forever that a completed
+  job is still ahead. The client-message read is now a single long-lived
+  receive instead of a re-armed 10 ms `wait_for`, which could drop the frame it
+  had just picked up — including a user's `cancel`. `GET /api/map/jobs/{job_id}`
+  reports fitted points from an authoritative counter rather than counting
+  messages in the reconnect ring buffer, which undercounted once the buffer
+  wrapped (>2000 messages). Each `point_fitted` frame now carries that
+  counter too, and Map Mode counts progress by point identity, so a client
+  connecting mid-job — handed a status frame plus the per-point backlog behind
+  it — no longer reports twice the real progress. Terminal jobs are reaped when
+  a new fit starts, retained for an hour after they *finish* rather than after
+  they were created, so a fit that ran longer than the retention window is
+  still readable over REST and reconnect once it completes.
 
 ### Changed
 - **Map Mode fitting is faster on large scans (#6).** Despiking and the asPLS

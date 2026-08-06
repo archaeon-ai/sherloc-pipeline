@@ -524,9 +524,9 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
         )
 
     # Create job. The map executor is single-threaded, so a job submitted
-    # while another scan is still fitting waits its turn; record how many
-    # jobs are ahead of it so the WebSocket can report "queued" rather
-    # than leaving the UI on an empty progress panel (issue #6).
+    # while another scan is still fitting waits its turn; the registry
+    # records its FIFO rank so heartbeats can report a live "queued behind
+    # N" rather than leaving the UI on an empty progress panel (issue #6).
     job_id = f"mf_{secrets.token_hex(12)}"
     loop = request.app.state.event_loop
     ctx = registry.create(
@@ -535,13 +535,13 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
         loop=loop,
         n_points=n_points,
     )
-    ctx.queue_position = max(registry.count_active() - 1, 0)
-    if ctx.queue_position:
+    queued_behind = registry.position_of(job_id)
+    if queued_behind:
         logger.info(
             "Map fit job %s for scan %s queued behind %d active job(s)",
             job_id,
             body.scan_id,
-            ctx.queue_position,
+            queued_behind,
         )
 
     # Create callbacks that bridge fitting thread -> asyncio queue
@@ -561,8 +561,9 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
         factory = get_session_factory(engine)
         fit_session = factory()
         try:
+            # Position is derived from the registry (jobs still active ahead
+            # of this one), so leaving "queued" is all it takes to clear it.
             ctx.set_status("running")
-            ctx.queue_position = 0
             # Announce the real start: everything before this point was
             # spent waiting for the single map-executor thread.
             on_point_fitted.send_job_started(domains)  # type: ignore[attr-defined]

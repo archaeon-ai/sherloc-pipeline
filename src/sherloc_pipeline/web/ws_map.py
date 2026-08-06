@@ -36,6 +36,11 @@ RECONNECT_BUFFER_SECONDS = 300  # 5 min buffer for resume
 # instead of showing a dead progress panel forever (issue #6).
 STALL_WARN_SECONDS = 120.0
 
+# Statuses a job never leaves. Retention and queue accounting both key off
+# this set.
+TERMINAL_STATUSES = ("complete", "failed", "cancelled")
+ACTIVE_STATUSES = ("queued", "running")
+
 
 # ---------------------------------------------------------------------------
 # Map job context and registry
@@ -56,10 +61,15 @@ class MapJobContext:
     voronoi: Optional[dict] = None  # set by fitting thread after computation
     status: str = "queued"  # queued | running | complete | failed | cancelled
     n_points: int = 0
-    queue_position: int = 0  # jobs ahead of this one on the map executor
+    queue_position: int = 0  # fallback when no registry owns this context
     fitted: int = 0  # points streamed so far (authoritative progress counter)
     started_at: Optional[float] = None  # monotonic time the fitting thread began
+    terminal_at: Optional[float] = None  # monotonic time the job reached a terminal state
     last_activity: float = 0.0  # monotonic time of the last emitted message
+    submit_order: int = 0  # registry-assigned FIFO rank on the map executor
+    registry: Optional["MapJobRegistry"] = field(
+        default=None, repr=False, compare=False
+    )
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
@@ -72,32 +82,73 @@ class MapJobContext:
             self.status = new_status
             if new_status == "running" and self.started_at is None:
                 self.started_at = time.monotonic()
+            if new_status in TERMINAL_STATUSES:
+                # First terminal transition wins: a user cancel marks the job
+                # cancelled from the WebSocket handler, and the fitting thread
+                # re-marks it when it unwinds.
+                if self.terminal_at is None:
+                    self.terminal_at = time.monotonic()
+            else:
+                self.terminal_at = None
 
     def get_status(self) -> str:
         """Thread-safe status read."""
         with self._lock:
             return self.status
 
-    def note_activity(self, *, point_fitted: bool = False) -> None:
+    def terminal_since(self) -> Optional[float]:
+        """Monotonic time this job reached a terminal state, else ``None``.
+
+        Read atomically with the status so retention decisions can't see a
+        terminal status without its timestamp. A context whose status was
+        assigned without going through ``set_status`` has no stamp and falls
+        back to ``created_at``.
+        """
+        with self._lock:
+            if self.status not in TERMINAL_STATUSES:
+                return None
+            return self.terminal_at if self.terminal_at is not None else self.created_at
+
+    def note_activity(self, *, point_fitted: bool = False) -> int:
         """Record that the fitting thread produced output (thread-safe).
 
         Called from the fitting thread on every emitted message so the
         WebSocket heartbeat can report how long the job has been silent.
+
+        Returns the authoritative fitted-point count after this call.
         """
         with self._lock:
             self.last_activity = time.monotonic()
             if point_fitted:
                 self.fitted += 1
+            return self.fitted
+
+    def live_queue_position(self) -> int:
+        """Jobs currently ahead of this one on the single map executor.
+
+        Recomputed on every read rather than frozen at submission: with two
+        jobs queued behind a running fit, the second one's position has to
+        drop as the jobs ahead of it terminate, or heartbeats keep reporting
+        finished jobs as still ahead.
+        """
+        if self.get_status() != "queued":
+            return 0
+        if self.registry is None:
+            return self.queue_position
+        return self.registry.position_of(self.job_id)
 
     def progress_snapshot(self) -> dict:
         """Thread-safe progress/liveness snapshot for status frames."""
+        # Computed before the instance lock is taken: the registry walks every
+        # job (locking each in turn), so acquiring in the opposite order here
+        # would invert the registry -> context lock ordering.
+        queue_position = self.live_queue_position()
         now = time.monotonic()
         with self._lock:
             status = self.status
             fitted = self.fitted
             silent_for = now - self.last_activity
             elapsed = now - (self.started_at if self.started_at is not None else self.created_at)
-            queue_position = self.queue_position
         return {
             "status": status,
             "fitted": fitted,
@@ -114,6 +165,7 @@ class MapJobRegistry:
 
     def __init__(self) -> None:
         self._jobs: dict[str, MapJobContext] = {}
+        self._submit_counter = 0
         self._lock = threading.Lock()
 
     def create(
@@ -133,8 +185,11 @@ class MapJobRegistry:
             created_at=time.monotonic(),
             loop=loop,
             n_points=n_points,
+            registry=self,
         )
         with self._lock:
+            self._submit_counter += 1
+            ctx.submit_order = self._submit_counter
             self._jobs[job_id] = ctx
         return ctx
 
@@ -148,13 +203,23 @@ class MapJobRegistry:
         with self._lock:
             self._jobs.pop(job_id, None)
 
-    def count_active(self) -> int:
-        """Number of jobs currently queued or running on the map executor."""
+    def position_of(self, job_id: str) -> int:
+        """Number of still-active jobs submitted ahead of ``job_id``.
+
+        The map executor is single-threaded and FIFO, so submission order is
+        execution order: the answer is exactly how many jobs this one waits
+        on. Jobs that have since terminated drop out of the count.
+        """
         with self._lock:
+            ctx = self._jobs.get(job_id)
+            if ctx is None:
+                return 0
+            order = ctx.submit_order
             return sum(
                 1
-                for ctx in self._jobs.values()
-                if ctx.get_status() in ("queued", "running")
+                for other in self._jobs.values()
+                if other.submit_order < order
+                and other.get_status() in ACTIVE_STATUSES
             )
 
     def find_active_for_scan(self, scan_id: str) -> Optional[MapJobContext]:
@@ -162,12 +227,18 @@ class MapJobRegistry:
         with self._lock:
             for ctx in self._jobs.values():
                 status = ctx.get_status()
-                if ctx.scan_id == scan_id and status in ("queued", "running"):
+                if ctx.scan_id == scan_id and status in ACTIVE_STATUSES:
                     return ctx
             return None
 
     def cleanup_stale(self, max_age_seconds: float = 3600.0) -> int:
-        """Remove jobs older than max_age_seconds that are in terminal state.
+        """Drop terminal jobs that finished more than max_age_seconds ago.
+
+        Retention is measured from the terminal transition, not from
+        creation: a fit that ran for two hours is exactly the one whose
+        result a client most needs to fetch afterwards, and keying off
+        ``created_at`` would reap it the moment the next fit starts --
+        taking its REST status and reconnect buffer with it.
 
         Returns the number of removed jobs.
         """
@@ -175,13 +246,8 @@ class MapJobRegistry:
         to_remove = []
         with self._lock:
             for job_id, ctx in self._jobs.items():
-                status = ctx.get_status()
-                age = now - ctx.created_at
-                if age > max_age_seconds and status in (
-                    "complete",
-                    "failed",
-                    "cancelled",
-                ):
+                finished_at = ctx.terminal_since()
+                if finished_at is not None and now - finished_at > max_age_seconds:
                     to_remove.append(job_id)
             for job_id in to_remove:
                 del self._jobs[job_id]
@@ -207,10 +273,16 @@ def make_fitting_callbacks(
     seq_counter = [0]
     loop = ctx.loop
 
-    def _enqueue(msg: dict) -> None:
+    def _enqueue(msg: dict, *, point_fitted: bool = False) -> None:
         """Thread-safe push to the asyncio queue."""
+        fitted = ctx.note_activity(point_fitted=point_fitted)
+        if point_fitted:
+            # Carry the authoritative running total. A client that connects
+            # after fitting started gets a status frame with the count so
+            # far AND, right behind it, the queued per-point frames it never
+            # saw; counting those on top of the status frame would double.
+            msg["fitted"] = fitted
         ctx.message_buffer.append(msg)
-        ctx.note_activity(point_fitted=msg.get("type") == "point_fitted")
         try:
             loop.call_soon_threadsafe(ctx.queue.put_nowait, msg)
         except RuntimeError:
@@ -230,7 +302,7 @@ def make_fitting_callbacks(
                 for domain, dr in result.results.items()
             },
         }
-        _enqueue(msg)
+        _enqueue(msg, point_fitted=True)
 
     def on_progress(fitted: int, total: int, elapsed: float, eta: float) -> None:
         seq_counter[0] += 1

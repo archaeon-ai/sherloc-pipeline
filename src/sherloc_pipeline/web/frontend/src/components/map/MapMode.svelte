@@ -8,6 +8,7 @@
   import ClassificationEditor from './ClassificationEditor.svelte';
   import MapSpectrumPanel from './MapSpectrumPanel.svelte';
   import { MapWebSocket } from '../../lib/mapWebSocket';
+  import { MapProgressTracker } from '../../lib/mapProgress';
   import {
     mapPointSet,
     mapLayers,
@@ -781,6 +782,10 @@
   // stalled) is reported once instead of every 30 seconds.
   let lastHeartbeatNote = '';
 
+  // Reconciles the per-point stream against the server's own fitted count
+  // (see mapProgress.ts) — a client connecting mid-job receives both.
+  const fitProgress = new MapProgressTracker();
+
   function heartbeatNote(
     msg: import('../../lib/types/map').WSHeartbeat,
   ): string {
@@ -828,6 +833,7 @@
       });
       mapLogEntries.set([]);
       lastHeartbeatNote = '';
+      fitProgress.reset();
 
       // Connect WebSocket
       ws = new MapWebSocket(data.ws_url, {
@@ -842,16 +848,28 @@
             }
           },
           onPointFitted: (msg: WSPointFitted) => {
+            // Counted by point identity, not by arrival: a client that
+            // connects mid-job is handed the backlog it missed on top of a
+            // status frame that already counted those same points.
+            const isNew = fitProgress.notePoint(msg.point_index, msg.fitted);
             mapFitJob.update((j) =>
-              j ? { ...j, fitted: (j.fitted || 0) + 1 } : j,
+              j ? { ...j, fitted: fitProgress.fitted } : j,
             );
-            // Feed results into mapLayers via the ingest pipeline
-            ingestPointFitted(msg);
+            // Feed results into mapLayers via the ingest pipeline. A
+            // re-delivered point carries the same result, so skip it rather
+            // than duplicating it in the results cache.
+            if (isNew) ingestPointFitted(msg);
           },
           onProgress: (msg) => {
+            fitProgress.noteServerCount(msg.fitted);
             mapFitJob.update((j) =>
               j
-                ? { ...j, fitted: msg.fitted, total: msg.total, etaSeconds: msg.eta_s }
+                ? {
+                    ...j,
+                    fitted: fitProgress.fitted,
+                    total: msg.total,
+                    etaSeconds: msg.eta_s,
+                  }
                 : j,
             );
           },
@@ -862,12 +880,13 @@
             // Flush any remaining pending results
             flushPending();
             recalcColormapRanges();
+            fitProgress.noteServerCount(msg.summary.total_points);
             mapFitJob.update((j) =>
               j
                 ? {
                     ...j,
                     status: 'complete',
-                    fitted: msg.summary.total_points,
+                    fitted: fitProgress.fitted,
                   }
                 : j,
             );
@@ -894,12 +913,13 @@
           // from a frozen UI.
           const status = msg.status;
           if (status === 'queued' || status === 'running') {
+            fitProgress.noteServerCount(msg.fitted);
             mapFitJob.update((j) =>
               j
                 ? {
                     ...j,
                     status,
-                    fitted: msg.fitted ?? j.fitted,
+                    fitted: fitProgress.fitted,
                     total: msg.total || j.total,
                   }
                 : j,
