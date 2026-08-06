@@ -1623,3 +1623,65 @@ def test_a_fit_that_raises_on_its_own_still_reports_failed(monkeypatch):
     assert ctx.get_status() == "failed"
     assert [m["type"] for m in ctx.message_buffer] == ["job_started", "error"]
     assert ctx.message_buffer[-1]["error"] == "fit worker died"
+
+
+def test_a_cancel_landing_between_the_check_and_the_write_wins_the_stream(
+    monkeypatch,
+):
+    """A cancel that lands in the gap must not be reported as completion.
+
+    The fitting thread decides which terminal frame to send by reading
+    ``cancel_event`` and then writing the status, and those are two steps.
+    A cancel arriving between them loses the write (terminal statuses are
+    sticky, so ``set_status("complete")`` returns False) but used to win
+    nothing else: ``send_complete`` ran regardless, so ``GET
+    /api/map/jobs/{id}`` reported ``cancelled`` while the WebSocket client
+    was told ``complete``.
+
+    A barrier pins that interleaving: the fitting thread is held inside
+    ``set_status("complete")``, on the far side of its ``cancel_event``
+    check, until the cancel has been applied.
+    """
+    registry = MapJobRegistry()
+    at_the_gap = threading.Barrier(2, timeout=5)
+    cancel_applied = threading.Event()
+    original_set_status = MapJobContext.set_status
+
+    def _set_status_holding_the_gap(self, new_status):
+        if new_status == "complete":
+            at_the_gap.wait()
+            assert cancel_applied.wait(timeout=5)
+        return original_set_status(self, new_status)
+
+    monkeypatch.setattr(MapJobContext, "set_status", _set_status_holding_the_gap)
+
+    def _cancel_once_the_fit_is_in_the_gap() -> None:
+        at_the_gap.wait()
+        ctx = registry.find_active_for_scan("scan-a")
+        # Exactly what the WebSocket handler does on {"type": "cancel"}.
+        ctx.cancel_event.set()
+        ctx.request_cancel()
+        cancel_applied.set()
+
+    canceller = threading.Thread(target=_cancel_once_the_fit_is_in_the_gap)
+    canceller.start()
+    try:
+        ctx = _run_fit_with(
+            monkeypatch,
+            registry,
+            lambda **kwargs: SimpleNamespace(
+                total_points=3, detections=1, elapsed_s=0.5
+            ),
+        )
+    finally:
+        canceller.join(timeout=5)
+        assert not canceller.is_alive()
+
+    assert ctx.get_status() == "cancelled"
+    # No "complete" frame: the stream reports the status that won.
+    assert [m["type"] for m in ctx.message_buffer] == ["job_started", "cancelled"]
+    assert ctx.message_buffer[-1]["results_final"] is True
+    assert get_map_job_status(_status_request(registry), ctx.job_id).status == (
+        "cancelled"
+    )
+    assert ctx.results_are_final() is True

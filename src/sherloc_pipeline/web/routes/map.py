@@ -554,6 +554,32 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
     domains = list(body.domains)
     point_indices = list(body.point_indices) if body.point_indices is not None else None
 
+    def _emit_settled_terminal(attempted: str) -> None:
+        """Emit the terminal frame for the status that actually won.
+
+        Terminal statuses are sticky and first-writer-wins, so a status
+        write that loses means another thread settled this job first -- in
+        practice a user cancel from the WebSocket handler. That status is
+        the one REST reports and the one retention keys off, so the stream
+        has to agree with it: emitting the frame for the status we failed
+        to write leaves a client showing a terminal state the status
+        endpoint contradicts.
+        """
+        settled = ctx.get_status()
+        logger.info(
+            "Map fit job %s settled as %s before it could be marked %s; "
+            "reporting %s on the stream instead",
+            job_id,
+            settled,
+            attempted,
+            settled,
+        )
+        if settled == "cancelled":
+            on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+        # "complete" is the only other status another writer can leave
+        # here, and the thread that set it already emitted its own
+        # terminal frame.
+
     def _run_fit() -> None:
         """Fitting thread entry point."""
         # A queued job can be cancelled before the single map executor ever
@@ -613,13 +639,18 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
                 # from fetching the retained results too early and losing
                 # it (issue #6).
                 on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
-            else:
-                ctx.set_status("complete")
+            elif ctx.set_status("complete"):
                 on_point_fitted.send_complete({  # type: ignore[attr-defined]
                     "total_points": summary.total_points,
                     "detections": summary.detections,
                     "elapsed_s": summary.elapsed_s,
                 })
+            else:
+                # A cancel landed in the gap between the check above and
+                # this write, so the job is already terminal as cancelled.
+                # Sending "complete" anyway would put a complete frame on
+                # the stream for a job the status endpoint calls cancelled.
+                _emit_settled_terminal("complete")
         except Exception as exc:
             logger.exception("Map fit job %s failed", job_id)
             if ctx.set_status("failed"):
@@ -628,21 +659,10 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
                 # A terminal status got there first -- in practice a user
                 # cancel that landed while this point was being fitted, where
                 # the raise is a consequence of the stop rather than a
-                # separate failure. That status is the one REST reports and
-                # the one retention keys off, so the stream has to agree with
-                # it: sending "error" here left WebSocket clients showing a
-                # failed job that the status endpoint called cancelled.
-                settled = ctx.get_status()
-                logger.info(
-                    "Map fit job %s raised after settling as %s; reporting "
-                    "that instead of failed",
-                    job_id,
-                    settled,
-                )
-                if settled == "cancelled":
-                    on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
-                # "complete" is the only other reachable status, and the
-                # thread that set it already emitted its terminal frame.
+                # separate failure. Sending "error" here left WebSocket
+                # clients showing a failed job that the status endpoint
+                # called cancelled.
+                _emit_settled_terminal("failed")
         finally:
             fit_session.close()
 

@@ -102,11 +102,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has no fitting thread left to wait on), so the REST fallback waits for the
   same barrier instead of recovering results the moment a status turns
   terminal — bounded to three extra polls, after which it recovers anyway
-  and says the same thing. A fitting thread that unwinds through an exception
-  after the job was already cancelled now emits the terminal frame matching
-  the status that won: it used to send `error` regardless, so the socket
-  reported a failed fit while the status endpoint called the same job
-  cancelled, and Map Mode treats the two differently.
+  and says the same thing. However the fitting thread stops, it now emits the
+  terminal frame matching the status that actually won, because terminal
+  statuses are first-writer-wins and a user cancel can settle the job from
+  another thread at any point: it used to send `error` regardless when it
+  unwound through an exception after a cancel, and `complete` regardless when
+  a cancel landed in the gap between its cancel check and its status write.
+  Either way the socket reported a terminal state — failed, or finished — that
+  `GET /api/map/jobs/{job_id}` called cancelled, and Map Mode treats them
+  differently.
 - **A reconnecting Map Mode client no longer competes with its own dead
   socket (#6).** A client that drops and resumes overlaps with its
   predecessor — the server only learns the old socket is gone when it next
