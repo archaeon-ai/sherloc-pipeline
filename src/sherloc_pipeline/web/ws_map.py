@@ -1,8 +1,8 @@
 """Map Mode WebSocket handler -- per-point fitting result streaming.
 
-This WebSocket is push-based: the fitting thread pushes messages onto
-an asyncio.Queue, and the handler awaits them. This differs from the
-existing ws.py which polls JobState.
+This WebSocket is push-based: the fitting thread broadcasts messages to
+every connected client, and each handler awaits its own queue. This
+differs from the existing ws.py which polls JobState.
 
 Protocol: see docs/specs/MAP_MODE_SPEC.md section 3.2
 """
@@ -10,6 +10,7 @@ Protocol: see docs/specs/MAP_MODE_SPEC.md section 3.2
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import logging
 import threading
@@ -85,11 +86,22 @@ CANCEL_DRAIN_SECONDS = 30.0
 
 @dataclass
 class MapJobContext:
-    """Shared state between fitting thread and WebSocket handler."""
+    """Shared state between fitting thread and WebSocket handler.
+
+    Frames are *broadcast*: the fitting thread hands every message to
+    ``publish``, which fans it out to one queue per connected client.
+    There is deliberately no single job-wide queue. A client that drops
+    and resumes overlaps with its own predecessor -- the server only
+    learns the old socket is gone when it next touches it -- and with one
+    shared queue the two handlers race to dequeue: whichever won took the
+    frame, and if that was the dying one the frame died with it. Losing
+    the terminal frame that way leaves the resumed client waiting on a
+    job that already finished, which is exactly the frozen panel issue #6
+    is about.
+    """
 
     job_id: str
     scan_id: str
-    queue: asyncio.Queue  # fitting thread puts messages here
     cancel_event: threading.Event
     message_buffer: deque  # ring buffer for reconnect replay
     created_at: float
@@ -114,6 +126,15 @@ class MapJobContext:
         default=None, repr=False, compare=False
     )
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    # One queue per connected client, and the lock that keeps them in step
+    # with the replay buffer. Separate from ``_lock`` so a broadcast never
+    # waits on a progress snapshot, and so the two are never nested.
+    _subscribers: list[asyncio.Queue] = field(
+        default_factory=list, repr=False, compare=False
+    )
+    _stream_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.last_activity == 0.0:
@@ -269,6 +290,67 @@ class MapJobContext:
             return self.queue_position
         return self.registry.position_of(self.job_id)
 
+    # -- broadcast stream ---------------------------------------------------
+    #
+    # ``publish`` runs on the fitting thread; ``subscribe`` / ``unsubscribe``
+    # run on the event loop. All three mutate the buffer and the subscriber
+    # list under ``_stream_lock``, which is what makes a connect atomic with
+    # respect to a broadcast: see subscribe().
+
+    def publish(self, msg: dict, *, replayable: bool = True) -> None:
+        """Broadcast one frame to every connected client.
+
+        ``replayable`` messages also go into the reconnect ring buffer.
+        Progress frames do not: they are a running total that the next one
+        supersedes, so replaying them after a reconnect only re-reports
+        numbers the client has already moved past.
+        """
+        with self._stream_lock:
+            if replayable:
+                self.message_buffer.append(msg)
+            targets = list(self._subscribers)
+        for queue in targets:
+            try:
+                self.loop.call_soon_threadsafe(queue.put_nowait, msg)
+            except RuntimeError:
+                # Event loop is closed (app shutting down).
+                pass
+
+    def subscribe(self, resume_from: int = 0) -> tuple[asyncio.Queue, list[dict]]:
+        """Attach a client and take its replay backlog in one step.
+
+        Returns ``(queue, backlog)``: the frames buffered past
+        ``resume_from``, and the queue that receives everything after
+        them. ``resume_from`` of 0 replays the whole buffer, which is what
+        a client connecting mid-job with no history wants.
+
+        Both happen under ``_stream_lock``, so a frame published
+        concurrently is either already in the backlog (and not yet
+        broadcast to this queue) or not in it (and broadcast to this
+        queue) -- never both and never neither. Snapshotting the buffer
+        outside the lock would also iterate a deque the fitting thread is
+        appending to, which raises ``RuntimeError: deque mutated during
+        iteration`` and drops the client mid-replay.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+        with self._stream_lock:
+            backlog = [m for m in self.message_buffer if m.get("seq", 0) > resume_from]
+            self._subscribers.append(queue)
+        return queue, backlog
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        """Detach a client. Idempotent."""
+        with self._stream_lock:
+            for i, existing in enumerate(self._subscribers):
+                if existing is queue:
+                    del self._subscribers[i]
+                    return
+
+    def subscriber_count(self) -> int:
+        """How many clients are currently attached to the stream."""
+        with self._stream_lock:
+            return len(self._subscribers)
+
     def progress_snapshot(self) -> dict:
         """Thread-safe progress/liveness snapshot for status frames."""
         # Computed before the instance lock is taken: the registry walks every
@@ -311,7 +393,6 @@ class MapJobRegistry:
         ctx = MapJobContext(
             job_id=job_id,
             scan_id=scan_id,
-            queue=asyncio.Queue(),
             cancel_event=threading.Event(),
             message_buffer=deque(maxlen=RECONNECT_BUFFER_SIZE),
             created_at=time.monotonic(),
@@ -394,37 +475,32 @@ class MapJobRegistry:
 def make_fitting_callbacks(
     ctx: MapJobContext,
 ):
-    """Create callbacks that bridge from the fitting thread to asyncio queue.
+    """Create callbacks that bridge from the fitting thread to the stream.
 
-    The fitting thread (sync) calls these callbacks, which use
-    ``loop.call_soon_threadsafe`` to push messages onto the asyncio Queue.
+    The fitting thread (sync) calls these callbacks, which broadcast the
+    frame to every connected client via ``ctx.publish``.
 
     Returns:
         (on_point_fitted, on_progress, on_log) callback tuple.
     """
     seq_counter = [0]
-    loop = ctx.loop
 
     def _enqueue(msg: dict, *, point_fitted: bool = False) -> None:
-        """Thread-safe push to the asyncio queue."""
+        """Thread-safe broadcast of one replayable frame."""
         fitted = ctx.note_activity(point_fitted=point_fitted)
         if point_fitted:
             # Carry the authoritative running total. A client that connects
             # after fitting started gets a status frame with the count so
-            # far AND, right behind it, the queued per-point frames it never
-            # saw; counting those on top of the status frame would double.
+            # far AND, right behind it, the buffered per-point frames it
+            # never saw; counting those on top of the status frame would
+            # double.
             msg["fitted"] = fitted
         if msg.get("type") in TERMINAL_MESSAGE_TYPES:
             # Marked before the frame goes out, so a client that acts on it
             # cannot observe the job as finished while the store it is
             # about to read still says otherwise.
             ctx.mark_results_final()
-        ctx.message_buffer.append(msg)
-        try:
-            loop.call_soon_threadsafe(ctx.queue.put_nowait, msg)
-        except RuntimeError:
-            # Event loop is closed (client disconnected)
-            pass
+        ctx.publish(msg)
 
     def on_point_fitted(result: PointFitResult) -> None:
         seq_counter[0] += 1
@@ -459,10 +535,7 @@ def make_fitting_callbacks(
         }
         # Progress messages are not buffered for replay (transient)
         ctx.note_activity()
-        try:
-            loop.call_soon_threadsafe(ctx.queue.put_nowait, msg)
-        except RuntimeError:
-            pass
+        ctx.publish(msg, replayable=False)
 
     def on_log(point_index: int, message: str) -> None:
         seq_counter[0] += 1
@@ -572,12 +645,81 @@ def _cancel_ack(ctx: MapJobContext) -> dict:
     }
 
 
+
+
+class _Control(enum.Enum):
+    """Handler-internal items multiplexed onto a client's own stream queue.
+
+    The client's socket and the fitting thread are two independent wake-up
+    sources, and the pump used to await both with a single
+    ``asyncio.wait`` over a queue task and a receive task. Re-arming those
+    two tasks around every branch is what let a client's ``cancel`` and a
+    freshly published frame wake the pump in an order that left the other
+    one sitting unread until the next timeout -- a queued terminal frame
+    with nobody looking at it is the stall this change exists to remove.
+
+    A dedicated reader task now turns client input into these control
+    items and posts them to the same per-connection queue the fitting
+    thread broadcasts to, so the pump has exactly one wake-up source and
+    the two streams are ordered rather than raced.
+    """
+
+    CLIENT_GONE = "client_gone"
+
+
+@dataclass(frozen=True)
+class _CancelRequest:
+    """A client ``cancel``, with the outcome the reader already applied.
+
+    The cancel is applied to the context by the reader the instant it
+    arrives -- the fitting thread should stop as early as possible -- but
+    it is *answered* by the pump, in order behind the frames already
+    published. ``applied`` / ``previous_status`` are the atomic result of
+    ``request_cancel``, carried here so the pump does not re-read a status
+    that has since moved on.
+    """
+
+    applied: bool
+    previous_status: str
+
+
+async def _client_reader(
+    websocket: WebSocket, ctx: MapJobContext, stream: asyncio.Queue
+) -> None:
+    """Read client messages until the socket closes, posting to ``stream``.
+
+    One long-lived task rather than a per-iteration
+    ``wait_for(receive_text())``: cancelling a pending Starlette receive
+    can drop the frame it just picked up, which is how a user's "cancel"
+    could vanish and leave the UI stuck on a job it could no longer stop.
+    """
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                client_msg = json.loads(raw)
+            except (ValueError, TypeError):
+                client_msg = {}
+            if client_msg.get("type") != "cancel":
+                continue
+            ctx.cancel_event.set()
+            applied, previous_status = ctx.request_cancel()
+            stream.put_nowait(_CancelRequest(applied, previous_status))
+    except WebSocketDisconnect:
+        logger.debug("Map WS client disconnected for job %s", ctx.job_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("Map WS receive error for job %s", ctx.job_id, exc_info=True)
+    stream.put_nowait(_Control.CLIENT_GONE)
+
+
 @router.websocket("/ws/map/{job_id}")
 async def map_ws(websocket: WebSocket, job_id: str) -> None:
     """Stream map-mode fitting results over WebSocket.
 
-    Push-based: the fitting thread pushes messages onto an asyncio.Queue;
-    this handler awaits them and forwards to the client.
+    Push-based: the fitting thread broadcasts messages to every connected
+    client; this handler drains its own queue and forwards to the socket.
 
     Supports:
     - Resume via ``last_seq`` query parameter
@@ -599,39 +741,49 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
 
     await websocket.accept()
 
-    # Handle resume: replay buffered messages since last_seq
+    # Resume point. Absent (or unparseable) means "replay everything
+    # buffered": a client connecting mid-job has no history, and the
+    # frames already fitted are the map it has to draw. Clients that do
+    # hold history always send ``last_seq``, and the frontend drops any
+    # frame whose seq it has seen, so an overlapping replay costs nothing.
+    resume_from = 0
     last_seq_param = websocket.query_params.get("last_seq")
     if last_seq_param is not None:
         try:
             resume_from = int(last_seq_param)
         except ValueError:
             resume_from = 0
-        # Replay buffered messages with seq > resume_from
-        for msg in ctx.message_buffer:
-            if msg.get("seq", 0) > resume_from:
-                try:
-                    await websocket.send_json(msg)
-                except Exception:
-                    return
+
+    # Attach before anything is sent, and take the replay backlog in the
+    # same atomic step, so a frame published while this handler is
+    # starting up is delivered exactly once (see MapJobContext.subscribe).
+    stream, backlog = ctx.subscribe(resume_from)
 
     start_time = time.monotonic()
-
-    # Send an immediate status frame so a client that connects behind a
-    # long-running job sees "queued (N ahead)" instead of an empty panel.
-    await websocket.send_json({"type": "heartbeat", **ctx.progress_snapshot()})
-
-    # One long-lived receive task instead of re-arming a 10 ms
-    # ``wait_for(receive_text())`` every iteration: cancelling a pending
-    # Starlette receive can drop the frame it just picked up, which is how
-    # a user's "cancel" could vanish and leave the UI stuck on a job it
-    # could no longer stop.
-    receive_task: asyncio.Task = asyncio.create_task(websocket.receive_text())
-    queue_task: Optional[asyncio.Task] = None
+    reader_task: Optional[asyncio.Task] = None
+    pump_task: Optional[asyncio.Task] = None
     # Set when a client cancel is being drained: the deadline by which the
     # fitting thread's own terminal frame has to arrive.
     cancel_deadline: Optional[float] = None
 
     try:
+        # Send an immediate status frame so a client that connects behind a
+        # long-running job sees "queued (N ahead)" instead of an empty
+        # panel. It carries the authoritative fitted count, which the
+        # replay behind it can only converge on, never exceed.
+        await websocket.send_json({"type": "heartbeat", **ctx.progress_snapshot()})
+
+        for msg in backlog:
+            await websocket.send_json(msg)
+            if msg.get("type") in TERMINAL_MESSAGE_TYPES:
+                # The job ended before this client attached. Say so and
+                # close instead of heartbeating a finished job until the
+                # 30-minute cap.
+                await websocket.close()
+                return
+
+        reader_task = asyncio.create_task(_client_reader(websocket, ctx, stream))
+
         while True:
             # Check timeout
             if time.monotonic() - start_time > TIMEOUT:
@@ -652,90 +804,84 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
                 await websocket.close()
                 return
 
-            if queue_task is None:
-                queue_task = asyncio.create_task(ctx.queue.get())
-
             wait_timeout = HEARTBEAT_INTERVAL
             if cancel_deadline is not None:
                 # Wake at the drain deadline so the acknowledgement above
                 # is not held for a whole heartbeat interval past it.
-                wait_timeout = max(0.0, min(wait_timeout, cancel_deadline - time.monotonic()))
+                wait_timeout = max(
+                    0.0, min(wait_timeout, cancel_deadline - time.monotonic())
+                )
 
-            done, _pending = await asyncio.wait(
-                {queue_task, receive_task},
-                timeout=wait_timeout,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            # The pending get is kept across iterations rather than
+            # recreated: ``asyncio.wait`` leaves an unfinished task alone
+            # on timeout, so the queue always has a registered waiter and
+            # an item put while the pump was elsewhere still wakes it.
+            if pump_task is None:
+                pump_task = asyncio.create_task(stream.get())
+            done, _pending = await asyncio.wait({pump_task}, timeout=wait_timeout)
 
-            if queue_task in done:
-                msg = queue_task.result()
-                queue_task = None
-                await websocket.send_json(msg)
+            if pump_task not in done:
+                if cancel_deadline is None:
+                    # Nothing from either side within the heartbeat
+                    # interval: report server-side job state so a silent
+                    # job is distinguishable from a dead connection.
+                    # Suppressed while a cancel is draining -- that wait
+                    # ends in a terminal frame either way, and a heartbeat
+                    # in front of it only reports a status the client
+                    # already asked for.
+                    await websocket.send_json({
+                        "type": "heartbeat",
+                        **ctx.progress_snapshot(),
+                    })
+                continue
 
-                # If terminal message, close cleanly. "cancelled" is one of
-                # these: the fitting thread emits it once it has stopped,
-                # so it lands behind the last point it retained and is the
-                # signal a cancelling client is waiting on.
-                if msg.get("type") in TERMINAL_MESSAGE_TYPES:
+            item = pump_task.result()
+            pump_task = None
+
+            if item is _Control.CLIENT_GONE:
+                return
+
+            if isinstance(item, _CancelRequest):
+                if not item.applied:
+                    # Already terminal -- a cancel racing the end of the
+                    # job. The fitting thread's own complete / error /
+                    # cancelled frame is on its way (or has already been
+                    # replayed); keep draining so it, and the points ahead
+                    # of it, still reach the client instead of closing on
+                    # an acknowledgement that would contradict it. Answer
+                    # with the real state so the request is not met with
+                    # silence either.
+                    await websocket.send_json({
+                        "type": "heartbeat",
+                        **ctx.progress_snapshot(),
+                    })
+                    continue
+                if item.previous_status == "queued":
+                    # The fitting thread had not started, and the terminal
+                    # status it now carries means it never will: nothing is
+                    # in flight, so the retention store is already final.
+                    # Acknowledging here matters because the single map
+                    # executor may not reach this job for minutes.
+                    await websocket.send_json(_cancel_ack(ctx))
                     await websocket.close()
                     return
+                # Running: the thread is mid-point and retains that point
+                # *after* this message was received. Hold the
+                # acknowledgement until its own terminal frame arrives
+                # behind that point (issue #6).
+                if cancel_deadline is None:
+                    cancel_deadline = time.monotonic() + CANCEL_DRAIN_SECONDS
+                continue
 
-            if receive_task in done:
-                # Raises WebSocketDisconnect when the client goes away,
-                # which the handler below turns into a clean exit.
-                raw = receive_task.result()
-                receive_task = asyncio.create_task(websocket.receive_text())
-                try:
-                    client_msg = json.loads(raw)
-                except (ValueError, TypeError):
-                    client_msg = {}
-                if client_msg.get("type") == "cancel":
-                    ctx.cancel_event.set()
-                    applied, previous_status = ctx.request_cancel()
-                    if not applied:
-                        # Already terminal -- a cancel racing the end of
-                        # the job. The fitting thread's own complete /
-                        # error / cancelled frame is on its way (or has
-                        # already been replayed); keep draining so it, and
-                        # the points ahead of it, still reach the client
-                        # instead of closing on an acknowledgement that
-                        # would contradict it. Answer with the real state
-                        # so the request is not met with silence either.
-                        await websocket.send_json({
-                            "type": "heartbeat",
-                            **ctx.progress_snapshot(),
-                        })
-                        continue
-                    if previous_status == "queued":
-                        # The fitting thread had not started, and the
-                        # terminal status it now carries means it never
-                        # will: nothing is in flight, so the retention
-                        # store is already final. Acknowledging here
-                        # matters because the single map executor may not
-                        # reach this job for minutes.
-                        await websocket.send_json(
-                            _cancel_ack(ctx)
-                        )
-                        await websocket.close()
-                        return
-                    # Running: the thread is mid-point and retains that
-                    # point *after* this message was received. Hold the
-                    # acknowledgement until its own terminal frame arrives
-                    # behind that point (issue #6).
-                    if cancel_deadline is None:
-                        cancel_deadline = time.monotonic() + CANCEL_DRAIN_SECONDS
+            await websocket.send_json(item)
 
-            if not done and cancel_deadline is None:
-                # Nothing from either side within the heartbeat interval:
-                # report server-side job state so a silent job is
-                # distinguishable from a dead connection. Suppressed while
-                # a cancel is draining -- that wait ends in a terminal
-                # frame either way, and a heartbeat in front of it only
-                # reports a status the client already asked for.
-                await websocket.send_json({
-                    "type": "heartbeat",
-                    **ctx.progress_snapshot(),
-                })
+            # If terminal message, close cleanly. "cancelled" is one of
+            # these: the fitting thread emits it once it has stopped, so
+            # it lands behind the last point it retained and is the signal
+            # a cancelling client is waiting on.
+            if item.get("type") in TERMINAL_MESSAGE_TYPES:
+                await websocket.close()
+                return
 
     except WebSocketDisconnect:
         logger.debug("Map WS client disconnected for job %s", job_id)
@@ -746,6 +892,9 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
         except Exception:
             pass
     finally:
-        for task in (queue_task, receive_task):
+        # Detached first: the fitting thread must stop broadcasting into a
+        # queue nobody drains before the tasks that drained it go away.
+        ctx.unsubscribe(stream)
+        for task in (pump_task, reader_task):
             if task is not None and not task.done():
                 task.cancel()

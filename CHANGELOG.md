@@ -99,6 +99,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same barrier instead of recovering results the moment a status turns
   terminal — bounded to three extra polls, after which it recovers anyway
   and says the same thing.
+- **A reconnecting Map Mode client no longer competes with its own dead
+  socket (#6).** A client that drops and resumes overlaps with its
+  predecessor — the server only learns the old socket is gone when it next
+  touches it — and both handlers were draining one shared job queue. Every
+  frame went to whichever of them won the race, so the resumed client saw a
+  fraction of the stream, and a terminal frame taken by the dying handler was
+  gone outright: the surviving client then waited forever on a job that had
+  already finished, which is the same frozen panel from a third cause. Frames
+  are now broadcast to one queue per connection, so overlapping sockets each
+  see the whole stream. Reconnect replay is taken as a snapshot under the
+  lock the fitting thread appends under, instead of iterating the live ring
+  buffer — a frame landing mid-replay raised `RuntimeError: deque mutated
+  during iteration` and dropped the client at exactly the moment it was
+  trying to catch up. A socket that attaches after the job ended is now
+  closed on the replayed terminal frame rather than heartbeating a finished
+  job until the handler's 30-minute cap. Client input is read by its own
+  task that posts to the same per-connection queue, so the handler has a
+  single wake-up source and a queued frame can no longer sit unread behind a
+  client message (or the reverse) until the next heartbeat.
 - **A cancelled map fit job can no longer be restarted (#6).** Cancelling a
   job that was still waiting its turn on the single-threaded executor only set
   a flag: when the executor eventually reached it, the fitting thread marked

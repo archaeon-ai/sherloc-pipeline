@@ -25,6 +25,10 @@ These tests pin the observable signals that fix that:
   fitting thread that eventually picks it up.
 * The ``/ws/map/{job_id}`` handler itself: connect frame, resume replay,
   client cancel, and the two refusal paths.
+* Frames are broadcast per connection, so a resumed socket overlapping its
+  own predecessor still receives the whole stream -- including the
+  terminal frame the two used to race each other for -- and the replay
+  snapshot is taken atomically against the fitting thread's appends.
 * A cancel is acknowledged only once the fitting thread has stopped, so a
   point that was in flight when the cancel landed is retained before the
   client goes looking for it -- bounded by a drain window, past which the
@@ -43,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -69,13 +74,22 @@ def _make_ctx(n_points: int = 10, loop=None) -> MapJobContext:
     return MapJobContext(
         job_id="mf_test",
         scan_id="scan-1",
-        queue=asyncio.Queue(),
         cancel_event=threading.Event(),
         message_buffer=collections.deque(maxlen=RECONNECT_BUFFER_SIZE),
         created_at=time.monotonic(),
         loop=loop,
         n_points=n_points,
     )
+
+
+def _drain(stream: asyncio.Queue) -> list[dict]:
+    """Every frame currently waiting on a subscriber queue, in order."""
+    frames = []
+    while True:
+        try:
+            frames.append(stream.get_nowait())
+        except asyncio.QueueEmpty:
+            return frames
 
 
 class _InlineLoop:
@@ -89,6 +103,18 @@ class _InlineLoop:
 
     def call_soon_threadsafe(self, fn, *args):
         fn(*args)
+
+
+class _DiscardLoop:
+    """Drops the fan-out, keeping a test to the buffer side of ``publish``.
+
+    ``asyncio.Queue`` is not itself thread-safe, so a test that broadcasts
+    from a real thread without a running loop to marshal onto must not
+    touch subscriber queues.
+    """
+
+    def call_soon_threadsafe(self, fn, *args):
+        pass
 
 
 def _fit_points(on_point_fitted, indices) -> None:
@@ -284,12 +310,13 @@ def test_queue_position_counts_only_jobs_submitted_earlier():
 async def test_job_started_frame_is_emitted_and_buffered():
     loop = asyncio.get_running_loop()
     ctx = _make_ctx(n_points=3, loop=loop)
+    stream, _backlog = ctx.subscribe()
     on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
 
     on_point_fitted.send_job_started(["minerals", "organics"])
     await asyncio.sleep(0)
 
-    msg = ctx.queue.get_nowait()
+    msg = stream.get_nowait()
     assert msg["type"] == "job_started"
     assert msg["job_id"] == "mf_test"
     assert msg["n_points"] == 3
@@ -334,13 +361,13 @@ async def test_point_fitted_frames_carry_the_authoritative_count():
     loop = asyncio.get_running_loop()
     ctx = _make_ctx(n_points=3, loop=loop)
     ctx.set_status("running")
+    stream, _backlog = ctx.subscribe()
     on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
 
     _fit_points(on_point_fitted, range(3))
     await asyncio.sleep(0)
 
-    counts = [ctx.queue.get_nowait()["fitted"] for _ in range(3)]
-    assert counts == [1, 2, 3]
+    assert [f["fitted"] for f in _drain(stream)] == [1, 2, 3]
 
 
 # ---------------------------------------------------------------------------
@@ -719,6 +746,7 @@ async def test_cancel_racing_completion_lets_the_completion_frame_through():
         assert not any(f["type"] == "cancelled" for f in ws.sent)
         # Answered, though: the request gets the real state rather than
         # silence until the handler's 30-minute cap.
+        await _await_frames(ws, 2)  # connect frame, then the answer
         assert ws.sent[-1]["type"] == "heartbeat"
         assert ws.sent[-1]["status"] == "complete"
 
@@ -740,13 +768,14 @@ def test_the_fitting_thread_sends_its_own_terminal_cancelled_frame():
     registry = MapJobRegistry()
     ctx = registry.create("mf_worker", "scan-a", loop=_InlineLoop(), n_points=5)
     ctx.set_status("running")
+    stream, _backlog = ctx.subscribe()
     on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
 
     _fit_points(on_point_fitted, range(2))
     ctx.set_status("cancelled")
     on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
 
-    frames = [ctx.queue.get_nowait() for _ in range(ctx.queue.qsize())]
+    frames = _drain(stream)
     assert [f["type"] for f in frames] == ["point_fitted", "point_fitted", "cancelled"]
     tail = frames[-1]
     assert tail["seq"] > frames[-2]["seq"]
@@ -790,10 +819,9 @@ async def test_resume_replays_only_frames_after_last_seq():
     ctx = registry.create("mf_resume", "scan-a", loop=_InlineLoop(), n_points=10)
     ctx.set_status("running")
     on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    # Fitted with nobody attached, so only the replay path can produce
+    # these frames.
     _fit_points(on_point_fitted, range(3))
-    # Drain the live queue so only the replay path can produce these.
-    while not ctx.queue.empty():
-        ctx.queue.get_nowait()
 
     ws = _StubWebSocket(registry, query_params={"last_seq": "1"})
     async with _connected(ws, "mf_resume"):
@@ -801,6 +829,159 @@ async def test_resume_replays_only_frames_after_last_seq():
 
     replayed = [f for f in ws.sent if f["type"] == "point_fitted"]
     assert [f["seq"] for f in replayed] == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_socket_gets_the_terminal_frame_while_the_old_one_lingers():
+    """Overlapping connections must not compete for the same frames.
+
+    A client that drops and resumes overlaps with its own predecessor:
+    the server only learns the old socket is gone when it next touches
+    it, so for a moment two handlers are attached to one job. When they
+    shared a single job queue they raced to dequeue, and whichever won
+    took the frame — if that was the dying handler, the frame died with
+    it. Losing the *terminal* frame that way left the resumed client
+    waiting forever on a job that had already finished, which is the
+    frozen panel issue #6 is about.
+
+    Frames are broadcast per connection instead, so the stale handler
+    can consume all it likes without starving the live one.
+    """
+    registry = MapJobRegistry()
+    ctx = registry.create(
+        "mf_overlap", "scan-a", loop=asyncio.get_running_loop(), n_points=2
+    )
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+
+    stale = _StubWebSocket(registry)
+    async with _connected(stale, "mf_overlap") as stale_task:
+        await _await_frames(stale, 1)
+        _fit_points(on_point_fitted, [0])  # seq 1
+        await _await_frames(stale, 2)
+
+        # The client reconnects while the first handler is still attached
+        # and still draining.
+        resumed = _StubWebSocket(registry, query_params={"last_seq": "1"})
+        async with _connected(resumed, "mf_overlap") as resumed_task:
+            await _await_condition(
+                lambda: ctx.subscriber_count() == 2, "both sockets attached"
+            )
+            _fit_points(on_point_fitted, [1])  # seq 2
+            on_point_fitted.send_complete(  # type: ignore[attr-defined]
+                {"total_points": 2, "detections": {}, "elapsed_s": 0.2}
+            )
+            await asyncio.wait_for(resumed_task, timeout=3.0)
+        await asyncio.wait_for(stale_task, timeout=3.0)
+
+    # The resumed socket got the point it had not seen and, crucially, the
+    # terminal frame — neither was consumed out from under it.
+    assert [f["type"] for f in resumed.sent] == ["heartbeat", "point_fitted", "complete"]
+    assert resumed.sent[1]["point_index"] == 1
+    assert resumed.closed is not None
+
+    # The stale socket saw the same stream rather than a share of it.
+    assert [f["type"] for f in stale.sent] == [
+        "heartbeat",
+        "point_fitted",
+        "point_fitted",
+        "complete",
+    ]
+
+    # Both handlers detached on the way out, so the fitting thread is not
+    # left broadcasting into queues nobody drains.
+    assert ctx.subscriber_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_a_resume_after_the_job_ended_is_told_so_instead_of_hanging():
+    """The replayed terminal frame ends the socket, it does not precede a wait."""
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_over", "scan-a", loop=_InlineLoop(), n_points=1)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    _fit_points(on_point_fitted, [0])
+    on_point_fitted.send_complete(  # type: ignore[attr-defined]
+        {"total_points": 1, "detections": {}, "elapsed_s": 0.1}
+    )
+    ctx.set_status("complete")
+
+    ws = _StubWebSocket(registry)
+    async with _connected(ws, "mf_over") as task:
+        await asyncio.wait_for(task, timeout=3.0)
+
+    assert [f["type"] for f in ws.sent] == ["heartbeat", "point_fitted", "complete"]
+    assert ws.closed is not None
+    assert ctx.subscriber_count() == 0
+
+
+def test_replay_snapshot_is_atomic_against_the_fitting_thread():
+    """Replay must not iterate a buffer the fitting thread is appending to.
+
+    ``deque`` raises ``RuntimeError: deque mutated during iteration`` when
+    a frame lands mid-replay — dropping the reconnecting client at exactly
+    the moment it is trying to catch up, and leaving it to retry into the
+    same race. The snapshot is taken under the lock ``publish`` appends
+    under, so a concurrent broadcast either precedes the snapshot or
+    follows it.
+    """
+    ctx = _make_ctx(n_points=0, loop=_DiscardLoop())
+    stop = threading.Event()
+    failures: list[BaseException] = []
+
+    def _producer() -> None:
+        seq = 0
+        while not stop.is_set():
+            seq += 1
+            try:
+                ctx.publish({"type": "log", "seq": seq, "message": "fitting"})
+            except BaseException as exc:  # pragma: no cover - the regression
+                failures.append(exc)
+                return
+
+    # Frequent interpreter switches so the append lands inside the
+    # snapshot rather than only rarely.
+    previous_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    thread = threading.Thread(target=_producer, daemon=True)
+    thread.start()
+    try:
+        for _ in range(400):
+            stream, backlog = ctx.subscribe()
+            ctx.unsubscribe(stream)
+            # A snapshot, not a live view: it must be ordered and stable
+            # no matter what landed while it was being taken.
+            seqs = [m["seq"] for m in backlog]
+            assert seqs == sorted(seqs)
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+        sys.setswitchinterval(previous_interval)
+
+    assert failures == []
+    assert ctx.subscriber_count() == 0
+
+
+def test_a_broadcast_is_delivered_to_every_subscriber_exactly_once():
+    """Each attached client gets its own copy of the stream."""
+    ctx = _make_ctx(n_points=2, loop=_InlineLoop())
+    on_point_fitted, on_progress, _on_log = make_fitting_callbacks(ctx)
+
+    first, _ = ctx.subscribe()
+    second, _ = ctx.subscribe()
+    _fit_points(on_point_fitted, [0])
+    on_progress(1, 2, 1.0, 1.0)
+
+    for stream in (first, second):
+        assert [f["type"] for f in _drain(stream)] == ["point_fitted", "progress"]
+
+    # Detaching one leaves the other's stream intact.
+    ctx.unsubscribe(first)
+    _fit_points(on_point_fitted, [1])
+    assert _drain(first) == []
+    assert [f["point_index"] for f in _drain(second)] == [1]
+    # Transient progress frames stay out of the replay buffer.
+    assert [f["type"] for f in ctx.message_buffer] == ["point_fitted", "point_fitted"]
 
 
 @pytest.mark.asyncio
