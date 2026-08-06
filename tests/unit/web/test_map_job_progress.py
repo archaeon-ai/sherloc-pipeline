@@ -27,6 +27,9 @@ These tests pin the observable signals that fix that:
   client cancel, and the two refusal paths.
 * ``GET /api/map/jobs/{job_id}``, the REST fallback, carries the same
   queued / stalled / progress signals rather than collapsing them.
+* ``GET /api/map/jobs/{job_id}/results`` hands back the per-point results
+  a client missed while its socket was down -- the only place they exist,
+  since map fitting streams results and never writes them to the database.
 """
 
 from __future__ import annotations
@@ -40,9 +43,11 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from sherloc_pipeline.services.map_fitting import DomainResult, PointFitResult
-from sherloc_pipeline.web.routes.map import get_map_job_status
+from sherloc_pipeline.web import ws_map
+from sherloc_pipeline.web.routes.map import get_map_job_results, get_map_job_status
 from sherloc_pipeline.web.ws_map import (
     RECONNECT_BUFFER_SIZE,
     STALL_WARN_SECONDS,
@@ -675,3 +680,209 @@ def test_rest_status_reports_completion_and_offers_results():
         assert resp.stalled is False
     finally:
         loop.close()
+
+
+def test_rest_status_advertises_how_many_results_are_recoverable():
+    """A polling client needs to know the missed frames are still fetchable."""
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_retained", "scan-a", loop=_InlineLoop(), n_points=5)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    _fit_points(on_point_fitted, range(2))
+
+    resp = get_map_job_status(_status_request(registry), "mf_retained")
+
+    assert resp.results_retained == 2
+
+
+# ---------------------------------------------------------------------------
+# Disconnect recovery: GET /api/map/jobs/{job_id}/results
+#
+# The route reads ``app.state`` plus one scan row for the access check, so
+# it is called directly against stubs rather than through an HTTP stack.
+# ---------------------------------------------------------------------------
+
+
+class _StubScanQuery:
+    def __init__(self, scan):
+        self._scan = scan
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return self._scan
+
+
+class _StubSession:
+    def __init__(self, scan):
+        self._scan = scan
+
+    def query(self, *args, **kwargs):
+        return _StubScanQuery(self._scan)
+
+
+_MISSING = object()
+
+
+def _results_request(registry, *, scan=_MISSING, access_mode="internal"):
+    if scan is _MISSING:
+        scan = SimpleNamespace(id="scan-a", data_source="loupe")
+    return SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(map_registry=registry, access_mode=access_mode)
+        ),
+        state=SimpleNamespace(db=_StubSession(scan)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_results_missed_during_a_disconnect_are_recoverable_over_rest():
+    """End-to-end: stream, drop the socket, keep fitting, fetch what was missed.
+
+    ``MapFitService`` streams per-point results and never writes them to
+    ``fitted_peaks``, so a frame lost while the client's socket was down
+    exists nowhere in the database. Reloading the map from
+    ``/api/map/layers`` afterwards would show whatever peaks an *earlier*
+    pipeline run wrote -- and overwrite the live points this client did
+    receive with them. The job retains its own results instead, and this
+    is the sequence that has to work.
+    """
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_drop", "scan-a", loop=_InlineLoop(), n_points=5)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+
+    on_point_fitted.send_job_started(["minerals"])
+    _fit_points(on_point_fitted, range(2))
+
+    ws = _StubWebSocket(registry)
+    async with _connected(ws, "mf_drop"):
+        # Connect frame + job_started + the two points fitted so far.
+        await _await_frames(ws, 4)
+    # Leaving the block tears the handler down: the client is gone.
+
+    streamed = {f["point_index"] for f in ws.sent if f["type"] == "point_fitted"}
+    assert streamed == {0, 1}
+
+    # Fitting carries on with nobody listening.
+    _fit_points(on_point_fitted, range(2, 5))
+    on_point_fitted.send_complete(
+        {"total_points": 5, "detections": {"minerals": 0}, "elapsed_s": 1.0}
+    )
+    ctx.set_status("complete")
+
+    resp = get_map_job_results(_results_request(registry), "mf_drop")
+
+    assert resp.status == "complete"
+    assert (resp.fitted, resp.total) == (5, 5)
+    assert resp.truncated is False
+    assert [p.point_index for p in resp.points] == [0, 1, 2, 3, 4]
+    # The three the client never saw are exactly what recovery adds; the
+    # two it already has are skipped by point identity on the client.
+    assert {p.point_index for p in resp.points} - streamed == {2, 3, 4}
+
+
+def test_retained_results_carry_the_fitted_peaks():
+    """Recovery has to return the measurements, not just the point list."""
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_peaks", "scan-a", loop=_InlineLoop(), n_points=1)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+
+    on_point_fitted(
+        PointFitResult(
+            point_index=7,
+            x=1.5,
+            y=2.5,
+            results={
+                "minerals": DomainResult(
+                    status="measured",
+                    peaks=[
+                        {
+                            "center_cm1": 1000.0,
+                            "snr": 9.0,
+                            "assignment": "synthetic",
+                            "fwhm_cm1": 40.0,
+                        }
+                    ],
+                )
+            },
+        )
+    )
+
+    resp = get_map_job_results(_results_request(registry), "mf_peaks")
+
+    point = resp.points[0]
+    assert (point.point_index, point.x, point.y) == (7, 1.5, 2.5)
+    assert point.results["minerals"].status == "measured"
+    assert point.results["minerals"].peaks[0]["center_cm1"] == 1000.0
+
+
+def test_results_are_keyed_by_point_so_a_refit_replaces_rather_than_doubles():
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_dupe", "scan-a", loop=_InlineLoop(), n_points=1)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+
+    _fit_points(on_point_fitted, [3])
+    _fit_points(on_point_fitted, [3])
+
+    resp = get_map_job_results(_results_request(registry), "mf_dupe")
+
+    assert [p.point_index for p in resp.points] == [3]
+
+
+def test_partial_results_survive_a_cancelled_job():
+    """Points fitted before a cancel are still valid measurements."""
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_part", "scan-a", loop=_InlineLoop(), n_points=10)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    _fit_points(on_point_fitted, range(3))
+    ctx.set_status("cancelled")
+
+    resp = get_map_job_results(_results_request(registry), "mf_part")
+
+    assert resp.status == "cancelled"
+    assert [p.point_index for p in resp.points] == [0, 1, 2]
+
+
+def test_retention_is_bounded_and_says_so_rather_than_silently_truncating(monkeypatch):
+    """A partial map must not be served as if it were complete."""
+    monkeypatch.setattr(ws_map, "MAX_RETAINED_RESULTS", 2)
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_huge", "scan-a", loop=_InlineLoop(), n_points=5)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    _fit_points(on_point_fitted, range(5))
+
+    resp = get_map_job_results(_results_request(registry), "mf_huge")
+
+    assert resp.truncated is True
+    assert [p.point_index for p in resp.points] == [0, 1]
+    # The progress counter is not quietly reduced to what survived.
+    assert resp.fitted == 5
+
+
+def test_results_for_an_unknown_or_reaped_job_are_a_404():
+    with pytest.raises(HTTPException) as excinfo:
+        get_map_job_results(_results_request(MapJobRegistry()), "mf_nope")
+
+    assert excinfo.value.status_code == 404
+
+
+def test_results_carry_the_same_access_gate_as_the_fit_that_produced_them():
+    """These are measurement values, not counters, so public mode gates them."""
+    registry = MapJobRegistry()
+    ctx = registry.create("mf_gated", "scan-a", loop=_InlineLoop(), n_points=1)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+    _fit_points(on_point_fitted, [0])
+
+    with pytest.raises(HTTPException) as excinfo:
+        get_map_job_results(
+            _results_request(registry, access_mode="public"), "mf_gated"
+        )
+
+    assert excinfo.value.status_code == 403

@@ -14,6 +14,7 @@
     MapJobPoller,
     isTerminalJobStatus,
     jobLivenessNote,
+    selectMissedResults,
   } from '../../lib/mapProgress';
   import type { MapJobLiveness } from '../../lib/mapProgress';
   import {
@@ -43,6 +44,7 @@
     AuthRequiredError,
     fetchAciImage,
     getMapData,
+    getMapJobResults,
     getMapJobStatus,
     getMapLayers,
     getScan,
@@ -831,19 +833,71 @@
     fitPoller = null;
   }
 
+  function logFit(line: string): void {
+    mapLogEntries.update((logs) => [...logs.slice(-499), line]);
+  }
+
+  /**
+   * Fetch and ingest the per-point results this client missed.
+   *
+   * Fitting streams its results and never writes them to `fitted_peaks`,
+   * so a frame lost to a dropped socket exists only in the server's
+   * retention store. Reloading the map from `/api/map/layers` instead —
+   * which is what this used to do — showed whatever peaks an *earlier*
+   * pipeline run had written, and replaced the live results this client
+   * had already received with them.
+   *
+   * Points already seen are skipped by identity, so this is safe to call
+   * whenever the client suspects a gap: after a poll-observed terminal
+   * status, or when a resumed socket delivered fewer points than the
+   * server fitted (the replay buffer is bounded and can wrap).
+   */
+  async function recoverMissedResults(jobId: string): Promise<void> {
+    if (!jobId) return;
+    try {
+      const data = await getMapJobResults(jobId);
+      // A newer fit may have taken ownership of the layers while this
+      // request was in flight; its points are not this job's to write.
+      if (get(mapFitJob)?.jobId !== jobId) return;
+      const missed = selectMissedResults(data.points, fitProgress);
+      for (const pt of missed) {
+        ingestPointFitted({ type: 'point_fitted', seq: -1, ...pt });
+      }
+      const recovered = missed.length;
+      if (recovered > 0) {
+        flushPending();
+        recalcColormapRanges();
+        mapFitJob.update((j) => (j ? { ...j, fitted: fitProgress.fitted } : j));
+        logFit(
+          `Recovered ${recovered} result${recovered === 1 ? '' : 's'} missed while the fit stream was down.`,
+        );
+      }
+      if (data.truncated) {
+        logFit(
+          'The server could not retain every point of this fit — the map may be incomplete. Re-run the fit to fill it in.',
+        );
+      }
+    } catch (err) {
+      // Say so rather than quietly reloading the database view, which
+      // would look like recovery while showing a different run's peaks.
+      console.warn('Map fit result recovery failed:', err);
+      logFit(
+        'Could not recover the results missed while disconnected — the server no longer holds them. Re-run the fit to see the full map.',
+      );
+    }
+  }
+
   /**
    * Fall back to REST polling when the fit WebSocket closes on a job that
-   * has not finished. Without this the progress panel simply froze — the
-   * symptom issue #6 is about — because nothing else reports server-side
-   * state. Per-point results stop streaming, so the layers are reloaded
-   * from the database once the job reaches a terminal status.
+   * has not finished and cannot be re-established. Without this the
+   * progress panel simply froze — the symptom issue #6 is about — because
+   * nothing else reports server-side state. Per-point results stop
+   * streaming, so the ones missed are fetched from the server's retention
+   * store once the job reaches a terminal status.
    */
   function startFitPolling(jobId: string): void {
     if (!jobId || fitPoller) return;
-    mapLogEntries.update((logs) => [
-      ...logs.slice(-499),
-      'Fit stream disconnected — falling back to status polling.',
-    ]);
+    logFit('Fit stream disconnected — falling back to status polling.');
     fitPoller = new MapJobPoller(jobId, getMapJobStatus, {
       onStatus: (s) => applyLiveness(s),
       onTerminal: (s) => {
@@ -857,15 +911,13 @@
               }
             : j,
         );
+        // Partial results from a cancelled or failed job are still valid
+        // measurements, so recover on every terminal status, not only on
+        // "complete".
         if (s.status === 'complete') {
-          // The per-point frames missed while the socket was down live in
-          // the database, not in this client.
-          mapLogEntries.update((logs) => [
-            ...logs.slice(-499),
-            'Fit complete — reloading results.',
-          ]);
-          void refreshLayers();
+          logFit('Fit complete — recovering the results missed while disconnected.');
         }
+        void recoverMissedResults(jobId);
       },
       onError: (err) => {
         console.warn('Map fit status poll failed:', err);
@@ -972,6 +1024,13 @@
                   }
                 : j,
             );
+            // A resumed socket replays from a bounded ring buffer, so a
+            // long outage can still leave holes. Fill them from the
+            // server's retention store rather than showing a map with
+            // missing points and no sign that anything is absent.
+            if (fitProgress.pointsReceived < msg.summary.total_points) {
+              void recoverMissedResults(data.job_id);
+            }
           },
           onFailed: (msg) => {
             flushPending();
@@ -995,12 +1054,23 @@
           // from a frozen UI.
           applyLiveness(msg);
         },
+        onReconnecting: (attempt, maxAttempts) => {
+          // The socket can close while the job is still running (proxy
+          // idle timeout, the handler's own 30-minute cap, a flaky link).
+          // The client resumes from its last sequence number, so the
+          // stream picks up where it left off instead of restarting.
+          logFit(
+            `Fit stream dropped — reconnecting (attempt ${attempt}/${maxAttempts}).`,
+          );
+        },
+        onReconnected: () => {
+          logFit('Fit stream reconnected.');
+        },
         onDisconnect: () => {
-          // The socket is the primary channel, but it can close while the
-          // job is still running (proxy idle timeout, the handler's own
-          // 30-minute cap, a flaky link). Leaving the panel untouched then
-          // reproduces exactly the stall this change is meant to remove,
-          // so hand over to the REST fallback until the job terminates.
+          // Reconnection has been abandoned (or was never wanted).
+          // Leaving the panel untouched here reproduces exactly the stall
+          // this change is meant to remove, so hand over to the REST
+          // fallback until the job terminates.
           const job = get(mapFitJob);
           if (job && !isTerminalJobStatus(job.status)) {
             startFitPolling(job.jobId);
@@ -1020,17 +1090,12 @@
   }
 
   function handleCancelFit() {
-    if (fitPoller) {
-      // Cancel travels over the fit socket only, and in polling mode that
-      // socket is gone. Say so rather than leaving the button silently
-      // inert — reporting state honestly is the point of this change.
-      mapLogEntries.update((logs) => [
-        ...logs.slice(-499),
-        'Cannot cancel: the fit stream is disconnected. The job continues on the server.',
-      ]);
-      return;
-    }
-    ws?.sendCancel();
+    // Cancel travels over the fit socket only. While the socket is down —
+    // in polling mode, or between reconnect attempts — it cannot reach the
+    // server, so say so rather than leaving the button silently inert:
+    // reporting state honestly is the point of this change.
+    if (!fitPoller && ws?.sendCancel()) return;
+    logFit('Cannot cancel: the fit stream is disconnected. The job continues on the server.');
   }
 
   async function refreshLayers() {

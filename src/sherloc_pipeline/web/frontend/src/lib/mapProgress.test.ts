@@ -4,6 +4,7 @@ import {
   MapJobPoller,
   isTerminalJobStatus,
   jobLivenessNote,
+  selectMissedResults,
 } from './mapProgress';
 import type { MapJobStatus } from './mapProgress';
 
@@ -70,6 +71,46 @@ describe('MapProgressTracker', () => {
     expect(p.fitted).toBe(0);
     expect(p.notePoint(3, 1)).toBe(true);
     expect(p.fitted).toBe(1);
+  });
+});
+
+describe('selectMissedResults', () => {
+  // Client half of disconnect recovery: the socket drops part-way through
+  // a fit, the job finishes on the server, and the retained results are
+  // fetched back. The payload re-delivers everything the job produced,
+  // including the points that did arrive live.
+  const retained = (indices: number[]) => indices.map((i) => ({ point_index: i, x: i, y: 0 }));
+
+  it('ingests only the points the client never received', () => {
+    const p = new MapProgressTracker();
+    for (const i of [0, 1]) p.notePoint(i, i + 1); // streamed before the drop
+
+    const missed = selectMissedResults(retained([0, 1, 2, 3, 4]), p);
+
+    expect(missed.map((m) => m.point_index)).toEqual([2, 3, 4]);
+    // Every point is now accounted for exactly once.
+    expect(p.fitted).toBe(5);
+    expect(p.pointsReceived).toBe(5);
+  });
+
+  it('is idempotent, so a repeated recovery adds nothing', () => {
+    const p = new MapProgressTracker();
+    const payload = retained([0, 1, 2]);
+
+    expect(selectMissedResults(payload, p)).toHaveLength(3);
+    expect(selectMissedResults(payload, p)).toHaveLength(0);
+    expect(p.fitted).toBe(3);
+  });
+
+  it('recovers the whole job for a client that saw none of it', () => {
+    // The socket never came back: nothing streamed, everything recovered.
+    const p = new MapProgressTracker();
+    p.noteServerCount(3); // only the REST poll's count got through
+
+    const missed = selectMissedResults(retained([0, 1, 2]), p);
+
+    expect(missed).toHaveLength(3);
+    expect(p.fitted).toBe(3);
   });
 });
 

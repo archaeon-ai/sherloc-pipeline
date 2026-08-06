@@ -750,3 +750,45 @@ class MapJobStatusResponse(BaseModel):
     stalled: bool = False
     since_last_message_s: Optional[float] = None
     elapsed_s: Optional[float] = None
+    # Per-point results the server still holds for this job, retrievable
+    # from GET /api/map/jobs/{job_id}/results. Non-zero means a client
+    # whose stream dropped can recover the frames it missed.
+    results_retained: int = 0
+
+
+class MapJobFitDomainDTO(BaseModel):
+    """One domain's fit outcome for a single point, as streamed."""
+
+    status: str  # "measured" | "below_threshold" | "missing"
+    peaks: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class MapJobFitPointDTO(BaseModel):
+    """A retained per-point fit result, shaped like the WS ``point_fitted`` frame."""
+
+    point_index: int
+    x: float
+    y: float
+    results: Dict[str, MapJobFitDomainDTO] = Field(default_factory=dict)
+
+
+class MapJobResultsResponse(BaseModel):
+    """Response from GET /api/map/jobs/{job_id}/results.
+
+    Map fitting streams its results and never writes them to
+    ``fitted_peaks``, so results missed while a client's WebSocket was down
+    exist nowhere else — reloading the map from the database would show an
+    earlier pipeline run's peaks instead. The server retains this job's own
+    per-point results for its lifetime in the registry so a reconnecting or
+    polling client can fetch exactly what it missed.
+    """
+
+    schema_version: str = API_SCHEMA_VERSION
+    job_id: str
+    status: str  # "queued" | "running" | "complete" | "failed" | "cancelled"
+    fitted: int
+    total: int
+    # True when the job outgrew the retention ceiling and some points were
+    # dropped, so a client knows the recovered map is incomplete.
+    truncated: bool = False
+    points: List[MapJobFitPointDTO] = Field(default_factory=list)

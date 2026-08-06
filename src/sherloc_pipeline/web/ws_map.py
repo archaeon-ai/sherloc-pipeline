@@ -30,6 +30,22 @@ TIMEOUT = 1800  # 30 minutes
 RECONNECT_BUFFER_SIZE = 2000  # max messages to retain for replay
 RECONNECT_BUFFER_SECONDS = 300  # 5 min buffer for resume
 
+# Ceiling on per-point results retained for REST retrieval.
+#
+# ``MapFitService`` streams results and never writes them to the database,
+# so a frame lost to a disconnect is lost outright: reloading the map from
+# ``fitted_peaks`` afterwards shows whatever an earlier pipeline run wrote,
+# not this job's output. Every point is therefore retained on the job
+# context, keyed by point index, and served by
+# ``GET /api/map/jobs/{job_id}/results``.
+#
+# Keying by point index bounds the store at the scan's point count (map
+# scans run to ~1600 points), and the registry drops it with the job an
+# hour after it terminates. The cap is a backstop against a pathological
+# scan, not an expected limit -- when it bites, the job reports
+# ``truncated`` rather than silently serving a partial map.
+MAX_RETAINED_RESULTS = 5000
+
 # A running job that has emitted nothing for this long is reported as
 # stalled in the heartbeat frame. The fitting thread is NOT killed --
 # the flag exists so the UI can distinguish "slow/queued" from "frozen"
@@ -67,6 +83,10 @@ class MapJobContext:
     terminal_at: Optional[float] = None  # monotonic time the job reached a terminal state
     last_activity: float = 0.0  # monotonic time of the last emitted message
     submit_order: int = 0  # registry-assigned FIFO rank on the map executor
+    # Per-point results, keyed by point index, for REST retrieval after a
+    # disconnect (see MAX_RETAINED_RESULTS).
+    results: dict[int, dict] = field(default_factory=dict)
+    results_truncated: bool = False
     registry: Optional["MapJobRegistry"] = field(
         default=None, repr=False, compare=False
     )
@@ -130,6 +150,41 @@ class MapJobContext:
             if point_fitted:
                 self.fitted += 1
             return self.fitted
+
+    def retain_result(self, payload: dict) -> None:
+        """Retain one point's fit result for later REST retrieval.
+
+        Keyed by point index so a re-emitted point overwrites rather than
+        accumulates, and so the store can never outgrow the scan.
+        """
+        point_index = payload.get("point_index")
+        if point_index is None:
+            return
+        with self._lock:
+            if (
+                point_index not in self.results
+                and len(self.results) >= MAX_RETAINED_RESULTS
+            ):
+                self.results_truncated = True
+                return
+            self.results[point_index] = payload
+
+    def results_snapshot(self) -> tuple[list[dict], bool]:
+        """Retained per-point results in point order, plus a truncation flag.
+
+        A shallow copy of the list is enough: the payloads are built once by
+        the fitting thread and never mutated afterwards.
+        """
+        with self._lock:
+            return (
+                [self.results[i] for i in sorted(self.results)],
+                self.results_truncated,
+            )
+
+    def results_retained(self) -> int:
+        """How many per-point results are available for REST retrieval."""
+        with self._lock:
+            return len(self.results)
 
     def live_queue_position(self) -> int:
         """Jobs currently ahead of this one on the single map executor.
@@ -299,9 +354,11 @@ def make_fitting_callbacks(
 
     def on_point_fitted(result: PointFitResult) -> None:
         seq_counter[0] += 1
-        msg = {
-            "type": "point_fitted",
-            "seq": seq_counter[0],
+        # Retained separately from the wire frame so a client that missed
+        # this point entirely can still fetch it: the ring buffer above is
+        # sized in messages and wraps on a long scan, while the retention
+        # store is keyed by point and holds the whole job.
+        payload = {
             "point_index": result.point_index,
             "x": result.x,
             "y": result.y,
@@ -310,6 +367,8 @@ def make_fitting_callbacks(
                 for domain, dr in result.results.items()
             },
         }
+        ctx.retain_result(payload)
+        msg = {"type": "point_fitted", "seq": seq_counter[0], **payload}
         _enqueue(msg, point_fitted=True)
 
     def on_progress(fitted: int, total: int, elapsed: float, eta: float) -> None:

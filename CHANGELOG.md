@@ -33,20 +33,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a new fit starts, retained for an hour after they *finish* rather than after
   they were created, so a fit that ran longer than the retention window is
   still readable over REST and reconnect once it completes.
-- **Map Mode falls back to REST polling when the fit WebSocket drops (#6).**
+- **Map Mode recovers a fit whose WebSocket drops mid-job (#6).**
   The socket can close mid-job (proxy idle timeout, the handler's own
   30-minute cap, a flaky link), and Map Mode previously did nothing at all in
   response — the progress panel simply froze, which is the same symptom from a
-  different cause. It now polls `GET /api/map/jobs/{job_id}` until the job
-  terminates, then reloads the results from the database. To make that
-  fallback equivalent, the endpoint no longer collapses `queued` into
-  `running` and now returns `queue_position`, `stalled`,
-  `since_last_message_s` and `elapsed_s` alongside the existing fields, so a
-  client without a socket can still tell "waiting behind another scan" from
-  "frozen". Response fields are additive; `status` gains the `queued` value
-  for map fit jobs. Polling gives up after five consecutive failures and says
-  so, rather than keeping a panel spinning on a job the server no longer
-  knows about.
+  different cause. The client now resumes the stream instead of treating every
+  close as final: it reconnects with the `last_seq` the handler already
+  replays from, up to five attempts with exponential backoff, so fitting
+  results keep arriving (and cancel keeps working) across a brief outage.
+  When the socket cannot be re-established it falls back to polling
+  `GET /api/map/jobs/{job_id}` until the job terminates. To make that fallback
+  equivalent, the endpoint no longer collapses `queued` into `running` and now
+  returns `queue_position`, `stalled`, `since_last_message_s` and `elapsed_s`
+  alongside the existing fields, so a client without a socket can still tell
+  "waiting behind another scan" from "frozen". Response fields are additive;
+  `status` gains the `queued` value for map fit jobs. Polling gives up after
+  five consecutive failures and says so, rather than keeping a panel spinning
+  on a job the server no longer knows about. A cancel that cannot reach the
+  server — no socket — is now reported instead of leaving the button silently
+  inert.
+- **Map fit results missed during a disconnect are no longer lost (#6).**
+  Map fitting streams its per-point results and never writes them to
+  `fitted_peaks`, so every result produced while a client's socket was down
+  used to be discarded: the fallback reloaded the map from `/api/map/layers`,
+  which returns whatever peaks an *earlier* pipeline run had written — and
+  overwrote the live results the client had already received with them. A job
+  now retains its own per-point results, keyed by point index (so the store is
+  bounded by the scan and dropped with the job an hour after it finishes), and
+  a new `GET /api/map/jobs/{job_id}/results` serves them. Map Mode fetches
+  them when a poll observes a terminal status, and also when a resumed socket
+  delivered fewer points than the server fitted — the reconnect replay buffer
+  is bounded and can wrap on a long scan. Recovered points are merged by point
+  identity, so nothing is ingested or coloured twice, and partial results from
+  a cancelled or failed job are recoverable too. If the results are genuinely
+  gone (the job was reaped, or outgrew the retention ceiling), Map Mode says so
+  rather than showing a different run's peaks as if they were this fit's. The
+  endpoint carries the same access gate as the fit that produced it.
 - **A cancelled map fit job can no longer be restarted (#6).** Cancelling a
   job that was still waiting its turn on the single-threaded executor only set
   a flag: when the executor eventually reached it, the fitting thread marked

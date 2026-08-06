@@ -57,6 +57,23 @@ export class MapProgressTracker {
   }
 }
 
+/**
+ * Pick the retained results this client has not already received, and
+ * record them as seen.
+ *
+ * Recovery after a dropped fit stream re-delivers everything the job has
+ * produced, including the points that did arrive live. Filtering by point
+ * identity keeps those from being ingested (and cached, and re-coloured)
+ * twice, and leaves the reconciled count correct: the tracker's `fitted`
+ * already covers the points it has seen.
+ */
+export function selectMissedResults<T extends { point_index: number }>(
+  points: T[],
+  progress: MapProgressTracker,
+): T[] {
+  return points.filter((p) => progress.notePoint(p.point_index));
+}
+
 // ============================================================
 // Job liveness, shared by the WebSocket heartbeat and the REST fallback.
 //
@@ -83,6 +100,12 @@ export interface MapJobStatus extends MapJobLiveness {
   fitted: number;
   total: number;
   results_available?: boolean;
+  /**
+   * Per-point results the server still holds for this job. Non-zero means
+   * the frames missed while the stream was down are still fetchable from
+   * `GET /api/map/jobs/{job_id}/results`.
+   */
+  results_retained?: number;
 }
 
 export const TERMINAL_JOB_STATUSES = ['complete', 'failed', 'cancelled'] as const;

@@ -107,6 +107,32 @@ export interface WSPeakResult {
   fwhm_nm?: number;
 }
 
+/**
+ * A per-point result retained server-side, from
+ * `GET /api/map/jobs/{job_id}/results`.
+ *
+ * Same shape as the `point_fitted` frame minus the stream envelope, so a
+ * recovered point is ingested through exactly the same path as a streamed
+ * one.
+ */
+export interface MapJobFitPoint {
+  point_index: number;
+  x: number;
+  y: number;
+  results: Record<string, { status: string; peaks: WSPeakResult[] }>;
+}
+
+/** Full payload of `GET /api/map/jobs/{job_id}/results`. */
+export interface MapJobResults {
+  job_id: string;
+  status: string;
+  fitted: number;
+  total: number;
+  /** True when the job outgrew the server's retention ceiling. */
+  truncated: boolean;
+  points: MapJobFitPoint[];
+}
+
 export interface WSProgress {
   type: 'progress';
   seq: number;
@@ -124,8 +150,14 @@ export interface WSLog {
   message: string;
 }
 
+// The three terminal frames below carry the name the server actually
+// sends (`complete` / `error` / `cancelled`) alongside the longer form
+// the client has always also accepted. The union previously listed only
+// the long form, which made the real branches unreachable to the type
+// checker — and those branches are what tells a reconnecting client the
+// job is over rather than dropped.
 export interface WSJobComplete {
-  type: 'job_complete';
+  type: 'job_complete' | 'complete';
   seq: number;
   summary: {
     total_points: number;
@@ -135,10 +167,10 @@ export interface WSJobComplete {
 }
 
 export interface WSJobFailed {
-  type: 'job_failed';
+  type: 'job_failed' | 'error';
   seq: number;
   error: string;
-  partial_results: number;
+  partial_results?: number;
 }
 
 export interface WSHeartbeat {
@@ -162,7 +194,9 @@ export type WSServerMessage =
   | WSJobFailed
   | WSHeartbeat
   | { type: 'job_queued'; seq: number }
-  | { type: 'job_cancelled'; seq: number }
+  // The cancel acknowledgement is sent straight from the WS handler, not
+  // from the fitting thread's sequenced stream, so it carries no `seq`.
+  | { type: 'job_cancelled' | 'cancelled'; seq?: number; job_id?: string }
   | { type: 'point_fitted_batch'; seq: number; points: WSPointFitted[] }
   | { type: 'ping' };
 

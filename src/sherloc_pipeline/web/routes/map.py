@@ -42,6 +42,8 @@ from sherloc_pipeline.web.schemas import (
     MapDataResponse,
     MapFitRequest,
     MapFitResponse,
+    MapJobFitPointDTO,
+    MapJobResultsResponse,
     MapJobStatusResponse,
     MapLayerInfoDTO,
     MapLayersResponse,
@@ -661,6 +663,9 @@ def get_map_job_status(request: Request, job_id: str) -> MapJobStatusResponse:
                 stalled=snapshot["stalled"],
                 since_last_message_s=snapshot["since_last_message_s"],
                 elapsed_s=snapshot["elapsed_s"],
+                # Tells a polling client whether the results it missed while
+                # its stream was down are still fetchable from this server.
+                results_retained=ctx.results_retained(),
             )
 
     # Fall back to general job queue
@@ -697,4 +702,52 @@ def get_map_job_status(request: Request, job_id: str) -> MapJobStatusResponse:
         fitted=fitted,
         total=total,
         results_available=results_available,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/map/jobs/{job_id}/results
+# ---------------------------------------------------------------------------
+
+
+@router.get("/jobs/{job_id}/results", response_model=MapJobResultsResponse)
+def get_map_job_results(request: Request, job_id: str) -> MapJobResultsResponse:
+    """Return the per-point fit results this job has produced so far.
+
+    Recovery path for a client whose fit WebSocket dropped. Map fitting
+    streams results and never persists them, so the frames lost to a
+    disconnect exist only here: reloading the map from ``/api/map/layers``
+    instead would show whatever peaks an earlier pipeline run wrote to
+    ``fitted_peaks`` — and overwrite the live results the client *did*
+    receive with them.
+
+    Serves partial results for a running, cancelled or failed job too:
+    everything fitted before the job stopped is still a valid measurement,
+    and the caller can tell how complete it is from ``status``,
+    ``fitted``/``total`` and ``truncated``.
+    """
+    registry = getattr(request.app.state, "map_registry", None)
+    ctx = registry.get(job_id) if registry is not None else None
+    if ctx is None:
+        # Unknown, or reaped once its retention window expired. Either way
+        # this server can no longer produce the results.
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # These are measurement values, not just counters, so they carry the
+    # same access gate as the fit that produced them (POST /api/map/fit).
+    session = _get_session(request)
+    scan = session.query(ScanORM).filter(ScanORM.id == ctx.scan_id).first()
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    _get_data_access(request).validate_scan_access(scan)
+
+    points, truncated = ctx.results_snapshot()
+    snapshot = ctx.progress_snapshot()
+    return MapJobResultsResponse(
+        job_id=job_id,
+        status=snapshot["status"],
+        fitted=snapshot["fitted"],
+        total=snapshot["total"],
+        truncated=truncated,
+        points=[MapJobFitPointDTO(**p) for p in points],
     )
