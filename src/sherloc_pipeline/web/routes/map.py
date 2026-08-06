@@ -529,6 +529,10 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
     # while another scan is still fitting waits its turn; the registry
     # records its FIFO rank so heartbeats can report a live "queued behind
     # N" rather than leaving the UI on an empty progress panel (issue #6).
+    # The rank is stamped by registry.submit() below, not here: two of these
+    # requests run concurrently in FastAPI's thread pool, and a rank taken
+    # before the hand-off can be overtaken by the request that reaches the
+    # executor first.
     job_id = f"mf_{secrets.token_hex(12)}"
     loop = request.app.state.event_loop
     ctx = registry.create(
@@ -537,14 +541,6 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
         loop=loop,
         n_points=n_points,
     )
-    queued_behind = registry.position_of(job_id)
-    if queued_behind:
-        logger.info(
-            "Map fit job %s for scan %s queued behind %d active job(s)",
-            job_id,
-            body.scan_id,
-            queued_behind,
-        )
 
     # Create callbacks that bridge fitting thread -> asyncio queue
     on_point_fitted, on_progress, on_log = make_fitting_callbacks(ctx)
@@ -626,13 +622,40 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
                 })
         except Exception as exc:
             logger.exception("Map fit job %s failed", job_id)
-            ctx.set_status("failed")
-            on_point_fitted.send_error(str(exc))  # type: ignore[attr-defined]
+            if ctx.set_status("failed"):
+                on_point_fitted.send_error(str(exc))  # type: ignore[attr-defined]
+            else:
+                # A terminal status got there first -- in practice a user
+                # cancel that landed while this point was being fitted, where
+                # the raise is a consequence of the stop rather than a
+                # separate failure. That status is the one REST reports and
+                # the one retention keys off, so the stream has to agree with
+                # it: sending "error" here left WebSocket clients showing a
+                # failed job that the status endpoint called cancelled.
+                settled = ctx.get_status()
+                logger.info(
+                    "Map fit job %s raised after settling as %s; reporting "
+                    "that instead of failed",
+                    job_id,
+                    settled,
+                )
+                if settled == "cancelled":
+                    on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+                # "complete" is the only other reachable status, and the
+                # thread that set it already emitted its terminal frame.
         finally:
             fit_session.close()
 
-    executor = request.app.state.map_executor
-    executor.submit(_run_fit)
+    registry.submit(ctx, request.app.state.map_executor, _run_fit)
+
+    queued_behind = registry.position_of(job_id)
+    if queued_behind:
+        logger.info(
+            "Map fit job %s for scan %s queued behind %d active job(s)",
+            job_id,
+            body.scan_id,
+            queued_behind,
+        )
 
     return MapFitResponse(
         job_id=job_id,

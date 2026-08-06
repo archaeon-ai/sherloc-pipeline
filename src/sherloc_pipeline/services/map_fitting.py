@@ -129,8 +129,15 @@ def _load_point_spectra(
 ) -> dict[str, np.ndarray]:
     """Load spectra for scan points from DB.
 
+    A blob that will not decode is skipped rather than raised: this runs
+    once for the whole scan, so letting one unreadable spectrum out would
+    abort every point's fit instead of the one point that cannot be read.
+    The affected point simply has no entry, which callers already treat as
+    a missing spectrum -- the same outcome as when the row is absent.
+
     Returns:
-        {scan_point_id: intensity_array} for each point that has a spectrum.
+        {scan_point_id: intensity_array} for each point that has a
+        readable spectrum.
     """
     spectra = (
         session.query(SpectrumORM)
@@ -143,7 +150,16 @@ def _load_point_spectra(
     )
     result = {}
     for s in spectra:
-        data = np.frombuffer(zlib.decompress(s.intensities), dtype=np.float32)
+        try:
+            data = np.frombuffer(zlib.decompress(s.intensities), dtype=np.float32)
+        except Exception as exc:
+            logger.warning(
+                "Skipping unreadable %s spectrum for scan point %s: %s",
+                region,
+                s.scan_point_id,
+                exc,
+            )
+            continue
         result[s.scan_point_id] = data
     return result
 
@@ -161,8 +177,11 @@ def _load_point_spectra_multi(
     from spending most of their wall clock in SQLAlchemy.
 
     Returns:
-        {scan_point_id: {region: intensity_array}} — points missing a
-        region simply lack that key.
+        {scan_point_id: {region: intensity_array}} — a point whose region
+        is absent or unreadable simply lacks that key, which
+        ``_fit_fluorescence_domain`` reports as a missing domain for that
+        point alone (batching must not turn one bad blob into a failed
+        scan).
     """
     result: dict[str, dict[str, np.ndarray]] = {}
     for region in regions:

@@ -305,3 +305,75 @@ def test_cancel_before_start_skips_the_eager_spectrum_load(fit_session, monkeypa
     assert logged == []
     assert summary.total_points == 0
     assert summary.detections == {"minerals": 0, "fluorescence": 0}
+
+
+# ---------------------------------------------------------------------------
+# Batched loading must not turn one bad blob into a failed scan
+# ---------------------------------------------------------------------------
+
+
+def _point_id(i: int) -> str:
+    return str(uuid.UUID(f"00000000-0000-0000-0000-{910 + i:012d}"))
+
+
+@pytest.fixture()
+def fluor_session(fit_session):
+    """``fit_session`` plus R2/R3 spectra, with point 1's R2 blob corrupt.
+
+    Fluorescence used to load its three regions per point, inside the
+    per-point error handling, so an unreadable spectrum cost that point its
+    fluorescence result and nothing else. Batching the load moved the
+    decode to the top of the run, where it can take the whole scan with it.
+    """
+    for i in range(N_POINTS):
+        for region, offset in (("R2", 960), ("R3", 970)):
+            payload = _spectrum_bytes(i + offset)
+            if i == 1 and region == "R2":
+                payload = b"this is not a zlib stream"
+            fit_session.add(
+                SpectrumORM(
+                    id=str(uuid.UUID(f"00000000-0000-0000-0000-{offset + i:012d}")),
+                    scan_point_id=_point_id(i),
+                    region=region,
+                    spectrum_type="dark_subtracted",
+                    processing_level="dark_subtracted",
+                    intensities=payload,
+                )
+            )
+    fit_session.commit()
+    return fit_session
+
+
+def test_batch_load_skips_an_unreadable_blob_rather_than_raising(fluor_session):
+    loaded = map_fitting._load_point_spectra_multi(
+        fluor_session, [_point_id(i) for i in range(N_POINTS)]
+    )
+
+    # Only the affected point loses the region it could not decode.
+    assert set(loaded[_point_id(0)]) == {"R1", "R2", "R3"}
+    assert set(loaded[_point_id(1)]) == {"R1", "R3"}
+    assert set(loaded[_point_id(2)]) == {"R1", "R2", "R3"}
+
+
+def test_one_corrupt_spectrum_costs_its_own_point_not_the_whole_scan(fluor_session):
+    """Every other point still gets fitted, as it did before batching."""
+    results = {}
+
+    summary = MapFitService(config=_CONFIG).run_map_fit(
+        session=fluor_session,
+        scan_id=SCAN_UUID,
+        domains=["minerals", "fluorescence"],
+        point_indices=None,
+        point_coords={i: (float(i), float(i)) for i in range(N_POINTS)},
+        on_point_fitted=lambda r: results.update({r.point_index: r}),
+        on_progress=lambda *a: None,
+        on_log=lambda *a: None,
+        cancel_event=threading.Event(),
+    )
+
+    assert summary.total_points == N_POINTS
+    assert sorted(results) == list(range(N_POINTS))
+    # The unreadable spectrum is reported as a missing domain for that point,
+    # exactly as an absent row is — and its Raman fit is untouched.
+    assert results[1].results["fluorescence"].status == "missing"
+    assert results[1].results["minerals"].status != "missing"

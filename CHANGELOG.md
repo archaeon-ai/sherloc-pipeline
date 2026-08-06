@@ -21,7 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ns"). `queue_position` is recomputed on every frame from the jobs still
   active ahead of this one, so a client waiting behind two fits watches its
   position fall as they finish instead of being told forever that a completed
-  job is still ahead. The client-message read is now a single long-lived
+  job is still ahead. A job's place in that order is stamped as it is handed
+  to the executor, in the same critical section, because two fit requests run
+  concurrently in the API thread pool and can reach the single executor in the
+  opposite order to the one they were registered in — which had both clients
+  watching a queue the executor was not running. The client-message read is now a single long-lived
   receive instead of a re-armed 10 ms `wait_for`, which could drop the frame it
   had just picked up — including a user's `cancel`. `GET /api/map/jobs/{job_id}`
   reports fitted points from an authoritative counter rather than counting
@@ -98,7 +102,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has no fitting thread left to wait on), so the REST fallback waits for the
   same barrier instead of recovering results the moment a status turns
   terminal — bounded to three extra polls, after which it recovers anyway
-  and says the same thing.
+  and says the same thing. A fitting thread that unwinds through an exception
+  after the job was already cancelled now emits the terminal frame matching
+  the status that won: it used to send `error` regardless, so the socket
+  reported a failed fit while the status endpoint called the same job
+  cancelled, and Map Mode treats the two differently.
 - **A reconnecting Map Mode client no longer competes with its own dead
   socket (#6).** A client that drops and resumes overlaps with its
   predecessor — the server only learns the old socket is gone when it next
@@ -107,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fraction of the stream, and a terminal frame taken by the dying handler was
   gone outright: the surviving client then waited forever on a job that had
   already finished, which is the same frozen panel from a third cause. Frames
-  are now broadcast to one queue per connection, so overlapping sockets each
+  are now broadcast to one stream per connection, so overlapping sockets each
   see the whole stream. Reconnect replay is taken as a snapshot under the
   lock the fitting thread appends under, instead of iterating the live ring
   buffer — a frame landing mid-replay raised `RuntimeError: deque mutated
@@ -115,9 +123,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trying to catch up. A socket that attaches after the job ended is now
   closed on the replayed terminal frame rather than heartbeating a finished
   job until the handler's 30-minute cap. Client input is read by its own
-  task that posts to the same per-connection queue, so the handler has a
-  single wake-up source and a queued frame can no longer sit unread behind a
-  client message (or the reverse) until the next heartbeat.
+  task that posts to the same per-connection stream, so the handler has a
+  single thing to read and a published frame can no longer sit unread behind a
+  client message (or the reverse) until the next heartbeat. The fitting thread
+  appends to that stream directly and only then nudges the event loop, and the
+  handler bounds how long it goes without re-reading, so a frame is delivered
+  whether or not the cross-thread wake-up lands while the handler happens to be
+  parked — previously the frame and the wake-up were the same event, and a
+  terminal frame stranded by that timing was the frozen panel again.
 - **A cancelled map fit job can no longer be restarted (#6).** Cancelling a
   job that was still waiting its turn on the single-threaded executor only set
   a flag: when the executor eventually reached it, the fitting thread marked
@@ -135,7 +148,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   minerals+organics+hydration selection. They now run once per point and are
   shared across domains (fit results are unchanged; pinned by test).
   Fluorescence fitting batch-loads R1/R2/R3 for the whole scan instead of
-  issuing three queries per point. Runs also log their scale up front
+  issuing three queries per point; a stored spectrum that will not decode is
+  skipped for its own point (reported as a missing domain, as an absent row
+  already was) rather than failing the run it is now loaded ahead of. Runs
+  also log their scale up front
   (`Fitting N points x M domain(s)`, flagged when N > 200, where the sequential
   design stops being comfortable).
 

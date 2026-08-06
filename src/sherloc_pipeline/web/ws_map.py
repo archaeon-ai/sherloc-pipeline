@@ -1,7 +1,7 @@
 """Map Mode WebSocket handler -- per-point fitting result streaming.
 
 This WebSocket is push-based: the fitting thread broadcasts messages to
-every connected client, and each handler awaits its own queue. This
+every connected client, and each handler reads its own stream. This
 differs from the existing ws.py which polls JobState.
 
 Protocol: see docs/specs/MAP_MODE_SPEC.md section 3.2
@@ -59,7 +59,7 @@ TERMINAL_STATUSES = ("complete", "failed", "cancelled")
 ACTIVE_STATUSES = ("queued", "running")
 
 # Message types that end the stream. Each is emitted by the fitting thread
-# once it has unwound, so everything it produced is already on the queue
+# once it has unwound, so everything it produced is already on the stream
 # (and in the retention store) behind it.
 TERMINAL_MESSAGE_TYPES = ("complete", "error", "cancelled")
 
@@ -78,10 +78,114 @@ TERMINAL_MESSAGE_TYPES = ("complete", "error", "cancelled")
 # and flags the results as not yet final.
 CANCEL_DRAIN_SECONDS = 30.0
 
+# Upper bound on any single wait inside a client's pump.
+#
+# The fitting thread appends to a connection's stream directly and then
+# nudges the event loop; the nudge crosses a thread boundary, so this
+# bound is the handler's own guarantee that it looks again regardless.
+# Every published frame is already in the stream by the time the nudge is
+# scheduled, so a nudge that lands late -- or after the handler has
+# already looked -- costs at most this long, rather than parking a
+# terminal frame behind a whole heartbeat or cancel-drain window with
+# nobody reading it (issue #6).
+#
+# Short enough to be invisible to a client, long enough that an idle
+# connection is a low-rate timer rather than a spin.
+STREAM_WAIT_SECONDS = 0.25
+
 
 # ---------------------------------------------------------------------------
 # Map job context and registry
 # ---------------------------------------------------------------------------
+
+
+class _ConnectionStream:
+    """Ordered hand-off from the fitting thread to one client handler.
+
+    Items are appended under a plain lock, so a frame is *in* the stream
+    the moment ``publish`` returns -- before any event-loop callback has
+    run. The loop is nudged awake afterwards, but the nudge only makes
+    delivery prompt: whenever the handler next looks, for whatever
+    reason, everything published so far is already waiting for it.
+
+    That ordering is the point. An ``asyncio.Queue`` filled purely by
+    ``call_soon_threadsafe`` puts the frame *and* the wake-up in the same
+    cross-thread callback, so the handler sees the frame only if that
+    callback resolves the particular waiter it is parked on. Here the
+    data lands first and unconditionally, and ``next`` bounds how long
+    the handler can go without re-reading it -- so a frame is never
+    stranded by a wake-up that raced the handler, only ever slightly
+    delayed. The frames with no successor to cover for them are exactly
+    the terminal ones (``complete`` / ``error`` / ``cancelled``), and a
+    stranded terminal frame is the stall issue #6 is about.
+
+    The client reader task pushes its own control items here too, so the
+    socket and the fitting thread arrive in one order instead of being
+    raced across two channels.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._items: deque = deque()
+        self._lock = threading.Lock()
+        self._wakeup = asyncio.Event()
+
+    def push(self, item: Any) -> None:
+        """Append from the event loop thread (the client reader task)."""
+        with self._lock:
+            self._items.append(item)
+        self._wakeup.set()
+
+    def push_threadsafe(self, item: Any) -> None:
+        """Append from the fitting thread, then nudge the loop.
+
+        Queued before the nudge is scheduled, so a nudge that never lands
+        (a loop shutting down) delays or outlives the frame rather than
+        losing it.
+        """
+        with self._lock:
+            self._items.append(item)
+        try:
+            self._loop.call_soon_threadsafe(self._wakeup.set)
+        except RuntimeError:
+            # Event loop is closed (app shutting down).
+            pass
+
+    def pop_nowait(self) -> tuple[Any, bool]:
+        """``(item, True)``, or ``(None, False)`` when nothing is waiting.
+
+        The wake-up flag is cleared under the same lock that guards the
+        append, so a concurrent push either lands before this call (and
+        is returned here) or after it (and its ``set`` outlives this
+        clear). Either way no item is left behind an already-consumed
+        wake-up.
+        """
+        with self._lock:
+            if self._items:
+                return self._items.popleft(), True
+            self._wakeup.clear()
+            return None, False
+
+    async def next(self, timeout: float) -> tuple[Any, bool]:
+        """Next item, or ``(None, False)`` if none arrived within ``timeout``.
+
+        Loops rather than trusting a single wake-up: a nudge scheduled
+        for an item this call has already returned can set the flag with
+        nothing behind it, and that spurious wake must not be reported to
+        the caller as an item -- nor as a timeout that has not elapsed.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            item, received = self.pop_nowait()
+            if received:
+                return item, True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None, False
+            try:
+                await asyncio.wait_for(self._wakeup.wait(), remaining)
+            except asyncio.TimeoutError:
+                return None, False
 
 
 @dataclass
@@ -89,11 +193,11 @@ class MapJobContext:
     """Shared state between fitting thread and WebSocket handler.
 
     Frames are *broadcast*: the fitting thread hands every message to
-    ``publish``, which fans it out to one queue per connected client.
-    There is deliberately no single job-wide queue. A client that drops
+    ``publish``, which fans it out to one stream per connected client.
+    There is deliberately no single job-wide stream. A client that drops
     and resumes overlaps with its own predecessor -- the server only
     learns the old socket is gone when it next touches it -- and with one
-    shared queue the two handlers race to dequeue: whichever won took the
+    shared stream the two handlers race to dequeue: whichever won took the
     frame, and if that was the dying one the frame died with it. Losing
     the terminal frame that way leaves the resumed client waiting on a
     job that already finished, which is exactly the frozen panel issue #6
@@ -114,7 +218,10 @@ class MapJobContext:
     started_at: Optional[float] = None  # monotonic time the fitting thread began
     terminal_at: Optional[float] = None  # monotonic time the job reached a terminal state
     last_activity: float = 0.0  # monotonic time of the last emitted message
-    submit_order: int = 0  # registry-assigned FIFO rank on the map executor
+    # FIFO rank on the map executor, stamped by MapJobRegistry.submit() as the
+    # job is handed over. 0 means "not handed over yet", which is not the same
+    # as "first in line" -- see MapJobRegistry.position_of().
+    submit_order: int = 0
     # Per-point results, keyed by point index, for REST retrieval after a
     # disconnect (see MAX_RETAINED_RESULTS).
     results: dict[int, dict] = field(default_factory=dict)
@@ -126,10 +233,10 @@ class MapJobContext:
         default=None, repr=False, compare=False
     )
     _lock: threading.Lock = field(default_factory=threading.Lock)
-    # One queue per connected client, and the lock that keeps them in step
+    # One stream per connected client, and the lock that keeps them in step
     # with the replay buffer. Separate from ``_lock`` so a broadcast never
     # waits on a progress snapshot, and so the two are never nested.
-    _subscribers: list[asyncio.Queue] = field(
+    _subscribers: list[_ConnectionStream] = field(
         default_factory=list, repr=False, compare=False
     )
     _stream_lock: threading.Lock = field(
@@ -309,40 +416,36 @@ class MapJobContext:
             if replayable:
                 self.message_buffer.append(msg)
             targets = list(self._subscribers)
-        for queue in targets:
-            try:
-                self.loop.call_soon_threadsafe(queue.put_nowait, msg)
-            except RuntimeError:
-                # Event loop is closed (app shutting down).
-                pass
+        for stream in targets:
+            stream.push_threadsafe(msg)
 
-    def subscribe(self, resume_from: int = 0) -> tuple[asyncio.Queue, list[dict]]:
+    def subscribe(self, resume_from: int = 0) -> tuple[_ConnectionStream, list[dict]]:
         """Attach a client and take its replay backlog in one step.
 
-        Returns ``(queue, backlog)``: the frames buffered past
-        ``resume_from``, and the queue that receives everything after
+        Returns ``(stream, backlog)``: the frames buffered past
+        ``resume_from``, and the stream that receives everything after
         them. ``resume_from`` of 0 replays the whole buffer, which is what
         a client connecting mid-job with no history wants.
 
         Both happen under ``_stream_lock``, so a frame published
         concurrently is either already in the backlog (and not yet
-        broadcast to this queue) or not in it (and broadcast to this
-        queue) -- never both and never neither. Snapshotting the buffer
+        broadcast to this stream) or not in it (and broadcast to this
+        stream) -- never both and never neither. Snapshotting the buffer
         outside the lock would also iterate a deque the fitting thread is
         appending to, which raises ``RuntimeError: deque mutated during
         iteration`` and drops the client mid-replay.
         """
-        queue: asyncio.Queue = asyncio.Queue()
+        stream = _ConnectionStream(self.loop)
         with self._stream_lock:
             backlog = [m for m in self.message_buffer if m.get("seq", 0) > resume_from]
-            self._subscribers.append(queue)
-        return queue, backlog
+            self._subscribers.append(stream)
+        return stream, backlog
 
-    def unsubscribe(self, queue: asyncio.Queue) -> None:
+    def unsubscribe(self, stream: _ConnectionStream) -> None:
         """Detach a client. Idempotent."""
         with self._stream_lock:
             for i, existing in enumerate(self._subscribers):
-                if existing is queue:
+                if existing is stream:
                     del self._subscribers[i]
                     return
 
@@ -381,6 +484,10 @@ class MapJobRegistry:
         self._jobs: dict[str, MapJobContext] = {}
         self._submit_counter = 0
         self._lock = threading.Lock()
+        # Serializes rank assignment with the executor hand-off. Separate
+        # from ``_lock`` so a status reader never waits behind a foreign
+        # ``executor.submit`` call; see submit().
+        self._submit_lock = threading.Lock()
 
     def create(
         self,
@@ -389,7 +496,11 @@ class MapJobRegistry:
         loop: asyncio.AbstractEventLoop,
         n_points: int = 0,
     ) -> MapJobContext:
-        """Create and register a new map job context."""
+        """Create and register a new map job context.
+
+        The context is registered but not yet ranked: it takes its place in
+        the queue when it is handed to the executor by submit().
+        """
         ctx = MapJobContext(
             job_id=job_id,
             scan_id=scan_id,
@@ -401,10 +512,30 @@ class MapJobRegistry:
             registry=self,
         )
         with self._lock:
-            self._submit_counter += 1
-            ctx.submit_order = self._submit_counter
             self._jobs[job_id] = ctx
         return ctx
+
+    def submit(self, ctx: MapJobContext, executor: Any, fn: Any) -> Any:
+        """Hand ``fn`` to the map executor, stamping ``ctx``'s FIFO rank.
+
+        The rank has to be decided in the same critical section as the
+        hand-off. FastAPI runs the synchronous POST endpoint in a thread
+        pool, so two fit requests genuinely overlap: with the rank stamped
+        anywhere before this call, the pair can reach the single map
+        executor in the opposite order, and both clients are then shown a
+        queue position describing a queue that is not the one the executor
+        is running.
+
+        ``_submit_lock`` rather than ``_lock``: the registry-wide lock is
+        released before the foreign ``executor.submit`` call, so a client
+        asking for its queue position -- including the job that starts
+        running the instant it is submitted -- never waits on the executor.
+        """
+        with self._submit_lock:
+            with self._lock:
+                self._submit_counter += 1
+                ctx.submit_order = self._submit_counter
+            return executor.submit(fn)
 
     def get(self, job_id: str) -> Optional[MapJobContext]:
         """Look up a job by ID."""
@@ -419,9 +550,14 @@ class MapJobRegistry:
     def position_of(self, job_id: str) -> int:
         """Number of still-active jobs submitted ahead of ``job_id``.
 
-        The map executor is single-threaded and FIFO, so submission order is
-        execution order: the answer is exactly how many jobs this one waits
-        on. Jobs that have since terminated drop out of the count.
+        The map executor is single-threaded and FIFO, so the order in which
+        jobs were handed to it is execution order: the answer is exactly how
+        many jobs this one waits on. Jobs that have since terminated drop out
+        of the count.
+
+        Ranks come from submit(), so a registered job that has not reached
+        the executor yet (rank 0) is ahead of nothing -- it will land behind
+        everything already queued, which is what its own position reports.
         """
         with self._lock:
             ctx = self._jobs.get(job_id)
@@ -431,7 +567,8 @@ class MapJobRegistry:
             return sum(
                 1
                 for other in self._jobs.values()
-                if other.submit_order < order
+                if other.submit_order > 0
+                and (order == 0 or other.submit_order < order)
                 and other.get_status() in ACTIVE_STATUSES
             )
 
@@ -648,7 +785,7 @@ def _cancel_ack(ctx: MapJobContext) -> dict:
 
 
 class _Control(enum.Enum):
-    """Handler-internal items multiplexed onto a client's own stream queue.
+    """Handler-internal items multiplexed onto a client's own stream.
 
     The client's socket and the fitting thread are two independent wake-up
     sources, and the pump used to await both with a single
@@ -659,9 +796,9 @@ class _Control(enum.Enum):
     with nobody looking at it is the stall this change exists to remove.
 
     A dedicated reader task now turns client input into these control
-    items and posts them to the same per-connection queue the fitting
-    thread broadcasts to, so the pump has exactly one wake-up source and
-    the two streams are ordered rather than raced.
+    items and posts them to the same ``_ConnectionStream`` the fitting
+    thread broadcasts to, so the pump has exactly one thing to read and
+    the two sources are ordered rather than raced.
     """
 
     CLIENT_GONE = "client_gone"
@@ -684,7 +821,7 @@ class _CancelRequest:
 
 
 async def _client_reader(
-    websocket: WebSocket, ctx: MapJobContext, stream: asyncio.Queue
+    websocket: WebSocket, ctx: MapJobContext, stream: _ConnectionStream
 ) -> None:
     """Read client messages until the socket closes, posting to ``stream``.
 
@@ -704,14 +841,14 @@ async def _client_reader(
                 continue
             ctx.cancel_event.set()
             applied, previous_status = ctx.request_cancel()
-            stream.put_nowait(_CancelRequest(applied, previous_status))
+            stream.push(_CancelRequest(applied, previous_status))
     except WebSocketDisconnect:
         logger.debug("Map WS client disconnected for job %s", ctx.job_id)
     except asyncio.CancelledError:
         raise
     except Exception:
         logger.debug("Map WS receive error for job %s", ctx.job_id, exc_info=True)
-    stream.put_nowait(_Control.CLIENT_GONE)
+    stream.push(_Control.CLIENT_GONE)
 
 
 @router.websocket("/ws/map/{job_id}")
@@ -719,7 +856,7 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
     """Stream map-mode fitting results over WebSocket.
 
     Push-based: the fitting thread broadcasts messages to every connected
-    client; this handler drains its own queue and forwards to the socket.
+    client; this handler drains its own stream and forwards to the socket.
 
     Supports:
     - Resume via ``last_seq`` query parameter
@@ -761,10 +898,14 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
 
     start_time = time.monotonic()
     reader_task: Optional[asyncio.Task] = None
-    pump_task: Optional[asyncio.Task] = None
     # Set when a client cancel is being drained: the deadline by which the
     # fitting thread's own terminal frame has to arrive.
     cancel_deadline: Optional[float] = None
+    # When the next heartbeat is due. Tracked as a deadline rather than
+    # inferred from "the wait timed out": the pump's waits are capped well
+    # below the heartbeat interval (see STREAM_WAIT_SECONDS), so most of
+    # them expire with nothing to report.
+    next_heartbeat = start_time + HEARTBEAT_INTERVAL
 
     try:
         # Send an immediate status frame so a client that connects behind a
@@ -785,8 +926,9 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
         reader_task = asyncio.create_task(_client_reader(websocket, ctx, stream))
 
         while True:
+            now = time.monotonic()
             # Check timeout
-            if time.monotonic() - start_time > TIMEOUT:
+            if now - start_time > TIMEOUT:
                 await websocket.send_json({
                     "type": "heartbeat",
                     **ctx.progress_snapshot(),
@@ -795,7 +937,7 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
                 await websocket.close(code=1000, reason="Timeout")
                 return
 
-            if cancel_deadline is not None and time.monotonic() >= cancel_deadline:
+            if cancel_deadline is not None and now >= cancel_deadline:
                 # The fitting thread did not unwind in time. Acknowledge
                 # anyway rather than leaving the client watching a job it
                 # has already cancelled, but say the retention store may
@@ -804,39 +946,36 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
                 await websocket.close()
                 return
 
-            wait_timeout = HEARTBEAT_INTERVAL
+            wait_timeout = next_heartbeat - now
             if cancel_deadline is not None:
                 # Wake at the drain deadline so the acknowledgement above
-                # is not held for a whole heartbeat interval past it.
-                wait_timeout = max(
-                    0.0, min(wait_timeout, cancel_deadline - time.monotonic())
-                )
+                # is not held past it.
+                wait_timeout = min(wait_timeout, cancel_deadline - now)
+            # Capped so the pump re-reads the stream on its own schedule
+            # rather than relying on the fitting thread's cross-thread
+            # nudge to arrive while it is parked (see STREAM_WAIT_SECONDS).
+            wait_timeout = max(0.0, min(wait_timeout, STREAM_WAIT_SECONDS))
 
-            # The pending get is kept across iterations rather than
-            # recreated: ``asyncio.wait`` leaves an unfinished task alone
-            # on timeout, so the queue always has a registered waiter and
-            # an item put while the pump was elsewhere still wakes it.
-            if pump_task is None:
-                pump_task = asyncio.create_task(stream.get())
-            done, _pending = await asyncio.wait({pump_task}, timeout=wait_timeout)
+            item, received = await stream.next(wait_timeout)
 
-            if pump_task not in done:
-                if cancel_deadline is None:
-                    # Nothing from either side within the heartbeat
-                    # interval: report server-side job state so a silent
-                    # job is distinguishable from a dead connection.
+            if not received:
+                if time.monotonic() < next_heartbeat:
+                    continue
+                next_heartbeat = time.monotonic() + HEARTBEAT_INTERVAL
+                if cancel_deadline is not None:
                     # Suppressed while a cancel is draining -- that wait
                     # ends in a terminal frame either way, and a heartbeat
                     # in front of it only reports a status the client
                     # already asked for.
-                    await websocket.send_json({
-                        "type": "heartbeat",
-                        **ctx.progress_snapshot(),
-                    })
+                    continue
+                # Nothing from either side within the heartbeat interval:
+                # report server-side job state so a silent job is
+                # distinguishable from a dead connection.
+                await websocket.send_json({
+                    "type": "heartbeat",
+                    **ctx.progress_snapshot(),
+                })
                 continue
-
-            item = pump_task.result()
-            pump_task = None
 
             if item is _Control.CLIENT_GONE:
                 return
@@ -893,8 +1032,7 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
             pass
     finally:
         # Detached first: the fitting thread must stop broadcasting into a
-        # queue nobody drains before the tasks that drained it go away.
+        # stream nobody drains before the task that drained it goes away.
         ctx.unsubscribe(stream)
-        for task in (pump_task, reader_task):
-            if task is not None and not task.done():
-                task.cancel()
+        if reader_task is not None and not reader_task.done():
+            reader_task.cancel()

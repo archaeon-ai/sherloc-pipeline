@@ -29,6 +29,10 @@ These tests pin the observable signals that fix that:
   own predecessor still receives the whole stream -- including the
   terminal frame the two used to race each other for -- and the replay
   snapshot is taken atomically against the fitting thread's appends.
+* A published frame is on the connection's stream before the event loop is
+  nudged, and the handler bounds how long it goes without re-reading, so
+  delivery survives a wake-up that never lands rather than stranding the
+  terminal frame behind it.
 * A cancel is acknowledged only once the fitting thread has stopped, so a
   point that was in flight when the cancel landed is retained before the
   client goes looking for it -- bounded by a drain window, past which the
@@ -59,6 +63,7 @@ from fastapi import HTTPException
 from sherloc_pipeline.services.map_fitting import DomainResult, PointFitResult
 from sherloc_pipeline.web import ws_map
 from sherloc_pipeline.web.routes.map import get_map_job_results, get_map_job_status
+from sherloc_pipeline.web.schemas import MapFitRequest
 from sherloc_pipeline.web.ws_map import (
     RECONNECT_BUFFER_SIZE,
     STALL_WARN_SECONDS,
@@ -82,14 +87,43 @@ def _make_ctx(n_points: int = 10, loop=None) -> MapJobContext:
     )
 
 
-def _drain(stream: asyncio.Queue) -> list[dict]:
-    """Every frame currently waiting on a subscriber queue, in order."""
+class _StubExecutor:
+    """Stands in for the app's single-threaded map executor.
+
+    Records the runnables handed to it, in order, so a test can compare the
+    order the executor will actually run jobs in against the FIFO ranks the
+    registry reports for them.
+    """
+
+    def __init__(self) -> None:
+        self.submitted: list = []
+
+    def submit(self, fn, *args, **kwargs):
+        self.submitted.append(fn)
+        return None
+
+
+def _queued(registry: MapJobRegistry, job_id: str, scan_id: str, **kwargs):
+    """Create a job and hand it to the executor, as POST /api/map/fit does.
+
+    Queue position is a property of the executor hand-off, not of
+    registration, so a test asserting positions has to go through
+    ``submit`` rather than stopping at ``create``.
+    """
+    executor = kwargs.pop("executor", None) or _StubExecutor()
+    ctx = registry.create(job_id, scan_id, **kwargs)
+    registry.submit(ctx, executor, lambda: None)
+    return ctx
+
+
+def _drain(stream) -> list[dict]:
+    """Every frame currently waiting on a subscriber stream, in order."""
     frames = []
     while True:
-        try:
-            frames.append(stream.get_nowait())
-        except asyncio.QueueEmpty:
+        item, received = stream.pop_nowait()
+        if not received:
             return frames
+        frames.append(item)
 
 
 class _InlineLoop:
@@ -106,11 +140,12 @@ class _InlineLoop:
 
 
 class _DiscardLoop:
-    """Drops the fan-out, keeping a test to the buffer side of ``publish``.
+    """Drops the loop nudge, keeping a test to the buffer side of ``publish``.
 
-    ``asyncio.Queue`` is not itself thread-safe, so a test that broadcasts
-    from a real thread without a running loop to marshal onto must not
-    touch subscriber queues.
+    A subscriber stream's items are appended under a lock and so survive a
+    dropped nudge, but the nudge itself sets an ``asyncio.Event`` -- which
+    a test broadcasting from a real thread with no running loop to marshal
+    onto must not touch.
     """
 
     def call_soon_threadsafe(self, fn, *args):
@@ -260,9 +295,9 @@ def test_queue_position_shrinks_as_jobs_ahead_terminate():
     registry = MapJobRegistry()
     loop = asyncio.new_event_loop()
     try:
-        first = registry.create("mf_1", "scan-a", loop=loop)
-        second = registry.create("mf_2", "scan-b", loop=loop)
-        third = registry.create("mf_3", "scan-c", loop=loop)
+        first = _queued(registry, "mf_1", "scan-a", loop=loop)
+        second = _queued(registry, "mf_2", "scan-b", loop=loop)
+        third = _queued(registry, "mf_3", "scan-c", loop=loop)
         first.set_status("running")
 
         assert first.progress_snapshot()["queue_position"] == 0
@@ -289,16 +324,94 @@ def test_queue_position_counts_only_jobs_submitted_earlier():
     registry = MapJobRegistry()
     loop = asyncio.new_event_loop()
     try:
-        first = registry.create("mf_1", "scan-a", loop=loop)
+        first = _queued(registry, "mf_1", "scan-a", loop=loop)
         first.set_status("running")
-        second = registry.create("mf_2", "scan-b", loop=loop)
-        third = registry.create("mf_3", "scan-c", loop=loop)
+        second = _queued(registry, "mf_2", "scan-b", loop=loop)
+        third = _queued(registry, "mf_3", "scan-c", loop=loop)
 
         # Three jobs are active, but only one precedes mf_2 in the FIFO.
         assert second.progress_snapshot()["queue_position"] == 1
         assert third.progress_snapshot()["queue_position"] == 2
     finally:
         loop.close()
+
+
+def test_queue_rank_follows_the_executor_hand_off_not_registration():
+    """The rank is the order the executor got the jobs, not the order they
+    were created.
+
+    FastAPI runs the synchronous POST endpoint in a thread pool, so two
+    ``/api/map/fit`` calls genuinely overlap. A rank stamped at creation
+    could be overtaken by the request that reached the single map executor
+    first, and both clients were then shown a queue position describing a
+    queue the executor was not running: the job that would actually run
+    first was told it was waiting behind the one queued after it.
+    """
+    registry = MapJobRegistry()
+    loop = _InlineLoop()
+    executor = _StubExecutor()
+
+    registered_first = registry.create("mf_registered_first", "scan-a", loop=loop)
+    registered_second = registry.create("mf_registered_second", "scan-b", loop=loop)
+
+    # Neither has reached the executor: an unranked job is ahead of nothing,
+    # and its own position is everything already queued (here, nothing).
+    assert registered_first.progress_snapshot()["queue_position"] == 0
+    assert registered_second.progress_snapshot()["queue_position"] == 0
+
+    # The second request wins the race to the executor...
+    registry.submit(registered_second, executor, lambda: None)
+    assert registered_first.progress_snapshot()["queue_position"] == 1
+
+    registry.submit(registered_first, executor, lambda: None)
+
+    # ...so it is the one that runs first, and the positions agree with the
+    # order the executor is holding them in.
+    assert len(executor.submitted) == 2
+    assert registered_second.progress_snapshot()["queue_position"] == 0
+    assert registered_first.progress_snapshot()["queue_position"] == 1
+    assert registered_second.submit_order < registered_first.submit_order
+
+
+def test_concurrent_submissions_are_ranked_in_executor_order():
+    """Rank and hand-off share a critical section under real contention.
+
+    Ten threads race through ``submit``; the executor records the order it
+    received them. If the rank were assigned outside the hand-off, the two
+    orders could disagree — which is exactly the position a client is shown
+    diverging from the queue it is actually in.
+    """
+    registry = MapJobRegistry()
+    loop = _InlineLoop()
+    contexts = [
+        registry.create(f"mf_{i}", f"scan-{i}", loop=loop) for i in range(10)
+    ]
+
+    class _OrderRecordingExecutor:
+        def __init__(self) -> None:
+            self.order: list[int] = []
+
+        def submit(self, fn, *args, **kwargs):
+            # Called while the submit lock is held, so this records the
+            # hand-off order itself, not a later reconstruction of it.
+            self.order.append(fn())
+            return None
+
+    executor = _OrderRecordingExecutor()
+    start = threading.Barrier(len(contexts))
+
+    def _submit(ctx):
+        start.wait()
+        registry.submit(ctx, executor, lambda: ctx.submit_order)
+
+    threads = [threading.Thread(target=_submit, args=(ctx,)) for ctx in contexts]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(executor.order) == list(range(1, len(contexts) + 1))
+    assert executor.order == sorted(executor.order)  # arrival order == rank order
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +429,8 @@ async def test_job_started_frame_is_emitted_and_buffered():
     on_point_fitted.send_job_started(["minerals", "organics"])
     await asyncio.sleep(0)
 
-    msg = stream.get_nowait()
+    msg, received = stream.pop_nowait()
+    assert received is True
     assert msg["type"] == "job_started"
     assert msg["job_id"] == "mf_test"
     assert msg["n_points"] == 3
@@ -386,8 +500,8 @@ def test_a_cancelled_job_cannot_be_reactivated():
     registry = MapJobRegistry()
     loop = asyncio.new_event_loop()
     try:
-        ctx = registry.create("mf_cancelled", "scan-a", loop=loop, n_points=10)
-        behind = registry.create("mf_behind", "scan-b", loop=loop, n_points=10)
+        ctx = _queued(registry, "mf_cancelled", "scan-a", loop=loop, n_points=10)
+        behind = _queued(registry, "mf_behind", "scan-b", loop=loop, n_points=10)
         assert behind.progress_snapshot()["queue_position"] == 1
 
         ctx.cancel_event.set()
@@ -561,9 +675,9 @@ async def test_late_connect_backlog_reconciles_to_the_status_frame_count():
 async def test_late_connect_to_a_queued_job_reports_live_queue_position():
     """The connect frame tells a waiting client it is queued, not frozen."""
     registry = MapJobRegistry()
-    running = registry.create("mf_running", "scan-a", loop=_InlineLoop(), n_points=10)
+    running = _queued(registry, "mf_running", "scan-a", loop=_InlineLoop(), n_points=10)
     running.set_status("running")
-    waiting = registry.create("mf_waiting", "scan-b", loop=_InlineLoop(), n_points=7)
+    waiting = _queued(registry, "mf_waiting", "scan-b", loop=_InlineLoop(), n_points=7)
 
     first = _StubWebSocket(registry)
     async with _connected(first, "mf_waiting"):
@@ -985,6 +1099,49 @@ def test_a_broadcast_is_delivered_to_every_subscriber_exactly_once():
 
 
 @pytest.mark.asyncio
+async def test_frames_land_even_when_the_loop_nudge_never_arrives():
+    """Delivery must not hinge on the fitting thread's wake-up landing.
+
+    ``publish`` runs on the fitting thread: it appends the frame to every
+    connected client's stream and *then* asks the event loop to wake the
+    handler. The two steps are separate on purpose. A handler that only
+    ever looks when a cross-thread wake-up resolves the exact waiter it
+    happens to be parked on can sit on a fully-written stream — and a
+    terminal frame stranded that way leaves the client watching a job that
+    has already finished, which is the frozen panel issue #6 is about.
+
+    Dropping the nudge outright is the worst case that mistiming can
+    produce. The frames still have to arrive, because the handler bounds
+    how long it goes without re-reading the stream (STREAM_WAIT_SECONDS).
+    """
+    registry = MapJobRegistry()
+    # The fitting thread's nudge goes nowhere. The handler itself runs on
+    # the real test loop.
+    ctx = registry.create("mf_nonudge", "scan-a", loop=_DiscardLoop(), n_points=1)
+    ctx.set_status("running")
+    on_point_fitted, _on_progress, _on_log = make_fitting_callbacks(ctx)
+
+    def _worker() -> None:
+        _fit_points(on_point_fitted, [0])
+        on_point_fitted.send_complete({"fitted": 1})  # type: ignore[attr-defined]
+
+    ws = _StubWebSocket(registry)
+    async with _connected(ws, "mf_nonudge") as task:
+        # Published only once this client is attached, so the frames go
+        # through the broadcast path rather than the replay backlog.
+        await _await_condition(lambda: ctx.subscriber_count() == 1, "handler attached")
+        worker = threading.Thread(target=_worker, daemon=True)
+        worker.start()
+        try:
+            await asyncio.wait_for(task, timeout=5.0)
+        finally:
+            worker.join(timeout=5.0)
+
+    assert [f["type"] for f in ws.sent] == ["heartbeat", "point_fitted", "complete"]
+    assert ws.closed is not None
+
+
+@pytest.mark.asyncio
 async def test_unknown_job_is_refused_without_accepting():
     ws = _StubWebSocket(MapJobRegistry())
     await asyncio.wait_for(map_ws(ws, "mf_nope"), timeout=2.0)
@@ -1029,9 +1186,9 @@ def test_rest_status_reports_queued_with_its_queue_position():
     registry = MapJobRegistry()
     loop = asyncio.new_event_loop()
     try:
-        running = registry.create("mf_a", "scan-a", loop=loop, n_points=10)
+        running = _queued(registry, "mf_a", "scan-a", loop=loop, n_points=10)
         running.set_status("running")
-        registry.create("mf_b", "scan-b", loop=loop, n_points=7)
+        _queued(registry, "mf_b", "scan-b", loop=loop, n_points=7)
 
         resp = get_map_job_status(_status_request(registry), "mf_b")
 
@@ -1350,3 +1507,119 @@ def test_results_carry_the_same_access_gate_as_the_fit_that_produced_them():
         )
 
     assert excinfo.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# POST /api/map/fit: the terminal frame must match the status that won
+#
+# The fitting thread runs inside the route, so the route is driven directly
+# against stubs (an executor that runs the job on this thread) rather than
+# through an HTTP stack.
+# ---------------------------------------------------------------------------
+
+
+class _InlineExecutor:
+    """Runs the submitted job here, as an idle map executor effectively does."""
+
+    def submit(self, fn, *args, **kwargs):
+        fn()
+        return None
+
+
+def _fit_request(registry):
+    return SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                map_registry=registry,
+                map_executor=_InlineExecutor(),
+                event_loop=_InlineLoop(),
+                engine=object(),
+                config=SimpleNamespace(),
+                access_mode="internal",
+            )
+        ),
+        state=SimpleNamespace(db=_StubSession(SimpleNamespace(id="scan-a"))),
+    )
+
+
+def _run_fit_with(monkeypatch, registry, run_map_fit):
+    """Drive POST /api/map/fit with ``run_map_fit`` as the fitting work."""
+    from sherloc_pipeline.database import connection as db_connection
+    from sherloc_pipeline.services import map_fitting
+    from sherloc_pipeline.web.routes import map as map_routes
+
+    monkeypatch.setattr(
+        map_routes, "_get_data_access", lambda request: SimpleNamespace(
+            validate_scan_access=lambda scan: None
+        )
+    )
+    monkeypatch.setattr(
+        map_routes,
+        "resolve_display_coordinates",
+        lambda session, scan_id, workspace_reader=None: [
+            SimpleNamespace(point_index=i, aci_x=float(i), aci_y=0.0) for i in range(3)
+        ],
+    )
+    monkeypatch.setattr(
+        db_connection, "get_session_factory", lambda engine: lambda: SimpleNamespace(
+            close=lambda: None
+        )
+    )
+
+    class _StubService:
+        def __init__(self, config):
+            self.config = config
+
+        def run_map_fit(self, **kwargs):
+            return run_map_fit(**kwargs)
+
+    monkeypatch.setattr(map_fitting, "MapFitService", _StubService)
+
+    resp = map_routes.start_map_fit(
+        _fit_request(registry),
+        MapFitRequest(scan_id="scan-a", domains=["minerals"]),
+    )
+    return registry.get(resp.job_id)
+
+
+def test_a_fit_that_raises_after_a_cancel_reports_cancelled_not_failed(monkeypatch):
+    """The stream has to agree with the status that actually won.
+
+    A cancel that lands mid-point makes the job terminal immediately, and
+    the fitting thread may then unwind through an exception (the stop is
+    what broke the read it was in). ``set_status("failed")`` loses to the
+    sticky cancel, so an unconditional ``error`` frame told the WebSocket
+    client the fit had failed while ``GET /api/map/jobs/{id}`` called the
+    same job cancelled — and Map Mode treats the two differently.
+    """
+    registry = MapJobRegistry()
+
+    def _cancel_then_raise(**kwargs):
+        # What the WebSocket handler does when the user cancels mid-point.
+        kwargs["cancel_event"].set()
+        registry.find_active_for_scan("scan-a").request_cancel()
+        raise RuntimeError("spectrum read aborted while the job was stopping")
+
+    ctx = _run_fit_with(monkeypatch, registry, _cancel_then_raise)
+
+    assert ctx.get_status() == "cancelled"
+    assert [m["type"] for m in ctx.message_buffer] == ["job_started", "cancelled"]
+    # ...and the REST fallback a client may be polling instead says the same.
+    assert get_map_job_status(_status_request(registry), ctx.job_id).status == (
+        "cancelled"
+    )
+    assert ctx.results_are_final() is True
+
+
+def test_a_fit_that_raises_on_its_own_still_reports_failed(monkeypatch):
+    """The cancel case must not swallow a genuine failure."""
+    registry = MapJobRegistry()
+
+    def _just_raise(**kwargs):
+        raise RuntimeError("fit worker died")
+
+    ctx = _run_fit_with(monkeypatch, registry, _just_raise)
+
+    assert ctx.get_status() == "failed"
+    assert [m["type"] for m in ctx.message_buffer] == ["job_started", "error"]
+    assert ctx.message_buffer[-1]["error"] == "fit worker died"
