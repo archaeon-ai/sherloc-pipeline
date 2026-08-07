@@ -126,18 +126,28 @@ def _load_point_spectra(
     session: Session,
     scan_point_ids: list[str],
     region: str = "R1",
+    *,
+    skip_unreadable: bool = False,
 ) -> dict[str, np.ndarray]:
     """Load spectra for scan points from DB.
 
-    A blob that will not decode is skipped rather than raised: this runs
-    once for the whole scan, so letting one unreadable spectrum out would
-    abort every point's fit instead of the one point that cannot be read.
-    The affected point simply has no entry, which callers already treat as
-    a missing spectrum -- the same outcome as when the row is absent.
+    Args:
+        session: SQLAlchemy session.
+        scan_point_ids: Scan point UUIDs to load.
+        region: Detector region ("R1", "R2", "R3").
+        skip_unreadable: How to treat a stored blob that will not decode.
+            The default, False, lets the decode error out and fail the job
+            that asked for it. A corrupt spectrum must not be downgraded to
+            a silently absent one: "missing" is how this module reports a
+            point that was never measured, so folding corruption into it
+            would present damaged Raman data as an ordinary gap in the map,
+            with only a server-side warning to say otherwise. Only a caller
+            that already reports an unreadable spectrum as a per-point
+            outcome passes True -- currently just
+            ``_load_point_spectra_multi``, see there.
 
     Returns:
-        {scan_point_id: intensity_array} for each point that has a
-        readable spectrum.
+        {scan_point_id: intensity_array} for each point that has a spectrum.
     """
     spectra = (
         session.query(SpectrumORM)
@@ -153,6 +163,18 @@ def _load_point_spectra(
         try:
             data = np.frombuffer(zlib.decompress(s.intensities), dtype=np.float32)
         except Exception as exc:
+            if not skip_unreadable:
+                # Logged before re-raising because the exception itself
+                # ("Error -3 while decompressing data") does not say which
+                # point is damaged, and that is the first thing an operator
+                # needs when the fit reports a failure.
+                logger.error(
+                    "Unreadable %s spectrum for scan point %s: %s",
+                    region,
+                    s.scan_point_id,
+                    exc,
+                )
+                raise
             logger.warning(
                 "Skipping unreadable %s spectrum for scan point %s: %s",
                 region,
@@ -176,16 +198,28 @@ def _load_point_spectra_multi(
     points; one batched query per region keeps large scans (>500 points)
     from spending most of their wall clock in SQLAlchemy.
 
+    Unreadable blobs are skipped here, and only here, because that is what
+    this path did before it was batched: fluorescence loaded its regions
+    per point, inside ``run_map_fit``'s per-point ``except``, so a blob
+    that would not decode cost that point its fluorescence result and
+    nothing else. Batching must not turn that into a failed scan -- nor
+    into a stricter failure than the code it replaced. The R1 load feeding
+    the Raman domains keeps the opposite default: it never tolerated a
+    corrupt spectrum, and folding one into a "missing" point there would
+    hide damaged data inside an ordinary gap in the map.
+
     Returns:
         {scan_point_id: {region: intensity_array}} — a point whose region
         is absent or unreadable simply lacks that key, which
         ``_fit_fluorescence_domain`` reports as a missing domain for that
-        point alone (batching must not turn one bad blob into a failed
-        scan).
+        point alone.
     """
     result: dict[str, dict[str, np.ndarray]] = {}
     for region in regions:
-        for sp_id, arr in _load_point_spectra(session, scan_point_ids, region=region).items():
+        loaded = _load_point_spectra(
+            session, scan_point_ids, region=region, skip_unreadable=True
+        )
+        for sp_id, arr in loaded.items():
             result.setdefault(sp_id, {})[region] = arr
     return result
 

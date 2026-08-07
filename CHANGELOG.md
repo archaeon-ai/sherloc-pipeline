@@ -152,10 +152,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   minerals+organics+hydration selection. They now run once per point and are
   shared across domains (fit results are unchanged; pinned by test).
   Fluorescence fitting batch-loads R1/R2/R3 for the whole scan instead of
-  issuing three queries per point; a stored spectrum that will not decode is
-  skipped for its own point (reported as a missing domain, as an absent row
-  already was) rather than failing the run it is now loaded ahead of. Runs
-  also log their scale up front
+  issuing three queries per point; on that path alone, a stored spectrum that
+  will not decode is skipped for its own point (reported as a missing domain,
+  as an absent row already was) rather than failing the run it is now loaded
+  ahead of — which is exactly what it cost before batching, when those regions
+  were read inside the per-point error handling. The R1 load feeding the Raman
+  domains is unchanged: an undecodable spectrum still fails the job, because
+  reporting it as a missing point would present damaged data as an ordinary
+  gap in the map. Runs also log their scale up front
   (`Fitting N points x M domain(s)`, flagged when N > 200, where the sequential
   design stops being comfortable).
 

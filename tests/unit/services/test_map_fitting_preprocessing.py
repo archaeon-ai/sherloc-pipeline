@@ -279,7 +279,7 @@ def test_cancel_before_start_skips_the_eager_spectrum_load(fit_session, monkeypa
     """
     loaded: list[str] = []
 
-    def spy(session, ids, region="R1"):
+    def spy(session, ids, region="R1", **kwargs):
         loaded.append(region)
         return {}
 
@@ -377,3 +377,79 @@ def test_one_corrupt_spectrum_costs_its_own_point_not_the_whole_scan(fluor_sessi
     # exactly as an absent row is — and its Raman fit is untouched.
     assert results[1].results["fluorescence"].status == "missing"
     assert results[1].results["minerals"].status != "missing"
+
+
+# ---------------------------------------------------------------------------
+# ...but a corrupt R1 spectrum still fails the job, rather than being
+# laundered into a point that merely looks unmeasured
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def corrupt_r1_session(fit_session):
+    """``fit_session`` with point 1's R1 blob replaced by garbage."""
+    row = (
+        fit_session.query(SpectrumORM)
+        .filter(
+            SpectrumORM.scan_point_id == _point_id(1),
+            SpectrumORM.region == "R1",
+        )
+        .one()
+    )
+    row.intensities = b"this is not a zlib stream"
+    fit_session.commit()
+    return fit_session
+
+
+def test_unreadable_r1_blob_raises_rather_than_dropping_the_point(corrupt_r1_session):
+    """Corrupt Raman data must not leave the loader as a silent absence.
+
+    ``missing`` is how this module reports a point that was never
+    measured. A point whose stored spectrum is damaged is a different
+    fact, and it is the one a reader of the map has to know about.
+    """
+    with pytest.raises(zlib.error):
+        map_fitting._load_point_spectra(
+            corrupt_r1_session, [_point_id(i) for i in range(N_POINTS)], region="R1"
+        )
+
+
+def test_unreadable_r1_blob_fails_the_fit_instead_of_reporting_missing(
+    corrupt_r1_session,
+):
+    """The job fails loudly, as it did before the batched load was added.
+
+    ``start_map_fit``'s fitting thread turns this into a ``failed`` status
+    and an ``error`` frame, so the corruption reaches the operator instead
+    of being served as a hole in an otherwise ordinary map.
+    """
+    results = {}
+
+    with pytest.raises(zlib.error):
+        MapFitService(config=_CONFIG).run_map_fit(
+            session=corrupt_r1_session,
+            scan_id=SCAN_UUID,
+            domains=["minerals"],
+            point_indices=None,
+            point_coords={i: (float(i), float(i)) for i in range(N_POINTS)},
+            on_point_fitted=lambda r: results.update({r.point_index: r}),
+            on_progress=lambda *a: None,
+            on_log=lambda *a: None,
+            cancel_event=threading.Event(),
+        )
+
+    # And it fails before emitting anything, so no point was ever streamed
+    # to the client carrying a status that hid the corruption.
+    assert results == {}
+
+
+def test_skipping_an_unreadable_blob_is_opt_in(corrupt_r1_session):
+    """The tolerant path exists for the batched fluorescence load only."""
+    loaded = map_fitting._load_point_spectra(
+        corrupt_r1_session,
+        [_point_id(i) for i in range(N_POINTS)],
+        region="R1",
+        skip_unreadable=True,
+    )
+
+    assert sorted(loaded) == [_point_id(0), _point_id(2)]
