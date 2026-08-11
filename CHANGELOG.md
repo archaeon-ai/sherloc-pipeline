@@ -7,6 +7,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Map Mode fitting no longer looks frozen on slow or queued scans (#6).**
+  Map fitting runs on a single-threaded executor, so a job started while
+  another scan is still fitting waited its turn while the UI sat on an empty
+  progress panel; the WebSocket's only liveness signal was a contentless
+  `{"type": "heartbeat"}` the client ignored. The heartbeat frame now carries
+  the server-side job snapshot (`status`, `fitted`/`total`, `queue_position`,
+  `elapsed_s`, `since_last_message_s`, `stalled`) and is also sent once
+  immediately on connect, and a `job_started` frame is emitted when the job
+  actually leaves the executor queue. Map Mode surfaces both as progress-panel
+  status and log lines ("Queued behind N active fit jobs", "No new results for
+  Ns"). `queue_position` is recomputed on every frame from the jobs still
+  active ahead of this one, so a client waiting behind two fits watches its
+  position fall as they finish instead of being told forever that a completed
+  job is still ahead. A job's place in that order is stamped as it is handed
+  to the executor, in the same critical section, because two fit requests run
+  concurrently in the API thread pool and can reach the single executor in the
+  opposite order to the one they were registered in — which had both clients
+  watching a queue the executor was not running. The client-message read is now a single long-lived
+  receive instead of a re-armed 10 ms `wait_for`, which could drop the frame it
+  had just picked up — including a user's `cancel`. `GET /api/map/jobs/{job_id}`
+  reports fitted points from an authoritative counter rather than counting
+  messages in the reconnect ring buffer, which undercounted once the buffer
+  wrapped (>2000 messages). Each `point_fitted` frame now carries that
+  counter too, and Map Mode counts progress by point identity, so a client
+  connecting mid-job — handed a status frame plus the per-point backlog behind
+  it — no longer reports twice the real progress. Terminal jobs are reaped when
+  a new fit starts, retained for an hour after they *finish* rather than after
+  they were created, so a fit that ran longer than the retention window is
+  still readable over REST and reconnect once it completes.
+- **Map Mode recovers a fit whose WebSocket drops mid-job (#6).**
+  The socket can close mid-job (proxy idle timeout, the handler's own
+  30-minute cap, a flaky link), and Map Mode previously did nothing at all in
+  response — the progress panel simply froze, which is the same symptom from a
+  different cause. The client now resumes the stream instead of treating every
+  close as final: it reconnects with the `last_seq` the handler already
+  replays from, up to five attempts with exponential backoff, so fitting
+  results keep arriving (and cancel keeps working) across a brief outage.
+  When the socket cannot be re-established it falls back to polling
+  `GET /api/map/jobs/{job_id}` until the job terminates. To make that fallback
+  equivalent, the endpoint no longer collapses `queued` into `running` and now
+  returns `queue_position`, `stalled`, `since_last_message_s` and `elapsed_s`
+  alongside the existing fields, so a client without a socket can still tell
+  "waiting behind another scan" from "frozen". Response fields are additive;
+  `status` gains the `queued` value for map fit jobs. Polling gives up after
+  five consecutive failures and says so, rather than keeping a panel spinning
+  on a job the server no longer knows about. A cancel that cannot reach the
+  server — no socket — is now reported instead of leaving the button silently
+  inert.
+- **Map fit results missed during a disconnect are no longer lost (#6).**
+  Map fitting streams its per-point results and never writes them to
+  `fitted_peaks`, so every result produced while a client's socket was down
+  used to be discarded: the fallback reloaded the map from `/api/map/layers`,
+  which returns whatever peaks an *earlier* pipeline run had written — and
+  overwrote the live results the client had already received with them. A job
+  now retains its own per-point results, keyed by point index (so the store is
+  bounded by the scan and dropped with the job an hour after it finishes), and
+  a new `GET /api/map/jobs/{job_id}/results` serves them. Map Mode fetches
+  them on every terminal status, whether it is observed on the socket or by a
+  poll — on completion when a resumed socket delivered fewer points than the
+  server fitted (the reconnect replay buffer is bounded and can wrap on a long
+  scan), and always on failure or cancellation, where the socket closes on the
+  terminal frame and anything not forwarded by then never arrives. Recovered
+  points are merged by point
+  identity, so nothing is ingested or coloured twice, and the partial results
+  of a cancelled or failed job — measurements that were finished before the
+  job stopped — reach the map instead of leaving points that look unmeasured.
+  If the results are genuinely
+  gone (the job was reaped, or outgrew the retention ceiling), Map Mode says so
+  rather than showing a different run's peaks as if they were this fit's. The
+  endpoint carries the same access gate as the fit that produced it.
+- **Cancelling a map fit no longer loses the point it was working on (#6).**
+  `run_map_fit` only tests the cancel flag between points, so a cancel that
+  arrives mid-point is noticed after that point has been fitted and retained.
+  The WebSocket handler used to acknowledge the cancel and close the socket
+  the moment it read the request, and Map Mode fetches the server's retained
+  results as soon as it is acknowledged — so a point still in flight landed in
+  the retention store *after* the client had already read it, and with no
+  terminal frame left to announce it, that finished measurement was gone for
+  good. The terminal `cancelled` frame is now emitted by the fitting thread
+  itself, alongside `complete` and `error`, which places it behind the last
+  point that thread retained; the handler holds the acknowledgement until it
+  arrives (or up to 30 seconds) and forwards the remaining point frames in the
+  meantime. Two cases short-circuit that wait: a job cancelled while still
+  queued never started, so its results are already final and it is
+  acknowledged at once rather than waiting on an executor that may be minutes
+  away; and a cancel that races the end of a job leaves the real
+  `complete`/`error` frame to close the stream instead of masking it. The
+  acknowledgement carries `results_final`, false only when the drain window
+  expired, and Map Mode says the map may be a point short rather than
+  presenting it as the whole measurement. `GET /api/map/jobs/{job_id}`
+  reports the same `results_final` flag (additive; `true` for any job that
+  has no fitting thread left to wait on), so the REST fallback waits for the
+  same barrier instead of recovering results the moment a status turns
+  terminal — bounded to three extra polls, after which it recovers anyway
+  and says the same thing. However the fitting thread stops, it now emits the
+  terminal frame matching the status that actually won, because terminal
+  statuses are first-writer-wins and a user cancel can settle the job from
+  another thread at any point: it used to send `error` regardless when it
+  unwound through an exception after a cancel, and `complete` regardless when
+  a cancel landed in the gap between its cancel check and its status write.
+  Either way the socket reported a terminal state — failed, or finished — that
+  `GET /api/map/jobs/{job_id}` called cancelled, and Map Mode treats them
+  differently.
+- **A reconnecting Map Mode client no longer competes with its own dead
+  socket (#6).** A client that drops and resumes overlaps with its
+  predecessor — the server only learns the old socket is gone when it next
+  touches it — and both handlers were draining one shared job queue. Every
+  frame went to whichever of them won the race, so the resumed client saw a
+  fraction of the stream, and a terminal frame taken by the dying handler was
+  gone outright: the surviving client then waited forever on a job that had
+  already finished, which is the same frozen panel from a third cause. Frames
+  are now broadcast to one stream per connection, so overlapping sockets each
+  see the whole stream. Reconnect replay is taken as a snapshot under the
+  lock the fitting thread appends under, instead of iterating the live ring
+  buffer — a frame landing mid-replay raised `RuntimeError: deque mutated
+  during iteration` and dropped the client at exactly the moment it was
+  trying to catch up. A socket that attaches after the job ended is now
+  closed on the replayed terminal frame rather than heartbeating a finished
+  job until the handler's 30-minute cap. Client input is read by its own
+  task that posts to the same per-connection stream, so the handler has a
+  single thing to read and a published frame can no longer sit unread behind a
+  client message (or the reverse) until the next heartbeat. The fitting thread
+  appends to that stream directly and only then nudges the event loop, and the
+  handler bounds how long it goes without re-reading, so a frame is delivered
+  whether or not the cross-thread wake-up lands while the handler happens to be
+  parked — previously the frame and the wake-up were the same event, and a
+  terminal frame stranded by that timing was the frozen panel again.
+- **A cancelled map fit job can no longer be restarted (#6).** Cancelling a
+  job that was still waiting its turn on the single-threaded executor only set
+  a flag: when the executor eventually reached it, the fitting thread marked
+  it `running` again, announced `job_started` to a client that had already
+  stopped it, and paid for the whole-scan spectrum load to produce results
+  nobody was listening for — while every job behind it kept counting the
+  zombie as still ahead. Terminal statuses are now sticky, the fitting thread
+  checks for cancellation before it starts, and `run_map_fit` checks again
+  before the eager per-scan load rather than only inside the per-point loop.
+
+### Changed
+- **Map Mode fitting is faster on large scans (#6).** Despiking and the asPLS
+  baseline depend only on a point's R1 spectrum, but were recomputed inside
+  every requested Raman domain — three times per point for the default
+  minerals+organics+hydration selection. They now run once per point and are
+  shared across domains (fit results are unchanged; pinned by test).
+  Fluorescence fitting batch-loads R1/R2/R3 for the whole scan instead of
+  issuing three queries per point; on that path alone, a stored spectrum that
+  will not decode is skipped for its own point (reported as a missing domain,
+  as an absent row already was) rather than failing the run it is now loaded
+  ahead of — which is exactly what it cost before batching, when those regions
+  were read inside the per-point error handling. The R1 load feeding the Raman
+  domains is unchanged: an undecodable spectrum still fails the job, because
+  reporting it as a missing point would present damaged data as an ordinary
+  gap in the map. Runs also log their scale up front
+  (`Fitting N points x M domain(s)`, flagged when N > 200, where the sequential
+  design stops being comfortable).
+
 ### Added
 - **Zoomed mineral-region companion plot for average fits (#30).** Every
   average-spectrum fit overlay `fit-averages` (and so `process-new`) emits now

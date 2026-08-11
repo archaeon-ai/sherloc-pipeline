@@ -42,6 +42,8 @@ from sherloc_pipeline.web.schemas import (
     MapDataResponse,
     MapFitRequest,
     MapFitResponse,
+    MapJobFitPointDTO,
+    MapJobResultsResponse,
     MapJobStatusResponse,
     MapLayerInfoDTO,
     MapLayersResponse,
@@ -510,8 +512,11 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
     # Build point_coords lookup: {point_index: (aci_x, aci_y)}
     point_coords = {c.point_index: (c.aci_x, c.aci_y) for c in coords}
 
-    # Check for active jobs for this scan via the map registry
+    # Check for active jobs for this scan via the map registry. Reap
+    # terminal jobs first so the registry (and its retained message
+    # buffers) doesn't grow without bound over a long-lived server.
     registry: MapJobRegistry = request.app.state.map_registry
+    registry.cleanup_stale()
     existing = registry.find_active_for_scan(body.scan_id)
     if existing is not None:
         return MapFitResponse(
@@ -520,7 +525,14 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
             ws_url=f"/ws/map/{existing.job_id}",
         )
 
-    # Create job
+    # Create job. The map executor is single-threaded, so a job submitted
+    # while another scan is still fitting waits its turn; the registry
+    # records its FIFO rank so heartbeats can report a live "queued behind
+    # N" rather than leaving the UI on an empty progress panel (issue #6).
+    # The rank is stamped by registry.submit() below, not here: two of these
+    # requests run concurrently in FastAPI's thread pool, and a rank taken
+    # before the hand-off can be overtaken by the request that reaches the
+    # executor first.
     job_id = f"mf_{secrets.token_hex(12)}"
     loop = request.app.state.event_loop
     ctx = registry.create(
@@ -542,12 +554,69 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
     domains = list(body.domains)
     point_indices = list(body.point_indices) if body.point_indices is not None else None
 
+    def _emit_settled_terminal(attempted: str) -> None:
+        """Emit the terminal frame for the status that actually won.
+
+        Terminal statuses are sticky and first-writer-wins, so a status
+        write that loses means another thread settled this job first -- in
+        practice a user cancel from the WebSocket handler. That status is
+        the one REST reports and the one retention keys off, so the stream
+        has to agree with it: emitting the frame for the status we failed
+        to write leaves a client showing a terminal state the status
+        endpoint contradicts.
+        """
+        settled = ctx.get_status()
+        logger.info(
+            "Map fit job %s settled as %s before it could be marked %s; "
+            "reporting %s on the stream instead",
+            job_id,
+            settled,
+            attempted,
+            settled,
+        )
+        if settled == "cancelled":
+            on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+        # "complete" is the only other status another writer can leave
+        # here, and the thread that set it already emitted its own
+        # terminal frame.
+
     def _run_fit() -> None:
         """Fitting thread entry point."""
+        # A queued job can be cancelled before the single map executor ever
+        # reaches it. Starting it anyway would announce job_started for a
+        # job the user already stopped and pay for the eager per-scan
+        # spectrum load to produce results nobody is listening for.
+        if ctx.cancel_event.is_set():
+            ctx.set_status("cancelled")
+            logger.info("Map fit job %s cancelled before it started", job_id)
+            # Terminal frame from the thread that owns the results, like
+            # complete and error. Nothing was fitted here, but emitting it
+            # unconditionally is what lets the WebSocket handler treat
+            # "the fitting thread has stopped" as an observable event.
+            on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+            return
+
         factory = get_session_factory(engine)
         fit_session = factory()
         try:
-            ctx.set_status("running")
+            # Position is derived from the registry (jobs still active ahead
+            # of this one), so leaving "queued" is all it takes to clear it.
+            # Terminal states are sticky, so a cancel that lands in the gap
+            # above keeps the job cancelled rather than reactivating it.
+            if not ctx.set_status("running"):
+                terminal_status = ctx.get_status()
+                logger.info(
+                    "Map fit job %s reached a terminal state (%s) before it "
+                    "could start",
+                    job_id,
+                    terminal_status,
+                )
+                if terminal_status == "cancelled":
+                    on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+                return
+            # Announce the real start: everything before this point was
+            # spent waiting for the single map-executor thread.
+            on_point_fitted.send_job_started(domains)  # type: ignore[attr-defined]
             service = MapFitService(config=config.to_dict() if hasattr(config, 'to_dict') else _config_to_dict(config))
             summary = service.run_map_fit(
                 session=fit_session,
@@ -562,22 +631,51 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
             )
             if ctx.cancel_event.is_set():
                 ctx.set_status("cancelled")
-            else:
-                ctx.set_status("complete")
+                # Sent from here, not from the WebSocket handler that read
+                # the cancel: ``run_map_fit`` only notices the cancel
+                # between points, so the point it was on has been fitted
+                # and retained by now. Emitting the terminal frame here
+                # puts it behind that point, which is what stops a client
+                # from fetching the retained results too early and losing
+                # it (issue #6).
+                on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
+            elif ctx.set_status("complete"):
                 on_point_fitted.send_complete({  # type: ignore[attr-defined]
                     "total_points": summary.total_points,
                     "detections": summary.detections,
                     "elapsed_s": summary.elapsed_s,
                 })
+            else:
+                # A cancel landed in the gap between the check above and
+                # this write, so the job is already terminal as cancelled.
+                # Sending "complete" anyway would put a complete frame on
+                # the stream for a job the status endpoint calls cancelled.
+                _emit_settled_terminal("complete")
         except Exception as exc:
             logger.exception("Map fit job %s failed", job_id)
-            ctx.set_status("failed")
-            on_point_fitted.send_error(str(exc))  # type: ignore[attr-defined]
+            if ctx.set_status("failed"):
+                on_point_fitted.send_error(str(exc))  # type: ignore[attr-defined]
+            else:
+                # A terminal status got there first -- in practice a user
+                # cancel that landed while this point was being fitted, where
+                # the raise is a consequence of the stop rather than a
+                # separate failure. Sending "error" here left WebSocket
+                # clients showing a failed job that the status endpoint
+                # called cancelled.
+                _emit_settled_terminal("failed")
         finally:
             fit_session.close()
 
-    executor = request.app.state.map_executor
-    executor.submit(_run_fit)
+    registry.submit(ctx, request.app.state.map_executor, _run_fit)
+
+    queued_behind = registry.position_of(job_id)
+    if queued_behind:
+        logger.info(
+            "Map fit job %s for scan %s queued behind %d active job(s)",
+            job_id,
+            body.scan_id,
+            queued_behind,
+        )
 
     return MapFitResponse(
         job_id=job_id,
@@ -603,28 +701,36 @@ def get_map_job_status(request: Request, job_id: str) -> MapJobStatusResponse:
     if registry is not None:
         ctx = registry.get(job_id)
         if ctx is not None:
-            status = ctx.get_status()
-            # Map internal status to schema status
-            status_map = {
-                "queued": "running",
-                "running": "running",
-                "complete": "complete",
-                "failed": "failed",
-                "cancelled": "cancelled",
-            }
-            mapped_status = status_map.get(status, status)
-            total = ctx.n_points
-            # Estimate fitted from the message buffer (count point_fitted messages)
-            fitted = sum(
-                1 for m in ctx.message_buffer if m.get("type") == "point_fitted"
-            )
-            results_available = status == "complete"
+            snapshot = ctx.progress_snapshot()
+            status = snapshot["status"]
+            # "queued" is reported as-is rather than collapsed into
+            # "running": a client polling this endpoint because its
+            # WebSocket is unavailable needs the same queued/stalled
+            # distinction the heartbeat frame carries (issue #6).
+            #
+            # Authoritative counter maintained by the streaming callbacks.
+            # Counting point_fitted messages in the ring buffer undercounts
+            # once the buffer wraps (>2000 messages), which made long scans
+            # look like they had stopped making progress.
             return MapJobStatusResponse(
                 job_id=job_id,
-                status=mapped_status,
-                fitted=fitted,
-                total=total,
-                results_available=results_available,
+                status=status,
+                fitted=snapshot["fitted"],
+                total=snapshot["total"],
+                results_available=status == "complete",
+                queue_position=snapshot["queue_position"],
+                stalled=snapshot["stalled"],
+                since_last_message_s=snapshot["since_last_message_s"],
+                elapsed_s=snapshot["elapsed_s"],
+                # Tells a polling client whether the results it missed while
+                # its stream was down are still fetchable from this server.
+                results_retained=ctx.results_retained(),
+                # ...and whether they are worth fetching yet. A cancel is
+                # recorded as soon as it is requested, so a poller that
+                # treated the status alone as its cue would read the store
+                # while the point the fitting thread was on is still in
+                # flight, and lose it (issue #6).
+                results_final=ctx.results_are_final(),
             )
 
     # Fall back to general job queue
@@ -661,4 +767,52 @@ def get_map_job_status(request: Request, job_id: str) -> MapJobStatusResponse:
         fitted=fitted,
         total=total,
         results_available=results_available,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/map/jobs/{job_id}/results
+# ---------------------------------------------------------------------------
+
+
+@router.get("/jobs/{job_id}/results", response_model=MapJobResultsResponse)
+def get_map_job_results(request: Request, job_id: str) -> MapJobResultsResponse:
+    """Return the per-point fit results this job has produced so far.
+
+    Recovery path for a client whose fit WebSocket dropped. Map fitting
+    streams results and never persists them, so the frames lost to a
+    disconnect exist only here: reloading the map from ``/api/map/layers``
+    instead would show whatever peaks an earlier pipeline run wrote to
+    ``fitted_peaks`` — and overwrite the live results the client *did*
+    receive with them.
+
+    Serves partial results for a running, cancelled or failed job too:
+    everything fitted before the job stopped is still a valid measurement,
+    and the caller can tell how complete it is from ``status``,
+    ``fitted``/``total`` and ``truncated``.
+    """
+    registry = getattr(request.app.state, "map_registry", None)
+    ctx = registry.get(job_id) if registry is not None else None
+    if ctx is None:
+        # Unknown, or reaped once its retention window expired. Either way
+        # this server can no longer produce the results.
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # These are measurement values, not just counters, so they carry the
+    # same access gate as the fit that produced them (POST /api/map/fit).
+    session = _get_session(request)
+    scan = session.query(ScanORM).filter(ScanORM.id == ctx.scan_id).first()
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    _get_data_access(request).validate_scan_access(scan)
+
+    points, truncated = ctx.results_snapshot()
+    snapshot = ctx.progress_snapshot()
+    return MapJobResultsResponse(
+        job_id=job_id,
+        status=snapshot["status"],
+        fitted=snapshot["fitted"],
+        total=snapshot["total"],
+        truncated=truncated,
+        points=[MapJobFitPointDTO(**p) for p in points],
     )

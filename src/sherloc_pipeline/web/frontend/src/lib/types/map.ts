@@ -94,6 +94,8 @@ export interface WSPointFitted {
   x: number;
   y: number;
   results: Record<string, { status: string; peaks: WSPeakResult[] }>;
+  /** Authoritative server-side fitted count at the time this point completed. */
+  fitted?: number;
 }
 
 export interface WSPeakResult {
@@ -103,6 +105,32 @@ export interface WSPeakResult {
   assignment: string;
   fwhm_cm1?: number;
   fwhm_nm?: number;
+}
+
+/**
+ * A per-point result retained server-side, from
+ * `GET /api/map/jobs/{job_id}/results`.
+ *
+ * Same shape as the `point_fitted` frame minus the stream envelope, so a
+ * recovered point is ingested through exactly the same path as a streamed
+ * one.
+ */
+export interface MapJobFitPoint {
+  point_index: number;
+  x: number;
+  y: number;
+  results: Record<string, { status: string; peaks: WSPeakResult[] }>;
+}
+
+/** Full payload of `GET /api/map/jobs/{job_id}/results`. */
+export interface MapJobResults {
+  job_id: string;
+  status: string;
+  fitted: number;
+  total: number;
+  /** True when the job outgrew the server's retention ceiling. */
+  truncated: boolean;
+  points: MapJobFitPoint[];
 }
 
 export interface WSProgress {
@@ -122,8 +150,14 @@ export interface WSLog {
   message: string;
 }
 
+// The three terminal frames below carry the name the server actually
+// sends (`complete` / `error` / `cancelled`) alongside the longer form
+// the client has always also accepted. The union previously listed only
+// the long form, which made the real branches unreachable to the type
+// checker — and those branches are what tells a reconnecting client the
+// job is over rather than dropped.
 export interface WSJobComplete {
-  type: 'job_complete';
+  type: 'job_complete' | 'complete';
   seq: number;
   summary: {
     total_points: number;
@@ -133,10 +167,45 @@ export interface WSJobComplete {
 }
 
 export interface WSJobFailed {
-  type: 'job_failed';
+  type: 'job_failed' | 'error';
   seq: number;
   error: string;
-  partial_results: number;
+  partial_results?: number;
+}
+
+/**
+ * Terminal acknowledgement of a cancel.
+ *
+ * Normally emitted by the fitting thread once it has stopped — carrying a
+ * `seq` like every other streamed frame, and landing behind the last point
+ * that thread retained. The client fetches the server's retained results
+ * as soon as it sees this, so that ordering is what stops the point the
+ * job was fitting when the cancel landed from being lost (issue #6).
+ *
+ * The WebSocket handler synthesises it (without a `seq`) in two cases: the
+ * job had not started, so nothing was in flight; or the fitting thread did
+ * not stop inside the drain window. `results_final` is false only in that
+ * second case — the retained results may still be one point short.
+ */
+export interface WSJobCancelled {
+  type: 'job_cancelled' | 'cancelled';
+  seq?: number;
+  job_id?: string;
+  fitted?: number;
+  total?: number;
+  results_final?: boolean;
+}
+
+export interface WSHeartbeat {
+  type: 'heartbeat';
+  status?: string;
+  fitted?: number;
+  total?: number;
+  queue_position?: number;
+  elapsed_s?: number;
+  since_last_message_s?: number;
+  stalled?: boolean;
+  timed_out?: boolean;
 }
 
 export type WSServerMessage =
@@ -146,8 +215,9 @@ export type WSServerMessage =
   | WSLog
   | WSJobComplete
   | WSJobFailed
+  | WSHeartbeat
   | { type: 'job_queued'; seq: number }
-  | { type: 'job_cancelled'; seq: number }
+  | WSJobCancelled
   | { type: 'point_fitted_batch'; seq: number; points: WSPointFitted[] }
   | { type: 'ping' };
 

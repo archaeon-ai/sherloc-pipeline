@@ -28,7 +28,8 @@ import type {
 } from './types';
 
 import { bootstrapAuthReady, getSession } from './auth';
-import type { DisplayPoint, VoronoiGeometry } from './types/map';
+import type { DisplayPoint, MapJobResults, VoronoiGeometry } from './types/map';
+import type { MapJobStatus } from './mapProgress';
 
 const API_BASE = '/api';
 
@@ -448,6 +449,31 @@ export async function startMapFit(
     method: 'POST',
     body: JSON.stringify({ scan_id: scanId, domains }),
   });
+}
+
+/**
+ * Authenticated read of a map fit job's status — the REST fallback used
+ * when the fit WebSocket is unavailable. Carries the same liveness signals
+ * as the WS heartbeat frame (status incl. `queued`, fitted/total, queue
+ * position, stall flag) so a client without a socket still knows whether a
+ * silent job is waiting its turn or genuinely slow (issue #6).
+ */
+export async function getMapJobStatus(jobId: string): Promise<MapJobStatus> {
+  await ensureAuthenticated();
+  return fetchJson<MapJobStatus>(`/map/jobs/${encodeURIComponent(jobId)}`);
+}
+
+/**
+ * Per-point fit results the server still holds for a job.
+ *
+ * Recovery path after a dropped fit stream: map fitting streams results
+ * and never writes them to `fitted_peaks`, so a point missed while the
+ * socket was down cannot be recovered by reloading the map from the
+ * database — that returns an earlier pipeline run's peaks (issue #6).
+ */
+export async function getMapJobResults(jobId: string): Promise<MapJobResults> {
+  await ensureAuthenticated();
+  return fetchJson<MapJobResults>(`/map/jobs/${encodeURIComponent(jobId)}/results`);
 }
 
 export interface JobStatus {
