@@ -339,10 +339,6 @@ def fwhm_to_sigma(fwhm: float) -> float:
     return float(fwhm) / (2.0 * np.sqrt(2.0 * np.log(2.0)))
 
 
-def sigma_to_fwhm(sigma: float) -> float:
-    return float(sigma) * (2.0 * np.sqrt(2.0 * np.log(2.0)))
-
-
 def gaussian(x: np.ndarray, m_cm1: float, a: float, fwhm: float) -> np.ndarray:
     s = fwhm_to_sigma(fwhm)
     return a * np.exp(-0.5 * ((x - m_cm1) / s) ** 2)

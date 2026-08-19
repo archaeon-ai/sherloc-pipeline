@@ -331,41 +331,6 @@ def _compose_rings_on_image(
                  alpha_nondet=alpha_nondet)
 
 
-def draw_rings(
-    image: np.ndarray,
-    x: np.ndarray,
-    y: np.ndarray,
-    snr: Optional[np.ndarray] = None,
-    *,
-    pixel_scale_um_per_px: float,
-    nonselected: Optional[Tuple[np.ndarray, np.ndarray]] = None,
-    style: Optional[Dict[str, Any]] = None,
-) -> np.ndarray:
-    """Compose notebook-style rings on an image and return RGB float array.
-
-    Delegates to visualization.spatial._compose_rings_on_image.
-    """
-    style = style or {}
-    pts_sel = None
-    pts_ns = None
-    if x is not None and y is not None:
-        pts_sel = np.stack([np.asarray(x, dtype=float), np.asarray(y, dtype=float)], axis=1)
-    if nonselected is not None and len(nonselected) == 2 and nonselected[0] is not None and nonselected[1] is not None:
-        pts_ns = np.stack([np.asarray(nonselected[0], dtype=float), np.asarray(nonselected[1], dtype=float)], axis=1)
-    return _compose_rings_on_image(
-        image=image,
-        points_selected=pts_sel,
-        snr_selected=(np.asarray(snr, dtype=float) if snr is not None else None),
-        points_nondet=pts_ns,
-        pixel_scale_um_per_px=float(pixel_scale_um_per_px),
-        use_raster=bool(style.get('raster', True)),
-        cmap_name=str(style.get('cmap', 'viridis')),
-        ring_width_det_px=float(style.get('ring_width_det_px', 2.0)),
-        ring_width_nondet_px=float(style.get('ring_width_nondet_px', 1.0)),
-        alpha_nondet=float(style.get('alpha_nondet', 0.3)),
-    )
-
-
 def render_pointloc_full(
     image_native: np.ndarray,
     pixel_scale_um_per_px: float,

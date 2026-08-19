@@ -50,16 +50,6 @@ class ProcessingParamsSchema(BaseModel):
     fitting: Optional[FitParamsSchema] = None
 
 
-# ---------------------------------------------------------------------------
-# Error envelope
-# ---------------------------------------------------------------------------
-
-
-class ErrorResponse(BaseModel):
-    schema_version: str = API_SCHEMA_VERSION
-    error: str
-    detail: Optional[str] = None
-
 
 # ---------------------------------------------------------------------------
 # Scan DTOs

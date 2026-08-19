@@ -87,21 +87,6 @@ def detect_img_format(file_path: str | Path) -> str:
     raise ValueError(f"Could not determine format of {file_path}")
 
 
-def is_vicar_format(file_path: str | Path) -> bool:
-    """Check if a file is in VICAR format (vs PDS3/ODL).
-
-    Args:
-        file_path: Path to the .IMG file
-
-    Returns:
-        True if VICAR format, False otherwise
-    """
-    try:
-        return detect_img_format(file_path) == FORMAT_VICAR
-    except ValueError:
-        return False
-
-
 class ACIImageMetadata(PHASEBaseModel):
     """Metadata extracted from VICAR header of ACI image.
 
