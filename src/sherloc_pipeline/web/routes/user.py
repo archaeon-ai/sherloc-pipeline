@@ -212,21 +212,6 @@ def _require_user(request: Request) -> tuple[Session, UserORM]:
     return session, user
 
 
-def _profile_orm_to_response(orm: ClassificationProfileORM) -> ProfileResponse:
-    try:
-        parsed = json.loads(orm.profile_json)
-    except Exception:
-        parsed = {}
-    return ProfileResponse(
-        id=orm.id,
-        name=orm.name,
-        base=parsed.get("base", "default"),
-        overrides=parsed.get("overrides", []),
-        created_at=orm.created_at,
-        updated_at=orm.updated_at,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Preference endpoints
 # ---------------------------------------------------------------------------

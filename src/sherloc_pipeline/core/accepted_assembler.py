@@ -315,18 +315,6 @@ def write_schema_sidecar(csv_path: Path, *, metadata: Optional[Dict[str, Any]] =
     return sidecar_path
 
 
-def load_schema_metadata(csv_path: Path) -> Optional[Dict[str, Any]]:
-    sidecar_path = _schema_sidecar_path(csv_path)
-    if not sidecar_path.exists():
-        return None
-    try:
-        with sidecar_path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-            return data if isinstance(data, dict) else None
-    except Exception:
-        return None
-
-
 def normalize_accepted_peaks_df(df: pd.DataFrame) -> pd.DataFrame:
     normalized = df.copy()
     for column in ACCEPTED_PEAKS_COLUMNS:
@@ -352,98 +340,4 @@ def write_accepted_table(path: Path, df: pd.DataFrame) -> Path:
     normalized.to_csv(path, index=False)
     write_schema_sidecar(path)
     return path
-
-
-def validate_accepted_peaks_table(table_path: Path) -> Dict[str, Any]:
-    errors: List[str] = []
-    warnings: List[str] = []
-    metadata: Optional[Dict[str, Any]] = None
-
-    sidecar_path = _schema_sidecar_path(table_path)
-    if not sidecar_path.exists():
-        errors.append(f"Missing schema metadata: expected {sidecar_path.name}")
-    else:
-        try:
-            with sidecar_path.open("r", encoding="utf-8") as handle:
-                metadata = json.load(handle)
-                if not isinstance(metadata, dict):
-                    raise ValueError("Schema sidecar must be a JSON object")
-        except Exception as exc:
-            errors.append(f"Failed to read schema metadata {sidecar_path.name}: {exc}")
-            metadata = None
-
-    expected_schema = accepted_peaks_schema()
-    if metadata:
-        if metadata.get("schema_id") != expected_schema["schema_id"]:
-            errors.append(
-                f"Schema ID mismatch: got '{metadata.get('schema_id')}', expected '{expected_schema['schema_id']}'"
-            )
-        if metadata.get("version") != ACCEPTED_PEAKS_SCHEMA_VERSION:
-            errors.append(
-                f"Schema version mismatch: got '{metadata.get('version')}', expected '{ACCEPTED_PEAKS_SCHEMA_VERSION}'"
-            )
-        if metadata.get("columns") != ACCEPTED_PEAKS_COLUMNS:
-            errors.append(
-                "Schema column list mismatch between metadata and current release."
-            )
-        if metadata.get("boolean_columns") != ACCEPTED_PEAKS_BOOLEAN_COLUMNS:
-            errors.append(
-                "Schema boolean column list mismatch between metadata and current release."
-            )
-
-    if not table_path.exists():
-        errors.append(f"Accepted peaks table not found: {table_path}")
-        return {
-            "is_valid": not errors,
-            "errors": errors,
-            "warnings": warnings,
-            "metadata": metadata,
-        }
-
-    try:
-        table_df = pd.read_csv(table_path)
-    except Exception as exc:
-        errors.append(f"Failed to read accepted peaks table: {exc}")
-        return {
-            "is_valid": False,
-            "errors": errors,
-            "warnings": warnings,
-            "metadata": metadata,
-        }
-
-    actual_columns = table_df.columns.tolist()
-    if actual_columns != ACCEPTED_PEAKS_COLUMNS:
-        errors.append(
-            "Accepted peaks columns mismatch: expected "
-            f"{ACCEPTED_PEAKS_COLUMNS}, got {actual_columns}"
-        )
-    for column in ACCEPTED_PEAKS_BOOLEAN_COLUMNS:
-        if column not in table_df.columns:
-            errors.append(f"Accepted peaks table missing boolean column '{column}'")
-            continue
-        column_values = table_df[column]
-        if column_values.isnull().any():
-            errors.append(f"Boolean column '{column}' contains null values")
-        normalized_tokens = {
-            value if isinstance(value, bool) else str(value).strip()
-            for value in column_values.dropna().unique()
-        }
-        invalid_tokens = {
-            token for token in normalized_tokens if token not in {"True", "False", True, False}
-        }
-        # Remove native boolean literals from invalid set
-        invalid_tokens = {token for token in invalid_tokens if token not in {True, False}}
-        if invalid_tokens:
-            printable = ", ".join(str(token) for token in sorted(invalid_tokens))
-            errors.append(
-                f"Boolean column '{column}' contains non-normalized values: {printable}"
-            )
-
-    return {
-        "is_valid": not errors,
-        "errors": errors,
-        "warnings": warnings,
-        "metadata": metadata,
-    }
-
 
