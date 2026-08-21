@@ -525,7 +525,11 @@ class TestSilhouetteScore:
 class TestSilhouetteScalability:
     """Tests for silhouette score scalability with large datasets."""
 
-    @pytest.mark.parametrize("n_samples", [1000, 5000])
+    # The 5000-sample case is ~85 s on a 4-vCPU CI runner and proves nothing
+    # the 1000-sample case does not; keep it runnable locally, out of CI.
+    @pytest.mark.parametrize(
+        "n_samples", [1000, pytest.param(5000, marks=pytest.mark.slow)]
+    )
     def test_scales_with_samples(self, n_samples):
         """Handles datasets with many samples."""
         np.random.seed(42)

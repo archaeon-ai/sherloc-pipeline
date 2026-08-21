@@ -209,8 +209,13 @@ class TestPipelinePersistenceWiring:
                 summary="stubbed", artifacts=[], warnings=[], metadata={}
             )
 
+        # Every FittingService stage run_full_pipeline dispatches must be
+        # listed here. fit_fluorescence was missing: its real
+        # differential_evolution fit over all ingested points cost ~13 CPU-
+        # minutes per run (506 s on a 4-vCPU runner — a third of the whole
+        # CI suite; archaeon-ai Actions budget exhaustion, 2026-08-21).
         for name in ("fit_minerals", "fit_organics", "fit_hydration",
-                     "fit_averages"):
+                     "fit_averages", "fit_fluorescence"):
             monkeypatch.setattr(FittingService, name, empty_result)
         monkeypatch.setattr(SpatialService, "render_overlay", empty_result)
 

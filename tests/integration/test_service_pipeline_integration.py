@@ -81,8 +81,7 @@ def engine():
     return eng
 
 
-@pytest.fixture
-def fluor_db(engine):
+def _build_fluor_db(engine):
     """DB with Sol 293 / Quartier / HDR_1, 2 points with R1+R2+R3 dark_subtracted spectra.
 
     Stores full 2148-channel CCD frames per region (matching real DB format).
@@ -136,6 +135,33 @@ def fluor_db(engine):
                 spectrum_ids[i][region] = spec_id
 
     return engine, spectrum_ids, scan_point_ids
+
+
+@pytest.fixture
+def fluor_db(engine):
+    """Function-scoped fluorescence DB (see ``_build_fluor_db``)."""
+    return _build_fluor_db(engine)
+
+
+@pytest.fixture(scope="module")
+def fitted_fluor_db():
+    """Fluorescence DB with ``fit_fluorescence`` already run exactly once.
+
+    The fit uses ``differential_evolution`` (~10-20 s per call). Every
+    read-only assertion on the fitted peaks shares this single fit instead
+    of re-fitting identical synthetic inputs per test — the 13 repeated
+    fits this replaced were ~275 s of CI wall-clock (archaeon-ai Actions
+    budget exhaustion, 2026-08-21). Tests that mutate the DB (idempotency)
+    keep the function-scoped ``fluor_db``.
+
+    Yields ``(engine, fit_result)``.
+    """
+    eng = get_engine(":memory:")
+    create_all_tables(eng)
+    _build_fluor_db(eng)
+    service = _make_service(eng)
+    result = service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+    return eng, result
 
 
 @pytest.fixture
@@ -269,21 +295,16 @@ def _call_persist_raman(service, results_base, domain):
 class TestFitFluorescenceService:
     """Service-layer test: fit_fluorescence() on synthetic spectra."""
 
-    def test_fit_fluorescence_returns_peaks(self, fluor_db):
+    def test_fit_fluorescence_returns_peaks(self, fitted_fluor_db):
         """fit_fluorescence() should fit peaks and persist them to the DB."""
-        engine, spectrum_ids, scan_point_ids = fluor_db
-        service = _make_service(engine)
-
-        result = service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+        engine, result = fitted_fluor_db
 
         assert result.metadata["peaks_inserted"] > 0
         assert result.metadata["points_fitted"] > 0
 
-    def test_fit_fluorescence_peaks_in_db(self, fluor_db):
+    def test_fit_fluorescence_peaks_in_db(self, fitted_fluor_db):
         """Persisted peaks should exist in the database after fit."""
-        engine, spectrum_ids, scan_point_ids = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).filter_by(
@@ -291,11 +312,9 @@ class TestFitFluorescenceService:
             ).all()
             assert len(peaks) > 0
 
-    def test_fit_fluorescence_center_recovery(self, fluor_db):
+    def test_fit_fluorescence_center_recovery(self, fitted_fluor_db):
         """Fitted centers should be close to the synthetic peak positions."""
-        engine, spectrum_ids, scan_point_ids = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).filter_by(
@@ -621,20 +640,16 @@ class TestPipelineOrchestration:
 class TestFluorescencePeakFields:
     """Verify fluorescence peak ORM fields are populated correctly."""
 
-    def test_fit_modality_is_fluorescence(self, fluor_db):
-        engine, _, _ = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+    def test_fit_modality_is_fluorescence(self, fitted_fluor_db):
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
             for p in peaks:
                 assert p.fit_modality == "fluorescence"
 
-    def test_center_nm_populated(self, fluor_db):
-        engine, _, _ = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+    def test_center_nm_populated(self, fitted_fluor_db):
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
@@ -643,10 +658,8 @@ class TestFluorescencePeakFields:
                 assert p.center_nm is not None
                 assert 270.0 < p.center_nm < 360.0, f"center_nm {p.center_nm} out of range"
 
-    def test_fwhm_nm_populated(self, fluor_db):
-        engine, _, _ = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+    def test_fwhm_nm_populated(self, fitted_fluor_db):
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
@@ -655,11 +668,9 @@ class TestFluorescencePeakFields:
                 assert p.fwhm_nm is not None
                 assert 5.0 < p.fwhm_nm < 50.0, f"fwhm_nm {p.fwhm_nm} out of range"
 
-    def test_center_cm1_null_for_fluorescence(self, fluor_db):
+    def test_center_cm1_null_for_fluorescence(self, fitted_fluor_db):
         """Fluorescence peaks should NOT have center_cm1/fwhm_cm1 set."""
-        engine, _, _ = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
@@ -667,11 +678,9 @@ class TestFluorescencePeakFields:
                 assert p.center_cm1 is None
                 assert p.fwhm_cm1 is None
 
-    def test_is_saturated_set(self, fluor_db):
+    def test_is_saturated_set(self, fitted_fluor_db):
         """Fluorescence peaks should have is_saturated populated."""
-        engine, _, _ = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
@@ -679,11 +688,9 @@ class TestFluorescencePeakFields:
             for p in peaks:
                 assert p.is_saturated is not None
 
-    def test_group_label_assigned(self, fluor_db):
+    def test_group_label_assigned(self, fitted_fluor_db):
         """Fluorescence peaks should have mineral_assignment (group label) set."""
-        engine, _, _ = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
@@ -694,21 +701,17 @@ class TestFluorescencePeakFields:
             for label in labels:
                 assert label in valid_labels, f"Unexpected label: {label}"
 
-    def test_peak_type_is_gaussian(self, fluor_db):
-        engine, _, _ = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+    def test_peak_type_is_gaussian(self, fitted_fluor_db):
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
             for p in peaks:
                 assert p.peak_type == "gaussian"
 
-    def test_assignment_confidence_populated(self, fluor_db):
+    def test_assignment_confidence_populated(self, fitted_fluor_db):
         """Fluorescence peaks should have assignment_confidence set by cross-modal scoring."""
-        engine, _, _ = fluor_db
-        service = _make_service(engine)
-        service.fit_fluorescence(sol="0293", target="Quartier", scan="HDR_1")
+        engine, result = fitted_fluor_db
 
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
