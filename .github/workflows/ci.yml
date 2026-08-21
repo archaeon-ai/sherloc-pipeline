@@ -1,8 +1,24 @@
 name: CI
-on: [push, pull_request]
+# Trigger discipline (archaeon-ai Actions budget, 2026-08-21): this suite is
+# the org's only multi-minute workflow. `on: [push, pull_request]` with no
+# branch filter ran it TWICE per push to a PR branch; with 25-min runs that
+# burned the org's entire 3,000-minute monthly allowance by 08-21 and blocked
+# CI for every repo. Run once per PR head, once per main push, and cancel a
+# superseded run when a new push lands on the same ref.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         # fetch-depth: 0 pulls full history + tags so
@@ -32,7 +48,9 @@ jobs:
       # double-marked `docker` + `slow`; the dedicated contract-smoke.yml
       # workflow opts it in. Filter on `not docker` defensively so the
       # smoke is excluded even if `slow` is dropped on a future test.
-      - run: pytest -m "not slow and not docker"
+      # --durations keeps the slowest tests visible in every run so a stage
+      # silently un-stubbed or a new heavy test shows up before the bill does.
+      - run: pytest -m "not slow and not docker" --durations=25
       - name: Guard against tests reading absolute local paths
         run: |
           # Catch hardcoded operator-local paths in test IDs / parametrize values.
