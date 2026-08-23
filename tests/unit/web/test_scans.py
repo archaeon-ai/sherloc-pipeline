@@ -7,6 +7,31 @@ import pytest
 from tests.unit.web.conftest import SCAN_UUID, SOL_NUMBER
 
 
+def _add_scan(session, *, scan_id: str, sol: int, target: str, name: str) -> None:
+    """Seed the minimum scan shape needed by list-filter/sort tests."""
+    from sherloc_pipeline.database.models import ScanORM, SolORM
+
+    if session.get(SolORM, sol) is None:
+        session.add(SolORM(sol_number=sol, data_source="loupe"))
+    session.add(
+        ScanORM(
+            id=scan_id,
+            sol_number=sol,
+            scan_name=name,
+            target=target,
+            scan_id=f"{sol}_{name}",
+            sclk_start=730000000 + sol,
+            n_points=1,
+            n_channels=2148,
+            laser_wavelength_nm=248.5794,
+            data_source="loupe",
+            target_type="mars_target",
+            scan_class="primary",
+            scan_type="detail",
+        )
+    )
+
+
 @pytest.mark.asyncio
 async def test_list_scans(client):
     resp = await client.get("/api/scans")
@@ -37,6 +62,29 @@ async def test_list_scans_filter_sol(client):
 
 
 @pytest.mark.asyncio
+async def test_list_scans_filter_sol_range(client, test_engine):
+    from sqlalchemy.orm import Session
+
+    with Session(test_engine) as session:
+        _add_scan(session, scan_id="range-920", sol=920, target="Zulu", name="detail_920")
+        _add_scan(session, scan_id="range-923", sol=923, target="Alpha", name="detail_923")
+        session.commit()
+
+    resp = await client.get("/api/scans", params={"sol_from": 921, "sol_to": 922})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert [scan["sol_number"] for scan in data["scans"]] == [921]
+
+
+@pytest.mark.asyncio
+async def test_list_scans_rejects_reversed_sol_range(client):
+    resp = await client.get("/api/scans", params={"sol_from": 923, "sol_to": 921})
+    assert resp.status_code == 400
+    assert "sol_from" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_list_scans_filter_target(client):
     resp = await client.get("/api/scans", params={"target": "Amherst Point"})
     data = resp.json()
@@ -62,6 +110,72 @@ async def test_list_scans_pagination(client):
     data = resp.json()
     assert data["limit"] == 1
     assert len(data["scans"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_scans_sort_sol_descending(client, test_engine):
+    from sqlalchemy.orm import Session
+
+    with Session(test_engine) as session:
+        _add_scan(session, scan_id="sort-920", sol=920, target="Zulu", name="detail_920")
+        _add_scan(session, scan_id="sort-923", sol=923, target="Alpha", name="detail_923")
+        session.commit()
+
+    resp = await client.get("/api/scans", params={"sort_by": "sol", "sort_order": "desc"})
+    assert resp.status_code == 200
+    assert [scan["sol_number"] for scan in resp.json()["scans"]] == [923, 921, 920]
+
+
+@pytest.mark.asyncio
+async def test_list_scans_sort_target_ascending(client, test_engine):
+    from sqlalchemy.orm import Session
+
+    with Session(test_engine) as session:
+        _add_scan(session, scan_id="sort-920", sol=920, target="Zulu", name="detail_920")
+        _add_scan(session, scan_id="sort-923", sol=923, target="alpha_site", name="detail_923")
+        session.commit()
+
+    resp = await client.get("/api/scans", params={"sort_by": "target", "sort_order": "asc"})
+    assert resp.status_code == 200
+    assert [scan["target"] for scan in resp.json()["scans"]] == [
+        "alpha_site",
+        "Amherst_Point",
+        "Zulu",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sort_by", ["sol", "target"])
+async def test_list_scans_sort_uses_unique_final_tie_breaker(client, test_engine, sort_by):
+    from sqlalchemy.orm import Session
+
+    with Session(test_engine) as session:
+        # Insert reverse-ID order so the assertion specifically exercises the
+        # final ordering column when every user-visible sort key is identical.
+        _add_scan(session, scan_id="tie-b", sol=924, target="Same_Target", name="detail_tie")
+        _add_scan(session, scan_id="tie-a", sol=924, target="Same_Target", name="detail_tie")
+        session.commit()
+
+    resp = await client.get(
+        "/api/scans",
+        params={"sol": 924, "sort_by": sort_by, "sort_order": "asc"},
+    )
+    assert resp.status_code == 200
+    assert [scan["id"] for scan in resp.json()["scans"]] == ["tie-a", "tie-b"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params", "detail"),
+    [
+        ({"sort_by": "scan_name"}, "sort_by"),
+        ({"sort_by": "sol", "sort_order": "sideways"}, "sort_order"),
+    ],
+)
+async def test_list_scans_rejects_invalid_sort(client, params, detail):
+    resp = await client.get("/api/scans", params=params)
+    assert resp.status_code == 400
+    assert detail in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
