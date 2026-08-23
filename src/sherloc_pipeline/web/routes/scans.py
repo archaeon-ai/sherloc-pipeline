@@ -145,11 +145,20 @@ def list_scans(
         sort_column = ScanORM.sol_number
 
     if sort_by is None:
-        order_columns = (ScanORM.sol_number.asc(), ScanORM.scan_name.asc())
+        order_columns = (
+            ScanORM.sol_number.asc(),
+            ScanORM.scan_name.asc(),
+            ScanORM.id.asc(),
+        )
     else:
         primary_order = sort_column.desc() if sort_order == "desc" else sort_column.asc()
         # Stable tie-breakers prevent rows moving between paginated requests.
-        order_columns = (primary_order, ScanORM.sol_number.asc(), ScanORM.scan_name.asc())
+        order_columns = (
+            primary_order,
+            ScanORM.sol_number.asc(),
+            ScanORM.scan_name.asc(),
+            ScanORM.id.asc(),
+        )
 
     scans = q.order_by(*order_columns).offset(offset).limit(limit).all()
 

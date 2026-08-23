@@ -145,6 +145,26 @@ async def test_list_scans_sort_target_ascending(client, test_engine):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sort_by", ["sol", "target"])
+async def test_list_scans_sort_uses_unique_final_tie_breaker(client, test_engine, sort_by):
+    from sqlalchemy.orm import Session
+
+    with Session(test_engine) as session:
+        # Insert reverse-ID order so the assertion specifically exercises the
+        # final ordering column when every user-visible sort key is identical.
+        _add_scan(session, scan_id="tie-b", sol=924, target="Same_Target", name="detail_tie")
+        _add_scan(session, scan_id="tie-a", sol=924, target="Same_Target", name="detail_tie")
+        session.commit()
+
+    resp = await client.get(
+        "/api/scans",
+        params={"sol": 924, "sort_by": sort_by, "sort_order": "asc"},
+    )
+    assert resp.status_code == 200
+    assert [scan["id"] for scan in resp.json()["scans"]] == ["tie-a", "tie-b"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("params", "detail"),
     [

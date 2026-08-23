@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { currentHash, parsedRoute, accessMode, features, navigate } from './lib/stores';
+  import {
+    currentHash,
+    parsedRoute,
+    accessMode,
+    accessModeResolved,
+    features,
+    navigate,
+  } from './lib/stores';
   import { getAccessMode } from './lib/api';
   import Navigation from './components/Navigation.svelte';
   import ScanBrowser from './components/ScanBrowser.svelte';
@@ -10,6 +17,10 @@
   import ProcessingWorkbench from './components/ProcessingWorkbench.svelte';
   import PdsBrowser from './components/PdsBrowser.svelte';
   import MapMode from './components/map/MapMode.svelte';
+
+  // Reset before child components mount. ScanBrowser must not restore a saved
+  // filtered hash until the startup access-mode redirect has been decided.
+  accessModeResolved.set(false);
 
   $: route = $parsedRoute;
 
@@ -46,10 +57,12 @@
         && get(features).pds_browser
         && (!window.location.hash || window.location.hash === '#/')
       ) {
-        window.location.hash = '#/pds';
+        navigate('#/pds');
       }
     } catch {
       // ignore — default to internal
+    } finally {
+      accessModeResolved.set(true);
     }
   });
 

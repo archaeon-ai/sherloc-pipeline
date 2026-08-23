@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import ScanBrowser from './ScanBrowser.svelte';
 import { getScans } from '../lib/api';
-import { currentHash } from '../lib/stores';
+import { accessModeResolved, currentHash } from '../lib/stores';
 import type { ScanListResponse } from '../lib/types';
 
 vi.mock('../lib/api', () => ({
@@ -46,6 +46,7 @@ beforeEach(() => {
   sessionStorage.clear();
   window.history.replaceState(null, '', '#/');
   currentHash.set('#/');
+  accessModeResolved.set(true);
 });
 
 afterEach(() => {
@@ -53,6 +54,22 @@ afterEach(() => {
 });
 
 describe('ScanBrowser filters and sorting', () => {
+  it('waits for access-mode routing before restoring a saved hash', async () => {
+    accessModeResolved.set(false);
+    sessionStorage.setItem('sherloc.scanBrowserHash', '#/?target=Amherst');
+
+    render(ScanBrowser);
+    expect(window.location.hash).toBe('#/');
+    expect(getScansMock).not.toHaveBeenCalled();
+
+    accessModeResolved.set(true);
+
+    await waitFor(() => expect(screen.getByLabelText('Target')).toHaveValue('Amherst'));
+    await waitFor(() => expect(getScansMock).toHaveBeenCalledWith(
+      expect.objectContaining({ target: 'Amherst' }),
+    ));
+  });
+
   it('submits sol range and target filters through the Enter-enabled form', async () => {
     render(ScanBrowser);
     await waitFor(() => expect(getScansMock).toHaveBeenCalledTimes(1));

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentHash, navigate } from '../lib/stores';
+  import { accessModeResolved, currentHash, navigate } from '../lib/stores';
   import { getScans } from '../lib/api';
   import type { ScanListItem, ScanFilterParams } from '../lib/types';
 
@@ -30,15 +30,27 @@
   $: currentPage = Math.floor(offset / limit) + 1;
 
   onMount(() => {
-    // Query state makes browser Back work, while session storage also covers
-    // the in-app "Scans" links that intentionally navigate to bare #/.
-    const current = window.location.hash || '#/';
-    const hash = current.includes('?')
-      ? current
-      : sessionStorage.getItem(savedBrowserHashKey) ?? current;
-    restoreState(hash);
-    syncBrowserLocation();
-    fetchScans();
+    let initialized = false;
+    const unsubscribe = accessModeResolved.subscribe((resolved) => {
+      if (!resolved || initialized) return;
+
+      const current = window.location.hash || '#/';
+      // A public-mode startup may have redirected while this component was
+      // still mounted. Never restore browser state over that route.
+      if (current !== '#/' && !current.startsWith('#/?')) return;
+
+      initialized = true;
+      // Query state makes browser Back work, while session storage also covers
+      // the in-app "Scans" links that intentionally navigate to bare #/.
+      const hash = current.includes('?')
+        ? current
+        : sessionStorage.getItem(savedBrowserHashKey) ?? current;
+      restoreState(hash);
+      syncBrowserLocation();
+      fetchScans();
+    });
+
+    return unsubscribe;
   });
 
   function restoreState(hash: string) {

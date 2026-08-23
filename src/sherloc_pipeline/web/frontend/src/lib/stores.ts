@@ -13,6 +13,9 @@ import type {
 
 // --- Access mode ---
 export const accessMode = writable<'internal' | 'public'>('internal');
+// Scan Browser session restoration waits for this signal so it cannot replace
+// a bare startup route before App applies the public-mode default redirect.
+export const accessModeResolved = writable(false);
 
 // --- Route ---
 export const currentHash = writable(window.location.hash || '#/');

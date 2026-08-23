@@ -6,22 +6,42 @@
 // sees `pds` while features.pds_browser is false.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render } from '@testing-library/svelte';
+import { render, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import App from './App.svelte';
-import { features, currentHash } from './lib/stores';
+import { accessMode, accessModeResolved, features, currentHash } from './lib/stores';
 
 beforeEach(() => {
+  accessMode.set('internal');
   features.set({ pds_browser: true });
+  accessModeResolved.set(false);
   currentHash.set('#/');
   window.location.hash = '#/';
+  sessionStorage.clear();
   // Block App's onMount network calls (getAccessMode) from polluting
   // the assertions — leave them rejecting so the public-mode default
   // redirect path doesn't fire on the synchronous render.
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('blocked in test')));
 });
 
-describe('App — disabled-feature `#/pds` redirect (issue #21)', () => {
+describe('App routing', () => {
+  it('preserves the public-mode default redirect when a saved scan filter exists', async () => {
+    sessionStorage.setItem('sherloc.scanBrowserHash', '#/?target=Amherst');
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const body = String(input).includes('/config/access-mode')
+        ? { schema_version: '1.0.0', access_mode: 'public' }
+        : { status: 'ok' };
+      return Promise.resolve(new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }));
+
+    render(App);
+
+    await waitFor(() => expect(window.location.hash).toBe('#/pds'));
+  });
+
   it('redirects #/pds → #/ synchronously when pds_browser=false', async () => {
     features.set({ pds_browser: false });
     currentHash.set('#/pds');
