@@ -471,10 +471,14 @@ export type WsMessage =
 
 export interface ScanFilterParams {
   sol?: number;
+  sol_from?: number;
+  sol_to?: number;
   target?: string;
   scan_class?: string;
   scan_type?: string;
   processing_status?: string;
+  sort_by?: 'sol' | 'target';
+  sort_order?: 'asc' | 'desc';
   offset?: number;
   limit?: number;
 }

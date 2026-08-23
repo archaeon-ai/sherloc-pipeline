@@ -498,6 +498,27 @@ if fit:
 
 ---
 
+## Web HTTP API — Scan Browser query parameters
+
+`GET /api/scans` supports the Scan Browser's range filtering, sortable
+columns, and pagination. All parameters are optional:
+
+| Parameter | Meaning |
+|---|---|
+| `sol` | Exact sol match (retained for backward compatibility) |
+| `sol_from`, `sol_to` | Inclusive lower and upper sol bounds |
+| `target` | Case-insensitive substring match; spaces and underscores are equivalent |
+| `scan_class`, `scan_type`, `processing_status` | Existing categorical filters |
+| `sort_by` | `sol` or `target` |
+| `sort_order` | `asc` or `desc` (defaults to `asc`) |
+| `offset`, `limit` | Pagination offset and page size |
+
+A reversed sol range, unknown sort field, or unknown sort direction returns
+HTTP 400. Sorting includes stable sol/name tie-breakers so rows do not move
+between paginated requests.
+
+---
+
 ## Web HTTP API — Spectra despike method selector
 
 The web API (`sherloc_pipeline.web`) exposes a despike **method selector** on
@@ -686,4 +707,3 @@ glyph (hollow blue diamonds) from the red-triangle ML/modz spike markers.
 - [METHODS.md](METHODS.md) - Cosmic-ray detection (ML, v1.1) and coverage limits
 - [notebooks/spectral_analysis_example.ipynb](../notebooks/spectral_analysis_example.ipynb) - Complete notebook examples
 - [CHANGELOG.md](../CHANGELOG.md) - Version history
-

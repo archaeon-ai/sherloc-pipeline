@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { navigate } from '../lib/stores';
+  import { currentHash, navigate } from '../lib/stores';
   import { getScans } from '../lib/api';
   import type { ScanListItem, ScanFilterParams } from '../lib/types';
 
@@ -12,39 +12,98 @@
   // empty-DB response. When present we render the onboarding panel
   // in place of the standard table.
   let emptyDbMessage: string | null = null;
+  const savedBrowserHashKey = 'sherloc.scanBrowserHash';
 
   // Filters
-  let filterSol: string = '';
+  let filterSolFrom: string = '';
+  let filterSolTo: string = '';
   let filterTarget: string = '';
   let filterScanClass: string = '';
   let filterScanType: string = '';
   let filterProcessingStatus: string = '';
   let offset = 0;
   let limit = 50;
+  let sortBy: 'sol' | 'target' | '' = '';
+  let sortOrder: 'asc' | 'desc' = 'asc';
 
   $: totalPages = Math.ceil(total / limit);
   $: currentPage = Math.floor(offset / limit) + 1;
 
   onMount(() => {
-    // Read optional sol query param from hash (e.g. #/?sol=921)
-    const hashQuery = window.location.hash.replace(/^#\/?/, '');
-    const params = new URLSearchParams(hashQuery);
-    if (params.has('sol')) {
-      filterSol = params.get('sol') ?? '';
-    }
+    // Query state makes browser Back work, while session storage also covers
+    // the in-app "Scans" links that intentionally navigate to bare #/.
+    const current = window.location.hash || '#/';
+    const hash = current.includes('?')
+      ? current
+      : sessionStorage.getItem(savedBrowserHashKey) ?? current;
+    restoreState(hash);
+    syncBrowserLocation();
     fetchScans();
   });
+
+  function restoreState(hash: string) {
+    const queryIndex = hash.indexOf('?');
+    const params = new URLSearchParams(queryIndex >= 0 ? hash.slice(queryIndex + 1) : '');
+    const legacySol = params.get('sol') ?? '';
+    filterSolFrom = params.get('sol_from') ?? legacySol;
+    filterSolTo = params.get('sol_to') ?? legacySol;
+    filterTarget = params.get('target') ?? '';
+    filterScanClass = params.get('scan_class') ?? '';
+    filterScanType = params.get('scan_type') ?? '';
+    filterProcessingStatus = params.get('processing_status') ?? '';
+    offset = Math.max(0, Number.parseInt(params.get('offset') ?? '0', 10) || 0);
+    const requestedSort = params.get('sort_by');
+    sortBy = requestedSort === 'sol' || requestedSort === 'target' ? requestedSort : '';
+    sortOrder = params.get('sort_order') === 'desc' ? 'desc' : 'asc';
+  }
+
+  function browserHash(): string {
+    const params = new URLSearchParams();
+    if (filterSolFrom) params.set('sol_from', filterSolFrom);
+    if (filterSolTo) params.set('sol_to', filterSolTo);
+    if (filterTarget) params.set('target', filterTarget);
+    if (filterScanClass) params.set('scan_class', filterScanClass);
+    if (filterScanType) params.set('scan_type', filterScanType);
+    if (filterProcessingStatus) params.set('processing_status', filterProcessingStatus);
+    if (sortBy) {
+      params.set('sort_by', sortBy);
+      params.set('sort_order', sortOrder);
+    }
+    if (offset > 0) params.set('offset', String(offset));
+    const query = params.toString();
+    return query ? `#/?${query}` : '#/';
+  }
+
+  function syncBrowserLocation() {
+    const hash = browserHash();
+    sessionStorage.setItem(savedBrowserHashKey, hash);
+    if (window.location.hash !== hash) {
+      window.history.replaceState(null, '', hash);
+    }
+    currentHash.set(hash);
+  }
+
+  function optionalInteger(value: string): number | undefined {
+    if (!value) return undefined;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
 
   async function fetchScans() {
     loading = true;
     error = '';
     try {
       const params: ScanFilterParams = { offset, limit };
-      if (filterSol) params.sol = parseInt(filterSol, 10);
+      params.sol_from = optionalInteger(filterSolFrom);
+      params.sol_to = optionalInteger(filterSolTo);
       if (filterTarget) params.target = filterTarget;
       if (filterScanClass) params.scan_class = filterScanClass;
       if (filterScanType) params.scan_type = filterScanType;
       if (filterProcessingStatus) params.processing_status = filterProcessingStatus;
+      if (sortBy) {
+        params.sort_by = sortBy;
+        params.sort_order = sortOrder;
+      }
 
       const res = await getScans(params);
       scans = res.scans;
@@ -59,22 +118,48 @@
 
   function applyFilters() {
     offset = 0;
+    syncBrowserLocation();
     fetchScans();
   }
 
   function clearFilters() {
-    filterSol = '';
+    filterSolFrom = '';
+    filterSolTo = '';
     filterTarget = '';
     filterScanClass = '';
     filterScanType = '';
     filterProcessingStatus = '';
     offset = 0;
+    syncBrowserLocation();
     fetchScans();
   }
 
   function goPage(page: number) {
     offset = (page - 1) * limit;
+    syncBrowserLocation();
     fetchScans();
+  }
+
+  function toggleSort(column: 'sol' | 'target') {
+    if (sortBy === column) {
+      sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortBy = column;
+      sortOrder = 'asc';
+    }
+    offset = 0;
+    syncBrowserLocation();
+    fetchScans();
+  }
+
+  function sortAria(column: 'sol' | 'target'): 'none' | 'ascending' | 'descending' {
+    if (sortBy !== column) return 'none';
+    return sortOrder === 'asc' ? 'ascending' : 'descending';
+  }
+
+  function sortIndicator(column: 'sol' | 'target'): string {
+    if (sortBy !== column) return '\u2195';
+    return sortOrder === 'asc' ? '\u2191' : '\u2193';
   }
 
   function openScan(scanId: string) {
@@ -93,12 +178,16 @@
   <p class="page-subtitle">Browse and filter SHERLOC measurement scans</p>
 
   <!-- Filters -->
-  <div class="card" style="margin-bottom: 16px">
+  <form class="card" style="margin-bottom: 16px" on:submit|preventDefault={applyFilters}>
     <div class="card-body">
       <div class="filter-row">
         <div class="filter-field">
-          <label for="f-sol">Sol</label>
-          <input id="f-sol" type="number" placeholder="e.g. 921" bind:value={filterSol} style="width: 100px" />
+          <label for="f-sol-from">Sol From</label>
+          <input id="f-sol-from" type="number" placeholder="e.g. 921" bind:value={filterSolFrom} style="width: 100px" />
+        </div>
+        <div class="filter-field">
+          <label for="f-sol-to">Sol To</label>
+          <input id="f-sol-to" type="number" placeholder="e.g. 1000" bind:value={filterSolTo} style="width: 100px" />
         </div>
         <div class="filter-field">
           <label for="f-target">Target</label>
@@ -133,12 +222,12 @@
           </select>
         </div>
         <div class="filter-actions">
-          <button class="btn-primary" on:click={applyFilters}>Filter</button>
-          <button class="btn-secondary" on:click={clearFilters}>Clear</button>
+          <button class="btn-primary" type="submit">Filter</button>
+          <button class="btn-secondary" type="button" on:click={clearFilters}>Clear</button>
         </div>
       </div>
     </div>
-  </div>
+  </form>
 
   {#if error}
     <div class="error-message">{error}</div>
@@ -188,8 +277,16 @@
       <table>
         <thead>
           <tr>
-            <th>Sol</th>
-            <th>Target</th>
+            <th aria-sort={sortAria('sol')}>
+              <button class="sort-header" type="button" on:click={() => toggleSort('sol')}>
+                Sol <span class="sort-indicator" aria-hidden="true">{sortIndicator('sol')}</span>
+              </button>
+            </th>
+            <th aria-sort={sortAria('target')}>
+              <button class="sort-header" type="button" on:click={() => toggleSort('target')}>
+                Target <span class="sort-indicator" aria-hidden="true">{sortIndicator('target')}</span>
+              </button>
+            </th>
             <th>Scan Name</th>
             <th>Points</th>
             <th>Class</th>
@@ -279,6 +376,29 @@
 
   .clickable {
     cursor: pointer;
+  }
+
+  .sort-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: inherit;
+    cursor: pointer;
+  }
+
+  .sort-header:hover,
+  .sort-header:focus-visible {
+    color: var(--color-primary);
+  }
+
+  .sort-indicator {
+    color: var(--color-text-tertiary);
+    font-size: 0.8em;
   }
 
   .pagination {

@@ -43,6 +43,8 @@ router = APIRouter(prefix="/api", tags=["scans"])
 
 VALID_SCAN_CLASSES = {"primary", "sub_scan", "composite"}
 VALID_SCAN_TYPES = {"detail", "line", "hdr", "survey"}
+VALID_SCAN_SORT_FIELDS = {"sol", "target"}
+VALID_SORT_ORDERS = {"asc", "desc"}
 
 
 def _get_session(request: Request) -> Session:
@@ -86,16 +88,26 @@ def _count_ml_masks(session: Session, scan_id: str) -> int:
 def list_scans(
     request: Request,
     sol: Optional[int] = Query(None),
+    sol_from: Optional[int] = Query(None),
+    sol_to: Optional[int] = Query(None),
     target: Optional[str] = Query(None),
     scan_class: Optional[str] = Query(None),
     scan_type: Optional[str] = Query(None),
     processing_status: Optional[str] = Query(None),
+    sort_by: Optional[str] = Query(None),
+    sort_order: str = Query("asc"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ) -> ScanListResponse:
     """List scans with optional filters and pagination."""
     if scan_class is not None and scan_class not in VALID_SCAN_CLASSES:
         raise HTTPException(status_code=400, detail=f"Invalid scan_class: {scan_class}")
+    if sol_from is not None and sol_to is not None and sol_from > sol_to:
+        raise HTTPException(status_code=400, detail="sol_from must be less than or equal to sol_to")
+    if sort_by is not None and sort_by not in VALID_SCAN_SORT_FIELDS:
+        raise HTTPException(status_code=400, detail=f"Invalid sort_by: {sort_by}")
+    if sort_order not in VALID_SORT_ORDERS:
+        raise HTTPException(status_code=400, detail=f"Invalid sort_order: {sort_order}")
 
     session = _get_session(request)
     data_access = _get_data_access(request)
@@ -107,6 +119,10 @@ def list_scans(
 
     if sol is not None:
         q = q.filter(ScanORM.sol_number == sol)
+    if sol_from is not None:
+        q = q.filter(ScanORM.sol_number >= sol_from)
+    if sol_to is not None:
+        q = q.filter(ScanORM.sol_number <= sol_to)
     if target is not None:
         # Case-insensitive substring match, treating spaces/underscores as equivalent
         pattern = f"%{target.replace('_', ' ')}%"
@@ -122,7 +138,20 @@ def list_scans(
             q = q.filter(ScanORM.processing_status == processing_status)
 
     total = q.count()
-    scans = q.order_by(ScanORM.sol_number, ScanORM.scan_name).offset(offset).limit(limit).all()
+    if sort_by == "target":
+        # Match target filtering's space/underscore and case normalization.
+        sort_column = func.lower(func.replace(ScanORM.target, "_", " "))
+    else:
+        sort_column = ScanORM.sol_number
+
+    if sort_by is None:
+        order_columns = (ScanORM.sol_number.asc(), ScanORM.scan_name.asc())
+    else:
+        primary_order = sort_column.desc() if sort_order == "desc" else sort_column.asc()
+        # Stable tie-breakers prevent rows moving between paginated requests.
+        order_columns = (primary_order, ScanORM.sol_number.asc(), ScanORM.scan_name.asc())
+
+    scans = q.order_by(*order_columns).offset(offset).limit(limit).all()
 
     # Per spec §12.2: when the DB is empty (zero scans visible to this
     # access mode) AND the caller applied no filters, surface a hint
@@ -130,7 +159,7 @@ def list_scans(
     message: Optional[str] = None
     has_filters = any(
         v is not None
-        for v in (sol, target, scan_class, scan_type, processing_status)
+        for v in (sol, sol_from, sol_to, target, scan_class, scan_type, processing_status)
     )
     if total == 0 and not has_filters:
         message = "No data ingested yet. See 'sherloc init --help' to bootstrap."
