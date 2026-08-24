@@ -400,6 +400,118 @@ class TestScanLinkage:
             assert matched_scan.scan_class == "primary"
             assert matched_scan.scan_name == "meteorite_detail_1"
 
+    def test_ingest_image_links_primary_scan_on_sclk_tie(self, tmp_path, monkeypatch):
+        """End-to-end regression for issue #42 through the public
+        ``ingest_image()`` entry point (not just the private selection
+        method), so this exercises the exact code path a real ingestion
+        run takes.
+
+        Simulates the production scenario: a single physical ACI image
+        file whose SCLK falls in the tie window shared by the sol-712
+        primary scan and its first sub-scan. Only one scan can own that
+        image row, so the fix's contract is that the *primary* — the
+        scan the issue says was wrongly hidden — is the one that ends up
+        linked, and ``ContextImageORM.scan_id`` (which
+        ``/api/images/{scan_id}/aci`` keys off of, per
+        ``web/routes/images.py:select_served_aci``) resolves to it.
+
+        ``read_aci_image``/``get_raw_vicar_label`` are monkeypatched
+        because a real VICAR/PDS3 fixture file is not available in this
+        suite (see ``TestRealImageIngestion``, skipped without
+        ``./data/loupe``); everything downstream of metadata extraction —
+        locator derivation, scan matching, and the DB write — runs for
+        real.
+        """
+        import sherloc_pipeline.services.image_ingestion as ii_module
+        from sherloc_pipeline.vision.img_reader import ACIImageMetadata
+
+        db_path = tmp_path / "test.db"
+        service = ImageIngestionService(database_path=db_path)
+        create_all_tables(service.engine)
+
+        shared_sclk = 730185246
+        with get_session(service.engine) as session:
+            sol = SolORM(
+                sol_number=712,
+                data_source="loupe",
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(sol)
+            session.flush()
+
+            session.add(
+                ScanORM(
+                    id=str(uuid.uuid4()),
+                    sol_number=712,
+                    scan_name="meteorite_detail_1a",
+                    scan_id="SrlcSpecSpecSohRaw_0730185246-26622-1",
+                    scan_class="sub_scan",
+                    sclk_start=shared_sclk,
+                    n_points=33,
+                    n_channels=2148,
+                    shots_per_point=10,
+                    laser_wavelength_nm=248.6,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            primary_scan_id = str(uuid.uuid4())
+            session.add(
+                ScanORM(
+                    id=primary_scan_id,
+                    sol_number=712,
+                    scan_name="meteorite_detail_1",
+                    scan_id="SrlcSpecSpecSohRaw_0730185246-26622-2",
+                    scan_class="primary",
+                    sclk_start=shared_sclk,
+                    n_points=100,
+                    n_channels=2148,
+                    shots_per_point=10,
+                    laser_wavelength_nm=248.6,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            session.commit()
+
+        # Loupe workspace layout so derive_rel_locator() finds the
+        # sol_NNNN anchor (core/r2_keys.py:derive_rel_locator).
+        img_path = (
+            tmp_path
+            / "loupe"
+            / "sol_0712"
+            / "meteorite_detail_1"
+            / "img"
+            / "SC3_0712_TIE_TEST.IMG"
+        )
+        img_path.parent.mkdir(parents=True)
+        img_path.write_bytes(b"not a real IMG; read_aci_image is monkeypatched")
+
+        import numpy as np
+
+        fake_image = np.zeros((10, 10), dtype=np.uint8)
+        fake_metadata = ACIImageMetadata(
+            product_id="SC3_0712_TIE_TEST",
+            sol=712,
+            spacecraft_clock=str(shared_sclk - 14),
+            label_size=0,
+        )
+        monkeypatch.setattr(
+            ii_module, "read_aci_image", lambda path, **kw: (fake_image, fake_metadata)
+        )
+        monkeypatch.setattr(ii_module, "get_raw_vicar_label", lambda path: {})
+
+        result = service.ingest_image(img_path)
+
+        assert result.metadata["success"] is True
+        assert result.metadata.get("errors") in (None, [])
+
+        with get_session(service.engine) as session:
+            images = session.query(ContextImageORM).all()
+            assert len(images) == 1, "exactly one image row for the tied SCLK"
+            assert images[0].scan_id == primary_scan_id, (
+                "the image must link to the primary scan (the one issue #42 "
+                "reports as hidden), not the tied sub-scan"
+            )
+
 
 # Skip integration tests if real data not available
 @pytest.mark.skipif(
