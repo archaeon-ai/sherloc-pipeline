@@ -1,0 +1,6 @@
+work_package: archaeon-ai/sherloc-pipeline#42 (cal-target view: sol 712 meteorite_detail_1 primary scan hidden)
+branch: 42-cal-target-view-sol-712-meteorite-detail-1
+head: 74e3f3f1cbb06b542b5eae4ad38d1e278a3daca2
+open_decisions: []
+next_action: run /code-review on the PR and iterate to GO or blocked; do not merge
+last_verified: 2026-08-24T09:23:06-07:00 — full pytest suite run in foreground (3360 passed, 230 skipped, 13 failed; failures are pre-existing ModuleNotFoundError:onnxruntime, the optional ml-despike extra not installed in this worktree venv, unrelated to this change — confirmed by isolated single-test run)
