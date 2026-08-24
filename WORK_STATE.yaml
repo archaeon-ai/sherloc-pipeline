@@ -1,0 +1,6 @@
+work_package: archaeon-ai/sherloc-pipeline#42 (cal-target view: sol 712 meteorite_detail_1 primary scan hidden)
+branch: 42-cal-target-view-sol-712-meteorite-detail-1
+head: 7417d55
+open_decisions: []
+next_action: run /code-review round 2 on PR #47 (post connector P1/P2 disposition) and iterate to GO or blocked; do not merge
+last_verified: 2026-08-24T10:35:00-07:00 — full pytest suite run in foreground (3361 passed, 230 skipped, 13 failed; failures are pre-existing ModuleNotFoundError:onnxruntime, the optional ml-despike extra not installed in this worktree venv, unrelated to this change). Round-1 Codex /code-review returned NO-GO on 2 Major findings (F1: no remediation path for already-ingested prod data; F2: test only covered the private selection method) — addressed F2 with an end-to-end test through ingest_image() (2beb122, verified fails pre-fix/passes post-fix) and F1 via a PR-body Rollout note (no CLI/migration in this repo owns re-ingestion). chatgpt-codex-connector then posted P1.1 (same concern as F1 — dispositioned Acknowledge, same rationale) and P2.1 (tie-break used Scan.id UUID instead of the stable scan_id, non-reproducible across DB rebuilds) — fixed P2.1 in 7417d55, dispositioned both connector findings in a PR response comment.

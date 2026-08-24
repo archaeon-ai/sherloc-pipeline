@@ -507,6 +507,13 @@ class ImageIngestionService:
         1. Look for scans on the same sol
         2. Find scan with sclk_start within tolerance window after image SCLK
         3. Prefer closest match if multiple candidates
+        4. Break exact ties (identical sclk_start, e.g. a primary detail scan
+           and its first sub-scan sharing an acquisition timestamp — see
+           issue #42) by preferring the primary scan, then by the stable
+           mission scan_id (not the row's UUID primary key, which is
+           reassigned on any re-ingest/rebuild and would make the tie-break
+           non-reproducible across environments), so the match is
+           deterministic instead of depending on row order.
 
         Args:
             session: Database session
@@ -523,7 +530,10 @@ class ImageIngestionService:
             WHERE sol_number = :sol_number
               AND sclk_start > :sclk_min
               AND sclk_start <= :sclk_max
-            ORDER BY delta ASC
+            ORDER BY delta ASC,
+                     CASE WHEN scan_class = 'primary' THEN 0 ELSE 1 END ASC,
+                     scan_id ASC,
+                     id ASC
             LIMIT 1
         """)
 
