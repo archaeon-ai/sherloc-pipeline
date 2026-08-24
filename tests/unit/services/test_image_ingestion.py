@@ -331,6 +331,75 @@ class TestScanLinkage:
 
             assert scan_id is None
 
+    def test_find_matching_scan_prefers_primary_on_sclk_tie(self, tmp_path):
+        """Regression test for issue #42 (sol 712 meteorite_detail_1).
+
+        A primary detail scan and its first sub-scan can share the same
+        ``sclk_start`` (they differ only in the trailing scan_id suffix,
+        e.g. ``...-26622-2`` vs ``...-26622-1``). Both rows tie for
+        smallest delta against an incoming image's SCLK, so the tie-break
+        must deterministically prefer the primary scan rather than
+        whichever row SQLite happens to return first.
+        """
+        db_path = tmp_path / "test.db"
+        service = ImageIngestionService(database_path=db_path)
+        create_all_tables(service.engine)
+
+        shared_sclk = 730185246
+        with get_session(service.engine) as session:
+            sol = SolORM(
+                sol_number=712,
+                data_source="loupe",
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(sol)
+            session.flush()
+
+            # Insert the sub-scan FIRST so a naive "first row wins" tie-break
+            # would pick it over the primary.
+            session.add(
+                ScanORM(
+                    id=str(uuid.uuid4()),
+                    sol_number=712,
+                    scan_name="meteorite_detail_1a",
+                    scan_id="SrlcSpecSpecSohRaw_0730185246-26622-1",
+                    scan_class="sub_scan",
+                    sclk_start=shared_sclk,
+                    n_points=33,
+                    n_channels=2148,
+                    shots_per_point=10,
+                    laser_wavelength_nm=248.6,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            session.add(
+                ScanORM(
+                    id=str(uuid.uuid4()),
+                    sol_number=712,
+                    scan_name="meteorite_detail_1",
+                    scan_id="SrlcSpecSpecSohRaw_0730185246-26622-2",
+                    scan_class="primary",
+                    sclk_start=shared_sclk,
+                    n_points=100,
+                    n_channels=2148,
+                    shots_per_point=10,
+                    laser_wavelength_nm=248.6,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            session.commit()
+
+        with get_session(service.engine) as session:
+            image_sclk = shared_sclk - 14
+            matched_id = service._find_matching_scan(session, image_sclk, 712)
+
+            assert matched_id is not None
+            matched_scan = (
+                session.query(ScanORM).filter(ScanORM.id == matched_id).one()
+            )
+            assert matched_scan.scan_class == "primary"
+            assert matched_scan.scan_name == "meteorite_detail_1"
+
 
 # Skip integration tests if real data not available
 @pytest.mark.skipif(
