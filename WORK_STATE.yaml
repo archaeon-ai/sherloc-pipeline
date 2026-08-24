@@ -1,6 +1,6 @@
 work_package: archaeon-ai/sherloc-pipeline#42 (cal-target view: sol 712 meteorite_detail_1 primary scan hidden)
 branch: 42-cal-target-view-sol-712-meteorite-detail-1
-head: 74e3f3f1cbb06b542b5eae4ad38d1e278a3daca2
+head: 2beb122
 open_decisions: []
-next_action: run /code-review on the PR and iterate to GO or blocked; do not merge
-last_verified: 2026-08-24T09:23:06-07:00 — full pytest suite run in foreground (3360 passed, 230 skipped, 13 failed; failures are pre-existing ModuleNotFoundError:onnxruntime, the optional ml-despike extra not installed in this worktree venv, unrelated to this change — confirmed by isolated single-test run)
+next_action: run /code-review round 2 on PR #47 and iterate to GO or blocked; do not merge
+last_verified: 2026-08-24T10:05:00-07:00 — full pytest suite run in foreground (3361 passed, 230 skipped, 13 failed; failures are pre-existing ModuleNotFoundError:onnxruntime, the optional ml-despike extra not installed in this worktree venv, unrelated to this change). Round-1 /code-review (Codex) returned NO-GO on 2 Major findings: (F1) no remediation path for already-ingested production data, (F2) test only covered the private selection method. Addressed F2 with a new end-to-end test through ingest_image() (commit 2beb122), verified to fail pre-fix and pass post-fix. F1 addressed via PR body rollout note (no CLI/migration in this repo owns re-ingestion; ImageIngestionService is a library consumed by a private pipeline — documented that already-ingested sol-712 images require a downstream force=True re-ingest run).
