@@ -509,8 +509,11 @@ class ImageIngestionService:
         3. Prefer closest match if multiple candidates
         4. Break exact ties (identical sclk_start, e.g. a primary detail scan
            and its first sub-scan sharing an acquisition timestamp — see
-           issue #42) by preferring the primary scan, then by scan id, so
-           the match is deterministic instead of depending on row order.
+           issue #42) by preferring the primary scan, then by the stable
+           mission scan_id (not the row's UUID primary key, which is
+           reassigned on any re-ingest/rebuild and would make the tie-break
+           non-reproducible across environments), so the match is
+           deterministic instead of depending on row order.
 
         Args:
             session: Database session
@@ -529,6 +532,7 @@ class ImageIngestionService:
               AND sclk_start <= :sclk_max
             ORDER BY delta ASC,
                      CASE WHEN scan_class = 'primary' THEN 0 ELSE 1 END ASC,
+                     scan_id ASC,
                      id ASC
             LIMIT 1
         """)
