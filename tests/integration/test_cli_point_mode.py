@@ -72,7 +72,7 @@ class TestCLIPointModeValidation:
         "normalized_baselined",
         "normalized_despiked_baselined",
     ])
-    def test_valid_levels_accepted(self, level, fixtures_path, tmp_path):
+    def test_valid_levels_accepted(self, level, writable_pipeline_outputs):
         """Test that all valid level values are accepted."""
         # Use fixture data
         result = runner.invoke(app, [
@@ -82,7 +82,7 @@ class TestCLIPointModeValidation:
             "--scan", "detail_1",
             "--point", "0",
             "--level", level,
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
             "--export", "csv",
         ])
         
@@ -93,7 +93,7 @@ class TestCLIPointModeValidation:
 class TestCLIPointModeExecution:
     """Test actual execution of point mode via CLI."""
     
-    def test_point_mode_basic(self, fixtures_path, tmp_path):
+    def test_point_mode_basic(self, writable_pipeline_outputs):
         """Test basic point mode execution."""
         result = runner.invoke(app, [
             "plot",
@@ -102,7 +102,7 @@ class TestCLIPointModeExecution:
             "--scan", "detail_1",
             "--point", "0",
             "--level", "normalized",
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
             "--export", "csv",
         ])
         
@@ -110,7 +110,7 @@ class TestCLIPointModeExecution:
         assert "point 0" in result.stdout
         assert "normalized" in result.stdout
     
-    def test_point_mode_with_xlim(self, fixtures_path, tmp_path):
+    def test_point_mode_with_xlim(self, writable_pipeline_outputs):
         """Test point mode with x-axis limits."""
         result = runner.invoke(app, [
             "plot",
@@ -120,14 +120,14 @@ class TestCLIPointModeExecution:
             "--point", "5",
             "--level", "normalized_baselined",
             "--xlim", "500,1500",
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
             "--export", "csv",
         ])
         
         assert result.exit_code == 0
         assert "point 5" in result.stdout
     
-    def test_point_mode_with_ylim(self, fixtures_path, tmp_path):
+    def test_point_mode_with_ylim(self, writable_pipeline_outputs):
         """Test point mode with y-axis limits."""
         result = runner.invoke(app, [
             "plot",
@@ -137,14 +137,14 @@ class TestCLIPointModeExecution:
             "--point", "3",
             "--level", "normalized_despiked_baselined",
             "--ylim", "-100,500",
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
             "--export", "csv",
         ])
         
         assert result.exit_code == 0
         assert "point 3" in result.stdout
     
-    def test_point_mode_creates_files(self, fixtures_path, tmp_path):
+    def test_point_mode_creates_files(self, writable_pipeline_outputs):
         """Test that point mode creates output files."""
         result = runner.invoke(app, [
             "plot",
@@ -153,7 +153,7 @@ class TestCLIPointModeExecution:
             "--scan", "detail_1",
             "--point", "2",
             "--level", "normalized",
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
             "--export", "both",
         ])
         
@@ -164,7 +164,7 @@ class TestCLIPointModeExecution:
 class TestCLIPointModeErrors:
     """Test error handling in CLI point mode."""
     
-    def test_point_not_found_error(self, fixtures_path, tmp_path):
+    def test_point_not_found_error(self, writable_pipeline_outputs):
         """Test error when point is out of range."""
         result = runner.invoke(app, [
             "plot",
@@ -173,12 +173,12 @@ class TestCLIPointModeErrors:
             "--scan", "detail_1",
             "--point", "999",  # Out of range
             "--level", "normalized",
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
         ], catch_exceptions=False)
         
         assert result.exit_code == 1
     
-    def test_missing_pipeline_output_error(self, fixtures_path, tmp_path):
+    def test_missing_pipeline_output_error(self, writable_pipeline_outputs):
         """Test error when pipeline output doesn't exist."""
         result = runner.invoke(app, [
             "plot",
@@ -187,7 +187,7 @@ class TestCLIPointModeErrors:
             "--scan", "detail_1",
             "--point", "0",
             "--level", "normalized",
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
         ], catch_exceptions=False)
         
         assert result.exit_code == 1
@@ -219,7 +219,7 @@ class TestCLIModeAutoDetection:
         assert result.exit_code == 0
         assert "avg" in result.stdout or "Processed averaged spectrum" in result.stdout
     
-    def test_point_mode_when_point_specified(self, fixtures_path):
+    def test_point_mode_when_point_specified(self, writable_pipeline_outputs):
         """Test that point mode is used when --point is provided."""
         result = runner.invoke(app, [
             "plot",
@@ -228,11 +228,10 @@ class TestCLIModeAutoDetection:
             "--scan", "detail_1",
             "--point", "0",
             "--level", "normalized",
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
             "--export", "csv",
         ])
         
         # Should use point mode
         assert result.exit_code == 0
         assert "point 0" in result.stdout
-

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict
 
@@ -36,35 +37,9 @@ os.environ.setdefault(
     str((Path(__file__).parent / "fixtures" / "background").resolve()),
 )
 
-# Suppress matplotlib's `Software` PNG metadata so test fixture PNGs stay
-# byte-identical across matplotlib versions. Without this, every minor
-# matplotlib bump (e.g. 3.10.8 → 3.10.9) flips the tEXt 'Software' chunk
-# in fixtures/pipeline_outputs/ and pollutes `git status` after pytest
-# runs. We only inject for PNG — PDF accepts the kwarg too but uses a
-# different metadata schema, and SVG raises on unknown keys.
 import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
-from matplotlib.figure import Figure as _SherlocFigure  # noqa: E402
-
-_sherloc_orig_savefig = _SherlocFigure.savefig
-
-
-def _sherloc_deterministic_savefig(self, fname, *args, **kwargs):
-    fmt = kwargs.get("format")
-    if fmt is None:
-        try:
-            fmt = str(fname).rsplit(".", 1)[-1].lower()
-        except Exception:
-            fmt = ""
-    if fmt == "png":
-        md = dict(kwargs.get("metadata") or {})
-        md.setdefault("Software", None)
-        kwargs["metadata"] = md
-    return _sherloc_orig_savefig(self, fname, *args, **kwargs)
-
-
-_SherlocFigure.savefig = _sherloc_deterministic_savefig
 
 import pytest
 
@@ -107,6 +82,34 @@ def tmp_results(tmp_path: Path) -> Path:
     results_dir = tmp_path / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
     return results_dir
+
+
+@pytest.fixture
+def writable_pipeline_outputs(fixtures_path: Path, tmp_path: Path) -> Path:
+    """Copy pipeline-output inputs to an isolated, writable results tree."""
+    results_dir = tmp_path / "pipeline_outputs"
+    shutil.copytree(fixtures_path / "pipeline_outputs", results_dir)
+    return results_dir
+
+
+@pytest.fixture(scope="session", autouse=True)
+def preserve_pipeline_output_fixtures(fixtures_path: Path):
+    """Fail the suite if a test mutates checked-in pipeline-output fixtures."""
+
+    def snapshot() -> dict[str, bytes]:
+        root = fixtures_path / "pipeline_outputs"
+        return {
+            str(path.relative_to(root)): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+
+    before = snapshot()
+    yield
+    assert snapshot() == before, (
+        "Tests modified checked-in pipeline-output fixtures; use "
+        "writable_pipeline_outputs for tests that export artifacts"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -199,4 +202,3 @@ def preprocessing_service_with_stub(stub_detector_factory, monkeypatch):
         lambda self: stub_detector_factory(),
     )
     return PreprocessingService()
-
