@@ -731,11 +731,11 @@ class TestBackwardCompatibility:
     """Verify backward compatibility - existing point mode with --level still works."""
 
     @pytest.fixture
-    def service_for_results(self, fixtures_path, tmp_path):
+    def service_for_results(self, fixtures_path, writable_pipeline_outputs):
         """Service configured to load from pipeline output fixtures."""
         return SpectralService(context=RuntimeContext.bootstrap(
             data_dir=fixtures_path / "loupe",
-            results_dir=fixtures_path / "pipeline_outputs",
+            results_dir=writable_pipeline_outputs,
         ))
 
     def test_level_mode_still_works(self, service_for_results):
@@ -778,4 +778,3 @@ class TestBackwardCompatibility:
         
         assert isinstance(result, ServiceResult)
         assert result.metadata["level"] == level
-

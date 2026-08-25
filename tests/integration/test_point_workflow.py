@@ -23,11 +23,11 @@ class TestProcessPointWorkflow:
     """Test the full _process_point() workflow."""
     
     @pytest.fixture
-    def service_with_pipeline_fixtures(self, test_context, fixtures_path):
-        """Service configured to use pipeline output fixtures as results."""
+    def service_with_pipeline_fixtures(self, test_context, writable_pipeline_outputs):
+        """Service configured with an isolated copy of pipeline outputs."""
         context = RuntimeContext.bootstrap(
             data_dir=test_context.data_root,
-            results_dir=fixtures_path / "pipeline_outputs",
+            results_dir=writable_pipeline_outputs,
         )
         return SpectralService(context=context)
     
@@ -138,11 +138,11 @@ class TestProcessPointErrors:
     """Test error handling in _process_point()."""
     
     @pytest.fixture
-    def service_with_pipeline_fixtures(self, test_context, fixtures_path):
-        """Service configured to use pipeline output fixtures as results."""
+    def service_with_pipeline_fixtures(self, test_context, writable_pipeline_outputs):
+        """Service configured with an isolated copy of pipeline outputs."""
         context = RuntimeContext.bootstrap(
             data_dir=test_context.data_root,
-            results_dir=fixtures_path / "pipeline_outputs",
+            results_dir=writable_pipeline_outputs,
         )
         return SpectralService(context=context)
     
@@ -183,11 +183,11 @@ class TestProcessPointOutputNaming:
     """Test output filename generation for point mode."""
     
     @pytest.fixture
-    def service_with_pipeline_fixtures(self, test_context, fixtures_path):
-        """Service configured to use pipeline output fixtures as results."""
+    def service_with_pipeline_fixtures(self, test_context, writable_pipeline_outputs):
+        """Service configured with an isolated copy of pipeline outputs."""
         context = RuntimeContext.bootstrap(
             data_dir=test_context.data_root,
-            results_dir=fixtures_path / "pipeline_outputs",
+            results_dir=writable_pipeline_outputs,
         )
         return SpectralService(context=context)
     
@@ -229,11 +229,11 @@ class TestProcessPointTitleGeneration:
     """Test plot title generation for point mode."""
     
     @pytest.fixture
-    def service_with_pipeline_fixtures(self, test_context, fixtures_path):
-        """Service configured to use pipeline output fixtures as results."""
+    def service_with_pipeline_fixtures(self, test_context, writable_pipeline_outputs):
+        """Service configured with an isolated copy of pipeline outputs."""
         context = RuntimeContext.bootstrap(
             data_dir=test_context.data_root,
-            results_dir=fixtures_path / "pipeline_outputs",
+            results_dir=writable_pipeline_outputs,
         )
         return SpectralService(context=context)
     
@@ -263,11 +263,11 @@ class TestProcessPointWithAllLevels:
     """Parametrized tests for all processing levels."""
     
     @pytest.fixture
-    def service_with_pipeline_fixtures(self, test_context, fixtures_path):
-        """Service configured to use pipeline output fixtures as results."""
+    def service_with_pipeline_fixtures(self, test_context, writable_pipeline_outputs):
+        """Service configured with an isolated copy of pipeline outputs."""
         context = RuntimeContext.bootstrap(
             data_dir=test_context.data_root,
-            results_dir=fixtures_path / "pipeline_outputs",
+            results_dir=writable_pipeline_outputs,
         )
         return SpectralService(context=context)
     
@@ -293,4 +293,3 @@ class TestProcessPointWithAllLevels:
         assert isinstance(result, ServiceResult)
         assert result.metadata["level"] == level
         assert len(result.artifacts) == 2  # CSV + JSON
-

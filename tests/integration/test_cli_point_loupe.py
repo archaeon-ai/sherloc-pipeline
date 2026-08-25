@@ -205,7 +205,9 @@ class TestCLIPointModeAxisControls:
 class TestCLIPointModeWarnings:
     """Test warning messages for point mode."""
 
-    def test_warning_when_processing_flags_with_level(self, fixtures_path, tmp_path):
+    def test_warning_when_processing_flags_with_level(
+        self, fixtures_path, writable_pipeline_outputs
+    ):
         """Test that warning is shown when using processing flags with --level."""
         result = runner.invoke(app, [
             "plot",
@@ -216,7 +218,7 @@ class TestCLIPointModeWarnings:
             "--level", "normalized",
             "--background", "fs",  # Should trigger warning
             "--data-dir", str(fixtures_path / "loupe"),
-            "--results-dir", str(fixtures_path / "pipeline_outputs"),
+            "--results-dir", str(writable_pipeline_outputs),
         ])
         
         # Command should succeed but show warning
@@ -248,4 +250,3 @@ class TestCLIPointModeAllDatasets:
         
         assert result.exit_code == 0, f"Failed for {sol}/{target}/{scan}: {result.output}"
         assert "Generated files:" in result.output
-

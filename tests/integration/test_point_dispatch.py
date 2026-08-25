@@ -31,11 +31,11 @@ class TestPointDispatchLogic:
         ))
 
     @pytest.fixture
-    def service_results(self, fixtures_path, tmp_path):
+    def service_results(self, fixtures_path, writable_pipeline_outputs):
         """Service configured for pipeline results (pipeline output fixtures)."""
         return SpectralService(context=RuntimeContext.bootstrap(
             data_dir=fixtures_path / "loupe",
-            results_dir=fixtures_path / "pipeline_outputs",
+            results_dir=writable_pipeline_outputs,
         ))
 
     def test_dispatch_to_loupe_when_no_level(self, service_loupe):
@@ -61,18 +61,8 @@ class TestPointDispatchLogic:
         # Should NOT have level in metadata
         assert "level" not in result.metadata
 
-    def test_dispatch_to_results_when_level_specified(self, service_results, tmp_path):
+    def test_dispatch_to_results_when_level_specified(self, service_results):
         """When level is specified, dispatch to _process_point_from_results()."""
-        # Update service to use tmp_path for output
-        service_results.context = RuntimeContext.bootstrap(
-            data_dir=service_results.context.data_root,
-            results_dir=tmp_path,
-        )
-        # But we need results_dir to point to fixtures for loading
-        service_results.context = RuntimeContext.bootstrap(
-            results_dir=service_results.context.data_root.parent / "pipeline_outputs",
-        )
-        
         request = SpectralPlotRequest(
             sol="0921",
             target="Amherst_Point",
@@ -194,11 +184,11 @@ class TestDispatchBackwardCompatibility:
     """Test backward compatibility with existing point mode tests."""
 
     @pytest.fixture
-    def service(self, fixtures_path, tmp_path):
+    def service(self, fixtures_path, writable_pipeline_outputs):
         """Service configured with pipeline output fixtures as results."""
         return SpectralService(context=RuntimeContext.bootstrap(
             data_dir=fixtures_path / "loupe",
-            results_dir=fixtures_path / "pipeline_outputs",
+            results_dir=writable_pipeline_outputs,
         ))
 
     def test_existing_point_mode_with_level_still_works(self, service, tmp_path):
@@ -295,4 +285,3 @@ class TestDispatchOutputs:
         df = pd.read_csv(csv_files[0])
         assert 'raman_shift' in df.columns
         assert 'intensity' in df.columns
-
