@@ -335,12 +335,31 @@ class IngestionService:
         if sol_number is None:
             sol_number = 0  # Default if not extractable
 
+        # Keep the single-workspace path consistent with ingest_sol(): a Loupe
+        # session file belongs to the sol, not to an individual working
+        # directory.  Previously only ingest_sol() consulted it, so invoking
+        # ``sherloc ingest`` on a workspace could silently create a targetless
+        # science scan even when the target was available in the source tree.
+        sol_dir = next(
+            (
+                parent
+                for parent in (workspace_path, *workspace_path.parents)
+                if parent.name.lower() == f"sol_{sol_number:04d}"
+            ),
+            None,
+        )
+        lpe_target = extract_target_from_lpe(sol_dir) if sol_dir else None
+
         self.console.print(f"[bold]Ingesting workspace: {workspace_path.name}[/bold]")
 
         try:
             with get_session(self.engine) as session:
                 stats = self._ingest_workspace_internal(
-                    session, workspace_path, sol_number, force=force
+                    session,
+                    workspace_path,
+                    sol_number,
+                    force=force,
+                    target=lpe_target,
                 )
                 # Finalize lineage / product_role against this sol's scans
                 # (resolves against any sibling scans already in the DB).
@@ -492,6 +511,23 @@ class IngestionService:
         if existing_scan and force:
             session.delete(existing_scan)
             session.flush()
+
+        scan_type = (
+            result.scan.scan_type.value
+            if hasattr(result.scan.scan_type, "value")
+            else result.scan.scan_type
+        )
+        if scan_type in {"detail", "survey"} and not (
+            result.scan.target and result.scan.target.strip()
+        ):
+            msg = (
+                "Science scan has no geological target during Loupe ingestion: "
+                f"sol={sol_number}, scan_id={result.scan.scan_id!r}, "
+                f"scan_name={result.scan.scan_name!r}, scan_type={scan_type!r}. "
+                "Inspect the sol's .lpe source before applying a keyed remediation."
+            )
+            logger.error(msg)
+            stats.warnings.append(msg)
 
         # Ensure sol exists
         existing_sol = session.get(SolORM, sol_number)

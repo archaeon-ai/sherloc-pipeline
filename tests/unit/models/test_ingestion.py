@@ -130,6 +130,31 @@ class TestHelperFunctions:
         (sol_dir / "random_file.lpe").write_text("")
         assert extract_target_from_lpe(sol_dir) is None
 
+    def test_extract_target_from_lpe_rejects_filename_for_another_sol(
+        self, tmp_path
+    ):
+        """A misplaced session file is not target evidence for this sol."""
+        sol_dir = tmp_path / "sol_0921"
+        sol_dir.mkdir()
+        (sol_dir / "Sol_0100_Other_Rock.lpe").write_text("")
+        assert extract_target_from_lpe(sol_dir) is None
+
+    def test_extract_target_from_lpe_rejects_ambiguous_sol(self, tmp_path):
+        """Different target names in one sol cannot be associated safely."""
+        sol_dir = tmp_path / "sol_0100"
+        sol_dir.mkdir()
+        (sol_dir / "Sol_0100_First_Rock.lpe").write_text("")
+        (sol_dir / "Sol_0100_Second_Rock.lpe").write_text("")
+        assert extract_target_from_lpe(sol_dir) is None
+
+    def test_extract_target_from_lpe_accepts_duplicate_target_names(self, tmp_path):
+        """Multiple session files are safe when their target names agree."""
+        sol_dir = tmp_path / "sol_0100"
+        sol_dir.mkdir()
+        (sol_dir / "Sol_0100_Same_Rock.lpe").write_text("")
+        (sol_dir / "Sol_0100_ Same_Rock.lpe").write_text("")
+        assert extract_target_from_lpe(sol_dir) == "Same Rock"
+
 
 class TestRawLoupeMetadata:
     """Tests for RawLoupeMetadata parsing."""
