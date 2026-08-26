@@ -1239,17 +1239,22 @@ def extract_target_from_lpe(sol_dir: Path) -> Optional[str]:
         sol_dir: Path to sol_XXXX directory containing a .lpe file.
 
     Returns:
-        Target name with underscores replaced by spaces, or None if
-        no .lpe file found or name cannot be parsed.
+        Target name with underscores replaced by spaces, or None if no .lpe
+        file is found, a name cannot be parsed, or the sol contains session
+        files naming more than one target.
     """
-    lpe_files = list(sol_dir.glob("*.lpe"))
+    lpe_files = sorted(sol_dir.glob("*.lpe"))
     if not lpe_files:
         return None
-    stem = lpe_files[0].stem  # e.g. "Sol_1771_ Djuma"
-    match = re.match(r"Sol_\d+_\s*(.*)", stem)
-    if not match or not match.group(1).strip():
-        return None
-    return match.group(1).replace("_", " ").strip()
+
+    targets = set()
+    for lpe_file in lpe_files:
+        stem = lpe_file.stem  # e.g. "Sol_1771_ Djuma"
+        match = re.match(r"Sol_\d+_\s*(.*)", stem)
+        if not match or not match.group(1).strip():
+            return None
+        targets.add(match.group(1).replace("_", " ").strip())
+    return next(iter(targets)) if len(targets) == 1 else None
 
 
 def extract_sol_from_path(path: Path) -> Optional[int]:

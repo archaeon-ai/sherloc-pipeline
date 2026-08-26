@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Targetless Loupe science scans are detected and safely auditable (#43).**
+  Direct workspace ingestion now resolves the sol-level `.lpe` target just as
+  whole-sol ingestion does, and any detail/survey scan still lacking a target
+  is emitted as both an error log and a service warning. A read-only planning
+  utility (`scripts/plan_missing_scan_targets.py`) lists existing residue and
+  prints guarded, primary-keyed SQL for operator review without offering an
+  apply mode. Ambiguous multi-target `.lpe` context is left unresolved.
 - **Map Mode fitting no longer looks frozen on slow or queued scans (#6).**
   Map fitting runs on a single-threaded executor, so a job started while
   another scan is still fitting waited its turn while the UI sat on an empty
