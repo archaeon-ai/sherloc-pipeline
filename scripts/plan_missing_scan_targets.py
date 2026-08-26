@@ -19,9 +19,6 @@ from sherloc_pipeline.models.ingestion import extract_target_from_lpe
 from sherloc_pipeline.models.spectra import classify_target_type
 
 
-SCIENCE_SCAN_TYPES = ("detail", "survey")
-
-
 @dataclass(frozen=True)
 class MissingTargetScan:
     """A detail/survey scan whose geological target is absent."""
