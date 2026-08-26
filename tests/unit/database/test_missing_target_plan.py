@@ -121,6 +121,22 @@ def test_plan_refuses_conflicting_sol_evidence(tmp_path):
     )
 
 
+def test_plan_rejects_lpe_filename_for_another_sol(tmp_path):
+    database = tmp_path / "audit.db"
+    _make_audit_database(database)
+    loupe_root = tmp_path / "loupe"
+    sol_dir = loupe_root / "sol_0100"
+    sol_dir.mkdir(parents=True)
+    (sol_dir / "Sol_0921_Other_Rock.lpe").write_text("")
+
+    with PLAN.open_read_only(database) as connection:
+        scan = PLAN.find_missing_scans(connection)[0]
+        resolution = PLAN.resolve_target(connection, scan, loupe_root)
+
+    assert resolution.target is None
+    assert resolution.source == "no Loupe or database sol context"
+
+
 def test_direct_workspace_ingest_uses_sol_lpe_target(fixtures_path, tmp_path):
     source = (
         fixtures_path
@@ -143,6 +159,32 @@ def test_direct_workspace_ingest_uses_sol_lpe_target(fixtures_path, tmp_path):
         scan = session.query(ScanORM).one()
         assert scan.target == "Amherst Point"
         assert scan.target_type == "mars_target"
+
+
+def test_direct_workspace_ingest_rejects_lpe_for_another_sol(
+    fixtures_path, tmp_path
+):
+    source = (
+        fixtures_path
+        / "loupe"
+        / "sol_0921"
+        / "detail_1"
+        / "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
+    )
+    workspace = tmp_path / "sol_0921" / "detail_1" / source.name
+    shutil.copytree(source, workspace)
+    (tmp_path / "sol_0921" / "Sol_0100_Other_Rock.lpe").write_text("")
+    service = IngestionService(
+        database_path=tmp_path / "ingest.db", include_spectra=False
+    )
+
+    result = service.ingest_workspace(workspace)
+
+    assert any("no geological target" in warning for warning in result.warnings)
+    with get_session(service.engine) as session:
+        scan = session.query(ScanORM).one()
+        assert scan.target is None
+        assert scan.target_type == "engineering"
 
 
 def test_targetless_science_workspace_logs_error_and_returns_warning(
