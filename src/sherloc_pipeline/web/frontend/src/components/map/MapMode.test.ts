@@ -28,9 +28,12 @@ import { get } from 'svelte/store';
 import MapMode from './MapMode.svelte';
 import * as api from '../../lib/api';
 import {
+  mapDisplayMode,
   mapFitJob,
   mapLayers,
   mapLogEntries,
+  mapPointSet,
+  mapScanId,
   resetMapState,
 } from '../../lib/stores/mapStore';
 import type { MapWSHandlers } from '../../lib/mapWebSocket';
@@ -44,6 +47,11 @@ import type { ScanDetailResponse } from '../../lib/types';
 
 const SCAN_ID = 'ae5578c9-5a91-41c9-8431-190117be23b4';
 const JOB_ID = 'job-6-terminal-recovery';
+const AVAILABLE_LAYERS = {
+  sherloc: {
+    minerals: { n_detections: 1, classes: ['olivine'] },
+  },
+};
 
 // Hoisted so the (hoisted) vi.mock factory can reach it — the factory runs
 // while MapMode's own imports are resolving, before this module's body.
@@ -173,6 +181,7 @@ beforeEach(() => {
       voronoi: null,
     },
     base_images: [],
+    available_layers: AVAILABLE_LAYERS,
   });
   vi.spyOn(api, 'startMapFit').mockResolvedValue({
     job_id: JOB_ID,
@@ -183,6 +192,45 @@ beforeEach(() => {
 
 afterEach(() => {
   resetMapState();
+});
+
+describe('MapMode — persisted display mode initialization (issue #37)', () => {
+  it('mounts when a class selection was retained from an earlier visit', () => {
+    mapDisplayMode.set({
+      type: 'class',
+      domain: 'minerals',
+      class_id: 'olivine',
+    });
+    mapScanId.set(SCAN_ID);
+    mapPointSet.set({
+      scan_id: SCAN_ID,
+      source: 'sherloc',
+      coordinate_source: 'aci_pixel',
+      points: [{ index: 0, x: 0, y: 0 }],
+      voronoi: null,
+    });
+
+    expect(() => render(MapMode, { props: { scanId: SCAN_ID } })).not.toThrow();
+  });
+
+  it('loads layer data after metadata is initialized and a class is selected', async () => {
+    const getMapData = vi.spyOn(api, 'getMapData').mockResolvedValue({ points: [] });
+
+    render(MapMode, { props: { scanId: SCAN_ID } });
+    await waitFor(() =>
+      expect(get(mapLayers).some((layer) => layer.class_id === 'olivine')).toBe(true),
+    );
+
+    mapDisplayMode.set({
+      type: 'class',
+      domain: 'minerals',
+      class_id: 'olivine',
+    });
+
+    await waitFor(() =>
+      expect(getMapData).toHaveBeenCalledWith(SCAN_ID, 'minerals', 'snr', 'olivine'),
+    );
+  });
 });
 
 describe('MapMode — recovering results on terminal fit statuses (issue #6)', () => {
