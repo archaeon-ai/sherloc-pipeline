@@ -28,9 +28,12 @@ import { get } from 'svelte/store';
 import MapMode from './MapMode.svelte';
 import * as api from '../../lib/api';
 import {
+  mapDisplayMode,
   mapFitJob,
   mapLayers,
   mapLogEntries,
+  mapPointSet,
+  mapScanId,
   resetMapState,
 } from '../../lib/stores/mapStore';
 import type { MapWSHandlers } from '../../lib/mapWebSocket';
@@ -183,6 +186,31 @@ beforeEach(() => {
 
 afterEach(() => {
   resetMapState();
+});
+
+describe('MapMode — persisted display mode initialization (issue #37)', () => {
+  it('mounts when a class selection was retained from an earlier visit', async () => {
+    const getMapData = vi.spyOn(api, 'getMapData').mockResolvedValue({ points: [] });
+    mapDisplayMode.set({
+      type: 'class',
+      domain: 'minerals',
+      class_id: 'olivine',
+    });
+    mapScanId.set(SCAN_ID);
+    mapPointSet.set({
+      scan_id: SCAN_ID,
+      source: 'sherloc',
+      coordinate_source: 'aci_pixel',
+      points: [{ index: 0, x: 0, y: 0 }],
+      voronoi: null,
+    });
+
+    expect(() => render(MapMode, { props: { scanId: SCAN_ID } })).not.toThrow();
+
+    await waitFor(() =>
+      expect(getMapData).toHaveBeenCalledWith(SCAN_ID, 'minerals', 'snr', 'olivine'),
+    );
+  });
 });
 
 describe('MapMode — recovering results on terminal fit statuses (issue #6)', () => {

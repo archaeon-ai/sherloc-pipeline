@@ -125,26 +125,32 @@
 
   // Watch display mode changes: load layer data on first non-default selection
   // Also drives inline spectrum viewer
-  const unsubDisplayMode = mapDisplayMode.subscribe((mode) => {
-    // Deferred DB layer loading (only when layerSource is 'init')
-    if (availableLayers && !layerDataLoaded && layerSource === 'init' && mode.type !== 'all_domains') {
-      layerDataLoaded = true;
-      loadLayerData(availableLayers);
-    }
-
-    // Drive spectrum viewer panel
-    if (mode.type === 'class' && 'class_id' in mode) {
-      const label = classLabel(mode.class_id);
-      spectrumClassInfo = { domain: mode.domain, class_id: mode.class_id, label };
-      spectrumMode = 'class_average';
-      spectrumPointIndex = null;
-    } else {
-      spectrumClassInfo = null;
-      if (spectrumMode === 'class_average') {
-        spectrumMode = 'empty';
+  let unsubDisplayMode = () => {};
+  onMount(() => {
+    // Svelte subscriptions emit their current value synchronously. Defer this
+    // one until the component is fully initialized because a retained class
+    // selection calls classLabel(), which reads constants declared below.
+    unsubDisplayMode = mapDisplayMode.subscribe((mode) => {
+      // Deferred DB layer loading (only when layerSource is 'init')
+      if (availableLayers && !layerDataLoaded && layerSource === 'init' && mode.type !== 'all_domains') {
+        layerDataLoaded = true;
+        loadLayerData(availableLayers);
       }
-      // Keep single_point mode if user clicked a point
-    }
+
+      // Drive spectrum viewer panel
+      if (mode.type === 'class' && 'class_id' in mode) {
+        const label = classLabel(mode.class_id);
+        spectrumClassInfo = { domain: mode.domain, class_id: mode.class_id, label };
+        spectrumMode = 'class_average';
+        spectrumPointIndex = null;
+      } else {
+        spectrumClassInfo = null;
+        if (spectrumMode === 'class_average') {
+          spectrumMode = 'empty';
+        }
+        // Keep single_point mode if user clicked a point
+      }
+    });
   });
 
   onMount(async () => {
