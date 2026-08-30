@@ -69,6 +69,9 @@
 
   // Region selector
   let selectedRegion: 'R1' | 'R2' | 'R3' | 'R123' = 'R1';
+  // Current interactive R1 viewport. BaselineStep defaults to full range and
+  // only consumes this value when the operator selects "Current zoom".
+  let visibleBaselineRange: [number, number] | null = null;
 
   // Despike method selector (issue #6). Owned here because the fetch carries
   // it (ML applies stored masks server-side; modz/none fetch raw). Initialised
@@ -143,6 +146,8 @@
   $: fitCurve = (currentState?.artifacts?.fitCurve as number[] | undefined) ?? null;
   $: residual = (currentState?.artifacts?.residual as number[] | undefined) ?? null;
   $: baselineOverlay = (currentState?.artifacts?.baseline as number[] | undefined) ?? null;
+  $: appliedBaselineRange =
+    (currentState?.artifacts?.baselineRange as [number, number] | undefined) ?? null;
   $: rSquared = (currentState?.artifacts?.rSquared as number | undefined) ?? null;
   $: modelMethod = (currentState?.artifacts?.modelSelectionMethod as string | undefined) ?? null;
   $: fitRange = (currentState?.artifacts?.fitRange as [number, number] | undefined) ?? null;
@@ -439,6 +444,7 @@
   // method write is never a reactive assignment (FRONTEND_HAZARDS H1).
   function switchRegion(reg: string): void {
     selectedRegion = reg as 'R1' | 'R2' | 'R3' | 'R123';
+    visibleBaselineRange = null;
     if (reg !== 'R1' && despikeMethod === 'modz') {
       despikeMethod = 'none';
     }
@@ -662,6 +668,7 @@
                 {mlNMaskedChannels}
                 {mlMissingRegions}
                 {mlAggregateView}
+                visibleRange={selectedRegion === 'R1' ? visibleBaselineRange : null}
                 onRegionSwitch={(reg) => switchRegion(reg)}
                 on:stateUpdate={onChainStateUpdate}
                 on:despikeMethodChange={onDespikeMethodChange}
@@ -739,6 +746,7 @@
                 background={currentState?.artifacts?.background ?? null}
                 backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
                 baseline={baselineOverlay}
+                baselineRange={appliedBaselineRange}
                 {fitCurve}
                 peaks={showFit ? fitPeaks : []}
                 {residual}
@@ -754,6 +762,9 @@
                 wavelength={spectrum?.wavelength ?? null}
                 region={selectedRegion}
                 {averagingMethod}
+                on:viewRangeChange={(e) => {
+                  if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
+                }}
               />
             {:else}
               <div class="empty-state" style="padding: 60px">

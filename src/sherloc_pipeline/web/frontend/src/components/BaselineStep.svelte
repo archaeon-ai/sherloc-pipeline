@@ -24,6 +24,10 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
   // raw input changed mid-flight, drop the stale response instead of
   // re-applying baseline state to the now-reset spectrum.
   export let inputGeneration: number = 0;
+  // Current R1 viewport from RamanView. null means the full spectrum is
+  // visible. The operator explicitly opts into this range; full remains the
+  // baseline default after exploratory zooming.
+  export let visibleRange: [number, number] | null = null;
 
   const dispatch = createEventDispatcher<{
     apply: { corrected: number[]; baseline: number[]; params: BaselineParams };
@@ -34,9 +38,16 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
   let lam = 1e6;
   let logLam = Math.log10(lam);
   let maxIter = 10;
+  let rangeMode: 'full' | 'visible' = 'full';
+  let appliedRange: [number, number] | null = null;
+
+  $: if (visibleRange === null) rangeMode = 'full';
 
   let computing = false;
   let error = '';
+  // Monotonically identify computations so a slower response for an older
+  // range or parameter selection cannot overwrite the latest applied state.
+  let computationSequence = 0;
 
   // Debounce timer
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -68,8 +79,21 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
     collapsed = !collapsed;
   }
 
+  function onRangeModeChange() {
+    if (enabled) applyBaseline();
+  }
+
+  function formatRange(range: [number, number]): string {
+    return `${range[0].toFixed(0)}–${range[1].toFixed(0)} cm⁻¹`;
+  }
+
   async function applyBaseline() {
     if (!enabled || wavenumber.length === 0) return;
+    if (rangeMode === 'visible' && visibleRange === null) {
+      error = 'Zoom the spectrum before applying a visible-range baseline';
+      return;
+    }
+    const sequence = ++computationSequence;
     const gen = inputGeneration;
     computing = true;
     error = '';
@@ -81,22 +105,27 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
           method: 'aspls',
           lam,
           max_iter: maxIter,
+          ...(rangeMode === 'visible' && visibleRange
+            ? { wavenumber_range: visibleRange }
+            : {}),
         },
       });
-      if (gen !== inputGeneration) return;
+      if (sequence !== computationSequence || gen !== inputGeneration) return;
+      appliedRange = result.params_used.wavenumber_range ?? null;
       dispatch('apply', {
         corrected: result.corrected,
         baseline: result.baseline,
         params: result.params_used,
       });
     } catch (e) {
+      if (sequence !== computationSequence || gen !== inputGeneration) return;
       if (e instanceof ApiError) {
         error = e.message;
       } else {
         error = 'Baseline correction failed';
       }
     } finally {
-      computing = false;
+      if (sequence === computationSequence) computing = false;
     }
   }
 </script>
@@ -114,7 +143,10 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
     </div>
     <div class="step-header-right">
       {#if enabled}
-        <span class="step-badge mono">&lambda;={lam.toExponential(0)}</span>
+        <span class="step-badge mono">
+          {appliedRange ? formatRange(appliedRange) : 'full'}
+          · &lambda;={lam.toExponential(0)}
+        </span>
       {/if}
       <span class="collapse-icon">{collapsed ? '+' : '-'}</span>
     </div>
@@ -125,6 +157,36 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
       {#if error}
         <div class="step-error">{error}</div>
       {/if}
+
+      <div class="param-group">
+        <div class="range-heading">Correction range</div>
+        <label class="range-choice">
+          <input
+            type="radio"
+            name="baseline-range"
+            value="full"
+            bind:group={rangeMode}
+            on:change={onRangeModeChange}
+          />
+          Full spectrum (default)
+        </label>
+        <label class="range-choice" class:disabled={visibleRange === null}>
+          <input
+            type="radio"
+            name="baseline-range"
+            value="visible"
+            bind:group={rangeMode}
+            on:change={onRangeModeChange}
+            disabled={visibleRange === null}
+          />
+          Current zoom{visibleRange ? ` (${formatRange(visibleRange)})` : ''}
+        </label>
+        {#if rangeMode === 'visible' && visibleRange && enabled}
+          <button class="btn-secondary btn-sm" on:click={applyBaseline}>
+            Reapply current zoom
+          </button>
+        {/if}
+      </div>
 
       <div class="param-group">
         <label for="bl-lam">
@@ -258,6 +320,25 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
     padding: 6px 10px;
     border-radius: var(--radius-sm);
     font-size: 0.8rem;
+  }
+
+  .range-choice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 3px 0;
+    font-size: 0.8rem;
+    font-weight: 400;
+  }
+
+  .range-heading {
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .range-choice.disabled {
+    color: var(--color-text-tertiary);
   }
 
   .param-group input[type="range"] {

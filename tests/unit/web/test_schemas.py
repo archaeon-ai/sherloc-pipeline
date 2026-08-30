@@ -23,11 +23,18 @@ class TestBaselineParamsSchema:
         assert p.method == "aspls"
         assert p.lam == 1_000_000.0
         assert p.max_iter == 10
+        assert p.wavenumber_range is None
 
     def test_custom_values(self):
-        p = BaselineParamsSchema(lam=5e5, max_iter=20)
+        p = BaselineParamsSchema(lam=5e5, max_iter=20, wavenumber_range=[800, 1100])
         assert p.lam == 5e5
         assert p.max_iter == 20
+        assert p.wavenumber_range == [800, 1100]
+
+    @pytest.mark.parametrize("value", [[900], [900, 800], [800, 900, 1000]])
+    def test_invalid_wavenumber_range(self, value):
+        with pytest.raises(ValidationError):
+            BaselineParamsSchema(wavenumber_range=value)
 
 
 class TestFitParamsSchema:

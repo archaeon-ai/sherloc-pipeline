@@ -46,9 +46,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["processing"])
 
 
+class _BaselineRangeError(ValueError):
+    """The requested baseline ROI cannot be fit against the supplied spectrum."""
+
+
 def _baseline_params_from_schema(schema: BaselineParamsSchema) -> BaselineParams:
     """Convert schema to core BaselineParams."""
     return BaselineParams(lam=schema.lam, iters=schema.max_iter)
+
+
+def _fit_baseline_in_range(
+    x: np.ndarray,
+    y: np.ndarray,
+    params: BaselineParams,
+    wavenumber_range: Optional[list[float]],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit/subtract a baseline over an optional ROI, preserving data outside it."""
+    if wavenumber_range is None:
+        mask = np.ones(x.shape, dtype=bool)
+    else:
+        lo, hi = wavenumber_range
+        mask = (x >= lo) & (x <= hi)
+
+    minimum_points = params.diff_order + 1
+    if np.count_nonzero(mask) < minimum_points:
+        if wavenumber_range is not None:
+            raise _BaselineRangeError(
+                f"wavenumber_range must contain at least {minimum_points} spectrum points"
+            )
+        raise _BaselineRangeError(
+            f"Baseline fitting requires at least {minimum_points} spectrum points"
+        )
+
+    series = pd.Series(y[mask], index=x[mask])
+    corrected_series, baseline_series = fit_baseline(series, params)
+
+    # A range-limited correction is deliberately local: channels outside the
+    # ROI remain byte-for-byte equivalent to the input.  A zero baseline there
+    # makes the subtraction identity explicit while preserving fixed-length
+    # arrays for downstream processing and export.
+    corrected = y.copy()
+    baseline = np.zeros_like(y)
+    corrected[mask] = corrected_series.values
+    baseline[mask] = baseline_series.values
+    return corrected, baseline
 
 
 @router.post("/process/baseline", response_model=BaselineResponse)
@@ -59,8 +100,8 @@ def process_baseline(request: Request, body: BaselineRequest) -> BaselineRespons
 
     if len(wn) != len(intensity):
         raise HTTPException(status_code=400, detail="wavenumber and intensity must have same length")
-    if len(wn) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 data points")
+    if len(wn) < 3:
+        raise HTTPException(status_code=400, detail="Need at least 3 data points")
 
     # Check monotonicity
     for i in range(1, len(wn)):
@@ -75,17 +116,19 @@ def process_baseline(request: Request, body: BaselineRequest) -> BaselineRespons
 
     x = np.array(wn, dtype=np.float64)
     y = np.array(intensity, dtype=np.float64)
-    series = pd.Series(y, index=x)
-
     try:
-        corrected_series, baseline_series = fit_baseline(series, params)
+        corrected, baseline = _fit_baseline_in_range(
+            x, y, params, params_schema.wavenumber_range
+        )
+    except _BaselineRangeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Baseline computation failed: {exc}")
 
     return BaselineResponse(
         raw=body.intensity,
-        baseline=numpy_to_list(baseline_series.values),
-        corrected=numpy_to_list(corrected_series.values),
+        baseline=numpy_to_list(baseline),
+        corrected=numpy_to_list(corrected),
         wavenumber=body.wavenumber,
         params_used=params_schema,
     )
@@ -118,13 +161,14 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
     else:
         bl_params_schema = params.baseline or BaselineParamsSchema()
         bl_params = _baseline_params_from_schema(bl_params_schema)
-        series = pd.Series(y, index=x)
         try:
-            corrected_series, baseline_series = fit_baseline(series, bl_params)
+            corrected, baseline = _fit_baseline_in_range(
+                x, y, bl_params, bl_params_schema.wavenumber_range
+            )
+        except _BaselineRangeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Baseline failed: {exc}")
-        corrected = corrected_series.values
-        baseline = baseline_series.values
 
     domain = fit_params_schema.domain
     peaks: list[PeakDTO] = []

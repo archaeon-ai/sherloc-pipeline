@@ -22,6 +22,19 @@ class BaselineParamsSchema(BaseModel):
     method: str = Field(default="aspls", description="Baseline algorithm.")
     lam: float = Field(default=1_000_000.0, description="Smoothness parameter.")
     max_iter: int = Field(default=10, description="Maximum iterations.")
+    wavenumber_range: Optional[List[float]] = Field(
+        default=None,
+        min_length=2,
+        max_length=2,
+        description="Optional baseline fit/subtraction ROI [lo, hi] in cm-1.",
+    )
+
+    @field_validator("wavenumber_range")
+    @classmethod
+    def validate_wavenumber_range(cls, value: Optional[List[float]]) -> Optional[List[float]]:
+        if value is not None and value[0] >= value[1]:
+            raise ValueError("wavenumber_range must be in ascending order")
+        return value
 
 
 class FitParamsSchema(BaseModel):

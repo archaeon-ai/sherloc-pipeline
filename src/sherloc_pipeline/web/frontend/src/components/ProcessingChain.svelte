@@ -24,6 +24,7 @@
   // Forwarded to RamanFitStep → /api/process/fit so the backend quality
   // classifier applies the calibration-scan downgrade rule (v4.1.12).
   export let targetType: string | null = null;
+  export let visibleRange: [number, number] | null = null;
 
   // --- Despike method selector (issue #6) ---
   // The method is owned by the workbench (it owns the fetch); the chain only
@@ -88,6 +89,7 @@
   let background: number[] | undefined;
   let backgroundScaled: number[] | undefined;
   let baseline: number[] | undefined;
+  let appliedBaselineRange: [number, number] | undefined;
 
   let despikeStep: DespikeStep;
 
@@ -110,6 +112,7 @@
     background = undefined;
     backgroundScaled = undefined;
     baseline = undefined;
+    appliedBaselineRange = undefined;
     baselineEnabled = false;
     bgEnabled = false;
     bgType = 'none';
@@ -171,6 +174,7 @@
       artifacts: {
         spikeMask,
         baseline,
+        baselineRange: appliedBaselineRange,
         background,
         backgroundScaled,
         ...(extraArtifacts as Record<string, unknown> | undefined),
@@ -259,6 +263,7 @@
   function onBaselineApply(e: CustomEvent<{ corrected: number[]; baseline: number[]; params: BaselineParams }>) {
     afterBaselineIntensity = e.detail.corrected;
     baseline = e.detail.baseline;
+    appliedBaselineRange = e.detail.params.wavenumber_range;
     emitState('baseline_corrected', e.detail.corrected, undefined, {
       step: 'baseline',
       ...(e.detail.params as Record<string, unknown>),
@@ -270,6 +275,7 @@
     if (!baselineEnabled) {
       afterBaselineIntensity = null;
       baseline = undefined;
+      appliedBaselineRange = undefined;
       const stage = computeCurrentStage();
       const output = bgEnabled && afterBgIntensity
         ? afterBgIntensity
@@ -351,6 +357,7 @@
     intensity={baselineInput}
     enabled={baselineEnabled}
     {inputGeneration}
+    {visibleRange}
     on:apply={onBaselineApply}
     on:toggle={onBaselineToggle}
   />
