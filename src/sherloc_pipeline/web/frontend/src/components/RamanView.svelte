@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, afterUpdate, onDestroy } from 'svelte';
+  import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
   import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
@@ -28,6 +28,7 @@
   export let background: number[] | null = null;     // dashed gray background line
   export let backgroundScaled: number[] | null = null;
   export let baseline: number[] | null = null;       // dashed red baseline curve
+  export let baselineRange: [number, number] | null = null;
   export let fitCurve: number[] | null = null;       // green fit curve
   export let peaks: Peak[] = [];                     // peak annotations
   export let residual: number[] | null = null;
@@ -47,6 +48,36 @@
 
   let plotDiv: HTMLDivElement;
   let plotInitialized = false;
+  let plotEventsBound = false;
+
+  const dispatch = createEventDispatcher<{
+    viewRangeChange: { range: [number, number] | null };
+  }>();
+
+  type PlotlyDiv = HTMLDivElement & {
+    on?: (event: string, handler: (update: Record<string, unknown>) => void) => void;
+    removeListener?: (event: string, handler: (update: Record<string, unknown>) => void) => void;
+  };
+
+  function onPlotRelayout(update: Record<string, unknown>) {
+    if (update['xaxis.autorange'] === true) {
+      dispatch('viewRangeChange', { range: null });
+      return;
+    }
+    const lo = Number(update['xaxis.range[0]']);
+    const hi = Number(update['xaxis.range[1]']);
+    if (Number.isFinite(lo) && Number.isFinite(hi)) {
+      dispatch('viewRangeChange', { range: lo <= hi ? [lo, hi] : [hi, lo] });
+    }
+  }
+
+  function bindPlotEvents() {
+    const div = plotDiv as PlotlyDiv;
+    if (!plotEventsBound && typeof div.on === 'function') {
+      div.on('plotly_relayout', onPlotRelayout);
+      plotEventsBound = true;
+    }
+  }
 
   function _validRange(minStr: string, maxStr: string): boolean {
     return minStr !== '' && maxStr !== '' && !isNaN(parseFloat(minStr)) && !isNaN(parseFloat(maxStr));
@@ -91,11 +122,16 @@
     Plotly = await import('plotly.js-basic-dist-min');
     plotInitialized = true;
     renderPlot();
+    bindPlotEvents();
   });
 
   onDestroy(() => {
     if (plotDiv && Plotly) {
       try {
+        const div = plotDiv as PlotlyDiv;
+        if (plotEventsBound && typeof div.removeListener === 'function') {
+          div.removeListener('plotly_relayout', onPlotRelayout);
+        }
         Plotly.purge(plotDiv);
       } catch {
         // ignore
@@ -176,9 +212,15 @@
 
     // Baseline overlay (dashed red)
     if (showOverlayBaseline && baseline && (stage === 'baseline_corrected' || stage === 'raman_fitted')) {
+      const baselineIndices = baselineRange
+        ? wavenumber
+            .map((x, i) => ({ x, i }))
+            .filter(({ x }) => x >= baselineRange![0] && x <= baselineRange![1])
+            .map(({ i }) => i)
+        : wavenumber.map((_, i) => i);
       traces.push({
-        x: xData,
-        y: baseline,
+        x: baselineIndices.map((i) => xData[i]),
+        y: baselineIndices.map((i) => baseline[i]),
         type: 'scatter',
         mode: 'lines',
         name: 'baseline',
@@ -513,6 +555,18 @@
     } else {
       Plotly.react(plotDiv, traces, mainLayout as Plotly.Layout, config);
     }
+    bindPlotEvents();
+  }
+
+  function onXRangeInputChange() {
+    renderPlot();
+    if (_validRange(xMin, xMax)) {
+      const lo = parseFloat(xMin);
+      const hi = parseFloat(xMax);
+      dispatch('viewRangeChange', { range: lo <= hi ? [lo, hi] : [hi, lo] });
+    } else if (xMin === '' && xMax === '') {
+      dispatch('viewRangeChange', { range: null });
+    }
   }
 
   function downloadAs(format: 'png' | 'svg') {
@@ -534,9 +588,9 @@
   {:else}
     <div class="axis-controls">
       <span class="axis-label">x:</span>
-      <input class="axis-input" type="number" bind:value={xMin} on:change={renderPlot} placeholder="640" />
+      <input class="axis-input" type="number" bind:value={xMin} on:change={onXRangeInputChange} placeholder="640" />
       <span class="axis-sep">-</span>
-      <input class="axis-input" type="number" bind:value={xMax} on:change={renderPlot} placeholder="4200" />
+      <input class="axis-input" type="number" bind:value={xMax} on:change={onXRangeInputChange} placeholder="4200" />
       <span class="axis-label" style="margin-left: 8px">y:</span>
       <input class="axis-input" type="number" bind:value={yMin} on:change={renderPlot} placeholder="auto" />
       <span class="axis-sep">-</span>

@@ -208,6 +208,7 @@ export interface BaselineParams {
   method?: string;
   lam?: number;
   max_iter?: number;
+  wavenumber_range?: [number, number];
 }
 
 export interface FitParams {
@@ -574,6 +575,7 @@ export type ProcessingStage = 'raw' | 'despiked' | 'bg_subtracted' | 'baseline_c
 export interface ProcessingArtifacts {
   spikeMask?: boolean[];
   baseline?: number[];
+  baselineRange?: [number, number];
   background?: number[];
   backgroundScaled?: number[];
   fitCurve?: number[];

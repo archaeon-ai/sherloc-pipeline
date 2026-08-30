@@ -281,6 +281,9 @@
               <label>Baseline Params</label>
               <div class="meta-info mono" style="font-size: 0.8rem; color: var(--color-text-secondary)">
                 {$baselineParams.method} | &lambda;={$baselineParams.lam?.toExponential(0)} | iter={$baselineParams.max_iter}
+                | range={$baselineParams.wavenumber_range
+                  ? `${$baselineParams.wavenumber_range[0].toFixed(0)}–${$baselineParams.wavenumber_range[1].toFixed(0)} cm⁻¹`
+                  : 'full'}
               </div>
               <button
                 class="btn-secondary btn-sm"

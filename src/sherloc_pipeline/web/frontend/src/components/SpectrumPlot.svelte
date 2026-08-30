@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, afterUpdate, onDestroy } from 'svelte';
+  import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
   import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
@@ -9,6 +9,7 @@
   export let wavenumber: number[] = [];
   export let intensity: number[] = [];
   export let baseline: number[] | null = null;
+  export let baselineRange: [number, number] | null = null;
   export let corrected: number[] | null = null;
   export let residual: number[] | null = null;
   export let fitCurve: number[] | null = null;
@@ -25,16 +26,51 @@
 
   let plotDiv: HTMLDivElement;
   let plotInitialized = false;
+  let plotEventsBound = false;
+
+  const dispatch = createEventDispatcher<{
+    viewRangeChange: { range: [number, number] | null };
+  }>();
+
+  type PlotlyDiv = HTMLDivElement & {
+    on?: (event: string, handler: (update: Record<string, unknown>) => void) => void;
+    removeListener?: (event: string, handler: (update: Record<string, unknown>) => void) => void;
+  };
+
+  function onPlotRelayout(update: Record<string, unknown>) {
+    if (update['xaxis.autorange'] === true) {
+      dispatch('viewRangeChange', { range: null });
+      return;
+    }
+    const lo = Number(update['xaxis.range[0]']);
+    const hi = Number(update['xaxis.range[1]']);
+    if (Number.isFinite(lo) && Number.isFinite(hi)) {
+      dispatch('viewRangeChange', { range: lo <= hi ? [lo, hi] : [hi, lo] });
+    }
+  }
+
+  function bindPlotEvents() {
+    const div = plotDiv as PlotlyDiv;
+    if (!plotEventsBound && typeof div.on === 'function') {
+      div.on('plotly_relayout', onPlotRelayout);
+      plotEventsBound = true;
+    }
+  }
 
   onMount(async () => {
     Plotly = await import('plotly.js-basic-dist-min');
     plotInitialized = true;
     renderPlot();
+    bindPlotEvents();
   });
 
   onDestroy(() => {
     if (plotDiv && Plotly) {
       try {
+        const div = plotDiv as PlotlyDiv;
+        if (plotEventsBound && typeof div.removeListener === 'function') {
+          div.removeListener('plotly_relayout', onPlotRelayout);
+        }
         Plotly.purge(plotDiv);
       } catch {
         // ignore
@@ -48,6 +84,15 @@
 
   function renderPlot() {
     if (!Plotly || !plotDiv || wavenumber.length === 0) return;
+
+    // Keep the operator's interactive zoom while parameter changes replace
+    // the baseline traces. Without this, applying a zoom-scoped correction
+    // immediately snapped the preview back to the full spectrum.
+    const curLayout = (plotDiv as unknown as { layout?: Record<string, unknown> }).layout;
+    const prevNChannels = curLayout?._nChannels as number | undefined;
+    const prevXRange = prevNChannels === wavenumber.length && curLayout?.xaxis
+      ? (curLayout.xaxis as Record<string, unknown>).range as [number, number] | undefined
+      : undefined;
 
     const traces: Plotly.Data[] = [];
 
@@ -65,9 +110,15 @@
 
     // Baseline overlay
     if (baseline && showBaseline && !showFit) {
+      const baselineIndices = baselineRange
+        ? wavenumber
+            .map((x, i) => ({ x, i }))
+            .filter(({ x }) => x >= baselineRange![0] && x <= baselineRange![1])
+            .map(({ i }) => i)
+        : wavenumber.map((_, i) => i);
       traces.push({
-        x: wavenumber,
-        y: baseline,
+        x: baselineIndices.map((i) => wavenumber[i]),
+        y: baselineIndices.map((i) => baseline[i]),
         type: 'scatter',
         mode: 'lines',
         name: 'Baseline',
@@ -93,7 +144,8 @@
     const shapes = peakElements.shapes as Partial<Plotly.Shape>[];
     const annotations = peakElements.annotations as unknown as Partial<Plotly.Annotations>[];
 
-    const mainLayout: Partial<Plotly.Layout> = {
+    const mainLayout: Partial<Plotly.Layout> & { _nChannels?: number } = {
+      _nChannels: wavenumber.length,
       title: title ? { text: title, font: { size: 14 } } : undefined,
       xaxis: {
         title: compact ? undefined : { text: xLabel, font: { size: 12 } },
@@ -103,6 +155,9 @@
         linecolor: '#cbd5e1',
         ticks: 'outside',
         tickcolor: '#cbd5e1',
+        ...(prevXRange
+          ? { range: [...prevXRange], autorange: false }
+          : { autorange: true }),
       },
       yaxis: {
         title: compact ? undefined : { text: yLabel, font: { size: 12 } },
@@ -188,6 +243,7 @@
     } else {
       Plotly.react(plotDiv, traces, mainLayout as Plotly.Layout, config);
     }
+    bindPlotEvents();
   }
 
   function downloadAs(format: 'png' | 'svg' | 'pdf') {

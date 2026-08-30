@@ -14,6 +14,8 @@
   let loading = true;
   let computing = false;
   let error = '';
+  let visibleRange: [number, number] | null = null;
+  let rangeMode: 'full' | 'visible' = 'full';
 
   // Parameters (initialized from store)
   let lam = $baselineParams.lam ?? 1e6;
@@ -51,6 +53,15 @@
     debounceTimer = setTimeout(() => computeBaseline(), 300);
   }
 
+  function setRangeMode(mode: 'full' | 'visible') {
+    rangeMode = mode;
+    computeBaseline();
+  }
+
+  function formatRange(range: [number, number]): string {
+    return `${range[0].toFixed(0)}–${range[1].toFixed(0)} cm⁻¹`;
+  }
+
   async function computeBaseline() {
     if (!spectrum) return;
     computing = true;
@@ -62,6 +73,9 @@
           method: 'aspls',
           lam,
           max_iter: maxIter,
+          ...(rangeMode === 'visible' && visibleRange
+            ? { wavenumber_range: visibleRange }
+            : {}),
         },
       });
     } catch (e) {
@@ -77,6 +91,9 @@
       method: 'aspls',
       lam,
       max_iter: maxIter,
+      ...(rangeMode === 'visible' && visibleRange
+        ? { wavenumber_range: visibleRange }
+        : {}),
     });
     navigate(`#/scan/${scanId}/fit`);
   }
@@ -115,10 +132,12 @@
                 wavenumber={spectrum.wavenumber}
                 intensity={spectrum.intensity}
                 baseline={baselineResult?.baseline ?? null}
+                baselineRange={baselineResult?.params_used.wavenumber_range ?? null}
                 showBaseline={true}
                 showFit={false}
                 title="{scan?.target ?? ''} Sol {scan?.sol_number ?? ''} {scan?.scan_name ?? ''} — Baseline"
                 height={480}
+                on:viewRangeChange={(e) => visibleRange = e.detail.range}
               />
             {/if}
 
@@ -141,6 +160,34 @@
         <div class="card">
           <div class="card-header">Baseline Parameters</div>
           <div class="card-body param-controls">
+            <div class="param-group">
+              <div class="range-heading">Correction range</div>
+              <label class="range-choice">
+                <input
+                  type="radio"
+                  name="workspace-baseline-range"
+                  checked={rangeMode === 'full'}
+                  on:change={() => setRangeMode('full')}
+                />
+                Full spectrum (default)
+              </label>
+              <label class="range-choice" class:disabled={visibleRange === null}>
+                <input
+                  type="radio"
+                  name="workspace-baseline-range"
+                  checked={rangeMode === 'visible'}
+                  disabled={visibleRange === null}
+                  on:change={() => setRangeMode('visible')}
+                />
+                Current zoom{visibleRange ? ` (${formatRange(visibleRange)})` : ''}
+              </label>
+              {#if rangeMode === 'visible' && visibleRange}
+                <button class="btn-secondary btn-sm" on:click={computeBaseline}>
+                  Reapply current zoom
+                </button>
+              {/if}
+            </div>
+
             <div class="param-group">
               <label for="b-lam">
                 Smoothness (&lambda;): {lam.toExponential(1)}
@@ -186,7 +233,10 @@
                 <strong>Params used:</strong>
                 <div class="mono">
                   &lambda;={baselineResult.params_used.lam?.toExponential(1)},
-                  iter={baselineResult.params_used.max_iter}
+                  iter={baselineResult.params_used.max_iter},
+                  range={baselineResult.params_used.wavenumber_range
+                    ? formatRange(baselineResult.params_used.wavenumber_range)
+                    : 'full'}
                 </div>
               </div>
             {/if}
@@ -255,5 +305,24 @@
     font-size: 0.75rem;
     color: var(--color-text-tertiary);
     font-family: var(--font-mono);
+  }
+
+  .range-choice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0;
+    font-size: 0.82rem;
+    font-weight: 400;
+  }
+
+  .range-heading {
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .range-choice.disabled {
+    color: var(--color-text-tertiary);
   }
 </style>

@@ -5,6 +5,10 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import pytest
+from fastapi import HTTPException
+
+from sherloc_pipeline.web.routes.processing import process_baseline
+from sherloc_pipeline.web.schemas import BaselineRequest
 
 
 def _make_test_spectrum():
@@ -73,6 +77,70 @@ async def test_baseline_custom_params(client):
     data = resp.json()
     assert data["params_used"]["lam"] == 5e5
     assert data["params_used"]["max_iter"] == 5
+
+
+def test_baseline_range_only_fits_and_subtracts_inside_roi():
+    wn = [700.0, 800.0, 900.0, 1000.0, 1100.0]
+    intensity = [10.0, 20.0, 30.0, 40.0, 50.0]
+    corrected_roi = pd.Series([1.0, 2.0, 3.0], index=wn[1:4])
+    baseline_roi = pd.Series([19.0, 28.0, 37.0], index=wn[1:4])
+
+    with patch(
+        "sherloc_pipeline.web.routes.processing.fit_baseline",
+        return_value=(corrected_roi, baseline_roi),
+    ) as fit_mock:
+        data = process_baseline(
+            request=None,
+            body=BaselineRequest.model_validate(
+                {
+                    "wavenumber": wn,
+                    "intensity": intensity,
+                    "params": {"wavenumber_range": [750.0, 1050.0]},
+                }
+            ),
+        )
+
+    fitted = fit_mock.call_args.args[0]
+    assert fitted.index.tolist() == wn[1:4]
+    assert fitted.tolist() == intensity[1:4]
+    assert data.corrected == [10.0, 1.0, 2.0, 3.0, 50.0]
+    assert data.baseline == [0.0, 19.0, 28.0, 37.0, 0.0]
+    assert data.params_used.wavenumber_range == [750.0, 1050.0]
+
+
+def test_baseline_default_still_fits_the_full_spectrum():
+    wn = [700.0, 800.0, 900.0]
+    intensity = [10.0, 20.0, 30.0]
+    corrected = pd.Series([1.0, 2.0, 3.0], index=wn)
+    baseline = pd.Series([9.0, 18.0, 27.0], index=wn)
+
+    with patch(
+        "sherloc_pipeline.web.routes.processing.fit_baseline",
+        return_value=(corrected, baseline),
+    ) as fit_mock:
+        data = process_baseline(
+            request=None,
+            body=BaselineRequest(wavenumber=wn, intensity=intensity),
+        )
+
+    fitted = fit_mock.call_args.args[0]
+    assert fitted.index.tolist() == wn
+    assert data.corrected == corrected.tolist()
+    assert data.baseline == baseline.tolist()
+    assert data.params_used.wavenumber_range is None
+
+
+def test_baseline_range_must_include_two_channels():
+    body = BaselineRequest.model_validate(
+        {
+            "wavenumber": [700.0, 800.0, 900.0],
+            "intensity": [10.0, 20.0, 30.0],
+            "params": {"wavenumber_range": [750.0, 850.0]},
+        }
+    )
+    with pytest.raises(HTTPException, match="at least 2 spectrum points") as exc_info:
+        process_baseline(request=None, body=body)
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.asyncio

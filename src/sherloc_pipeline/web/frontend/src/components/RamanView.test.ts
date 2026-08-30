@@ -223,6 +223,59 @@ describe('RamanView — issue #18 polish on the Workbench-routed component', () 
   });
 });
 
+describe('RamanView — baseline viewport selection (issue #5)', () => {
+  it('emits the normalized Plotly x-axis zoom and emits null on autorange reset', async () => {
+    let relayoutHandler: ((update: Record<string, unknown>) => void) | undefined;
+    const originalOn = (HTMLElement.prototype as unknown as { on?: unknown }).on;
+    Object.defineProperty(HTMLElement.prototype, 'on', {
+      configurable: true,
+      value: (event: string, handler: (update: Record<string, unknown>) => void) => {
+        if (event === 'plotly_relayout') relayoutHandler = handler;
+      },
+    });
+    try {
+      const { component } = render(RamanView, {
+        props: { wavenumber: [700, 800, 900], intensity: [1, 2, 3] },
+      });
+      const ranges: Array<[number, number] | null> = [];
+      component.$on('viewRangeChange', (e) => ranges.push(e.detail.range));
+      await flush();
+
+      expect(relayoutHandler).toBeDefined();
+      relayoutHandler!({ 'xaxis.range[0]': 875, 'xaxis.range[1]': 725 });
+      await tick();
+      relayoutHandler!({ 'xaxis.autorange': true });
+      await tick();
+      expect(ranges).toEqual([[725, 875], null]);
+    } finally {
+      if (originalOn === undefined) {
+        delete (HTMLElement.prototype as unknown as { on?: unknown }).on;
+      } else {
+        Object.defineProperty(HTMLElement.prototype, 'on', {
+          configurable: true,
+          value: originalOn,
+        });
+      }
+    }
+  });
+
+  it('draws a range-limited baseline overlay only inside its fitted interval', async () => {
+    render(RamanView, {
+      props: {
+        wavenumber: [700, 800, 900, 1000],
+        intensity: [10, 20, 30, 40],
+        baseline: [0, 18, 27, 0],
+        baselineRange: [750, 950],
+        stage: 'baseline_corrected',
+      },
+    });
+    await flush();
+
+    const trace = lastTraces().find((t) => t.name === 'baseline');
+    expect(trace?.x).toEqual([800, 900]);
+  });
+});
+
 describe('RamanView — ML/modz spike-marker provenance label (issue #8)', () => {
   const wavenumber = Array.from({ length: 100 }, (_, i) => 640 + i * 10);
   const intensity = wavenumber.map((wn) => Math.exp(-((wn - 1016) ** 2) / 5000));

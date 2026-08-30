@@ -423,6 +423,13 @@ tol: float = 0.001         # Convergence tolerance
 
 The aspls algorithm adapts the smoothness penalty along the spectrum, allowing flatter regions to receive stronger smoothing than peak-rich regions. R1 fits also apply soft "keep windows" (configurable in `config.yaml`) that down-weight the baseline within ranges where genuine peaks are expected, reducing under-fit at strong features.
 
+The web baseline workspace fits and subtracts over the full R1 spectrum by
+default. Operators may instead zoom the spectrum and select **Current zoom**;
+in that mode asPLS is fit and subtracted only within the visible wavenumber
+interval, while channels outside the interval remain unchanged. This local
+correction avoids allowing unrelated portions of the spectrum to bend the
+baseline in the region of interest.
+
 ### 2.4 Normalization Strategies
 
 **Vector Normalization (Default):**
