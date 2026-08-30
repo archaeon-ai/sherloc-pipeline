@@ -67,10 +67,16 @@ def _fit_baseline_in_range(
     else:
         lo, hi = wavenumber_range
         mask = (x >= lo) & (x <= hi)
-        if np.count_nonzero(mask) < 2:
+
+    minimum_points = params.diff_order + 1
+    if np.count_nonzero(mask) < minimum_points:
+        if wavenumber_range is not None:
             raise _BaselineRangeError(
-                "wavenumber_range must contain at least 2 spectrum points"
+                f"wavenumber_range must contain at least {minimum_points} spectrum points"
             )
+        raise _BaselineRangeError(
+            f"Baseline fitting requires at least {minimum_points} spectrum points"
+        )
 
     series = pd.Series(y[mask], index=x[mask])
     corrected_series, baseline_series = fit_baseline(series, params)
@@ -94,8 +100,8 @@ def process_baseline(request: Request, body: BaselineRequest) -> BaselineRespons
 
     if len(wn) != len(intensity):
         raise HTTPException(status_code=400, detail="wavenumber and intensity must have same length")
-    if len(wn) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 data points")
+    if len(wn) < 3:
+        raise HTTPException(status_code=400, detail="Need at least 3 data points")
 
     # Check monotonicity
     for i in range(1, len(wn)):

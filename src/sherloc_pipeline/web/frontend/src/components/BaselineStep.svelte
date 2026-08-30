@@ -45,6 +45,9 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
 
   let computing = false;
   let error = '';
+  // Monotonically identify computations so a slower response for an older
+  // range or parameter selection cannot overwrite the latest applied state.
+  let computationSequence = 0;
 
   // Debounce timer
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -90,6 +93,7 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
       error = 'Zoom the spectrum before applying a visible-range baseline';
       return;
     }
+    const sequence = ++computationSequence;
     const gen = inputGeneration;
     computing = true;
     error = '';
@@ -106,7 +110,7 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
             : {}),
         },
       });
-      if (gen !== inputGeneration) return;
+      if (sequence !== computationSequence || gen !== inputGeneration) return;
       appliedRange = result.params_used.wavenumber_range ?? null;
       dispatch('apply', {
         corrected: result.corrected,
@@ -114,13 +118,14 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
         params: result.params_used,
       });
     } catch (e) {
+      if (sequence !== computationSequence || gen !== inputGeneration) return;
       if (e instanceof ApiError) {
         error = e.message;
       } else {
         error = 'Baseline correction failed';
       }
     } finally {
-      computing = false;
+      if (sequence === computationSequence) computing = false;
     }
   }
 </script>

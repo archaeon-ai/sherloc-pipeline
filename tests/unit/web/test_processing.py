@@ -130,15 +130,24 @@ def test_baseline_default_still_fits_the_full_spectrum():
     assert data.params_used.wavenumber_range is None
 
 
-def test_baseline_range_must_include_two_channels():
+def test_baseline_range_must_include_three_channels():
     body = BaselineRequest.model_validate(
         {
             "wavenumber": [700.0, 800.0, 900.0],
             "intensity": [10.0, 20.0, 30.0],
-            "params": {"wavenumber_range": [750.0, 850.0]},
+            "params": {"wavenumber_range": [750.0, 950.0]},
         }
     )
-    with pytest.raises(HTTPException, match="at least 2 spectrum points") as exc_info:
+    with pytest.raises(HTTPException, match="at least 3 spectrum points") as exc_info:
+        process_baseline(request=None, body=body)
+    assert exc_info.value.status_code == 400
+
+
+def test_baseline_requires_three_total_channels():
+    body = BaselineRequest(
+        wavenumber=[700.0, 800.0], intensity=[10.0, 20.0]
+    )
+    with pytest.raises(HTTPException, match="Need at least 3 data points") as exc_info:
         process_baseline(request=None, body=body)
     assert exc_info.value.status_code == 400
 
