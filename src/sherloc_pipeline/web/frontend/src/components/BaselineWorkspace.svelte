@@ -17,6 +17,8 @@
   let visibleRange: [number, number] | null = null;
   let rangeMode: 'full' | 'visible' = 'full';
 
+  $: if (visibleRange === null) rangeMode = 'full';
+
   // Parameters (initialized from store)
   let lam = $baselineParams.lam ?? 1e6;
   let maxIter = $baselineParams.max_iter ?? 10;

@@ -113,7 +113,7 @@ describe('ProcessingChain — UI state tracks applied spectrum state (issue #34)
     expect(stateUpdate.mock.calls[0][0].stage).toBe('baseline_corrected');
   });
 
-  it('fits the baseline over the current zoom only when explicitly selected', async () => {
+  it('fits the current zoom only when selected and resets to full when it is cleared', async () => {
     const zoomRange: [number, number] = [850, 1150];
     const postBaselineSpy = vi.spyOn(api, 'postBaseline').mockResolvedValue({
       schema_version: '1',
@@ -159,6 +159,26 @@ describe('ProcessingChain — UI state tracks applied spectrum state (issue #34)
     const snapshot = stateUpdate.mock.calls[0][0];
     expect(snapshot.artifacts.baselineRange).toEqual(zoomRange);
     expect(snapshot.params.wavenumber_range).toEqual(zoomRange);
+
+    component.$set({ visibleRange: null });
+    await tick();
+
+    const fullRadio = card.querySelector<HTMLInputElement>(
+      'input[name="baseline-range"][value="full"]',
+    );
+    expect(fullRadio?.checked).toBe(true);
+    expect(visibleRadio?.checked).toBe(false);
+    expect(visibleRadio?.disabled).toBe(true);
+
+    postBaselineSpy.mockClear();
+    const lamInput = card.querySelector<HTMLInputElement>('#bl-lam');
+    await fireEvent.input(lamInput!, { target: { value: '6.1' } });
+    await new Promise((r) => setTimeout(r, 350));
+    await tick();
+
+    expect(postBaselineSpy).toHaveBeenCalledTimes(1);
+    expect(postBaselineSpy.mock.calls[0][0].params?.wavenumber_range).toBeUndefined();
+    expect(card.querySelector('.step-error')).toBeNull();
   });
 
   it('resets Baseline checkbox and Background radio when raw input props change', async () => {

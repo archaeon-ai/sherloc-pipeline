@@ -41,6 +41,8 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
   let rangeMode: 'full' | 'visible' = 'full';
   let appliedRange: [number, number] | null = null;
 
+  $: if (visibleRange === null) rangeMode = 'full';
+
   let computing = false;
   let error = '';
 
