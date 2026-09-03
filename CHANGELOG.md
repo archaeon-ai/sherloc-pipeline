@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cosmic-ray veto for hydration fitting, feature-flagged and default OFF (#38).**
+  A cosmic ray inside the 2800-3900 cm-1 OH-stretch window clears the R2 and
+  F-test gates and is reported as a hydration feature with its FWHM pinned at
+  the 50 cm-1 floor. `core/hydration_veto.py` adds two independent signals: a
+  despike-mask veto (the fit still runs on the non-despiked spectrum for
+  published-method fidelity; the existing despiker runs alongside purely to
+  harvest the spike mask that call sites previously discarded) and
+  bound-pinning detection (a fit converged within epsilon of the FWHM floor is
+  flagged unreliable-by-construction, never rejected on that basis alone).
+  Both apply consistently to all three hydration paths --
+  `services/fitting.py`, `services/map_fitting.py`, and the web point-fit
+  endpoint. New config block `fitting.hydration_cr_veto` with
+  `enabled: false`: with the flag off, behaviour is unchanged and peak records
+  carry no veto fields. The thresholds are proposals, not ratified defaults --
+  see `docs/reports/HYDRATION_CR_VETO_EVIDENCE.md` and the read-only sweep
+  utility `scripts/hydration_cr_veto_report.py`. Turning the flag on is a
+  science decision.
+
 ### Fixed
 - **Targetless Loupe science scans are detected and safely auditable (#43).**
   Direct workspace ingestion now resolves the sol-level `.lpe` target just as

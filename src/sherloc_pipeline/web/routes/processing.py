@@ -1,5 +1,6 @@
 """Stateless processing endpoints: baseline, fit, despike, and background."""
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -20,6 +21,11 @@ from sherloc_pipeline.core.mineral_id import (
     classify_hydration_band,
     classify_organic_band,
     load_mineral_rules,
+)
+from sherloc_pipeline.core.hydration_veto import (
+    HydrationVetoConfig,
+    despike_for_veto,
+    evaluate_hydration_peak,
 )
 from sherloc_pipeline.core.preprocessing import DespikeParams, despike_r1_spectrum
 from sherloc_pipeline.services.quality import classify_fit_quality
@@ -280,12 +286,34 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
         else:
             _assign = lambda _: None
 
+        # Hydration cosmic-ray veto (issue #38) — feature-flagged, default OFF.
+        # The veto runs against the raw (non-baselined, non-despiked) spectrum
+        # the client posted, which is the same array the fit was seeded from.
+        veto_cfg = dataclasses.replace(
+            HydrationVetoConfig.from_fitting_config(fit_cfg),
+            # This endpoint's FWHM floor is the caller-supplied bound, not the
+            # config default, so bound-pinning must be measured against it.
+            fwhm_floor_cm1=float(fit_params_schema.fwhm_bounds[0]),
+        )
+        veto_active = domain == "hydration" and veto_cfg.enabled
+        if veto_active:
+            y_veto_desp, veto_mask = despike_for_veto(x, y)
+
         for p in fit_result.peaks:
             center = p.m_cm1
             assignment = _assign(center) if center is not None else None
             sharpness_ratio = getattr(p, "sharpness_ratio", None)
+            veto_row: dict = {}
+            if veto_active:
+                verdict = evaluate_hydration_peak(
+                    center, p.fwhm, x, y, y_veto_desp, veto_mask, veto_cfg
+                )
+                if verdict.vetoed:
+                    continue
+                veto_row = verdict.as_row()
             peaks.append(
                 PeakDTO(
+                    **veto_row,
                     center_cm1=center,
                     amplitude=p.a,
                     fwhm_cm1=p.fwhm,

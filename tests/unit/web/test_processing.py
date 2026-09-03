@@ -880,3 +880,106 @@ def test_built_wheel_ships_background_csvs(tmp_path):
         f"{in_wheel_bg}. This is the production-artifact regression "
         f"issue #13 was originally about."
     )
+
+
+# ---------------------------------------------------------------------------
+# Hydration cosmic-ray veto on the point-fit endpoint (issue #38)
+# ---------------------------------------------------------------------------
+
+
+def _make_hydration_cr_spectrum():
+    """OH-window spectrum whose only feature is a two-channel cosmic ray.
+
+    Detector-realistic channel spacing (~8.6 cm-1) so the spike reproduces the
+    filed defect: it clears R2 and the F-test and is fit as an OH-stretch
+    feature with its FWHM pinned at the 50 cm-1 floor.
+    """
+    wn = np.linspace(1800.0, 4000.0, 256)
+    intensity = 100.0 + np.random.default_rng(38).normal(0.0, 4.0, len(wn))
+    idx = int(np.argmin(np.abs(wn - 3300.0)))
+    intensity[idx] += 6000.0
+    intensity[idx + 1] += 5400.0
+    return wn.tolist(), intensity.tolist()
+
+
+def _hydration_fit_body(wn, intensity):
+    return {
+        "wavenumber": wn,
+        "intensity": intensity,
+        "params": {
+            "fitting": {
+                "domain": "hydration",
+                "wavenumber_range": [2800.0, 3900.0],
+                "fwhm_bounds": [50.0, 300.0],
+                "max_peaks": 2,
+                "min_snr": 3.0,
+                "model_selection": "f-test",
+            },
+            "baseline": None,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_off_by_default_keeps_the_cosmic_ray(client, fake_config):
+    """Flag-off is the pre-#38 contract: the CR is still returned, unannotated."""
+    wn, intensity = _make_hydration_cr_spectrum()
+    resp = await client.post("/api/process/fit", json=_hydration_fit_body(wn, intensity))
+
+    assert resp.status_code == 200
+    peaks = resp.json()["peaks"]
+    assert peaks, "flag-off must reproduce today's behaviour"
+    assert all(p["cr_vetoed"] is None for p in peaks)
+    assert all(p["fwhm_floor_pinned"] is None for p in peaks)
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_on_rejects_the_cosmic_ray(client, fake_config):
+    wn, intensity = _make_hydration_cr_spectrum()
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "reject"}
+    try:
+        resp = await client.post(
+            "/api/process/fit", json=_hydration_fit_body(wn, intensity)
+        )
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+
+    assert resp.status_code == 200
+    assert resp.json()["peaks"] == []
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_flag_action_annotates_the_cosmic_ray(client, fake_config):
+    wn, intensity = _make_hydration_cr_spectrum()
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "flag"}
+    try:
+        resp = await client.post(
+            "/api/process/fit", json=_hydration_fit_body(wn, intensity)
+        )
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+
+    peaks = resp.json()["peaks"]
+    assert peaks, "flag action must keep the candidate"
+    peak = peaks[0]
+    assert peak["cr_vetoed"] is False
+    # Bound pinning is measured against the caller-supplied FWHM floor (50).
+    assert peak["fwhm_floor_pinned"] is True
+    assert peak["cr_mask_hit"] or peak["cr_amplitude_drop_ratio"] > 0.5
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_does_not_apply_to_other_domains(client, fake_config):
+    """The veto is hydration-only — a mineral fit is untouched with the flag on."""
+    wn, intensity = _make_test_spectrum()
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "reject"}
+    try:
+        resp = await client.post(
+            "/api/process/fit", json={"wavenumber": wn, "intensity": intensity}
+        )
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+
+    assert resp.status_code == 200
+    for peak in resp.json()["peaks"]:
+        assert peak["cr_vetoed"] is None

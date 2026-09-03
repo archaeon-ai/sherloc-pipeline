@@ -55,6 +55,14 @@ import pandas as pd
 from rich.console import Console
 from rich.progress import Progress, BarColumn, TextColumn, MofNCompleteColumn, TimeElapsedColumn
 
+from sherloc_pipeline.core.hydration_veto import (
+    HydrationVetoConfig,
+    HydrationVetoResult,
+    despike_for_veto,
+    evaluate_hydration_peak,
+)
+from sherloc_pipeline.core.preprocessing import DespikeParams
+
 from .base import ServiceResult
 from .errors import FittingError, enrich
 from .paths import resolve_scan_context
@@ -207,6 +215,25 @@ def _fit_point_minerals(
         }
 
 
+def _despike_params_from_config(cfg) -> DespikeParams:
+    """Build classical despiker params from a pipeline config for veto use."""
+    pre = getattr(cfg, "preprocessing", None)
+    if pre is None and isinstance(cfg, dict):
+        pre = cfg.get("preprocessing")
+    if not isinstance(pre, dict):
+        pre = getattr(pre, "__dict__", {}) or {}
+    dsp = pre.get("despike") or {}
+    if not isinstance(dsp, dict):
+        dsp = getattr(dsp, "__dict__", {}) or {}
+    defaults = DespikeParams()
+    return DespikeParams(
+        window_size=int(dsp.get("window_size", defaults.window_size)),
+        zscore_threshold=float(dsp.get("zscore_threshold", defaults.zscore_threshold)),
+        max_iterations=int(dsp.get("max_iterations", defaults.max_iterations)),
+        interpolation_method=str(dsp.get("interpolation_method", defaults.interpolation_method)),
+    )
+
+
 def _fit_point_hydration(
     point_data: Dict[str, Any],
     *,
@@ -225,6 +252,8 @@ def _fit_point_hydration(
     sol: str,
     target: str,
     scan: str,
+    veto_cfg: Optional[HydrationVetoConfig] = None,
+    despike_params: Optional[DespikeParams] = None,
 ) -> Dict[str, Any]:
     """Fit hydration for a single point (picklable worker)."""
     from sherloc_pipeline.core.fitting import fit_spectrum, save_peak_table
@@ -298,6 +327,27 @@ def _fit_point_hydration(
             continue
         accepted_peaks.append(p)
 
+    # Cosmic-ray veto (issue #38), feature-flagged and default OFF. The fit
+    # itself stays on the non-despiked spectrum for published-method fidelity;
+    # the despiker runs here only to supply the spike mask.
+    veto_by_peak: Dict[int, HydrationVetoResult] = {}
+    if veto_cfg is not None and veto_cfg.enabled and accepted_peaks:
+        y_desp, spike_mask = despike_for_veto(x, y_full, despike_params)
+        surviving = []
+        for p in accepted_peaks:
+            verdict = evaluate_hydration_peak(
+                p.m_cm1, p.fwhm, x, y_full, y_desp, spike_mask, veto_cfg
+            )
+            veto_by_peak[id(p)] = verdict
+            if verdict.vetoed:
+                warnings.append(
+                    f"Point {point_idx}: hydration candidate at {p.m_cm1:.1f} cm-1 "
+                    f"vetoed as cosmic ray ({', '.join(verdict.flags)})"
+                )
+                continue
+            surviving.append(p)
+        accepted_peaks = surviving
+
     oh_pass = len(accepted_peaks) > 0
 
     # Export if accepted
@@ -318,7 +368,7 @@ def _fit_point_hydration(
     # Build accepted rows
     accepted_rows = []
     for p in accepted_peaks:
-        accepted_rows.append({
+        row = {
             'point': point_idx,
             'center_cm1': p.m_cm1,
             'amplitude_a': p.a,
@@ -328,7 +378,11 @@ def _fit_point_hydration(
             'r2': oh_result.r2,
             'sharpness_ratio': p.sharpness_ratio,
             'pass_sharpness': p.pass_sharpness,
-        })
+        }
+        verdict = veto_by_peak.get(id(p))
+        if verdict is not None:
+            row.update(verdict.as_row())
+        accepted_rows.append(row)
 
     summary_row = {
         'point': point_idx,
@@ -1025,6 +1079,14 @@ class FittingService:
                 'ftest_alpha': ftest_alpha,
             }
 
+            # Cosmic-ray veto config (issue #38) — default OFF.
+            veto_cfg = HydrationVetoConfig.from_fitting_config(fit_cfg)
+            veto_despike_params = _despike_params_from_config(cfg)
+            if veto_cfg.enabled:
+                self.console.print(
+                    f"[yellow]Hydration cosmic-ray veto ENABLED (action={veto_cfg.action}).[/yellow]"
+                )
+
             oh_mask = (x >= oh_roi[0]) & (x <= oh_roi[1])
             plot_mask_oh = (x >= oh_plot[0]) & (x <= oh_plot[1])
             n_edge = 5  # points for endpoint averaging
@@ -1050,6 +1112,7 @@ class FittingService:
                 min_snr=min_snr, r2_min=r2_min, center_lo=center_lo,
                 center_hi=center_hi, out_dir=str(multifits_dir),
                 sol=sol, target=target, scan=scan,
+                veto_cfg=veto_cfg, despike_params=veto_despike_params,
             )
 
             results = self._run_parallel(
