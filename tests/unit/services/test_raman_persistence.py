@@ -7,6 +7,7 @@ domain isolation; stale row cleanup; feature assignment; assignment_confidence N
 AC: bd-3cqz.10 (spec step 2.5)
 """
 
+import json
 import uuid
 import pytest
 import pandas as pd
@@ -17,8 +18,30 @@ from sherloc_pipeline.database.connection import get_engine, get_session, create
 from sherloc_pipeline.database.models import (
     SolORM, ScanORM, ScanPointORM, SpectrumORM, FittedPeakORM,
 )
-from sherloc_pipeline.services.fitting import FittingService
+from sherloc_pipeline.services.fitting import (
+    FittingService,
+    _fit_run_marker_path,
+    _read_fit_run_marker,
+    _write_fit_run_marker,
+)
 from sherloc_pipeline.services.errors import FittingError
+
+
+def _write_marker(fit_dir: Path, *, points_fitted: int = 3, accepted_peaks: int = 1) -> None:
+    """Write the completion marker persistence requires for every fit dir.
+
+    Real fits write this as their last step; tests that hand-build a fit
+    directory have to stand in for that.
+    """
+    domain = fit_dir.name[: -len("_fit")]
+    _write_fit_run_marker(
+        _fit_run_marker_path(
+            fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", domain,
+        ),
+        domain=domain,
+        points_fitted=points_fitted,
+        accepted_peaks=accepted_peaks,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +99,7 @@ def _make_minerals_csvs(base: Path) -> Path:
     """Create minerals_fit/ with CSVs for points 0-2."""
     d = base / "minerals_fit"
     d.mkdir(parents=True, exist_ok=True)
+    _write_marker(d)
 
     # Point 0: peak at 1085.5 (carbonate range)
     pd.DataFrame([
@@ -108,6 +132,7 @@ def _make_organics_csvs(base: Path) -> Path:
     """Create organics_fit/ with DG peaks for points 0-2."""
     d = base / "organics_fit"
     d.mkdir(parents=True, exist_ok=True)
+    _write_marker(d)
 
     # Point 0: D band (1350) + G band (1600)
     pd.DataFrame([
@@ -143,6 +168,7 @@ def _make_hydration_csvs(base: Path) -> Path:
     """Create hydration_fit/ with peaks for points 0-2."""
     d = base / "hydration_fit"
     d.mkdir(parents=True, exist_ok=True)
+    _write_marker(d)
 
     # Point 0: OH stretch (3500)
     pd.DataFrame([
@@ -279,6 +305,7 @@ class TestOrganicsDomain:
         base.mkdir()
         d = base / "organics_fit"
         d.mkdir()
+        _write_marker(d)
 
         # DG CSV: peak at 1350
         pd.DataFrame([
@@ -630,6 +657,7 @@ class TestR2PosthocFilter:
         base.mkdir()
         d = base / "minerals_fit"
         d.mkdir(parents=True, exist_ok=True)
+        _write_marker(d)
 
         # Point 0: good peak, R² = 0.95
         pd.DataFrame([
@@ -667,6 +695,7 @@ class TestR2PosthocFilter:
         base.mkdir()
         d = base / "minerals_fit"
         d.mkdir(parents=True, exist_ok=True)
+        _write_marker(d)
 
         pd.DataFrame([
             {"center_cm1": 1085.5, "fwhm_cm1": 30.0, "amplitude_a": 1500.0,
@@ -688,6 +717,7 @@ class TestR2PosthocFilter:
         base.mkdir()
         d = base / "minerals_fit"
         d.mkdir(parents=True, exist_ok=True)
+        _write_marker(d)
 
         pd.DataFrame([
             {"center_cm1": 1085.5, "fwhm_cm1": 30.0, "amplitude_a": 1500.0,
@@ -715,6 +745,7 @@ class TestOrganicsFWHMFilter:
         base.mkdir()
         d = base / "organics_fit"
         d.mkdir()
+        _write_marker(d)
 
         # D_band at 1350, FWHM=25 (too narrow)
         pd.DataFrame([
@@ -736,6 +767,7 @@ class TestOrganicsFWHMFilter:
         base.mkdir()
         d = base / "organics_fit"
         d.mkdir()
+        _write_marker(d)
 
         pd.DataFrame([
             {"center_cm1": 1350.0, "fwhm_cm1": 60.0, "amplitude_a": 300.0,
@@ -756,6 +788,7 @@ class TestOrganicsFWHMFilter:
         base.mkdir()
         d = base / "organics_fit"
         d.mkdir()
+        _write_marker(d)
 
         pd.DataFrame([
             {"center_cm1": 1600.0, "fwhm_cm1": 25.0, "amplitude_a": 500.0,
@@ -776,6 +809,7 @@ class TestOrganicsFWHMFilter:
         base.mkdir()
         d = base / "organics_fit"
         d.mkdir()
+        _write_marker(d)
 
         # Peak at 1450 cm⁻¹ — not in D or G range, classified as unidentified
         pd.DataFrame([
@@ -803,6 +837,7 @@ class TestHydrationCenterRangeGate:
         base.mkdir()
         d = base / "hydration_fit"
         d.mkdir()
+        _write_marker(d)
 
         pd.DataFrame([
             {"center_cm1": 3950.0, "fwhm_cm1": 60.0, "amplitude_a": 800.0,
@@ -823,6 +858,7 @@ class TestHydrationCenterRangeGate:
         base.mkdir()
         d = base / "hydration_fit"
         d.mkdir()
+        _write_marker(d)
 
         pd.DataFrame([
             {"center_cm1": 3500.0, "fwhm_cm1": 60.0, "amplitude_a": 800.0,
@@ -843,6 +879,7 @@ class TestHydrationCenterRangeGate:
         base.mkdir()
         d = base / "hydration_fit"
         d.mkdir()
+        _write_marker(d)
 
         pd.DataFrame([
             {"center_cm1": 3700.0, "fwhm_cm1": 55.0, "amplitude_a": 600.0,
@@ -868,6 +905,7 @@ class TestHydrationCenterRangeGate:
         base.mkdir()
         d = base / "hydration_fit"
         d.mkdir()
+        _write_marker(d)
 
         pd.DataFrame([
             {"center_cm1": 2900.0, "fwhm_cm1": 60.0, "amplitude_a": 800.0,
@@ -880,3 +918,129 @@ class TestHydrationCenterRangeGate:
         service = _make_service(engine)
         result = _call_persist_raman(service, base, "hydration")
         assert result.metadata["peaks_inserted"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Run-marker gating — persistence replaces every row for a domain, so it must
+# refuse to run against anything but a completed, non-empty fit.
+# ---------------------------------------------------------------------------
+
+class TestRunMarkerGating:
+    """An incomplete or empty run must never overwrite valid persisted peaks."""
+
+    @pytest.mark.parametrize("domain", ["minerals", "organics", "hydration"])
+    def test_interrupted_rerun_with_a_surviving_csv_raises(
+        self, populated_db, results_all, domain
+    ):
+        """Leftover CSVs are not evidence that this run finished.
+
+        A rerun that dies partway leaves the marker deleted (cleared at fit
+        start) while some of the previous run's per-point CSVs are still on
+        disk. Persisting from that mix would replace the database with a
+        partial result.
+        """
+        engine, _, _ = populated_db
+        service = _make_service(engine)
+        first = _call_persist_raman(service, results_all, domain)
+        assert first.metadata["peaks_inserted"] > 0
+
+        fit_dir = results_all / f"{domain}_fit"
+        _fit_run_marker_path(
+            fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", domain,
+        ).unlink()
+        # Point 0's CSV is gone, point 1's survives: at least one CSV remains,
+        # so discovery still succeeds.
+        next(fit_dir.glob("*point0*peaks.csv")).unlink()
+        assert list(fit_dir.glob("*point1*peaks.csv"))
+
+        with pytest.raises(FittingError) as exc_info:
+            _call_persist_raman(_make_service(engine), results_all, domain)
+        assert "No completed-run marker" in str(exc_info.value)
+
+        with get_session(engine) as session:
+            assert session.query(FittedPeakORM).filter_by(
+                fit_modality=domain
+            ).count() == first.metadata["peaks_inserted"], (
+                "an aborted persist must leave persisted rows untouched"
+            )
+
+    @pytest.mark.parametrize("domain", ["hydration", "organics"])
+    def test_zero_point_marker_is_rejected(self, populated_db, results_all, domain):
+        """A run that fitted no points says nothing about the scan.
+
+        Its `accepted_peaks: 0` must not be read as "the fit found nothing" and
+        used to clear rows a real earlier run persisted.
+        """
+        engine, _, _ = populated_db
+        service = _make_service(engine)
+        first = _call_persist_raman(service, results_all, domain)
+        assert first.metadata["peaks_inserted"] > 0
+
+        fit_dir = results_all / f"{domain}_fit"
+        for csv in fit_dir.glob("*peaks.csv"):
+            csv.unlink()
+        _write_fit_run_marker(
+            _fit_run_marker_path(
+                fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", domain,
+            ),
+            domain=domain, points_fitted=0, accepted_peaks=0,
+        )
+
+        with pytest.raises(FittingError) as exc_info:
+            _call_persist_raman(_make_service(engine), results_all, domain)
+        assert "fitted 0 points" in str(exc_info.value)
+
+        with get_session(engine) as session:
+            assert session.query(FittedPeakORM).filter_by(
+                fit_modality=domain
+            ).count() == first.metadata["peaks_inserted"]
+
+    def test_zero_point_marker_rejected_before_csvs_are_read(
+        self, populated_db, results_all
+    ):
+        """The point count is checked even when CSVs are present."""
+        engine, _, _ = populated_db
+        fit_dir = results_all / "hydration_fit"
+        _write_fit_run_marker(
+            _fit_run_marker_path(
+                fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", "hydration",
+            ),
+            domain="hydration", points_fitted=0, accepted_peaks=1,
+        )
+
+        with pytest.raises(FittingError) as exc_info:
+            _call_persist_raman(_make_service(engine), results_all, "hydration")
+        assert "fitted 0 points" in str(exc_info.value)
+
+    def test_marker_for_another_domain_is_rejected(self, populated_db, results_all):
+        """A marker naming a different domain is not this domain's evidence."""
+        engine, _, _ = populated_db
+        fit_dir = results_all / "hydration_fit"
+        _write_fit_run_marker(
+            _fit_run_marker_path(
+                fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", "hydration",
+            ),
+            domain="organics", points_fitted=3, accepted_peaks=1,
+        )
+
+        with pytest.raises(FittingError) as exc_info:
+            _call_persist_raman(_make_service(engine), results_all, "hydration")
+        assert "records domain" in str(exc_info.value)
+
+    def test_marker_without_a_point_count_is_treated_as_absent(
+        self, populated_db, results_all
+    ):
+        """A marker missing `points_fitted` cannot certify a run."""
+        engine, _, _ = populated_db
+        fit_dir = results_all / "hydration_fit"
+        marker = _fit_run_marker_path(
+            fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", "hydration",
+        )
+        payload = json.loads(marker.read_text())
+        del payload["points_fitted"]
+        marker.write_text(json.dumps(payload))
+
+        assert _read_fit_run_marker(marker) is None
+        with pytest.raises(FittingError) as exc_info:
+            _call_persist_raman(_make_service(engine), results_all, "hydration")
+        assert "No completed-run marker" in str(exc_info.value)

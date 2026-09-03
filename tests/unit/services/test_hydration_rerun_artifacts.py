@@ -24,6 +24,7 @@ from sherloc_pipeline.services.fitting import (
     _fit_run_marker_path,
     _read_fit_run_marker,
 )
+from sherloc_pipeline.services.errors import FittingError
 from sherloc_pipeline.services.runtime import RuntimeContext
 
 SOL = "0921"
@@ -175,3 +176,64 @@ def test_remove_stale_artifacts_raises_on_unlink_failure(tmp_path):
 
     # Missing files stay non-fatal: nothing to resurrect.
     _remove_stale_artifacts([tmp_path / "absent.csv"])
+
+
+def _pointless_scan_csv(results_base: Path) -> Path:
+    """An R1_normalized.csv with a shift axis but no numeric point columns."""
+    x = np.linspace(1800.0, 4000.0, 64)
+    results_base.mkdir(parents=True, exist_ok=True)
+    csv_path = results_base / f"{SOL}_{TARGET}_{SCAN}_R1_normalized.csv"
+    pd.DataFrame({"raman_shift": x, "mean": np.full_like(x, 100.0)}).to_csv(
+        csv_path, index=False
+    )
+    return csv_path
+
+
+def test_hydration_fit_with_no_point_columns_fails_and_leaves_no_marker(tmp_path):
+    """A run that fits nothing must not complete.
+
+    Completing would write an `accepted_peaks: 0` marker, which persistence
+    would then read as "the fit found nothing" and use to clear peaks a real
+    earlier run put in the database.
+    """
+    base = tmp_path / "results" / SCAN
+    _pointless_scan_csv(base)
+
+    with pytest.raises(FittingError) as exc_info:
+        _run_fit(_service(tmp_path, veto_enabled=False), base)
+    assert "No point columns found to fit" in str(exc_info.value)
+
+    marker = _fit_run_marker_path(
+        base / "hydration_fit", SOL, TARGET, SCAN, "R1", "hydration",
+    )
+    assert not marker.exists()
+
+
+def test_organics_fit_with_no_point_columns_fails_and_leaves_no_marker(tmp_path):
+    """Same guard on the organics path, which shares the persistence gate."""
+    base = tmp_path / "results" / SCAN
+    base.mkdir(parents=True, exist_ok=True)
+    x = np.linspace(800.0, 2000.0, 64)
+    pd.DataFrame({"raman_shift": x, "mean": np.full_like(x, 100.0)}).to_csv(
+        base / f"{SOL}_{TARGET}_{SCAN}_R1_normalized_baselined.csv", index=False
+    )
+
+    service = _service(tmp_path, veto_enabled=False)
+    scan_ctx = MagicMock()
+    scan_ctx.base_data_dir = base
+    scan_ctx.results_dir = base
+    ingestion = MagicMock()
+    ingestion.get_results_path.return_value = base
+
+    with patch("sherloc_pipeline.services.fitting.resolve_scan_context",
+               return_value=scan_ctx), \
+         patch("sherloc_pipeline.core.data_ingestion.DataIngestion",
+               return_value=ingestion), \
+         pytest.raises(FittingError) as exc_info:
+        service.fit_organics(sol=SOL, target=TARGET, scan=SCAN)
+    assert "No point columns found to fit" in str(exc_info.value)
+
+    marker = _fit_run_marker_path(
+        base / "organics_fit", SOL, TARGET, SCAN, "R1", "organics",
+    )
+    assert not marker.exists()

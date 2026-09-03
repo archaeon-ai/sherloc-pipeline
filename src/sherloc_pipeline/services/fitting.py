@@ -324,6 +324,8 @@ def _read_fit_run_marker(marker_path: Path) -> Optional[Dict[str, Any]]:
         return None
     if not isinstance(payload.get("accepted_peaks"), int):
         return None
+    if not isinstance(payload.get("points_fitted"), int):
+        return None
     return payload
 
 
@@ -1251,6 +1253,16 @@ class FittingService:
             n_edge = 5  # points for endpoint averaging
 
             point_cols = [c for c in df.columns if str(c).isdigit()]
+            if not point_cols:
+                # A run that fits nothing must not be allowed to complete: its
+                # marker would otherwise license persistence to clear the
+                # domain's existing rows on the strength of an empty run.
+                error = FittingError(
+                    "No point columns found to fit.",
+                    exit_code=1,
+                    context={"input_file": str(input_csv)}
+                )
+                raise enrich(error, sol=sol, target=target, scan=scan)
 
             # --- Phase 1: Prepare per-point inputs ---
             point_inputs = [
@@ -1478,6 +1490,16 @@ class FittingService:
 
             org_mask = (x >= org_roi[0]) & (x <= org_roi[1])
             point_cols = [c for c in df.columns if str(c).isdigit()]
+            if not point_cols:
+                # A run that fits nothing must not be allowed to complete: its
+                # marker would otherwise license persistence to clear the
+                # domain's existing rows on the strength of an empty run.
+                error = FittingError(
+                    "No point columns found to fit.",
+                    exit_code=1,
+                    context={"input_file": str(input_csv)}
+                )
+                raise enrich(error, sol=sol, target=target, scan=scan)
 
             # --- Phase 1: Prepare per-point inputs ---
             point_inputs = [
@@ -2281,6 +2303,57 @@ class FittingService:
                     context={"fit_dir": str(fit_dir)}
                 )
 
+            # Gate persistence on this domain's completion marker.
+            #
+            # Persisting replaces every existing row for the domain, so it must
+            # only ever run against the output of a fit that ran to completion.
+            # The marker is the only evidence of that: it is deleted when a fit
+            # starts and rewritten atomically when it finishes. Peak CSVs are
+            # not evidence -- an interrupted rerun leaves the previous run's
+            # CSVs, or a partial mix of old and new ones, behind -- so the
+            # marker is required whether or not CSVs are present.
+            marker_path = _fit_run_marker_path(
+                fit_dir, sol, target, scan, region, domain,
+            )
+            marker = _read_fit_run_marker(marker_path)
+            if marker is None:
+                raise FittingError(
+                    f"No completed-run marker at {marker_path.name} for domain "
+                    f"'{domain}' in {fit_dir}. The last {domain} fit for this scan "
+                    f"never ran, was interrupted, or predates run markers; any peak "
+                    f"CSVs present cannot be trusted to be complete. Re-run fitting.",
+                    exit_code=1,
+                    context={"domain": domain, "fit_dir": str(fit_dir)}
+                )
+            if marker.get("domain") != domain:
+                raise FittingError(
+                    f"Completion marker at {marker_path.name} records domain "
+                    f"'{marker.get('domain')}', not '{domain}'. Re-run fitting.",
+                    exit_code=1,
+                    context={
+                        "domain": domain,
+                        "fit_dir": str(fit_dir),
+                        "marker_domain": marker.get("domain"),
+                    }
+                )
+            marker_points = int(marker["points_fitted"])
+            if marker_points <= 0:
+                # A run that fitted no points says nothing about this scan, and
+                # must never be read as "the fit found nothing" -- that would
+                # clear valid rows persisted from a real earlier run.
+                raise FittingError(
+                    f"The last completed {domain} run for {sol}/{target}/{scan} fitted "
+                    f"0 points, so it cannot be used to replace persisted peaks. "
+                    f"Re-run fitting against a scan with point spectra.",
+                    exit_code=1,
+                    context={
+                        "domain": domain,
+                        "fit_dir": str(fit_dir),
+                        "marker_points_fitted": marker_points,
+                    }
+                )
+            marker_accepted = int(marker["accepted_peaks"])
+
             # Discover per-point peak CSVs
             peak_csvs = self._discover_peak_csvs(fit_dir, sol, target, scan, region, domain)
             zero_result_run = False
@@ -2289,24 +2362,8 @@ class FittingService:
                 # result (e.g. the hydration cosmic-ray veto rejected every
                 # candidate). It must clear the domain's existing rows rather
                 # than abort, or the previous run's peaks stay in the database
-                # forever. A fit that never ran -- or was interrupted, or
-                # accepted peaks whose CSVs are now missing -- is still an
-                # error. Only the run marker can tell those apart: it is
-                # deleted when the fit starts, written atomically when it
-                # finishes, and records that run's accepted-peak count.
-                marker_path = _fit_run_marker_path(
-                    fit_dir, sol, target, scan, region, domain,
-                )
-                marker = _read_fit_run_marker(marker_path)
-                if marker is None:
-                    raise FittingError(
-                        f"No fitted peak CSVs found in {fit_dir} for domain '{domain}' "
-                        f"and no completed-run marker at {marker_path.name}. "
-                        f"Run fitting first.",
-                        exit_code=1,
-                        context={"domain": domain, "fit_dir": str(fit_dir)}
-                    )
-                marker_accepted = int(marker["accepted_peaks"])
+                # forever. The marker distinguishes that from a completed run
+                # whose accepted peaks' CSVs have since gone missing.
                 if marker_accepted != 0:
                     raise FittingError(
                         f"Fit directory {fit_dir} is inconsistent for domain '{domain}': "

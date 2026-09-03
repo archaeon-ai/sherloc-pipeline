@@ -26,8 +26,25 @@ from sherloc_pipeline.database.connection import get_engine, get_session, create
 from sherloc_pipeline.database.models import (
     SolORM, ScanORM, ScanPointORM, SpectrumORM, FittedPeakORM,
 )
-from sherloc_pipeline.services.fitting import FittingService
+from sherloc_pipeline.services.fitting import (
+    FittingService,
+    _fit_run_marker_path,
+    _write_fit_run_marker,
+)
 from sherloc_pipeline.core.calibration import calculate_loupe_wavelength_wavenumber
+
+
+def _write_marker(fit_dir, *, points_fitted: int = 3, accepted_peaks: int = 1) -> None:
+    """Stand in for the completion marker a real fit writes as its last step."""
+    domain = fit_dir.name[: -len("_fit")]
+    _write_fit_run_marker(
+        _fit_run_marker_path(
+            fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", domain,
+        ),
+        domain=domain,
+        points_fitted=points_fitted,
+        accepted_peaks=accepted_peaks,
+    )
 
 
 runner = CliRunner()
@@ -215,6 +232,7 @@ def raman_csvs(tmp_path):
     # Minerals
     d = base / "minerals_fit"
     d.mkdir()
+    _write_marker(d)
     pd.DataFrame([
         {"center_cm1": 1085.5, "fwhm_cm1": 30.0, "amplitude_a": 1500.0,
          "area": 100.0, "snr": 15.0},
@@ -233,6 +251,7 @@ def raman_csvs(tmp_path):
     # Organics
     d = base / "organics_fit"
     d.mkdir()
+    _write_marker(d)
     pd.DataFrame([
         {"center_cm1": 1350.0, "fwhm_cm1": 40.0, "amplitude_a": 300.0,
          "area": 80.0, "snr": 6.0},
@@ -253,6 +272,7 @@ def raman_csvs(tmp_path):
     # Hydration
     d = base / "hydration_fit"
     d.mkdir()
+    _write_marker(d)
     pd.DataFrame([
         {"center_cm1": 3500.0, "fwhm_cm1": 60.0, "amplitude_a": 800.0,
          "area": 200.0, "snr": 12.0},

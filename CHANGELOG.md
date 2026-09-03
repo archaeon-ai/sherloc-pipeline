@@ -34,10 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different paths. Re-fitting into a populated results directory now removes
   the per-point CSV, overlay PNG and accepted-peaks summary that a run no
   longer produces, and `persist_raman_peaks()` treats a fit that accepted
-  nothing (scan summary present, no per-point CSVs) as a zero result that
-  clears the domain's existing rows rather than an error; turning the veto on
-  for an already-fitted scan therefore removes the rejected peak from the
-  database instead of resurrecting it from a stale artifact.
+  nothing as a zero result that clears the domain's existing rows rather than
+  an error; turning the veto on for an already-fitted scan therefore removes
+  the rejected peak from the database instead of resurrecting it from a stale
+  artifact. Because persistence replaces every row for a domain, it now
+  requires that domain's completed-run marker (`*_<domain>_fit_run.json`,
+  deleted when a fit starts and written atomically when it finishes) whether
+  or not per-point CSVs are present: leftover CSVs from an interrupted rerun
+  are not evidence that the run completed. A marker reporting zero fitted
+  points is rejected as well, and fitting itself now fails on a scan with no
+  point columns, so an empty run can never license clearing valid rows.
+  **Fit directories produced before run markers existed must be re-fitted
+  before `persist-peaks` will accept them.**
 
 ### Fixed
 - **Targetless Loupe science scans are detected and safely auditable (#43).**

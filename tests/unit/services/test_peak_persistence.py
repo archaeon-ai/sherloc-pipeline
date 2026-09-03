@@ -21,6 +21,18 @@ from sherloc_pipeline.services.fitting import (
 from sherloc_pipeline.services.errors import FittingError
 
 
+def _write_minerals_marker(minerals_dir: Path, *, points_fitted: int = 3, accepted_peaks: int = 1) -> None:
+    """Stand in for the completion marker a real minerals fit writes last."""
+    _write_fit_run_marker(
+        _fit_run_marker_path(
+            minerals_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", "minerals",
+        ),
+        domain="minerals",
+        points_fitted=points_fitted,
+        accepted_peaks=accepted_peaks,
+    )
+
+
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database with full schema."""
@@ -83,6 +95,7 @@ def mock_csvs(tmp_path):
     results_base = tmp_path / "results"
     minerals_dir = results_base / "minerals_fit"
     minerals_dir.mkdir(parents=True)
+    _write_minerals_marker(minerals_dir)
 
     # Point 0: 2 reviewable peaks + 1 non-reviewable (low SNR and FWHM)
     pd.DataFrame([
@@ -249,6 +262,7 @@ def test_persist_empty_csv_ok(populated_db, tmp_path):
     results_base = tmp_path / "results_empty"
     minerals_dir = results_base / "minerals_fit"
     minerals_dir.mkdir(parents=True)
+    _write_minerals_marker(minerals_dir)
 
     for i in range(3):
         pd.DataFrame(columns=["center_cm1", "fwhm_cm1", "amplitude_a", "area", "snr", "pass_snr", "pass_fwhm", "pass_r2"]).to_csv(
@@ -317,6 +331,7 @@ def test_persist_no_aicc_summary_warns(populated_db, tmp_path):
     results_base = tmp_path / "results_no_aicc"
     minerals_dir = results_base / "minerals_fit"
     minerals_dir.mkdir(parents=True)
+    _write_minerals_marker(minerals_dir)
 
     # Only create peak CSV for point 0
     pd.DataFrame([
@@ -355,20 +370,25 @@ def test_persist_minerals_fit_dir_missing_raises(populated_db, tmp_path):
 
 
 def test_persist_no_csvs_raises(populated_db, tmp_path):
-    """Verify FittingError when no peak CSVs found in minerals_fit directory."""
+    """Verify FittingError when a completed run's peak CSVs have gone missing.
+
+    The marker says the run accepted peaks, so an empty directory is
+    inconsistent — not a zero-result run that may clear the database.
+    """
     engine, spectrum_ids = populated_db
 
     # Create minerals_fit dir but no CSV files
     results_base = tmp_path / "results_no_csvs"
     minerals_dir = results_base / "minerals_fit"
     minerals_dir.mkdir(parents=True)
+    _write_minerals_marker(minerals_dir)
 
     service = _make_service(engine)
 
     with pytest.raises(FittingError) as exc_info:
         _call_persist(service, results_base)
 
-    assert "No fitted peak CSVs found" in str(exc_info.value)
+    assert "no peak CSVs are present" in str(exc_info.value)
 
 
 def test_persist_filters_by_min_snr_and_fwhm(populated_db, tmp_path):
@@ -378,6 +398,7 @@ def test_persist_filters_by_min_snr_and_fwhm(populated_db, tmp_path):
     results_base = tmp_path / "results_filter"
     minerals_dir = results_base / "minerals_fit"
     minerals_dir.mkdir(parents=True)
+    _write_minerals_marker(minerals_dir)
 
     # Create CSV with peaks at various SNR and FWHM thresholds
     pd.DataFrame([
@@ -598,7 +619,7 @@ def test_persist_hydration_without_a_run_marker_still_raises(populated_db, tmp_p
     with pytest.raises(FittingError) as exc_info:
         _call_persist_hydration(service, results_base)
 
-    assert "No fitted peak CSVs found" in str(exc_info.value)
+    assert "No completed-run marker" in str(exc_info.value)
 
 
 def test_persist_hydration_stale_summary_without_marker_raises(populated_db, tmp_path):
@@ -621,7 +642,7 @@ def test_persist_hydration_stale_summary_without_marker_raises(populated_db, tmp
 
     with pytest.raises(FittingError) as exc_info:
         _call_persist_hydration(_make_service(engine), results_base)
-    assert "no completed-run marker" in str(exc_info.value)
+    assert "No completed-run marker" in str(exc_info.value)
 
     with get_session(engine) as session:
         assert session.query(FittedPeakORM).filter_by(
