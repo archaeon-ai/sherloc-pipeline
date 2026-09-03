@@ -15,6 +15,7 @@ from sherloc_pipeline.database.connection import get_engine, get_session, create
 from sherloc_pipeline.database.models import SolORM, ScanORM, ScanPointORM, SpectrumORM, FittedPeakORM
 from sherloc_pipeline.services.fitting import (
     FittingService,
+    _begin_fit_run,
     _fit_run_marker_path,
     _write_fit_run_marker,
 )
@@ -610,7 +611,10 @@ def test_persist_hydration_zero_result_leaves_other_domains_alone(
 
 
 def test_persist_hydration_without_a_run_marker_still_raises(populated_db, tmp_path):
-    """No per-point CSVs AND no run marker means the fit never ran — an error."""
+    """No per-point CSVs AND no run marker means the fit never ran — an error.
+
+    This is the pre-marker behaviour, and it is unchanged.
+    """
     engine, _ = populated_db
     results_base = tmp_path / "results_never_fitted"
     (results_base / "hydration_fit").mkdir(parents=True)
@@ -619,7 +623,40 @@ def test_persist_hydration_without_a_run_marker_still_raises(populated_db, tmp_p
     with pytest.raises(FittingError) as exc_info:
         _call_persist_hydration(service, results_base)
 
-    assert "No completed-run marker" in str(exc_info.value)
+    assert "No fitted peak CSVs found" in str(exc_info.value)
+    assert exc_info.value.exit_code == 1
+
+
+def test_persist_hydration_pre_marker_directory_still_persists(populated_db, tmp_path):
+    """A fit directory written before run markers existed must still persist.
+
+    `persist-peaks` is a published command under docs/INVARIANTS.md §1: adding
+    the marker must not turn a previously successful invocation into exit 1.
+    """
+    engine, _ = populated_db
+    results_base = _hydration_results_dir(tmp_path, with_peaks=True)
+    _hydration_marker_path(results_base).unlink()
+
+    result = _call_persist_hydration(_make_service(engine), results_base)
+
+    assert result.metadata["peaks_inserted"] == 1
+    with get_session(engine) as session:
+        assert session.query(FittedPeakORM).filter_by(
+            fit_modality="hydration"
+        ).count() == 1
+
+
+def test_persist_hydration_interrupted_run_marker_raises(populated_db, tmp_path):
+    """An in-progress marker means the CSVs are a mix of runs — refuse."""
+    engine, _ = populated_db
+    results_base = _hydration_results_dir(tmp_path, with_peaks=True)
+    _begin_fit_run(_hydration_marker_path(results_base), domain="hydration")
+
+    with pytest.raises(FittingError) as exc_info:
+        _call_persist_hydration(_make_service(engine), results_base)
+
+    assert "was interrupted" in str(exc_info.value)
+    assert exc_info.value.exit_code == 1
 
 
 def test_persist_hydration_stale_summary_without_marker_raises(populated_db, tmp_path):
@@ -634,15 +671,15 @@ def test_persist_hydration_stale_summary_without_marker_raises(populated_db, tmp
     first = _call_persist_hydration(_make_service(engine), results_base)
     assert first.metadata["peaks_inserted"] == 1
 
-    # Interrupted re-run: marker cleared at start, per-point CSVs gone, the
-    # previous run's positive summary still on disk.
+    # Interrupted re-run: the marker was rewritten as in-progress at start,
+    # per-point CSVs gone, the previous run's positive summary still on disk.
     hyd_dir = results_base / "hydration_fit"
     (hyd_dir / "0851_Lake_Haiyaha_detail_1_R1_point0_hydration_peaks.csv").unlink()
-    _hydration_marker_path(results_base).unlink()
+    _begin_fit_run(_hydration_marker_path(results_base), domain="hydration")
 
     with pytest.raises(FittingError) as exc_info:
         _call_persist_hydration(_make_service(engine), results_base)
-    assert "No completed-run marker" in str(exc_info.value)
+    assert "was interrupted" in str(exc_info.value)
 
     with get_session(engine) as session:
         assert session.query(FittedPeakORM).filter_by(

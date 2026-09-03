@@ -20,6 +20,7 @@ from sherloc_pipeline.database.models import (
 )
 from sherloc_pipeline.services.fitting import (
     FittingService,
+    _begin_fit_run,
     _fit_run_marker_path,
     _read_fit_run_marker,
     _write_fit_run_marker,
@@ -934,10 +935,10 @@ class TestRunMarkerGating:
     ):
         """Leftover CSVs are not evidence that this run finished.
 
-        A rerun that dies partway leaves the marker deleted (cleared at fit
-        start) while some of the previous run's per-point CSVs are still on
-        disk. Persisting from that mix would replace the database with a
-        partial result.
+        A rerun that dies partway leaves the marker recording an in-progress
+        run (written at fit start) while some of the previous run's per-point
+        CSVs are still on disk. Persisting from that mix would replace the
+        database with a partial result.
         """
         engine, _, _ = populated_db
         service = _make_service(engine)
@@ -945,9 +946,12 @@ class TestRunMarkerGating:
         assert first.metadata["peaks_inserted"] > 0
 
         fit_dir = results_all / f"{domain}_fit"
-        _fit_run_marker_path(
-            fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", domain,
-        ).unlink()
+        _begin_fit_run(
+            _fit_run_marker_path(
+                fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", domain,
+            ),
+            domain=domain,
+        )
         # Point 0's CSV is gone, point 1's survives: at least one CSV remains,
         # so discovery still succeeds.
         next(fit_dir.glob("*point0*peaks.csv")).unlink()
@@ -955,7 +959,7 @@ class TestRunMarkerGating:
 
         with pytest.raises(FittingError) as exc_info:
             _call_persist_raman(_make_service(engine), results_all, domain)
-        assert "No completed-run marker" in str(exc_info.value)
+        assert "was interrupted" in str(exc_info.value)
 
         with get_session(engine) as session:
             assert session.query(FittedPeakORM).filter_by(
@@ -1027,10 +1031,15 @@ class TestRunMarkerGating:
             _call_persist_raman(_make_service(engine), results_all, "hydration")
         assert "records domain" in str(exc_info.value)
 
-    def test_marker_without_a_point_count_is_treated_as_absent(
+    def test_marker_without_a_point_count_is_rejected(
         self, populated_db, results_all
     ):
-        """A marker missing `points_fitted` cannot certify a run."""
+        """A marker missing `points_fitted` cannot certify a run.
+
+        It is reported as `invalid` rather than absent: something wrote it, so
+        this is not a pre-marker directory and the legacy fallback must not
+        apply.
+        """
         engine, _, _ = populated_db
         fit_dir = results_all / "hydration_fit"
         marker = _fit_run_marker_path(
@@ -1040,7 +1049,31 @@ class TestRunMarkerGating:
         del payload["points_fitted"]
         marker.write_text(json.dumps(payload))
 
-        assert _read_fit_run_marker(marker) is None
+        assert _read_fit_run_marker(marker)["status"] == "invalid"
         with pytest.raises(FittingError) as exc_info:
             _call_persist_raman(_make_service(engine), results_all, "hydration")
-        assert "No completed-run marker" in str(exc_info.value)
+        assert "unreadable or malformed" in str(exc_info.value)
+
+    @pytest.mark.parametrize("domain", ["minerals", "organics", "hydration"])
+    def test_pre_marker_fit_directory_still_persists(
+        self, populated_db, results_all, domain
+    ):
+        """Removing the marker reproduces a directory fitted before markers.
+
+        `persist-peaks` must behave exactly as it did then (docs/INVARIANTS.md
+        §1): persist the CSVs it discovers, not exit 1.
+        """
+        engine, _, _ = populated_db
+        fit_dir = results_all / f"{domain}_fit"
+        _fit_run_marker_path(
+            fit_dir, "0851", "Lake_Haiyaha", "detail_1", "R1", domain,
+        ).unlink()
+        assert list(fit_dir.glob("*peaks.csv"))
+
+        result = _call_persist_raman(_make_service(engine), results_all, domain)
+
+        assert result.metadata["peaks_inserted"] > 0
+        with get_session(engine) as session:
+            assert session.query(FittedPeakORM).filter_by(
+                fit_modality=domain
+            ).count() == result.metadata["peaks_inserted"]

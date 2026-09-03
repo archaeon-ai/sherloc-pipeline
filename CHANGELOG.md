@@ -37,15 +37,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing as a zero result that clears the domain's existing rows rather than
   an error; turning the veto on for an already-fitted scan therefore removes
   the rejected peak from the database instead of resurrecting it from a stale
-  artifact. Because persistence replaces every row for a domain, it now
-  requires that domain's completed-run marker (`*_<domain>_fit_run.json`,
-  deleted when a fit starts and written atomically when it finishes) whether
-  or not per-point CSVs are present: leftover CSVs from an interrupted rerun
-  are not evidence that the run completed. A marker reporting zero fitted
-  points is rejected as well, and fitting itself now fails on a scan with no
-  point columns, so an empty run can never license clearing valid rows.
-  **Fit directories produced before run markers existed must be re-fitted
-  before `persist-peaks` will accept them.**
+  artifact. The organics fitter's D+G and G-only per-point exports are
+  mutually exclusive and DG is preferred at discovery, so a rerun that changes
+  the outcome now removes the export it did not write. Because persistence
+  replaces every row for a domain, each fit now records a run marker
+  (`*_<domain>_fit_run.json`) written as `running` when it starts and rewritten
+  atomically as `completed` when it finishes; `persist-peaks` refuses a marker
+  still recording an in-progress run (leftover CSVs from an interrupted rerun
+  are not evidence that the run completed) and refuses one reporting zero
+  fitted points, and fitting itself now fails on a scan with no point columns,
+  so an empty run can never license clearing valid rows. **Backward
+  compatible:** a fit directory with no marker at all predates this change and
+  keeps its previous behaviour exactly — its peak CSVs are persisted, and only
+  a directory with no CSVs is an error, as before.
 
 ### Fixed
 - **Targetless Loupe science scans are detected and safely auditable (#43).**

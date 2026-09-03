@@ -45,10 +45,14 @@ was fitted under a non-default config.
 
 **Turning the flag on for an already-fitted scan.** Re-fitting deletes the
 per-point CSV, overlay PNG and accepted-peaks summary for any point that no
-longer has an accepted peak, and `persist_raman_peaks()` reads a run with a scan
-summary but no per-point CSVs as a zero result that clears the domain's existing
-database rows. Without both, the previous run's artifacts would be rediscovered
-and the vetoed peak restored.
+longer has an accepted peak (and, on the organics path, the mutually exclusive
+D+G / G-only export the run did not write), and `persist_raman_peaks()` reads a
+completed run with no per-point CSVs as a zero result that clears the domain's
+existing database rows. Without both, the previous run's artifacts would be
+rediscovered and the vetoed peak restored. A run marker written as `running` at
+fit start and `completed` at the end is what distinguishes that zero result from
+an interrupted rerun; a fit directory with no marker predates the change and
+persists exactly as it did before.
 
 ## Proposed thresholds
 

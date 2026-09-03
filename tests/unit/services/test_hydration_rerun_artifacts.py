@@ -160,8 +160,9 @@ def test_failed_stale_artifact_removal_fails_the_fit(tmp_path, results_base):
 
     assert "failed to remove stale artifact" in str(exc_info.value)
     assert peaks_csv.exists(), "the undeletable CSV is exactly the risk"
-    # No completion marker, so persistence refuses to treat this as a zero result.
-    assert _read_fit_run_marker(_marker_path(results_base)) is None
+    # The marker still records an in-progress run, so persistence refuses to
+    # treat this as a zero result (and does not fall back to legacy behaviour).
+    assert _read_fit_run_marker(_marker_path(results_base))["status"] == "running"
 
 
 def test_remove_stale_artifacts_raises_on_unlink_failure(tmp_path):
@@ -189,12 +190,13 @@ def _pointless_scan_csv(results_base: Path) -> Path:
     return csv_path
 
 
-def test_hydration_fit_with_no_point_columns_fails_and_leaves_no_marker(tmp_path):
+def test_hydration_fit_with_no_point_columns_leaves_no_completed_marker(tmp_path):
     """A run that fits nothing must not complete.
 
     Completing would write an `accepted_peaks: 0` marker, which persistence
     would then read as "the fit found nothing" and use to clear peaks a real
-    earlier run put in the database.
+    earlier run put in the database. The in-progress marker must survive: it is
+    what stops persistence falling back to pre-marker behaviour.
     """
     base = tmp_path / "results" / SCAN
     _pointless_scan_csv(base)
@@ -206,10 +208,10 @@ def test_hydration_fit_with_no_point_columns_fails_and_leaves_no_marker(tmp_path
     marker = _fit_run_marker_path(
         base / "hydration_fit", SOL, TARGET, SCAN, "R1", "hydration",
     )
-    assert not marker.exists()
+    assert _read_fit_run_marker(marker)["status"] == "running"
 
 
-def test_organics_fit_with_no_point_columns_fails_and_leaves_no_marker(tmp_path):
+def test_organics_fit_with_no_point_columns_leaves_no_completed_marker(tmp_path):
     """Same guard on the organics path, which shares the persistence gate."""
     base = tmp_path / "results" / SCAN
     base.mkdir(parents=True, exist_ok=True)
@@ -236,4 +238,4 @@ def test_organics_fit_with_no_point_columns_fails_and_leaves_no_marker(tmp_path)
     marker = _fit_run_marker_path(
         base / "organics_fit", SOL, TARGET, SCAN, "R1", "organics",
     )
-    assert not marker.exists()
+    assert _read_fit_run_marker(marker)["status"] == "running"
