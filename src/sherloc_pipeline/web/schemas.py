@@ -478,6 +478,13 @@ class PeakDTO(BaseModel):
     fit_modality: str = "minerals"
     sharpness_ratio: Optional[float] = None
     pass_sharpness: Optional[bool] = None
+    # Hydration cosmic-ray veto annotations (issue #38). Populated only when the
+    # veto feature flag is on and the domain is hydration; None otherwise.
+    cr_vetoed: Optional[bool] = None
+    cr_veto_flags: Optional[str] = None
+    cr_mask_hit: Optional[bool] = None
+    cr_amplitude_drop_ratio: Optional[float] = None
+    fwhm_floor_pinned: Optional[bool] = None
     # Tri-state display label set by services.quality.classify_fit_quality.
     # Workbench Peak Results "Quality" column renders this. None only when a
     # caller bypasses classifier population (no current production path).

@@ -880,3 +880,169 @@ def test_built_wheel_ships_background_csvs(tmp_path):
         f"{in_wheel_bg}. This is the production-artifact regression "
         f"issue #13 was originally about."
     )
+
+
+# ---------------------------------------------------------------------------
+# Hydration cosmic-ray veto on the point-fit endpoint (issue #38)
+# ---------------------------------------------------------------------------
+
+
+def _make_hydration_cr_spectrum():
+    """OH-window spectrum whose only feature is a two-channel cosmic ray.
+
+    Detector-realistic channel spacing (~8.6 cm-1) so the spike reproduces the
+    filed defect: it clears R2 and the F-test and is fit as an OH-stretch
+    feature with its FWHM pinned at the 50 cm-1 floor.
+    """
+    wn = np.linspace(1800.0, 4000.0, 256)
+    intensity = 100.0 + np.random.default_rng(38).normal(0.0, 4.0, len(wn))
+    idx = int(np.argmin(np.abs(wn - 3300.0)))
+    intensity[idx] += 6000.0
+    intensity[idx + 1] += 5400.0
+    return wn.tolist(), intensity.tolist()
+
+
+def _hydration_fit_body(wn, intensity):
+    return {
+        "wavenumber": wn,
+        "intensity": intensity,
+        "params": {
+            "fitting": {
+                "domain": "hydration",
+                "wavenumber_range": [2800.0, 3900.0],
+                "fwhm_bounds": [50.0, 300.0],
+                "max_peaks": 2,
+                "min_snr": 3.0,
+                "model_selection": "f-test",
+            },
+            "baseline": None,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_off_by_default_keeps_the_cosmic_ray(client, fake_config):
+    """Flag-off is the pre-#38 contract: the CR is still returned, unannotated."""
+    wn, intensity = _make_hydration_cr_spectrum()
+    resp = await client.post("/api/process/fit", json=_hydration_fit_body(wn, intensity))
+
+    assert resp.status_code == 200
+    peaks = resp.json()["peaks"]
+    assert peaks, "flag-off must reproduce today's behaviour"
+    assert all(p["cr_vetoed"] is None for p in peaks)
+    assert all(p["fwhm_floor_pinned"] is None for p in peaks)
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_on_rejects_the_cosmic_ray(client, fake_config):
+    wn, intensity = _make_hydration_cr_spectrum()
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "reject"}
+    try:
+        resp = await client.post(
+            "/api/process/fit", json=_hydration_fit_body(wn, intensity)
+        )
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+
+    assert resp.status_code == 200
+    assert resp.json()["peaks"] == []
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_flag_action_annotates_the_cosmic_ray(client, fake_config):
+    wn, intensity = _make_hydration_cr_spectrum()
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "flag"}
+    try:
+        resp = await client.post(
+            "/api/process/fit", json=_hydration_fit_body(wn, intensity)
+        )
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+
+    peaks = resp.json()["peaks"]
+    assert peaks, "flag action must keep the candidate"
+    peak = peaks[0]
+    assert peak["cr_vetoed"] is False
+    # Bound pinning is measured against the caller-supplied FWHM floor (50).
+    assert peak["fwhm_floor_pinned"] is True
+    assert peak["cr_mask_hit"] or peak["cr_amplitude_drop_ratio"] > 0.5
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_does_not_apply_to_other_domains(client, fake_config):
+    """The veto is hydration-only — a mineral fit is untouched with the flag on."""
+    wn, intensity = _make_test_spectrum()
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "reject"}
+    try:
+        resp = await client.post(
+            "/api/process/fit", json={"wavenumber": wn, "intensity": intensity}
+        )
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+
+    assert resp.status_code == 200
+    for peak in resp.json()["peaks"]:
+        assert peak["cr_vetoed"] is None
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_rebuilds_model_derived_outputs(client, fake_config):
+    """A veto must also remove the rejected component from the model.
+
+    Pruning the peak DTOs alone would leave ``residual`` and ``r_squared``
+    describing the original fit, so the response could report zero peaks while
+    the workbench still plotted — and an export still carried — the rejected
+    cosmic-ray curve.
+    """
+    wn, intensity = _make_hydration_cr_spectrum()
+    body = _hydration_fit_body(wn, intensity)
+
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "reject"}
+    try:
+        vetoed = (await client.post("/api/process/fit", json=body)).json()
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+    kept = (await client.post("/api/process/fit", json=body)).json()
+
+    # Precondition: with the flag off this spectrum does produce a fit.
+    assert kept["peaks"]
+    assert np.any(np.abs(np.asarray(kept["residual"])
+                         - np.asarray(kept["corrected"])) > 1e-9)
+
+    assert vetoed["peaks"] == []
+    assert vetoed["n_peaks"] == 0
+    # No surviving peaks means no model: the residual is the corrected trace.
+    np.testing.assert_allclose(
+        np.asarray(vetoed["residual"]), np.asarray(vetoed["corrected"]), atol=1e-9
+    )
+    # ...and R2 describes that empty model, not the discarded cosmic-ray fit.
+    assert vetoed["r_squared"] != kept["r_squared"]
+    assert vetoed["r_squared"] <= 0.0
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_honours_preprocessing_despike_override(
+    client, fake_config
+):
+    """The endpoint must despike with the configured parameters, not defaults.
+
+    Raising the robust z-score threshold means the despiker flags nothing, so
+    the veto has no spike evidence and the cosmic ray survives. If this endpoint
+    hard-coded ``DespikeParams()`` the override would be ignored here while the
+    pipeline and map-mode paths honoured it, and the same spectrum would get
+    different verdicts depending on which path fitted it (cross-path
+    consistency is asserted in tests/unit/services/test_hydration_veto_paths.py).
+    """
+    wn, intensity = _make_hydration_cr_spectrum()
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "reject"}
+    fake_config.preprocessing["despike"] = {"zscore_threshold": 1.0e6}
+    try:
+        resp = await client.post(
+            "/api/process/fit", json=_hydration_fit_body(wn, intensity)
+        )
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+        fake_config.preprocessing.pop("despike", None)
+
+    assert resp.status_code == 200
+    assert resp.json()["peaks"], "the override must disarm the veto"

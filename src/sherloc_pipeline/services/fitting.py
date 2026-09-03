@@ -40,20 +40,31 @@ Usage:
 """
 
 import copy
+import json
 import logging
 import math
+import os
 import re
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Set, Tuple
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 from rich.console import Console
 from rich.progress import Progress, BarColumn, TextColumn, MofNCompleteColumn, TimeElapsedColumn
+
+from sherloc_pipeline.core.hydration_veto import (
+    HydrationVetoConfig,
+    HydrationVetoResult,
+    despike_for_veto,
+    evaluate_hydration_peak,
+    rebuild_post_veto_fit,
+)
+from sherloc_pipeline.core.preprocessing import DespikeParams, despike_params_from_config
 
 from .base import ServiceResult
 from .errors import FittingError, enrich
@@ -92,6 +103,22 @@ RAMAN_SUBDIRS = {
     "hydration": "hydration_fit",
 }
 
+# Run marker each per-point fitter writes as "running" when it starts and
+# rewrites atomically as "completed" when it finishes. It is the only evidence
+# of what *this* run of the fit did, which is what distinguishes "fitted,
+# nothing accepted" (a real zero result that must clear the database) from
+# "interrupted" (an error). A summary CSV cannot play that role: it survives
+# from a previous, possibly positive, run.
+#
+# The *absence* of a marker means only that the directory predates markers:
+# such directories keep their pre-marker persistence behaviour (see
+# persist_raman_peaks) so the published `persist-peaks` contract is unchanged.
+RAMAN_RUN_MARKER_TEMPLATE = "{sol}_{target}_{scan}_{region}_{domain}_fit_run.json"
+RAMAN_RUN_MARKER_SCHEMA = 1
+RUN_MARKER_RUNNING = "running"
+RUN_MARKER_COMPLETED = "completed"
+RUN_MARKER_INVALID = "invalid"
+
 
 # ---------------------------------------------------------------------------
 # Module-level worker functions for parallel per-point fitting.
@@ -123,6 +150,13 @@ def _fit_point_minerals(
     artifacts: List[Path] = []
     warnings: List[str] = []
 
+    # Artifacts this point owns. The peak table is what the accepted-peaks
+    # assembler globs, so any exit that does not rewrite it must delete the
+    # previous run's copy rather than let it read as current.
+    peaks_csv = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit_peaks.csv"
+    png_path = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit.png"
+    owned_artifacts = [peaks_csv, png_path]
+
     try:
         result, y_model_full = fit_spectrum(x, y, fit_cfg, roi=fit_roi)
         mask = (x >= plot_roi[0]) & (x <= plot_roi[1])
@@ -137,23 +171,24 @@ def _fit_point_minerals(
             for p in (result.peaks or [])
         )
 
-        # Always save per-point peaks table
-        try:
-            peaks_csv = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit_peaks.csv"
-            save_peak_table(result.peaks, str(peaks_csv))
-            artifacts.append(peaks_csv)
-        except Exception as e:
-            warnings.append(f"Failed to save peaks table for point {point_idx}: {e}")
+        # Always save per-point peaks table. A failure here is not swallowed:
+        # it would leave the previous run's table for the assembler to pick up
+        # while this run still reported the point as fitted.
+        save_peak_table(result.peaks, str(peaks_csv))
+        artifacts.append(peaks_csv)
 
         # Export plot when strictly accepted OR reviewable
         if accepted_point or reviewable_point:
-            png_path = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit.png"
             plot_fit_overlay(
                 x, y, mask, result, y_model_full, str(png_path),
                 title=None, xlim=plot_roi,
                 sol=sol, target=target, scan=scan, point=point_idx, roi=fit_roi,
             )
             artifacts.append(png_path)
+        else:
+            # Nothing to show for this point any more: an earlier run's overlay
+            # would otherwise keep displaying a fit this run rejected.
+            _remove_stale_artifacts([png_path])
 
         # Collect accepted peaks
         accepted_peaks = []
@@ -196,7 +231,16 @@ def _fit_point_minerals(
             'count_accepted': 1 if accepted_point else 0,
         }
 
+    except StaleArtifactError:
+        # An artifact that could not be deleted is fatal in its own right:
+        # failing the whole scan is the only way to keep persistence away
+        # from it. Never downgrade it to a per-point warning.
+        raise
     except Exception as e:
+        # This point produced nothing usable, so drop whatever an earlier run
+        # left behind for it before reporting the failure upward, where the
+        # scan refuses to write a completed marker.
+        _remove_stale_artifacts(owned_artifacts)
         return {
             'point_idx': point_idx,
             'summary_row': None,
@@ -204,7 +248,193 @@ def _fit_point_minerals(
             'artifacts': [],
             'warnings': [f"Fit failed for point {point_idx}: {e}"],
             'count_accepted': 0,
+            'failed': True,
         }
+
+
+class StaleArtifactError(RuntimeError):
+    """An artifact left by an earlier run could not be deleted.
+
+    Deliberately fatal: a surviving peak CSV is exactly what
+    ``persist_raman_peaks`` rediscovers, so a run that reported success after a
+    failed cleanup would let persistence restore a rejected peak. Plain
+    ``RuntimeError`` subclass with a single string argument so it survives the
+    pickling round-trip out of a ``ProcessPoolExecutor`` worker.
+    """
+
+
+def _remove_stale_artifacts(paths: List[Path]) -> None:
+    """Delete artifacts from an earlier run that this run did not regenerate.
+
+    Fit artifacts are keyed by (sol, target, scan, point), so a re-run into the
+    same results directory overwrites them — but only when the run still
+    produces them. A run that newly rejects every candidate for a point writes
+    nothing, leaving the previous run's peak CSV and overlay PNG in place. The
+    CSV is exactly what ``persist_raman_peaks`` rediscovers, so a stale file
+    would restore the rejected peak to the database. Removing it is what makes
+    the fit -> persist chain idempotent under a configuration change.
+
+    Raises:
+        StaleArtifactError: if a file exists and cannot be removed. The fit must
+            fail rather than leave the undeleted artifact for persistence.
+    """
+    for path in paths:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise StaleArtifactError(
+                f"failed to remove stale artifact {path}: {exc}"
+            ) from exc
+
+
+def _remove_obsolete_point_artifacts(
+    fit_dir: Path,
+    *,
+    sol: str,
+    target: str,
+    scan: str,
+    region: str,
+    fitted_points: Set[int],
+) -> List[Path]:
+    """Delete per-point artifacts for points this run did not fit.
+
+    ``_remove_stale_artifacts`` only reaches points the current run actually
+    processed: a point that fails, or that newly rejects every candidate,
+    cleans up after itself. It cannot reach a point that is *absent from this
+    run's input* -- a rerun over a reduced or partial point set, or one whose
+    upstream normalized CSV lost columns. Those artifacts would survive under
+    this run's ``completed`` marker, and ``persist_raman_peaks`` rediscovers
+    every matching CSV in the directory, so the vanished points' peaks would be
+    repersisted as if they were current.
+
+    Every per-point artifact is named ``{sol}_{target}_{scan}_{region}_point{i}_...``
+    (peak table and overlay PNG alike), so one filename sweep covers all three
+    domains. Scan-level files -- summaries, averaged-spectrum fits, the run
+    marker -- never carry a ``point{i}`` token and are left alone.
+
+    Returns:
+        The paths removed, for logging.
+
+    Raises:
+        StaleArtifactError: if a file exists and cannot be removed. The fit must
+            fail rather than write a completed marker over an undeleted artifact.
+    """
+    prefix = f"{sol}_{target}_{scan}_{region}_"
+    point_re = re.compile(rf"^{re.escape(prefix)}point(\d+)[_.]")
+
+    obsolete: List[Path] = []
+    for path in sorted(fit_dir.iterdir()):
+        if not path.is_file():
+            continue
+        match = point_re.match(path.name)
+        if match and int(match.group(1)) not in fitted_points:
+            obsolete.append(path)
+
+    _remove_stale_artifacts(obsolete)
+    return obsolete
+
+
+def _fit_run_marker_path(
+    fit_dir: Path, sol: str, target: str, scan: str, region: str, domain: str
+) -> Path:
+    """Path of the completion marker for one (scan, region, domain) fit run."""
+    return fit_dir / RAMAN_RUN_MARKER_TEMPLATE.format(
+        sol=sol, target=target, scan=scan, region=region, domain=domain,
+    )
+
+
+def _write_marker_payload(marker_path: Path, payload: Dict[str, Any]) -> None:
+    """Write a marker payload atomically (tmp file + os.replace)."""
+    tmp_path = marker_path.with_name(f"{marker_path.name}.{uuid4().hex}.tmp")
+    try:
+        tmp_path.write_text(json.dumps(payload, indent=2) + "\n")
+        os.replace(tmp_path, marker_path)
+    except OSError:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _begin_fit_run(marker_path: Path, *, domain: str) -> None:
+    """Mark this (scan, region, domain) fit as in progress before fitting starts.
+
+    Writing a ``running`` marker -- rather than merely deleting the previous
+    one -- is what lets persistence tell an *interrupted* run (marker present,
+    still ``running``) from a fit directory that simply *predates* markers
+    (no marker at all), which must keep its legacy behaviour.
+    """
+    payload = {
+        "schema": RAMAN_RUN_MARKER_SCHEMA,
+        "domain": domain,
+        "status": RUN_MARKER_RUNNING,
+    }
+    try:
+        _write_marker_payload(marker_path, payload)
+    except OSError:
+        # Never leave a previous run's `completed` marker standing in front of
+        # a fit that is about to rewrite the directory: drop back to the
+        # no-marker (legacy) state and let the failure propagate.
+        _remove_stale_artifacts([marker_path])
+        raise
+
+
+def _write_fit_run_marker(
+    marker_path: Path, *, domain: str, points_fitted: int, accepted_peaks: int
+) -> None:
+    """Atomically record that this run completed, and what it accepted."""
+    _write_marker_payload(marker_path, {
+        "schema": RAMAN_RUN_MARKER_SCHEMA,
+        "domain": domain,
+        "status": RUN_MARKER_COMPLETED,
+        "points_fitted": int(points_fitted),
+        "accepted_peaks": int(accepted_peaks),
+    })
+
+
+def _read_fit_run_marker(marker_path: Path) -> Optional[Dict[str, Any]]:
+    """Return the run marker payload, or None if the directory has no marker.
+
+    A marker that exists but cannot be trusted (unreadable, malformed, wrong
+    schema, missing counts) is reported with ``status`` ``invalid`` rather than
+    as absent: something wrote it, so the directory is *not* a pre-marker one,
+    and the caller must refuse rather than fall back to legacy persistence.
+    """
+    invalid = {"status": RUN_MARKER_INVALID}
+    try:
+        payload = json.loads(marker_path.read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        logger.warning(f"unreadable fit run marker {marker_path}: {exc}")
+        return invalid
+    if not isinstance(payload, dict):
+        return invalid
+    if payload.get("schema") != RAMAN_RUN_MARKER_SCHEMA:
+        return invalid
+    status = payload.get("status")
+    if status == RUN_MARKER_RUNNING:
+        return payload
+    if status != RUN_MARKER_COMPLETED:
+        return invalid
+    if not isinstance(payload.get("accepted_peaks"), int):
+        return invalid
+    if not isinstance(payload.get("points_fitted"), int):
+        return invalid
+    return payload
+
+
+def _despike_params_from_config(cfg) -> DespikeParams:
+    """Build classical despiker params from a pipeline config for veto use.
+
+    Thin alias over :func:`core.preprocessing.despike_params_from_config`, which
+    is the single source of truth shared by every despiker caller. Kept as a
+    module-local name because the pipeline worker imports it by this name.
+    """
+    return despike_params_from_config(cfg)
 
 
 def _fit_point_hydration(
@@ -225,6 +455,8 @@ def _fit_point_hydration(
     sol: str,
     target: str,
     scan: str,
+    veto_cfg: Optional[HydrationVetoConfig] = None,
+    despike_params: Optional[DespikeParams] = None,
 ) -> Dict[str, Any]:
     """Fit hydration for a single point (picklable worker)."""
     from sherloc_pipeline.core.fitting import fit_spectrum, save_peak_table
@@ -236,11 +468,19 @@ def _fit_point_hydration(
     artifacts: List[Path] = []
     warnings: List[str] = []
 
+    # Artifacts this point owns. Every no-detection exit deletes them so a
+    # previous run's CSV/PNG cannot survive into a run that rejected the peak
+    # (see _remove_stale_artifacts).
+    peaks_csv = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_hydration_peaks.csv"
+    png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_hydration_fit.png"
+    owned_artifacts = [peaks_csv, png_path]
+
     # Extract hydration window
     x_oh = x[oh_mask]
     y_oh = y_full[oh_mask]
 
     if len(x_oh) < 10:
+        _remove_stale_artifacts(owned_artifacts)
         return {
             'point_idx': point_idx,
             'summary_row': {'point': point_idx, 'oh_detected': False, 'oh_r2': '', 'oh_n_accepted': 0},
@@ -265,6 +505,7 @@ def _fit_point_hydration(
     # Pre-fit SNR gate
     y_max = float(np.max(y_bl))
     if noise_std > 0 and (y_max / noise_std) < min_snr:
+        _remove_stale_artifacts(owned_artifacts)
         return {
             'point_idx': point_idx,
             'summary_row': {'point': point_idx, 'oh_detected': False, 'oh_r2': '', 'oh_n_accepted': 0},
@@ -281,6 +522,7 @@ def _fit_point_hydration(
 
     # R² quality gate
     if oh_result.r2 < r2_min:
+        _remove_stale_artifacts(owned_artifacts)
         return {
             'point_idx': point_idx,
             'summary_row': {'point': point_idx, 'oh_detected': False, 'oh_r2': oh_result.r2, 'oh_n_accepted': 0},
@@ -298,15 +540,50 @@ def _fit_point_hydration(
             continue
         accepted_peaks.append(p)
 
+    # Cosmic-ray veto (issue #38), feature-flagged and default OFF. The fit
+    # itself stays on the non-despiked spectrum for published-method fidelity;
+    # the despiker runs here only to supply the spike mask.
+    veto_by_peak: Dict[int, HydrationVetoResult] = {}
+    if veto_cfg is not None and veto_cfg.enabled and accepted_peaks:
+        y_desp, spike_mask = despike_for_veto(x, y_full, despike_params)
+        surviving = []
+        vetoed_ids = set()
+        for p in accepted_peaks:
+            verdict = evaluate_hydration_peak(
+                p.m_cm1, p.fwhm, x, y_full, y_desp, spike_mask, veto_cfg
+            )
+            veto_by_peak[id(p)] = verdict
+            if verdict.vetoed:
+                vetoed_ids.add(id(p))
+                warnings.append(
+                    f"Point {point_idx}: hydration candidate at {p.m_cm1:.1f} cm-1 "
+                    f"vetoed as cosmic ray ({', '.join(verdict.flags)})"
+                )
+                continue
+            surviving.append(p)
+        accepted_peaks = surviving
+        if vetoed_ids:
+            # The overlay and the exported R2 are model-derived, so pruning the
+            # accepted list is not enough: a mixed authentic-plus-cosmic fit
+            # would still render the vetoed component as part of the accepted
+            # fit. Rebuild the curve from every non-vetoed component of the
+            # original fit — peaks the centre/sharpness filters excluded are
+            # still genuine parts of the fit and stay in the model.
+            oh_result, oh_model = rebuild_post_veto_fit(
+                x,
+                y_for_fit,
+                oh_result,
+                [p for p in oh_result.peaks if id(p) not in vetoed_ids],
+                roi=oh_roi,
+            )
+
     oh_pass = len(accepted_peaks) > 0
 
     # Export if accepted
     if oh_pass:
-        peaks_csv = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_hydration_peaks.csv"
         save_peak_table(accepted_peaks, str(peaks_csv))
         artifacts.append(peaks_csv)
 
-        png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_hydration_fit.png"
         plot_fit_overlay(
             x, y_for_fit, plot_mask_oh, oh_result, oh_model,
             str(png_path),
@@ -314,11 +591,15 @@ def _fit_point_hydration(
             xlim=oh_plot, roi=oh_roi,
         )
         artifacts.append(png_path)
+    else:
+        # Nothing survived (e.g. the veto rejected the only candidate). Clear
+        # this point's artifacts so a later persist cannot resurrect them.
+        _remove_stale_artifacts(owned_artifacts)
 
     # Build accepted rows
     accepted_rows = []
     for p in accepted_peaks:
-        accepted_rows.append({
+        row = {
             'point': point_idx,
             'center_cm1': p.m_cm1,
             'amplitude_a': p.a,
@@ -328,7 +609,11 @@ def _fit_point_hydration(
             'r2': oh_result.r2,
             'sharpness_ratio': p.sharpness_ratio,
             'pass_sharpness': p.pass_sharpness,
-        })
+        }
+        verdict = veto_by_peak.get(id(p))
+        if verdict is not None:
+            row.update(verdict.as_row())
+        accepted_rows.append(row)
 
     summary_row = {
         'point': point_idx,
@@ -380,6 +665,18 @@ def _fit_point_organics(
     artifacts: List[Path] = []
     warnings: List[str] = []
 
+    # Artifacts this point owns. The DG and G-only exports are mutually
+    # exclusive -- and `_discover_peak_csvs` prefers DG -- so every exit must
+    # delete the pair it did not write. Otherwise a rerun that flips DG->G, or
+    # G->no detection, leaves the previous run's CSV behind for persistence to
+    # rediscover as if it were current (see _remove_stale_artifacts).
+    dg_peaks_csv = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_dg_peaks.csv"
+    dg_png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_dg_fit.png"
+    g_peaks_csv = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_g_peaks.csv"
+    g_png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_g_fit.png"
+    dg_artifacts = [dg_peaks_csv, dg_png_path]
+    g_artifacts = [g_peaks_csv, g_png_path]
+
     # Optional local re-baseline
     rb = rebaseline_cfg
     if use_norm_input and rb and rb.get('enabled', False):
@@ -410,6 +707,11 @@ def _fit_point_organics(
     accepted_rows = []
     dg_accepted_list = []  # track for summary
 
+    if not detected_g:
+        # Nothing detected this run: clear both exports so a previous run's
+        # peaks cannot be rediscovered and persisted as current.
+        _remove_stale_artifacts(dg_artifacts + g_artifacts)
+
     if detected_g:
         fit_cfg_dg = {**fit_cfg_org, 'slit_pref_weight': 0.0}
         result_dg, y_model_dg = fit_spectrum(
@@ -420,17 +722,18 @@ def _fit_point_organics(
         dg_accepted_list = dg_accepted
 
         if dg_accepted:
-            peaks_csv = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_dg_peaks.csv"
-            save_peak_table(result_dg.peaks, str(peaks_csv))
-            artifacts.append(peaks_csv)
+            # This run is DG; a previous run's G-only export must not survive.
+            _remove_stale_artifacts(g_artifacts)
 
-            png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_dg_fit.png"
+            save_peak_table(result_dg.peaks, str(dg_peaks_csv))
+            artifacts.append(dg_peaks_csv)
+
             plot_fit_overlay(
                 x, y, org_mask, result_dg, y_model_dg,
-                str(png_path),
+                str(dg_png_path),
                 sol=sol, target=target, scan=scan, point=point_idx, xlim=org_plot, roi=org_roi,
             )
-            artifacts.append(png_path)
+            artifacts.append(dg_png_path)
 
             for p in dg_accepted:
                 if p.snr < persist_min_snr:
@@ -452,19 +755,25 @@ def _fit_point_organics(
                     'pass_sharpness': p.pass_sharpness,
                 })
         else:
-            # Fall back to G-only
-            try:
-                peaks_csv = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_g_peaks.csv"
-                save_peak_table(result_g.peaks, str(peaks_csv))
-                artifacts.append(peaks_csv)
+            # Fall back to G-only. Dropping a previous run's DG export is not
+            # optional, because `_discover_peak_csvs` would prefer it over this
+            # run's G CSV. The previous run's *G* export goes too: it is stale
+            # the moment this run starts, and if the rewrite below fails we must
+            # not leave it behind to be rediscovered as if it were current.
+            _remove_stale_artifacts(dg_artifacts + g_artifacts)
 
-                png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_g_fit.png"
+            # Not guarded: a failed peak-table write must fail the fit rather
+            # than let the run be recorded as completed with no current G CSV.
+            save_peak_table(result_g.peaks, str(g_peaks_csv))
+            artifacts.append(g_peaks_csv)
+
+            try:
                 plot_fit_overlay(
                     x, y, org_mask, result_g, y_model_g,
-                    str(png_path),
+                    str(g_png_path),
                     sol=sol, target=target, scan=scan, point=point_idx, xlim=org_plot, roi=g_roi,
                 )
-                artifacts.append(png_path)
+                artifacts.append(g_png_path)
             except Exception:
                 pass
 
@@ -665,6 +974,14 @@ class FittingService:
             out_dir = base / "minerals_fit"
             out_dir.mkdir(parents=True, exist_ok=True)
 
+            # Record an in-progress run marker before any fitting happens, so an
+            # interrupted run cannot be mistaken for a completed zero-result one
+            # (or for a pre-marker directory) by persist_raman_peaks.
+            run_marker = _fit_run_marker_path(
+                out_dir, sol, target, scan, region, "minerals"
+            )
+            _begin_fit_run(run_marker, domain="minerals")
+
             # Expect normalized baselined CSV for region
             input_csv = base / f"{sol}_{target}_{scan}_{region}_normalized_baselined.csv"
             if not input_csv.exists():
@@ -798,29 +1115,85 @@ class FittingService:
                 accepted_rows.extend(r['accepted_peaks'])
                 count += r.get('count_accepted', 0)
 
-            # Emit scan-level AICc summary CSV
+            # A point whose fit raised produced no peak table, so its previous
+            # run's tables were deleted by the worker. The scan still must not
+            # complete: the marker would certify a points_fitted count the run
+            # never actually fitted, and the AICc summary below would be
+            # missing that point's R2 while claiming to describe every point.
+            failed_points = [r['point_idx'] for r in results if r.get('failed')]
+            if failed_points:
+                error = FittingError(
+                    f"Mineral fitting failed for point(s) {failed_points}; "
+                    "refusing to complete the run.",
+                    exit_code=1,
+                    context={"sol": sol, "target": target, "scan": scan,
+                             "failed_points": failed_points},
+                )
+                raise enrich(error, sol=sol, target=target, scan=scan)
+
+            # Emit scan-level AICc summary CSV. The assembler reads its r2
+            # column per point, and the marker below certifies it as this run's
+            # output, so a failed rewrite must not leave an older summary
+            # standing: drop it and fail the fit.
+            out_csv = base / f"{sol}_{target}_{scan}_{region}_fit_aicc_summary.csv"
             try:
                 summary_df = pd.DataFrame(summary_rows).sort_values('point')
-                out_csv = base / f"{sol}_{target}_{scan}_{region}_fit_aicc_summary.csv"
                 summary_df.to_csv(out_csv, index=False)
-                artifacts.append(out_csv)
-                self.console.print(f"[green]Wrote AICc summary to {out_csv}[/green]")
             except Exception as e:
-                logger.warning(f"failed to write AICc summary: {e}")
-                warnings.append(f"Failed to write AICc summary: {e}")
-            
-            # Emit accepted-peaks scan-level summary
-            try:
-                if accepted_rows:
+                logger.error(f"failed to write AICc summary: {e}")
+                _remove_stale_artifacts([out_csv])
+                error = FittingError(
+                    f"Failed to write AICc summary: {e}",
+                    exit_code=1,
+                    context={"output_file": str(out_csv)},
+                )
+                raise enrich(error, sol=sol, target=target, scan=scan) from e
+            artifacts.append(out_csv)
+            self.console.print(f"[green]Wrote AICc summary to {out_csv}[/green]")
+
+            # Emit accepted-peaks scan-level summary, on the same terms.
+            acc_csv = out_dir / f"{sol}_{target}_{scan}_{region}_accepted_peaks.csv"
+            if accepted_rows:
+                try:
                     acc_df = pd.DataFrame(accepted_rows).sort_values(['point', 'center_cm1'])
-                    acc_csv = out_dir / f"{sol}_{target}_{scan}_{region}_accepted_peaks.csv"
                     acc_df.to_csv(acc_csv, index=False)
-                    artifacts.append(acc_csv)
-                    self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
-            except Exception as e:
-                logger.warning(f"failed to write accepted-peaks summary: {e}")
-                warnings.append(f"Failed to write accepted-peaks summary: {e}")
-            
+                except Exception as e:
+                    logger.error(f"failed to write accepted-peaks summary: {e}")
+                    _remove_stale_artifacts([acc_csv])
+                    error = FittingError(
+                        f"Failed to write accepted-peaks summary: {e}",
+                        exit_code=1,
+                        context={"output_file": str(acc_csv)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan) from e
+                artifacts.append(acc_csv)
+                self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
+            else:
+                # Zero accepted peaks scan-wide: drop a previous run's summary
+                # rather than leaving it to be read as current. Deliberately
+                # outside the try -- a failed removal must fail the fit.
+                _remove_stale_artifacts([acc_csv])
+
+            # Drop artifacts belonging to points that are not in this run's
+            # input at all. Per-point cleanup cannot see them, so without this a
+            # rerun over a reduced point set would certify a directory that
+            # still holds the earlier run's peak CSVs for the dropped points.
+            obsolete = _remove_obsolete_point_artifacts(
+                out_dir, sol=sol, target=target, scan=scan, region=region,
+                fitted_points={inp['point_idx'] for inp in point_inputs},
+            )
+            if obsolete:
+                self.console.print(
+                    f"[yellow]Removed {len(obsolete)} artifact(s) for points no longer "
+                    f"in this scan's input.[/yellow]"
+                )
+
+            _write_fit_run_marker(
+                run_marker, domain="minerals",
+                points_fitted=len(point_cols), accepted_peaks=len(accepted_rows),
+            )
+            artifacts.append(run_marker)
+
             self.console.print(f"[bold green]Done.[/bold green] Saved {count} overlays and peak tables to {out_dir}")
             
             metadata = {
@@ -911,8 +1284,15 @@ class FittingService:
 
         Uses R1_normalized.csv (laser-normalized, background-subtracted, NO asPLS
         baseline) with a linear endpoint baseline over the hydration window.
-        No despiking — cosmic ray rejection relies on quality gates (R² ≥ 0.25,
-        FWHM ≥ 50 cm⁻¹, F-test significance).
+        The fit itself is never despiked — cosmic ray rejection relies on quality
+        gates (R² ≥ 0.25, FWHM ≥ 50 cm⁻¹, F-test significance), plus the
+        optional ``fitting.hydration_cr_veto`` (issue #38, default OFF), which
+        runs the despiker only to harvest its spike mask.
+
+        Idempotent under a configuration change: per-point artifacts and the
+        accepted-peaks summary are removed when a re-run no longer produces
+        them, so a later ``persist_raman_peaks()`` cannot rediscover a peak this
+        run rejected.
 
         Reference: Phua et al. (2024), JGR: Planets, 10.1029/2023JE008251.
 
@@ -973,6 +1353,13 @@ class FittingService:
             multifits_dir = base / "hydration_fit"
             multifits_dir.mkdir(parents=True, exist_ok=True)
 
+            # See fit_minerals: the marker is written as `running` up front and
+            # rewritten as `completed` only once this run finishes.
+            run_marker = _fit_run_marker_path(
+                multifits_dir, sol, target, scan, "R1", "hydration"
+            )
+            _begin_fit_run(run_marker, domain="hydration")
+
             fit_cfg = copy.deepcopy(cfg.fitting or {})
 
             # Select input: prefer pre-baseline (R1_normalized.csv) per audit findings
@@ -1025,11 +1412,29 @@ class FittingService:
                 'ftest_alpha': ftest_alpha,
             }
 
+            # Cosmic-ray veto config (issue #38) — default OFF.
+            veto_cfg = HydrationVetoConfig.from_fitting_config(fit_cfg)
+            veto_despike_params = _despike_params_from_config(cfg)
+            if veto_cfg.enabled:
+                self.console.print(
+                    f"[yellow]Hydration cosmic-ray veto ENABLED (action={veto_cfg.action}).[/yellow]"
+                )
+
             oh_mask = (x >= oh_roi[0]) & (x <= oh_roi[1])
             plot_mask_oh = (x >= oh_plot[0]) & (x <= oh_plot[1])
             n_edge = 5  # points for endpoint averaging
 
             point_cols = [c for c in df.columns if str(c).isdigit()]
+            if not point_cols:
+                # A run that fits nothing must not be allowed to complete: its
+                # marker would otherwise license persistence to clear the
+                # domain's existing rows on the strength of an empty run.
+                error = FittingError(
+                    "No point columns found to fit.",
+                    exit_code=1,
+                    context={"input_file": str(input_csv)}
+                )
+                raise enrich(error, sol=sol, target=target, scan=scan)
 
             # --- Phase 1: Prepare per-point inputs ---
             point_inputs = [
@@ -1050,6 +1455,7 @@ class FittingService:
                 min_snr=min_snr, r2_min=r2_min, center_lo=center_lo,
                 center_hi=center_hi, out_dir=str(multifits_dir),
                 sol=sol, target=target, scan=scan,
+                veto_cfg=veto_cfg, despike_params=veto_despike_params,
             )
 
             results = self._run_parallel(
@@ -1073,17 +1479,53 @@ class FittingService:
             pd.DataFrame(summary).to_csv(summary_csv, index=False)
             artifacts.append(summary_csv)
 
-            # Emit accepted-peaks summary
-            try:
-                if accepted_rows:
+            # Emit accepted-peaks summary. Replacing it is not optional: the
+            # marker below certifies it as this run's output, and the assembler
+            # reads its R2/centre values, so an older summary left standing
+            # would hand persistence stale numbers under a completed marker.
+            # A failed write therefore drops the stale file and fails the fit.
+            acc_csv = multifits_dir / f"{sol}_{target}_{scan}_R1_hydration_accepted_peaks.csv"
+            if accepted_rows:
+                try:
                     acc_df = pd.DataFrame(accepted_rows).sort_values(['point', 'center_cm1'])
-                    acc_csv = multifits_dir / f"{sol}_{target}_{scan}_R1_hydration_accepted_peaks.csv"
                     acc_df.to_csv(acc_csv, index=False)
-                    artifacts.append(acc_csv)
-                    self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
-            except Exception as e:
-                logger.warning(f"failed to write hydration accepted-peaks summary: {e}")
-                warnings.append(f"Failed to write hydration accepted-peaks summary: {e}")
+                except Exception as e:
+                    logger.error(f"failed to write hydration accepted-peaks summary: {e}")
+                    _remove_stale_artifacts([acc_csv])
+                    error = FittingError(
+                        f"Failed to write hydration accepted-peaks summary: {e}",
+                        exit_code=1,
+                        context={"output_file": str(acc_csv)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan) from e
+                artifacts.append(acc_csv)
+                self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
+            else:
+                # Zero accepted peaks scan-wide: drop a previous run's summary
+                # rather than leaving it to be read as current. Deliberately
+                # outside the try -- a failed removal must fail the fit.
+                _remove_stale_artifacts([acc_csv])
+
+            # Drop artifacts belonging to points that are not in this run's
+            # input at all. Per-point cleanup cannot see them, so without this a
+            # rerun over a reduced point set would certify a directory that
+            # still holds the earlier run's peak CSVs for the dropped points.
+            obsolete = _remove_obsolete_point_artifacts(
+                multifits_dir, sol=sol, target=target, scan=scan, region="R1",
+                fitted_points={inp['point_idx'] for inp in point_inputs},
+            )
+            if obsolete:
+                self.console.print(
+                    f"[yellow]Removed {len(obsolete)} artifact(s) for points no longer "
+                    f"in this scan's input.[/yellow]"
+                )
+
+            # Marker last: it certifies that everything above completed.
+            _write_fit_run_marker(
+                run_marker, domain="hydration",
+                points_fitted=len(point_cols), accepted_peaks=len(accepted_rows),
+            )
+            artifacts.append(run_marker)
 
             self.console.print(f"[bold green]Hydration analysis complete.[/bold green] Artifacts in {multifits_dir}")
 
@@ -1183,6 +1625,13 @@ class FittingService:
             multifits_dir = base / "organics_fit"
             multifits_dir.mkdir(parents=True, exist_ok=True)
 
+            # See fit_minerals: the marker is written as `running` up front and
+            # rewritten as `completed` only once this run finishes.
+            run_marker = _fit_run_marker_path(
+                multifits_dir, sol, target, scan, "R1", "organics"
+            )
+            _begin_fit_run(run_marker, domain="organics")
+
             # Prefer despiked+baselined per-point spectra (legacy behavior), then baselined, then normalized
             input_csv_dsp_bl = base / f"{sol}_{target}_{scan}_R1_normalized_despiked_baselined.csv"
             input_csv_bl = base / f"{sol}_{target}_{scan}_R1_normalized_baselined.csv"
@@ -1237,6 +1686,16 @@ class FittingService:
 
             org_mask = (x >= org_roi[0]) & (x <= org_roi[1])
             point_cols = [c for c in df.columns if str(c).isdigit()]
+            if not point_cols:
+                # A run that fits nothing must not be allowed to complete: its
+                # marker would otherwise license persistence to clear the
+                # domain's existing rows on the strength of an empty run.
+                error = FittingError(
+                    "No point columns found to fit.",
+                    exit_code=1,
+                    context={"input_file": str(input_csv)}
+                )
+                raise enrich(error, sol=sol, target=target, scan=scan)
 
             # --- Phase 1: Prepare per-point inputs ---
             point_inputs = [
@@ -1283,17 +1742,52 @@ class FittingService:
             pd.DataFrame(summary).sort_values('point').to_csv(summary_csv, index=False)
             artifacts.append(summary_csv)
 
-            # Emit accepted-peaks summary
-            try:
-                if accepted_rows:
+            # Emit accepted-peaks summary. Replacing it is not optional: the
+            # marker below certifies it as this run's output, and the assembler
+            # reads its R2/centre values, so an older summary left standing
+            # would hand persistence stale numbers under a completed marker.
+            # A failed write therefore drops the stale file and fails the fit.
+            acc_csv = multifits_dir / f"{sol}_{target}_{scan}_R1_organics_accepted_peaks.csv"
+            if accepted_rows:
+                try:
                     acc_df = pd.DataFrame(accepted_rows).sort_values(['point', 'center_cm1'])
-                    acc_csv = multifits_dir / f"{sol}_{target}_{scan}_R1_organics_accepted_peaks.csv"
                     acc_df.to_csv(acc_csv, index=False)
-                    artifacts.append(acc_csv)
-                    self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
-            except Exception as e:
-                logger.warning(f"failed to write organics accepted-peaks summary: {e}")
-                warnings.append(f"Failed to write organics accepted-peaks summary: {e}")
+                except Exception as e:
+                    logger.error(f"failed to write organics accepted-peaks summary: {e}")
+                    _remove_stale_artifacts([acc_csv])
+                    error = FittingError(
+                        f"Failed to write organics accepted-peaks summary: {e}",
+                        exit_code=1,
+                        context={"output_file": str(acc_csv)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan) from e
+                artifacts.append(acc_csv)
+                self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
+            else:
+                # Zero accepted peaks scan-wide: drop a previous run's summary
+                # rather than leaving it to be read as current. Deliberately
+                # outside the try -- a failed removal must fail the fit.
+                _remove_stale_artifacts([acc_csv])
+
+            # Drop artifacts belonging to points that are not in this run's
+            # input at all. Per-point cleanup cannot see them, so without this a
+            # rerun over a reduced point set would certify a directory that
+            # still holds the earlier run's peak CSVs for the dropped points.
+            obsolete = _remove_obsolete_point_artifacts(
+                multifits_dir, sol=sol, target=target, scan=scan, region="R1",
+                fitted_points={inp['point_idx'] for inp in point_inputs},
+            )
+            if obsolete:
+                self.console.print(
+                    f"[yellow]Removed {len(obsolete)} artifact(s) for points no longer "
+                    f"in this scan's input.[/yellow]"
+                )
+
+            _write_fit_run_marker(
+                run_marker, domain="organics",
+                points_fitted=len(point_cols), accepted_peaks=len(accepted_rows),
+            )
+            artifacts.append(run_marker)
 
             self.console.print(f"[bold green]Organics analysis complete.[/bold green] Artifacts in {multifits_dir}")
 
@@ -1941,7 +2435,10 @@ class FittingService:
         writes peaks to the fitted_peaks table via _write_peaks_to_db().
 
         Idempotent: re-running for a domain replaces only that domain's peaks.
-        Other domains' peaks are preserved.
+        Other domains' peaks are preserved. A fit that ran and accepted nothing
+        (the domain's scan-level summary is present but no per-point peak CSVs
+        are) is a zero result: the domain's existing rows are cleared and 0 is
+        reported. Only a domain that was never fitted raises.
 
         Args:
             sol: Sol number (e.g., "0921")
@@ -1957,7 +2454,7 @@ class FittingService:
 
         Raises:
             FittingError: If domain is invalid, database not configured, scan not
-                found, or persistence fails
+                found, the domain was never fitted, or persistence fails
         """
         from sherloc_pipeline.core.data_ingestion import normalize_target_name
         target = normalize_target_name(target)
@@ -2031,14 +2528,115 @@ class FittingService:
                     context={"fit_dir": str(fit_dir)}
                 )
 
-            # Discover per-point peak CSVs
-            peak_csvs = self._discover_peak_csvs(fit_dir, sol, target, scan, region, domain)
-            if not peak_csvs:
+            # Gate persistence on this domain's run marker.
+            #
+            # Persisting replaces every existing row for the domain, so a run
+            # whose outputs cannot be trusted must never reach the database.
+            # Three states are distinguished:
+            #
+            #   completed -> the marker says what the run fitted and accepted;
+            #                a zero-accept run is a real zero result and clears
+            #                the domain's rows.
+            #   running   -> the fit started and never finished. The CSVs on
+            #                disk are a partial mix of this run's and the
+            #                previous one's: refuse.
+            #   absent    -> the directory predates run markers. Keep the
+            #                pre-marker contract (see docs/INVARIANTS.md §1):
+            #                persist whatever peak CSVs are there, and error
+            #                only when there are none -- exactly as before.
+            marker_path = _fit_run_marker_path(
+                fit_dir, sol, target, scan, region, domain,
+            )
+            marker = _read_fit_run_marker(marker_path)
+            marker_status = marker.get("status") if marker else None
+
+            if marker is not None and marker_status == RUN_MARKER_INVALID:
                 raise FittingError(
-                    f"No fitted peak CSVs found in {fit_dir} for domain '{domain}'",
+                    f"Run marker {marker_path.name} for domain '{domain}' in {fit_dir} "
+                    f"is unreadable or malformed, so the state of the last {domain} fit "
+                    f"is unknown. Re-run fitting.",
                     exit_code=1,
                     context={"domain": domain, "fit_dir": str(fit_dir)}
                 )
+            if marker is not None and marker.get("domain") != domain:
+                raise FittingError(
+                    f"Run marker at {marker_path.name} records domain "
+                    f"'{marker.get('domain')}', not '{domain}'. Re-run fitting.",
+                    exit_code=1,
+                    context={
+                        "domain": domain,
+                        "fit_dir": str(fit_dir),
+                        "marker_domain": marker.get("domain"),
+                    }
+                )
+            if marker_status == RUN_MARKER_RUNNING:
+                raise FittingError(
+                    f"The last {domain} fit for {sol}/{target}/{scan} was interrupted "
+                    f"({marker_path.name} still records an in-progress run), so the peak "
+                    f"CSVs in {fit_dir} are an untrusted mix of runs. Re-run fitting.",
+                    exit_code=1,
+                    context={"domain": domain, "fit_dir": str(fit_dir)}
+                )
+
+            # Discover per-point peak CSVs
+            peak_csvs = self._discover_peak_csvs(fit_dir, sol, target, scan, region, domain)
+            zero_result_run = False
+
+            if marker is None:
+                # Legacy (pre-marker) fit directory: unchanged behaviour.
+                if not peak_csvs:
+                    raise FittingError(
+                        f"No fitted peak CSVs found in {fit_dir} for domain '{domain}'",
+                        exit_code=1,
+                        context={"domain": domain, "fit_dir": str(fit_dir)}
+                    )
+                self.console.print(
+                    f"[yellow]No run marker in {fit_dir}; persisting the peak CSVs found "
+                    f"there (pre-marker fit directory). Re-run {domain} fitting to record "
+                    f"one.[/yellow]"
+                )
+            else:
+                marker_points = int(marker["points_fitted"])
+                if marker_points <= 0:
+                    # A run that fitted no points says nothing about this scan,
+                    # and must never be read as "the fit found nothing" -- that
+                    # would clear valid rows persisted from a real earlier run.
+                    raise FittingError(
+                        f"The last completed {domain} run for {sol}/{target}/{scan} fitted "
+                        f"0 points, so it cannot be used to replace persisted peaks. "
+                        f"Re-run fitting against a scan with point spectra.",
+                        exit_code=1,
+                        context={
+                            "domain": domain,
+                            "fit_dir": str(fit_dir),
+                            "marker_points_fitted": marker_points,
+                        }
+                    )
+                marker_accepted = int(marker["accepted_peaks"])
+                if not peak_csvs:
+                    # A fit that ran and accepted nothing is a legitimate zero
+                    # result (e.g. the hydration cosmic-ray veto rejected every
+                    # candidate). It must clear the domain's existing rows rather
+                    # than abort, or the previous run's peaks stay in the database
+                    # forever. The marker distinguishes that from a completed run
+                    # whose accepted peaks' CSVs have since gone missing.
+                    if marker_accepted != 0:
+                        raise FittingError(
+                            f"Fit directory {fit_dir} is inconsistent for domain '{domain}': "
+                            f"the last completed run accepted {marker_accepted} peaks but no "
+                            f"peak CSVs are present. Re-run fitting.",
+                            exit_code=1,
+                            context={
+                                "domain": domain,
+                                "fit_dir": str(fit_dir),
+                                "marker_accepted_peaks": marker_accepted,
+                            }
+                        )
+                    zero_result_run = True
+                    self.console.print(
+                        f"[yellow]No accepted {domain} peaks for {sol}/{target}/{scan}; "
+                        f"clearing any previously persisted {domain} peaks.[/yellow]"
+                    )
 
             # Load R² values (domain-specific source)
             r2_map = self._load_r2_map(fit_dir, results_base, sol, target, scan, region, domain)
@@ -2178,6 +2776,12 @@ class FittingService:
                         )
                         all_peaks.append(peak)
 
+                if zero_result_run:
+                    warnings_list.append(
+                        f"No accepted {domain} peaks found; existing {domain} peaks "
+                        "for this scan were cleared."
+                    )
+
                 # Write to DB via shared helper (handles idempotent delete+insert)
                 scan_point_ids = [sp.id for sp in scan_points]
                 inserted = self._write_peaks_to_db(session, all_peaks, scan_point_ids, domain)
@@ -2193,6 +2797,7 @@ class FittingService:
                     "region": region,
                     "domain": domain,
                     "peak_csvs_found": len(peak_csvs),
+                    "zero_result_run": zero_result_run,
                     "total_reviewable_peaks": total_reviewable,
                     "peaks_inserted": inserted,
                     "min_snr_threshold": min_snr,

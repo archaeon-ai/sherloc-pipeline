@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cosmic-ray veto for hydration fitting, feature-flagged and default OFF (#38).**
+  A cosmic ray inside the 2800-3900 cm-1 OH-stretch window clears the R2 and
+  F-test gates and is reported as a hydration feature with its FWHM pinned at
+  the 50 cm-1 floor. `core/hydration_veto.py` adds two independent signals: a
+  despike-mask veto (the fit still runs on the non-despiked spectrum for
+  published-method fidelity; the existing despiker runs alongside purely to
+  harvest the spike mask that call sites previously discarded) and
+  bound-pinning detection (a fit converged within epsilon of the FWHM floor is
+  flagged unreliable-by-construction, never rejected on that basis alone).
+  Both apply consistently to all three hydration paths --
+  `services/fitting.py`, `services/map_fitting.py`, and the web point-fit
+  endpoint. New config block `fitting.hydration_cr_veto` with
+  `enabled: false`: with the flag off, behaviour is unchanged and peak records
+  carry no veto fields. The thresholds are proposals, not ratified defaults --
+  see `docs/reports/HYDRATION_CR_VETO_EVIDENCE.md` and the read-only sweep
+  utility `scripts/hydration_cr_veto_report.py`. Turning the flag on is a
+  science decision. When a veto removes a component the model curve, residual,
+  R2 and the fit overlay are all rebuilt from the surviving peaks, so a vetoed
+  cosmic ray is never still plotted or exported alongside a zero-peak verdict.
+  Every despiker caller — pipeline, map mode, web point fit, web modz preview
+  and the evidence sweep — resolves its parameters through the single
+  `core/preprocessing.despike_params_from_config()`, so a supported
+  `preprocessing.despike` override cannot produce different veto verdicts on
+  different paths. Re-fitting into a populated results directory now removes
+  the per-point CSV, overlay PNG and accepted-peaks summary that a run no
+  longer produces, and `persist_raman_peaks()` treats a fit that accepted
+  nothing as a zero result that clears the domain's existing rows rather than
+  an error; turning the veto on for an already-fitted scan therefore removes
+  the rejected peak from the database instead of resurrecting it from a stale
+  artifact. The organics fitter's D+G and G-only per-point exports are
+  mutually exclusive and DG is preferred at discovery, so a rerun that changes
+  the outcome now removes the export it did not write. Per-point cleanup cannot
+  see a point that has left the input entirely, so before writing its completed
+  marker each fit also sweeps the domain directory for artifacts belonging to
+  point indices absent from this run: a re-fit over a reduced or partially
+  re-exported point set can no longer certify a directory that still holds the
+  dropped points' peak CSVs for `persist-peaks` to rediscover. Because persistence
+  replaces every row for a domain, each fit now records a run marker
+  (`*_<domain>_fit_run.json`) written as `running` when it starts and rewritten
+  atomically as `completed` when it finishes; `persist-peaks` refuses a marker
+  still recording an in-progress run (leftover CSVs from an interrupted rerun
+  are not evidence that the run completed) and refuses one reporting zero
+  fitted points, and fitting itself now fails on a scan with no point columns,
+  so an empty run can never license clearing valid rows. **Backward
+  compatible:** a fit directory with no marker at all predates this change and
+  keeps its previous behaviour exactly — its peak CSVs are persisted, and only
+  a directory with no CSVs is an error, as before.
+
 ### Fixed
 - **Targetless Loupe science scans are detected and safely auditable (#43).**
   Direct workspace ingestion now resolves the sol-level `.lpe` target just as

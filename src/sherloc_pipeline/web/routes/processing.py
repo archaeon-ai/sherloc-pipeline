@@ -1,5 +1,6 @@
 """Stateless processing endpoints: baseline, fit, despike, and background."""
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -21,7 +22,17 @@ from sherloc_pipeline.core.mineral_id import (
     classify_organic_band,
     load_mineral_rules,
 )
-from sherloc_pipeline.core.preprocessing import DespikeParams, despike_r1_spectrum
+from sherloc_pipeline.core.hydration_veto import (
+    HydrationVetoConfig,
+    despike_for_veto,
+    evaluate_hydration_peak,
+    rebuild_post_veto_fit,
+)
+from sherloc_pipeline.core.preprocessing import (
+    DespikeParams,
+    despike_params_from_config,
+    despike_r1_spectrum,
+)
 from sherloc_pipeline.services.quality import classify_fit_quality
 from sherloc_pipeline.web.adapters import numpy_to_list
 from sherloc_pipeline.web.schemas import (
@@ -280,12 +291,58 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
         else:
             _assign = lambda _: None
 
-        for p in fit_result.peaks:
+        # Hydration cosmic-ray veto (issue #38) — feature-flagged, default OFF.
+        # The veto runs against the raw (non-baselined, non-despiked) spectrum
+        # the client posted, which is the same array the fit was seeded from.
+        veto_cfg = dataclasses.replace(
+            HydrationVetoConfig.from_fitting_config(fit_cfg),
+            # This endpoint's FWHM floor is the caller-supplied bound, not the
+            # config default, so bound-pinning must be measured against it.
+            fwhm_floor_cm1=float(fit_params_schema.fwhm_bounds[0]),
+        )
+        veto_active = domain == "hydration" and veto_cfg.enabled
+
+        # Pass 1: score every candidate and keep the survivors. The DTOs are
+        # only built afterwards because a veto changes the model curve, and with
+        # it the R2 that every peak row reports.
+        surviving: list = []
+        veto_rows: dict = {}
+        if veto_active:
+            y_veto_desp, veto_mask = despike_for_veto(
+                x, y, despike_params_from_config(config)
+            )
+            for p in fit_result.peaks:
+                verdict = evaluate_hydration_peak(
+                    p.m_cm1, p.fwhm, x, y, y_veto_desp, veto_mask, veto_cfg
+                )
+                if verdict.vetoed:
+                    continue
+                veto_rows[id(p)] = verdict.as_row()
+                surviving.append(p)
+            if len(surviving) != len(fit_result.peaks):
+                # A component was removed, so the model curve, residual and R2
+                # from the original fit no longer describe what is being
+                # reported. Rebuild them from the survivors alone, otherwise the
+                # response can claim zero peaks while still plotting and
+                # exporting the rejected cosmic-ray fit.
+                fit_result, y_model_full = rebuild_post_veto_fit(
+                    x,
+                    corrected,
+                    fit_result,
+                    surviving,
+                    roi=tuple(fit_params_schema.wavenumber_range),
+                )
+        else:
+            surviving = list(fit_result.peaks)
+
+        for p in surviving:
             center = p.m_cm1
             assignment = _assign(center) if center is not None else None
             sharpness_ratio = getattr(p, "sharpness_ratio", None)
+            veto_row: dict = veto_rows.get(id(p), {})
             peaks.append(
                 PeakDTO(
+                    **veto_row,
                     center_cm1=center,
                     amplitude=p.a,
                     fwhm_cm1=p.fwhm,
