@@ -13,7 +13,11 @@ from unittest.mock import patch, MagicMock
 
 from sherloc_pipeline.database.connection import get_engine, get_session, create_all_tables
 from sherloc_pipeline.database.models import SolORM, ScanORM, ScanPointORM, SpectrumORM, FittedPeakORM
-from sherloc_pipeline.services.fitting import FittingService
+from sherloc_pipeline.services.fitting import (
+    FittingService,
+    _fit_run_marker_path,
+    _write_fit_run_marker,
+)
 from sherloc_pipeline.services.errors import FittingError
 
 
@@ -487,12 +491,19 @@ def _call_persist_hydration(service, results_base):
         )
 
 
+def _hydration_marker_path(results_base):
+    return _fit_run_marker_path(
+        results_base / "hydration_fit",
+        "0851", "Lake_Haiyaha", "detail_1", "R1", "hydration",
+    )
+
+
 def _hydration_results_dir(tmp_path, with_peaks: bool):
     """A hydration_fit directory as the fitter leaves it.
 
     ``with_peaks=True`` is a run that accepted a peak; ``with_peaks=False`` is
     the same scan re-fitted with the cosmic-ray veto on, which writes the
-    scan-level summary but no per-point CSV.
+    scan-level summary and the completed-run marker but no per-point CSV.
     """
     results_base = tmp_path / "results"
     hyd_dir = results_base / "hydration_fit"
@@ -501,6 +512,12 @@ def _hydration_results_dir(tmp_path, with_peaks: bool):
     summary_csv = results_base / "0851_Lake_Haiyaha_detail_1_R1_hydration_summary.csv"
     point_csv = hyd_dir / "0851_Lake_Haiyaha_detail_1_R1_point0_hydration_peaks.csv"
     acc_csv = hyd_dir / "0851_Lake_Haiyaha_detail_1_R1_hydration_accepted_peaks.csv"
+    _write_fit_run_marker(
+        _hydration_marker_path(results_base),
+        domain="hydration",
+        points_fitted=1,
+        accepted_peaks=1 if with_peaks else 0,
+    )
 
     if with_peaks:
         pd.DataFrame([
@@ -571,8 +588,8 @@ def test_persist_hydration_zero_result_leaves_other_domains_alone(
         assert session.query(FittedPeakORM).filter_by(fit_modality="minerals").count() == 1
 
 
-def test_persist_hydration_without_a_summary_still_raises(populated_db, tmp_path):
-    """No per-point CSVs AND no summary means the fit never ran — still an error."""
+def test_persist_hydration_without_a_run_marker_still_raises(populated_db, tmp_path):
+    """No per-point CSVs AND no run marker means the fit never ran — an error."""
     engine, _ = populated_db
     results_base = tmp_path / "results_never_fitted"
     (results_base / "hydration_fit").mkdir(parents=True)
@@ -582,3 +599,45 @@ def test_persist_hydration_without_a_summary_still_raises(populated_db, tmp_path
         _call_persist_hydration(service, results_base)
 
     assert "No fitted peak CSVs found" in str(exc_info.value)
+
+
+def test_persist_hydration_stale_summary_without_marker_raises(populated_db, tmp_path):
+    """A leftover positive summary is not evidence that *this* run completed.
+
+    An interrupted re-run leaves the previous run's summary in place while
+    deleting its own peak CSVs. Treating that summary as proof of a zero-result
+    fit would wipe rows the database is still the only copy of.
+    """
+    engine, _ = populated_db
+    results_base = _hydration_results_dir(tmp_path, with_peaks=True)
+    first = _call_persist_hydration(_make_service(engine), results_base)
+    assert first.metadata["peaks_inserted"] == 1
+
+    # Interrupted re-run: marker cleared at start, per-point CSVs gone, the
+    # previous run's positive summary still on disk.
+    hyd_dir = results_base / "hydration_fit"
+    (hyd_dir / "0851_Lake_Haiyaha_detail_1_R1_point0_hydration_peaks.csv").unlink()
+    _hydration_marker_path(results_base).unlink()
+
+    with pytest.raises(FittingError) as exc_info:
+        _call_persist_hydration(_make_service(engine), results_base)
+    assert "no completed-run marker" in str(exc_info.value)
+
+    with get_session(engine) as session:
+        assert session.query(FittedPeakORM).filter_by(
+            fit_modality="hydration"
+        ).count() == 1, "an aborted persist must not clear persisted rows"
+
+
+def test_persist_hydration_positive_marker_without_csvs_raises(populated_db, tmp_path):
+    """A completed run that accepted peaks but has no CSVs is inconsistent."""
+    engine, _ = populated_db
+    results_base = _hydration_results_dir(tmp_path, with_peaks=True)
+    (results_base / "hydration_fit" /
+     "0851_Lake_Haiyaha_detail_1_R1_point0_hydration_peaks.csv").unlink()
+
+    with pytest.raises(FittingError) as exc_info:
+        _call_persist_hydration(_make_service(engine), results_base)
+
+    assert "inconsistent" in str(exc_info.value)
+    assert exc_info.value.context["marker_accepted_peaks"] == 1

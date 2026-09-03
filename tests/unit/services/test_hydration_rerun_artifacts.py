@@ -18,7 +18,12 @@ import pandas as pd
 import pytest
 
 from sherloc_pipeline.config import load_config
-from sherloc_pipeline.services.fitting import FittingService
+from sherloc_pipeline.services.fitting import (
+    FittingService,
+    StaleArtifactError,
+    _fit_run_marker_path,
+    _read_fit_run_marker,
+)
 from sherloc_pipeline.services.runtime import RuntimeContext
 
 SOL = "0921"
@@ -99,15 +104,74 @@ def test_veto_off_then_on_leaves_no_hydration_artifacts(tmp_path, results_base):
 
 
 def test_summary_csv_is_still_written_on_a_zero_result_run(tmp_path, results_base):
-    """The scan-level summary is the evidence the fit actually ran.
-
-    ``persist_raman_peaks`` uses it to tell "fitted, accepted nothing" (clear
-    the domain's rows) from "never fitted" (an error), so it must survive a run
-    that produced no peaks.
-    """
+    """The scan-level summary still describes a run that accepted nothing."""
     _run_fit(_service(tmp_path, veto_enabled=True), results_base)
 
     summary = results_base / f"{SOL}_{TARGET}_{SCAN}_R1_hydration_summary.csv"
     assert summary.exists()
     rows = pd.read_csv(summary)
     assert bool(rows["oh_detected"].iloc[0]) is False
+
+
+def _marker_path(results_base):
+    return _fit_run_marker_path(
+        results_base / "hydration_fit", SOL, TARGET, SCAN, "R1", "hydration"
+    )
+
+
+def test_run_marker_records_this_runs_accepted_count(tmp_path, results_base):
+    """The marker — not the summary — is what licenses clearing the database.
+
+    ``persist_raman_peaks`` uses it to tell "fitted, accepted nothing" (clear
+    the domain's rows) from "never fitted" or "interrupted" (errors), so a
+    zero-result run must leave one saying zero, overwriting the positive marker
+    the previous run left.
+    """
+    marker = _marker_path(results_base)
+
+    _run_fit(_service(tmp_path, veto_enabled=False), results_base)
+    assert _read_fit_run_marker(marker)["accepted_peaks"] == 1
+
+    _run_fit(_service(tmp_path, veto_enabled=True), results_base)
+    assert _read_fit_run_marker(marker)["accepted_peaks"] == 0
+
+
+def test_failed_stale_artifact_removal_fails_the_fit(tmp_path, results_base):
+    """A cleanup that could not delete must not report success.
+
+    Reporting success would leave the previous run's peak CSV on disk for
+    ``persist_raman_peaks`` to rediscover, restoring the vetoed peak.
+    """
+    peaks_csv, _png, _acc = _artifact_paths(results_base)
+    _run_fit(_service(tmp_path, veto_enabled=False), results_base)
+    assert peaks_csv.exists()
+
+    real_unlink = Path.unlink
+
+    def refuse_peaks_csv(self, *args, **kwargs):
+        if self == peaks_csv:
+            raise PermissionError(13, "Permission denied")
+        return real_unlink(self, *args, **kwargs)
+
+    with patch.object(Path, "unlink", refuse_peaks_csv):
+        with pytest.raises(Exception) as exc_info:
+            _run_fit(_service(tmp_path, veto_enabled=True), results_base)
+
+    assert "failed to remove stale artifact" in str(exc_info.value)
+    assert peaks_csv.exists(), "the undeletable CSV is exactly the risk"
+    # No completion marker, so persistence refuses to treat this as a zero result.
+    assert _read_fit_run_marker(_marker_path(results_base)) is None
+
+
+def test_remove_stale_artifacts_raises_on_unlink_failure(tmp_path):
+    from sherloc_pipeline.services.fitting import _remove_stale_artifacts
+
+    doomed = tmp_path / "leftover.csv"
+    doomed.write_text("center_cm1\n3300.0\n")
+
+    with patch.object(Path, "unlink", side_effect=OSError("read-only fs")):
+        with pytest.raises(StaleArtifactError):
+            _remove_stale_artifacts([doomed])
+
+    # Missing files stay non-fatal: nothing to resurrect.
+    _remove_stale_artifacts([tmp_path / "absent.csv"])
