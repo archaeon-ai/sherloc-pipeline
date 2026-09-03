@@ -690,15 +690,19 @@ def _fit_point_organics(
                     'pass_sharpness': p.pass_sharpness,
                 })
         else:
-            # Fall back to G-only. Deliberately outside the try below: dropping
-            # a previous run's DG export is not optional, because
-            # `_discover_peak_csvs` would prefer it over this run's G CSV.
-            _remove_stale_artifacts(dg_artifacts)
+            # Fall back to G-only. Dropping a previous run's DG export is not
+            # optional, because `_discover_peak_csvs` would prefer it over this
+            # run's G CSV. The previous run's *G* export goes too: it is stale
+            # the moment this run starts, and if the rewrite below fails we must
+            # not leave it behind to be rediscovered as if it were current.
+            _remove_stale_artifacts(dg_artifacts + g_artifacts)
+
+            # Not guarded: a failed peak-table write must fail the fit rather
+            # than let the run be recorded as completed with no current G CSV.
+            save_peak_table(result_g.peaks, str(g_peaks_csv))
+            artifacts.append(g_peaks_csv)
 
             try:
-                save_peak_table(result_g.peaks, str(g_peaks_csv))
-                artifacts.append(g_peaks_csv)
-
                 plot_fit_overlay(
                     x, y, org_mask, result_g, y_model_g,
                     str(g_png_path),

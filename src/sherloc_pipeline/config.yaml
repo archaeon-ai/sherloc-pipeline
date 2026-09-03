@@ -165,7 +165,8 @@ fitting:
   # `enabled` on is a science decision, not a code decision.
   hydration_cr_veto:
     enabled: false                    # feature flag; false = pre-#38 behaviour
-    action: "reject"                  # "reject" drops CR candidates, "flag" only annotates
+    action: "reject"                  # "reject" drops CR candidates, "flag" only annotates;
+                                      # any other value is a hard config error
     center_window_cm1: 15.0           # half-width searched for masked spike bins
     amplitude_drop_ratio_max: 0.5     # max raw->despiked height fraction removed
     mask_min_drop_ratio: 0.1          # a masked bin must account for >=10% of the height

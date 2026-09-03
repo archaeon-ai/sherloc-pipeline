@@ -39,6 +39,7 @@ __all__ = [
     "FLAG_AMPLITUDE_DROP",
     "FLAG_FWHM_FLOOR_PINNED",
     "WARNING_MODEL_REBUILT",
+    "VALID_ACTIONS",
     "HydrationVetoConfig",
     "HydrationVetoResult",
     "despike_for_veto",
@@ -54,6 +55,9 @@ FLAG_FWHM_FLOOR_PINNED = "fwhm_floor_pinned"
 # Appended to the warnings of a FitResult whose model was recomputed from the
 # surviving peaks after a veto removed at least one component.
 WARNING_MODEL_REBUILT = "post_veto_model_rebuilt"
+
+# The only two accepted values of ``HydrationVetoConfig.action``.
+VALID_ACTIONS = frozenset({"reject", "flag"})
 
 # Proposed defaults (NOT ratified — see the evidence report).
 DEFAULT_CENTER_WINDOW_CM1 = 15.0
@@ -71,7 +75,9 @@ class HydrationVetoConfig:
             behaves exactly as it did before this module existed.
         action: ``"reject"`` drops a cosmic-ray-implicated candidate from the
             accepted set; ``"flag"`` keeps it and only annotates it. Bound
-            pinning is always flag-only regardless of this setting.
+            pinning is always flag-only regardless of this setting. Any other
+            value raises ``ValueError``: silently degrading a typo to flag-only
+            would keep cosmic rays while the operator believes the veto rejects.
         center_window_cm1: Half-width of the window around a candidate centre
             searched for masked spike bins and for the raw-to-despiked drop.
         amplitude_drop_ratio_max: Maximum tolerated fraction of the candidate's
@@ -94,6 +100,13 @@ class HydrationVetoConfig:
     fwhm_floor_cm1: float = 50.0
     fwhm_floor_epsilon_cm1: float = DEFAULT_FWHM_FLOOR_EPSILON_CM1
 
+    def __post_init__(self) -> None:
+        if self.action not in VALID_ACTIONS:
+            raise ValueError(
+                f"hydration_cr_veto.action must be one of "
+                f"{sorted(VALID_ACTIONS)}, got {self.action!r}"
+            )
+
     @property
     def rejects(self) -> bool:
         """True when a cosmic-ray signal removes the candidate rather than annotating it."""
@@ -114,7 +127,7 @@ class HydrationVetoConfig:
         floor = float(cfg.get("hydration_fwhm_min_cm1", 50.0))
         return cls(
             enabled=bool(raw.get("enabled", False)),
-            action=str(raw.get("action", "reject")),
+            action=str(raw.get("action", "reject")).strip().lower(),
             center_window_cm1=float(raw.get("center_window_cm1", DEFAULT_CENTER_WINDOW_CM1)),
             amplitude_drop_ratio_max=float(
                 raw.get("amplitude_drop_ratio_max", DEFAULT_AMPLITUDE_DROP_RATIO_MAX)

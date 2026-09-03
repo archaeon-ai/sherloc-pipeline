@@ -141,3 +141,26 @@ def test_positive_to_zero_rerun_removes_both_exports(out_dir):
     assert not any(p.exists() for p in (dg_csv, dg_png, g_csv, g_png))
     assert result["accepted_peaks"] == []
     assert result["summary_row"]["g_detected"] is False
+
+
+def test_g_to_g_rerun_with_a_failing_export_leaves_nothing_stale(out_dir):
+    """A failed G table write must abort the fit, not leave the old table.
+
+    The caller marks the run completed once every point returns, so a
+    swallowed write error would certify the previous run's G peaks as this
+    run's result. Removing the old export up front and letting the write raise
+    keeps the fit -> persist chain honest.
+    """
+    _, _, g_csv, g_png = _paths(out_dir)
+    g_csv.write_text("m_cm1,a,fwhm,snr\n1605.0,999.0,60.0,20.0\n")
+    g_png.write_bytes(b"stale png")
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    with patch("sherloc_pipeline.core.fitting.save_peak_table", boom):
+        with pytest.raises(OSError):
+            _run(out_dir, [_result([_peak(1605.0, 60.0)]), _result([])])
+
+    assert not g_csv.exists(), "previous run's G peaks would be persisted as current"
+    assert not g_png.exists()

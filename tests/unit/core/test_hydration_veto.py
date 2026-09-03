@@ -317,3 +317,33 @@ class TestRebuildPostVetoFit:
         result, _ = rebuild_post_veto_fit(self.x, self.y, original, [])
         assert result.warnings[0] == "fit_failed"
         assert original.warnings == ["fit_failed"], "must not mutate the input"
+
+
+class TestActionValidation:
+    """An unrecognized `action` must fail loudly, not degrade to flag-only.
+
+    Silently treating `rejcet` as flag-only keeps cosmic rays in the accepted
+    set while the operator's config says the veto rejects them.
+    """
+
+    @pytest.mark.parametrize("action", ["rejcet", "REJECT_ALL", "", "drop", "none"])
+    def test_invalid_action_is_rejected(self, action):
+        with pytest.raises(ValueError, match="action"):
+            HydrationVetoConfig(enabled=True, action=action)
+
+    @pytest.mark.parametrize("action", ["reject", "flag"])
+    def test_valid_actions_are_accepted(self, action):
+        assert HydrationVetoConfig(enabled=True, action=action).action == action
+
+    def test_invalid_action_in_config_yaml_is_rejected(self):
+        with pytest.raises(ValueError, match="action"):
+            HydrationVetoConfig.from_fitting_config(
+                {"hydration_cr_veto": {"enabled": True, "action": "rejcet"}}
+            )
+
+    def test_config_action_is_case_and_whitespace_tolerant(self):
+        cfg = HydrationVetoConfig.from_fitting_config(
+            {"hydration_cr_veto": {"enabled": True, "action": " Flag "}}
+        )
+        assert cfg.action == "flag"
+        assert cfg.rejects is False
