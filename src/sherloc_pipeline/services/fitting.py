@@ -150,6 +150,13 @@ def _fit_point_minerals(
     artifacts: List[Path] = []
     warnings: List[str] = []
 
+    # Artifacts this point owns. The peak table is what the accepted-peaks
+    # assembler globs, so any exit that does not rewrite it must delete the
+    # previous run's copy rather than let it read as current.
+    peaks_csv = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit_peaks.csv"
+    png_path = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit.png"
+    owned_artifacts = [peaks_csv, png_path]
+
     try:
         result, y_model_full = fit_spectrum(x, y, fit_cfg, roi=fit_roi)
         mask = (x >= plot_roi[0]) & (x <= plot_roi[1])
@@ -164,23 +171,24 @@ def _fit_point_minerals(
             for p in (result.peaks or [])
         )
 
-        # Always save per-point peaks table
-        try:
-            peaks_csv = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit_peaks.csv"
-            save_peak_table(result.peaks, str(peaks_csv))
-            artifacts.append(peaks_csv)
-        except Exception as e:
-            warnings.append(f"Failed to save peaks table for point {point_idx}: {e}")
+        # Always save per-point peaks table. A failure here is not swallowed:
+        # it would leave the previous run's table for the assembler to pick up
+        # while this run still reported the point as fitted.
+        save_peak_table(result.peaks, str(peaks_csv))
+        artifacts.append(peaks_csv)
 
         # Export plot when strictly accepted OR reviewable
         if accepted_point or reviewable_point:
-            png_path = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit.png"
             plot_fit_overlay(
                 x, y, mask, result, y_model_full, str(png_path),
                 title=None, xlim=plot_roi,
                 sol=sol, target=target, scan=scan, point=point_idx, roi=fit_roi,
             )
             artifacts.append(png_path)
+        else:
+            # Nothing to show for this point any more: an earlier run's overlay
+            # would otherwise keep displaying a fit this run rejected.
+            _remove_stale_artifacts([png_path])
 
         # Collect accepted peaks
         accepted_peaks = []
@@ -223,7 +231,16 @@ def _fit_point_minerals(
             'count_accepted': 1 if accepted_point else 0,
         }
 
+    except StaleArtifactError:
+        # An artifact that could not be deleted is fatal in its own right:
+        # failing the whole scan is the only way to keep persistence away
+        # from it. Never downgrade it to a per-point warning.
+        raise
     except Exception as e:
+        # This point produced nothing usable, so drop whatever an earlier run
+        # left behind for it before reporting the failure upward, where the
+        # scan refuses to write a completed marker.
+        _remove_stale_artifacts(owned_artifacts)
         return {
             'point_idx': point_idx,
             'summary_row': None,
@@ -231,6 +248,7 @@ def _fit_point_minerals(
             'artifacts': [],
             'warnings': [f"Fit failed for point {point_idx}: {e}"],
             'count_accepted': 0,
+            'failed': True,
         }
 
 
@@ -1050,29 +1068,65 @@ class FittingService:
                 accepted_rows.extend(r['accepted_peaks'])
                 count += r.get('count_accepted', 0)
 
-            # Emit scan-level AICc summary CSV
+            # A point whose fit raised produced no peak table, so its previous
+            # run's tables were deleted by the worker. The scan still must not
+            # complete: the marker would certify a points_fitted count the run
+            # never actually fitted, and the AICc summary below would be
+            # missing that point's R2 while claiming to describe every point.
+            failed_points = [r['point_idx'] for r in results if r.get('failed')]
+            if failed_points:
+                error = FittingError(
+                    f"Mineral fitting failed for point(s) {failed_points}; "
+                    "refusing to complete the run.",
+                    exit_code=1,
+                    context={"sol": sol, "target": target, "scan": scan,
+                             "failed_points": failed_points},
+                )
+                raise enrich(error, sol=sol, target=target, scan=scan)
+
+            # Emit scan-level AICc summary CSV. The assembler reads its r2
+            # column per point, and the marker below certifies it as this run's
+            # output, so a failed rewrite must not leave an older summary
+            # standing: drop it and fail the fit.
+            out_csv = base / f"{sol}_{target}_{scan}_{region}_fit_aicc_summary.csv"
             try:
                 summary_df = pd.DataFrame(summary_rows).sort_values('point')
-                out_csv = base / f"{sol}_{target}_{scan}_{region}_fit_aicc_summary.csv"
                 summary_df.to_csv(out_csv, index=False)
-                artifacts.append(out_csv)
-                self.console.print(f"[green]Wrote AICc summary to {out_csv}[/green]")
             except Exception as e:
-                logger.warning(f"failed to write AICc summary: {e}")
-                warnings.append(f"Failed to write AICc summary: {e}")
-            
-            # Emit accepted-peaks scan-level summary
-            try:
-                if accepted_rows:
+                logger.error(f"failed to write AICc summary: {e}")
+                _remove_stale_artifacts([out_csv])
+                error = FittingError(
+                    f"Failed to write AICc summary: {e}",
+                    exit_code=1,
+                    context={"output_file": str(out_csv)},
+                )
+                raise enrich(error, sol=sol, target=target, scan=scan) from e
+            artifacts.append(out_csv)
+            self.console.print(f"[green]Wrote AICc summary to {out_csv}[/green]")
+
+            # Emit accepted-peaks scan-level summary, on the same terms.
+            acc_csv = out_dir / f"{sol}_{target}_{scan}_{region}_accepted_peaks.csv"
+            if accepted_rows:
+                try:
                     acc_df = pd.DataFrame(accepted_rows).sort_values(['point', 'center_cm1'])
-                    acc_csv = out_dir / f"{sol}_{target}_{scan}_{region}_accepted_peaks.csv"
                     acc_df.to_csv(acc_csv, index=False)
-                    artifacts.append(acc_csv)
-                    self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
-            except Exception as e:
-                logger.warning(f"failed to write accepted-peaks summary: {e}")
-                warnings.append(f"Failed to write accepted-peaks summary: {e}")
-            
+                except Exception as e:
+                    logger.error(f"failed to write accepted-peaks summary: {e}")
+                    _remove_stale_artifacts([acc_csv])
+                    error = FittingError(
+                        f"Failed to write accepted-peaks summary: {e}",
+                        exit_code=1,
+                        context={"output_file": str(acc_csv)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan) from e
+                artifacts.append(acc_csv)
+                self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
+            else:
+                # Zero accepted peaks scan-wide: drop a previous run's summary
+                # rather than leaving it to be read as current. Deliberately
+                # outside the try -- a failed removal must fail the fit.
+                _remove_stale_artifacts([acc_csv])
+
             _write_fit_run_marker(
                 run_marker, domain="minerals",
                 points_fitted=len(point_cols), accepted_peaks=len(accepted_rows),
@@ -1364,17 +1418,27 @@ class FittingService:
             pd.DataFrame(summary).to_csv(summary_csv, index=False)
             artifacts.append(summary_csv)
 
-            # Emit accepted-peaks summary
+            # Emit accepted-peaks summary. Replacing it is not optional: the
+            # marker below certifies it as this run's output, and the assembler
+            # reads its R2/centre values, so an older summary left standing
+            # would hand persistence stale numbers under a completed marker.
+            # A failed write therefore drops the stale file and fails the fit.
             acc_csv = multifits_dir / f"{sol}_{target}_{scan}_R1_hydration_accepted_peaks.csv"
             if accepted_rows:
                 try:
                     acc_df = pd.DataFrame(accepted_rows).sort_values(['point', 'center_cm1'])
                     acc_df.to_csv(acc_csv, index=False)
-                    artifacts.append(acc_csv)
-                    self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
                 except Exception as e:
-                    logger.warning(f"failed to write hydration accepted-peaks summary: {e}")
-                    warnings.append(f"Failed to write hydration accepted-peaks summary: {e}")
+                    logger.error(f"failed to write hydration accepted-peaks summary: {e}")
+                    _remove_stale_artifacts([acc_csv])
+                    error = FittingError(
+                        f"Failed to write hydration accepted-peaks summary: {e}",
+                        exit_code=1,
+                        context={"output_file": str(acc_csv)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan) from e
+                artifacts.append(acc_csv)
+                self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
             else:
                 # Zero accepted peaks scan-wide: drop a previous run's summary
                 # rather than leaving it to be read as current. Deliberately
@@ -1603,17 +1667,27 @@ class FittingService:
             pd.DataFrame(summary).sort_values('point').to_csv(summary_csv, index=False)
             artifacts.append(summary_csv)
 
-            # Emit accepted-peaks summary
+            # Emit accepted-peaks summary. Replacing it is not optional: the
+            # marker below certifies it as this run's output, and the assembler
+            # reads its R2/centre values, so an older summary left standing
+            # would hand persistence stale numbers under a completed marker.
+            # A failed write therefore drops the stale file and fails the fit.
             acc_csv = multifits_dir / f"{sol}_{target}_{scan}_R1_organics_accepted_peaks.csv"
             if accepted_rows:
                 try:
                     acc_df = pd.DataFrame(accepted_rows).sort_values(['point', 'center_cm1'])
                     acc_df.to_csv(acc_csv, index=False)
-                    artifacts.append(acc_csv)
-                    self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
                 except Exception as e:
-                    logger.warning(f"failed to write organics accepted-peaks summary: {e}")
-                    warnings.append(f"Failed to write organics accepted-peaks summary: {e}")
+                    logger.error(f"failed to write organics accepted-peaks summary: {e}")
+                    _remove_stale_artifacts([acc_csv])
+                    error = FittingError(
+                        f"Failed to write organics accepted-peaks summary: {e}",
+                        exit_code=1,
+                        context={"output_file": str(acc_csv)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan) from e
+                artifacts.append(acc_csv)
+                self.console.print(f"[green]Wrote accepted-peaks summary to {acc_csv}[/green]")
             else:
                 # Zero accepted peaks scan-wide: drop a previous run's summary
                 # rather than leaving it to be read as current. Deliberately
