@@ -8,6 +8,8 @@ Every path is asserted twice: flag OFF must reproduce pre-#38 behaviour exactly,
 flag ON must remove the cosmic ray while leaving a broad, authentic band alone.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -50,6 +52,24 @@ def _broad_hydration_spectrum(x, center=3400.0, fwhm=280.0, amplitude=900.0, see
     sigma = fwhm / 2.3548
     y = 100.0 + amplitude * np.exp(-0.5 * ((x - center) / sigma) ** 2)
     return y + np.random.default_rng(seed).normal(0.0, 4.0, size=x.shape)
+
+
+CR_CENTER = 3800.0
+BAND_CENTER = 3400.0
+
+
+def _mixed_spectrum(x, seed=11):
+    """An authentic broad OH band AND a cosmic ray, well separated.
+
+    Both components are fit and both clear the acceptance filters, so the veto
+    has to remove exactly one of them — the case where a stale model curve is
+    visible rather than merely inconsistent.
+    """
+    y = _broad_hydration_spectrum(x, center=BAND_CENTER, seed=seed)
+    idx = int(np.argmin(np.abs(x - CR_CENTER)))
+    y[idx] += 6000.0
+    y[idx + 1] += 5400.0
+    return y
 
 
 def _fit_cfg_oh():
@@ -154,6 +174,74 @@ class TestPipelineWorker:
         assert row["fwhm_floor_pinned"] is True
 
 
+class TestPipelineOverlayAfterVeto:
+    """A mixed authentic+cosmic fit must not render the vetoed component.
+
+    Pruning ``accepted_peaks`` alone leaves the overlay and the exported R2
+    describing the original fit, so the PNG would still draw the rejected
+    cosmic-ray Gaussian as part of an otherwise-accepted hydration fit.
+    """
+
+    @staticmethod
+    def _capture(monkeypatch):
+        captured = {}
+
+        def _fake_plot(x, y, mask, result, model, path, **kwargs):
+            captured["result"] = result
+            captured["model"] = np.asarray(model, dtype=float)
+            Path(path).write_bytes(b"")
+
+        monkeypatch.setattr(
+            "sherloc_pipeline.visualization.fitting_plots.plot_fit_overlay",
+            _fake_plot,
+        )
+        return captured
+
+    def test_mixed_spectrum_overlay_drops_the_vetoed_component(
+        self, tmp_path, monkeypatch
+    ):
+        x = _hydration_axis()
+        y = _mixed_spectrum(x)
+        cfg = HydrationVetoConfig(enabled=True, fwhm_floor_cm1=FWHM_FLOOR)
+
+        captured = self._capture(monkeypatch)
+        result = _run_worker(x, y, tmp_path, cfg)
+
+        # Precondition: the authentic band survives, so a plot is produced.
+        assert result["accepted_peaks"], "the broad OH band must survive the veto"
+        assert any("vetoed as cosmic ray" in w for w in result["warnings"])
+        assert "model" in captured, "an accepted fit must still be plotted"
+
+        cr_idx = int(np.argmin(np.abs(x - CR_CENTER)))
+        band_idx = int(np.argmin(np.abs(x - BAND_CENTER)))
+        model = captured["model"]
+
+        # The vetoed component is gone from the plotted model...
+        assert model[cr_idx] < 0.05 * model[band_idx]
+        # ...and from the result the overlay labels its peaks from.
+        assert all(
+            abs(p.m_cm1 - CR_CENTER) > 3 * FWHM_FLOOR for p in captured["result"].peaks
+        )
+        # The exported R2 is the surviving fit's, not the original's.
+        assert result["summary_row"]["oh_r2"] == pytest.approx(
+            captured["result"].r2
+        )
+
+    def test_flag_off_overlay_still_contains_the_cosmic_ray(
+        self, tmp_path, monkeypatch
+    ):
+        """Baseline contract: with the flag off nothing about the plot changes."""
+        x = _hydration_axis()
+        y = _mixed_spectrum(x)
+
+        captured = self._capture(monkeypatch)
+        _run_worker(x, y, tmp_path, None)
+
+        cr_idx = int(np.argmin(np.abs(x - CR_CENTER)))
+        band_idx = int(np.argmin(np.abs(x - BAND_CENTER)))
+        assert captured["model"][cr_idx] > 0.05 * captured["model"][band_idx]
+
+
 def _map_config(enabled, action="reject"):
     return {
         "fitting": {
@@ -201,6 +289,25 @@ class TestMapModeQuickFit:
         )
         assert result.peaks, "authentic broad OH band must survive"
         assert all(p["cr_vetoed"] is False for p in result.peaks)
+
+    def test_mixed_spectrum_reports_the_post_veto_r2(self):
+        """R2 rides on every peak row, so it must describe the surviving model."""
+        x = _hydration_axis()
+        y = _mixed_spectrum(x)
+
+        off = _fit_raman_domain(
+            x, y, _map_config(False), "hydration", preprocessed=True
+        )
+        on = _fit_raman_domain(
+            x, y, _map_config(True), "hydration", preprocessed=True,
+            raw_intensity_r1=y,
+        )
+
+        assert len(off.peaks) == 2, "both components must be reported flag-off"
+        assert len(on.peaks) == 1, "exactly the cosmic ray must be vetoed"
+        assert all(abs(pk["center_cm1"] - CR_CENTER) > FWHM_FLOOR for pk in on.peaks)
+        # The kept band's R2 is recomputed without the vetoed component.
+        assert on.peaks[0]["r2"] != off.peaks[0]["r2"]
 
     def test_veto_does_not_touch_other_domains(self):
         # The veto is hydration-only: a narrow mineral band must be unaffected

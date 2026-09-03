@@ -34,6 +34,7 @@ from sherloc_pipeline.core.hydration_veto import (
     HydrationVetoConfig,
     despike_for_veto,
     evaluate_hydration_peak,
+    rebuild_post_veto_fit,
 )
 from sherloc_pipeline.core.mineral_id import (
     DEFAULT_RULES,
@@ -407,11 +408,32 @@ def _fit_raman_domain(
         )
         y_veto_desp, veto_mask = despike_for_veto(x, y_veto_raw)
 
+    # Pass 1: score the candidates. R2 is reported on every peak row, so a veto
+    # has to be resolved before any row is built — otherwise the surviving peaks
+    # would carry the goodness-of-fit of a model that still contained the
+    # rejected cosmic ray.
+    verdicts: dict = {}
+    if veto_active:
+        survivors = []
+        for p in fit_result.peaks:
+            verdict = evaluate_hydration_peak(
+                p.m_cm1, p.fwhm, x, y_veto_raw, y_veto_desp, veto_mask, veto_cfg
+            )
+            verdicts[id(p)] = verdict
+            if not verdict.vetoed:
+                survivors.append(p)
+        if len(survivors) != len(fit_result.peaks):
+            fit_result, _ = rebuild_post_veto_fit(
+                x, y, fit_result, survivors, roi=roi
+            )
+
     # Convert peaks to dicts with assignments
     peaks = []
     has_detection = False
     for p in fit_result.peaks:
         if not (p.pass_snr and p.pass_fwhm):
+            continue
+        if veto_active and verdicts[id(p)].vetoed:
             continue
         assignment = assign_fn(p.m_cm1)
         peak_dict = {
@@ -424,12 +446,7 @@ def _fit_raman_domain(
             "r2": round(fit_result.r2, 4),
         }
         if veto_active:
-            verdict = evaluate_hydration_peak(
-                p.m_cm1, p.fwhm, x, y_veto_raw, y_veto_desp, veto_mask, veto_cfg
-            )
-            if verdict.vetoed:
-                continue
-            peak_dict.update(verdict.as_row())
+            peak_dict.update(verdicts[id(p)].as_row())
         peaks.append(peak_dict)
         if p.snr >= _SNR_THRESHOLD:
             has_detection = True

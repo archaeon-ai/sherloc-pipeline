@@ -30,22 +30,30 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from sherloc_pipeline.core.fitting import compute_r2, gaussian
 from sherloc_pipeline.core.preprocessing import DespikeParams, despike_r1_spectrum
+from sherloc_pipeline.models.fitting import FitResult, PeakFit
 
 __all__ = [
     "FLAG_MASK_HIT",
     "FLAG_AMPLITUDE_DROP",
     "FLAG_FWHM_FLOOR_PINNED",
+    "WARNING_MODEL_REBUILT",
     "HydrationVetoConfig",
     "HydrationVetoResult",
     "despike_for_veto",
     "evaluate_hydration_peak",
+    "rebuild_post_veto_fit",
 ]
 
 # Flag vocabulary. Stable strings — they are written into peak rows/DTOs.
 FLAG_MASK_HIT = "cr_mask_hit"
 FLAG_AMPLITUDE_DROP = "cr_amplitude_drop"
 FLAG_FWHM_FLOOR_PINNED = "fwhm_floor_pinned"
+
+# Appended to the warnings of a FitResult whose model was recomputed from the
+# surviving peaks after a veto removed at least one component.
+WARNING_MODEL_REBUILT = "post_veto_model_rebuilt"
 
 # Proposed defaults (NOT ratified — see the evidence report).
 DEFAULT_CENTER_WINDOW_CM1 = 15.0
@@ -277,3 +285,77 @@ def evaluate_hydration_peak(
         bound_pinned=bool(bound_pinned),
         amplitude_drop_ratio=ratio,
     )
+
+
+def rebuild_post_veto_fit(
+    x: np.ndarray,
+    y: np.ndarray,
+    fit_result: FitResult,
+    surviving_peaks: Sequence[PeakFit],
+    roi: Optional[Tuple[float, float]] = None,
+) -> Tuple[FitResult, np.ndarray]:
+    """Recompute the model curve and goodness-of-fit from the surviving peaks.
+
+    Dropping a vetoed component from the peak list is not enough: the model
+    curve, the residual, and R2 all still describe the *original* fit, so a
+    response could otherwise report zero accepted peaks while plotting and
+    exporting the rejected cosmic-ray component. This rebuilds every
+    model-derived output so the reported fit is the one the surviving peaks
+    actually make.
+
+    Only call this when a veto removed something — with nothing removed the
+    original ``fit_result``/model pair is already the right answer, and
+    rebuilding would drift from it because ``fit_spectrum`` prunes and merges
+    components after computing its model.
+
+    Args:
+        x: Raman shift axis the fit was run on (full length).
+        y: The intensity that was fit, aligned to ``x``.
+        fit_result: The pre-veto result, used for its warnings.
+        surviving_peaks: Peaks that were not vetoed.
+        roi: Fit region; outside it the model is zero, matching
+            :func:`~sherloc_pipeline.core.fitting.fit_spectrum`. ``None`` means
+            the whole axis.
+
+    Returns:
+        ``(result, model_full)`` where ``model_full`` is aligned to ``x``.
+    """
+    x_arr = np.asarray(x, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+    peaks = list(surviving_peaks)
+
+    if roi is None:
+        mask = np.ones(x_arr.shape, dtype=bool)
+    else:
+        mask = (x_arr >= float(roi[0])) & (x_arr <= float(roi[1]))
+
+    model_full = np.zeros(x_arr.shape, dtype=np.float64)
+    if mask.any():
+        contribution = np.zeros(int(np.count_nonzero(mask)), dtype=np.float64)
+        for p in peaks:
+            contribution += gaussian(x_arr[mask], p.m_cm1, p.a, p.fwhm)
+        model_full[mask] = contribution
+
+    n = min(x_arr.size, y_arr.size)
+    roi_sel = mask[:n]
+    y_roi = y_arr[:n][roi_sel]
+    m_roi = model_full[:n][roi_sel]
+
+    if y_roi.size:
+        r2 = compute_r2(y_roi, m_roi)
+        rss = float(np.sum((y_roi - m_roi) ** 2))
+    else:
+        r2, rss = 0.0, 0.0
+
+    warnings = list(fit_result.warnings)
+    if WARNING_MODEL_REBUILT not in warnings:
+        warnings.append(WARNING_MODEL_REBUILT)
+
+    rebuilt = FitResult(
+        peaks=peaks,
+        r2=float(r2),
+        rss=rss,
+        dof=max(0, int(y_roi.size) - 3 * len(peaks)),
+        warnings=warnings,
+    )
+    return rebuilt, model_full

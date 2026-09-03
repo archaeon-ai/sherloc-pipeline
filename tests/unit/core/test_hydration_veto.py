@@ -12,9 +12,13 @@ from sherloc_pipeline.core.hydration_veto import (
     FLAG_FWHM_FLOOR_PINNED,
     FLAG_MASK_HIT,
     HydrationVetoConfig,
+    WARNING_MODEL_REBUILT,
     despike_for_veto,
     evaluate_hydration_peak,
+    rebuild_post_veto_fit,
 )
+from sherloc_pipeline.core.fitting import gaussian
+from sherloc_pipeline.models.fitting import FitResult, PeakFit
 
 
 def _broad_oh_spectrum(center=3400.0, fwhm=250.0, amplitude=500.0, noise=5.0):
@@ -243,3 +247,73 @@ class TestSerialisation:
         )
         assert result.vetoed is False
         assert result.flags == ()
+
+
+def _peak(center, amplitude, fwhm):
+    return PeakFit(
+        m_cm1=center, a=amplitude, fwhm=fwhm,
+        sigma=fwhm / 2.3548, area=0.0, snr=10.0,
+        pass_snr=True, pass_fwhm=True, pass_r2=True,
+    )
+
+
+class TestRebuildPostVetoFit:
+    """Model-derived outputs must follow the surviving peaks, not the original fit."""
+
+    def setup_method(self):
+        self.x = np.linspace(2800.0, 3900.0, 256)
+        self.authentic = _peak(3400.0, 500.0, 250.0)
+        self.cosmic = _peak(3100.0, 4000.0, 50.0)
+        self.y = (
+            gaussian(self.x, 3400.0, 500.0, 250.0)
+            + gaussian(self.x, 3100.0, 4000.0, 50.0)
+        )
+        self.original = FitResult(
+            peaks=[self.cosmic, self.authentic], r2=0.99, rss=1.0,
+            dof=250, warnings=[],
+        )
+
+    def test_model_drops_the_vetoed_component(self):
+        result, model = rebuild_post_veto_fit(
+            self.x, self.y, self.original, [self.authentic]
+        )
+        expected = gaussian(self.x, 3400.0, 500.0, 250.0)
+        np.testing.assert_allclose(model, expected, atol=1e-9)
+        assert result.peaks == [self.authentic]
+
+    def test_r2_and_rss_describe_the_surviving_model(self):
+        result, model = rebuild_post_veto_fit(
+            self.x, self.y, self.original, [self.authentic]
+        )
+        assert result.r2 < self.original.r2
+        assert result.rss == pytest.approx(float(np.sum((self.y - model) ** 2)))
+        assert result.dof == len(self.x) - 3
+
+    def test_vetoing_everything_leaves_an_empty_model(self):
+        result, model = rebuild_post_veto_fit(self.x, self.y, self.original, [])
+        np.testing.assert_allclose(model, np.zeros_like(self.x), atol=0.0)
+        assert result.peaks == []
+        assert result.r2 <= 0.0
+
+    def test_model_is_zero_outside_the_roi(self):
+        """Matches fit_spectrum, which only ever populates the fitted region."""
+        _, model = rebuild_post_veto_fit(
+            self.x, self.y, self.original, [self.authentic], roi=(3300.0, 3500.0)
+        )
+        outside = (self.x < 3300.0) | (self.x > 3500.0)
+        np.testing.assert_allclose(model[outside], 0.0, atol=0.0)
+        assert np.any(model[~outside] > 0.0)
+
+    def test_rebuild_is_recorded_in_the_warnings(self):
+        result, _ = rebuild_post_veto_fit(
+            self.x, self.y, self.original, [self.authentic]
+        )
+        assert WARNING_MODEL_REBUILT in result.warnings
+
+    def test_original_warnings_are_preserved(self):
+        original = FitResult(
+            peaks=[self.cosmic], r2=0.5, rss=1.0, dof=1, warnings=["fit_failed"]
+        )
+        result, _ = rebuild_post_veto_fit(self.x, self.y, original, [])
+        assert result.warnings[0] == "fit_failed"
+        assert original.warnings == ["fit_failed"], "must not mutate the input"

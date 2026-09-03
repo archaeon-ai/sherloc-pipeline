@@ -60,6 +60,7 @@ from sherloc_pipeline.core.hydration_veto import (
     HydrationVetoResult,
     despike_for_veto,
     evaluate_hydration_peak,
+    rebuild_post_veto_fit,
 )
 from sherloc_pipeline.core.preprocessing import DespikeParams
 
@@ -334,12 +335,14 @@ def _fit_point_hydration(
     if veto_cfg is not None and veto_cfg.enabled and accepted_peaks:
         y_desp, spike_mask = despike_for_veto(x, y_full, despike_params)
         surviving = []
+        vetoed_ids = set()
         for p in accepted_peaks:
             verdict = evaluate_hydration_peak(
                 p.m_cm1, p.fwhm, x, y_full, y_desp, spike_mask, veto_cfg
             )
             veto_by_peak[id(p)] = verdict
             if verdict.vetoed:
+                vetoed_ids.add(id(p))
                 warnings.append(
                     f"Point {point_idx}: hydration candidate at {p.m_cm1:.1f} cm-1 "
                     f"vetoed as cosmic ray ({', '.join(verdict.flags)})"
@@ -347,6 +350,20 @@ def _fit_point_hydration(
                 continue
             surviving.append(p)
         accepted_peaks = surviving
+        if vetoed_ids:
+            # The overlay and the exported R2 are model-derived, so pruning the
+            # accepted list is not enough: a mixed authentic-plus-cosmic fit
+            # would still render the vetoed component as part of the accepted
+            # fit. Rebuild the curve from every non-vetoed component of the
+            # original fit — peaks the centre/sharpness filters excluded are
+            # still genuine parts of the fit and stay in the model.
+            oh_result, oh_model = rebuild_post_veto_fit(
+                x,
+                y_for_fit,
+                oh_result,
+                [p for p in oh_result.peaks if id(p) not in vetoed_ids],
+                roi=oh_roi,
+            )
 
     oh_pass = len(accepted_peaks) > 0
 

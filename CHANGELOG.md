@@ -24,7 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry no veto fields. The thresholds are proposals, not ratified defaults --
   see `docs/reports/HYDRATION_CR_VETO_EVIDENCE.md` and the read-only sweep
   utility `scripts/hydration_cr_veto_report.py`. Turning the flag on is a
-  science decision.
+  science decision. When a veto removes a component the model curve, residual,
+  R2 and the fit overlay are all rebuilt from the surviving peaks, so a vetoed
+  cosmic ray is never still plotted or exported alongside a zero-peak verdict.
 
 ### Fixed
 - **Targetless Loupe science scans are detected and safely auditable (#43).**

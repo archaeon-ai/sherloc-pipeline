@@ -85,20 +85,32 @@ def _percentiles(values: list[float]) -> str:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
-    if not args.db.exists():
-        print(f"error: no such database: {args.db}", file=sys.stderr)
-        return 1
+def _config_from_args(args: argparse.Namespace) -> HydrationVetoConfig:
+    """Build the sweep's veto config from the parsed command line.
 
-    config = HydrationVetoConfig(
+    ``--floor-tolerance`` has to reach ``fwhm_floor_epsilon_cm1`` as well as the
+    row selection: the sweep reports a bound-pinning count, and if the two came
+    apart that count would be measured against the 0.5 cm-1 default rather than
+    the tolerance the operator asked about.
+    """
+    return HydrationVetoConfig(
         enabled=True,
         action="reject",
         center_window_cm1=args.center_window_cm1,
         amplitude_drop_ratio_max=args.amplitude_drop_ratio_max,
         mask_min_drop_ratio=args.mask_min_drop_ratio,
         fwhm_floor_cm1=args.floor,
+        fwhm_floor_epsilon_cm1=args.floor_tolerance,
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    if not args.db.exists():
+        print(f"error: no such database: {args.db}", file=sys.stderr)
+        return 1
+
+    config = _config_from_args(args)
 
     wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
     r1_mask = get_region_wavelength_mask(wavelength, "R1")

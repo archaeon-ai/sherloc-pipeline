@@ -983,3 +983,38 @@ async def test_hydration_veto_does_not_apply_to_other_domains(client, fake_confi
     assert resp.status_code == 200
     for peak in resp.json()["peaks"]:
         assert peak["cr_vetoed"] is None
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_rebuilds_model_derived_outputs(client, fake_config):
+    """A veto must also remove the rejected component from the model.
+
+    Pruning the peak DTOs alone would leave ``residual`` and ``r_squared``
+    describing the original fit, so the response could report zero peaks while
+    the workbench still plotted — and an export still carried — the rejected
+    cosmic-ray curve.
+    """
+    wn, intensity = _make_hydration_cr_spectrum()
+    body = _hydration_fit_body(wn, intensity)
+
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "reject"}
+    try:
+        vetoed = (await client.post("/api/process/fit", json=body)).json()
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+    kept = (await client.post("/api/process/fit", json=body)).json()
+
+    # Precondition: with the flag off this spectrum does produce a fit.
+    assert kept["peaks"]
+    assert np.any(np.abs(np.asarray(kept["residual"])
+                         - np.asarray(kept["corrected"])) > 1e-9)
+
+    assert vetoed["peaks"] == []
+    assert vetoed["n_peaks"] == 0
+    # No surviving peaks means no model: the residual is the corrected trace.
+    np.testing.assert_allclose(
+        np.asarray(vetoed["residual"]), np.asarray(vetoed["corrected"]), atol=1e-9
+    )
+    # ...and R2 describes that empty model, not the discarded cosmic-ray fit.
+    assert vetoed["r_squared"] != kept["r_squared"]
+    assert vetoed["r_squared"] <= 0.0
