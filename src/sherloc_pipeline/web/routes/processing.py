@@ -28,7 +28,11 @@ from sherloc_pipeline.core.hydration_veto import (
     evaluate_hydration_peak,
     rebuild_post_veto_fit,
 )
-from sherloc_pipeline.core.preprocessing import DespikeParams, despike_r1_spectrum
+from sherloc_pipeline.core.preprocessing import (
+    DespikeParams,
+    despike_params_from_config,
+    despike_r1_spectrum,
+)
 from sherloc_pipeline.services.quality import classify_fit_quality
 from sherloc_pipeline.web.adapters import numpy_to_list
 from sherloc_pipeline.web.schemas import (
@@ -304,7 +308,9 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
         surviving: list = []
         veto_rows: dict = {}
         if veto_active:
-            y_veto_desp, veto_mask = despike_for_veto(x, y)
+            y_veto_desp, veto_mask = despike_for_veto(
+                x, y, despike_params_from_config(config)
+            )
             for p in fit_result.peaks:
                 verdict = evaluate_hydration_peak(
                     p.m_cm1, p.fwhm, x, y, y_veto_desp, veto_mask, veto_cfg

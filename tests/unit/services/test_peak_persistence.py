@@ -462,3 +462,123 @@ def test_persist_spectrum_type_fallback(engine, mock_csvs):
         peaks = session.query(FittedPeakORM).all()
         for peak in peaks:
             assert peak.spectrum_id in spectrum_ids.values()
+
+
+# ---------------------------------------------------------------------------
+# Zero-result persistence (issue #38): a fit that accepted nothing must clear
+# the domain's existing rows, not leave the previous run's peaks in place.
+# ---------------------------------------------------------------------------
+
+
+def _call_persist_hydration(service, results_base):
+    """persist_raman_peaks(domain='hydration') with the scan context mocked."""
+    mock_ctx = MagicMock()
+    mock_ctx.base_data_dir = results_base
+    mock_ctx.results_dir = results_base
+
+    mock_di = MagicMock()
+    mock_di.get_results_path.return_value = results_base
+
+    with patch('sherloc_pipeline.services.fitting.resolve_scan_context') as mock_rsc, \
+         patch('sherloc_pipeline.core.data_ingestion.DataIngestion', return_value=mock_di):
+        mock_rsc.return_value = mock_ctx
+        return service.persist_raman_peaks(
+            sol="0851", target="Lake_Haiyaha", scan="detail_1", domain="hydration"
+        )
+
+
+def _hydration_results_dir(tmp_path, with_peaks: bool):
+    """A hydration_fit directory as the fitter leaves it.
+
+    ``with_peaks=True`` is a run that accepted a peak; ``with_peaks=False`` is
+    the same scan re-fitted with the cosmic-ray veto on, which writes the
+    scan-level summary but no per-point CSV.
+    """
+    results_base = tmp_path / "results"
+    hyd_dir = results_base / "hydration_fit"
+    hyd_dir.mkdir(parents=True, exist_ok=True)
+
+    summary_csv = results_base / "0851_Lake_Haiyaha_detail_1_R1_hydration_summary.csv"
+    point_csv = hyd_dir / "0851_Lake_Haiyaha_detail_1_R1_point0_hydration_peaks.csv"
+    acc_csv = hyd_dir / "0851_Lake_Haiyaha_detail_1_R1_hydration_accepted_peaks.csv"
+
+    if with_peaks:
+        pd.DataFrame([
+            {"center_cm1": 3300.0, "fwhm_cm1": 50.0, "amplitude_a": 6000.0,
+             "area": 300.0, "snr": 40.0, "pass_sharpness": True},
+        ]).to_csv(point_csv, index=False)
+        pd.DataFrame([{"point": 0, "center_cm1": 3300.0, "r2": 0.9}]).to_csv(
+            acc_csv, index=False
+        )
+        pd.DataFrame([{"point": 0, "oh_detected": True, "oh_r2": 0.9,
+                       "oh_n_accepted": 1}]).to_csv(summary_csv, index=False)
+    else:
+        point_csv.unlink(missing_ok=True)
+        acc_csv.unlink(missing_ok=True)
+        pd.DataFrame([{"point": 0, "oh_detected": False, "oh_r2": 0.9,
+                       "oh_n_accepted": 0}]).to_csv(summary_csv, index=False)
+
+    return results_base
+
+
+def test_persist_hydration_zero_result_clears_existing_rows(populated_db, tmp_path):
+    """Veto-off then veto-on into the same results dir must empty the table."""
+    engine, _ = populated_db
+    service = _make_service(engine)
+
+    # Round 1: the peak is persisted.
+    results_base = _hydration_results_dir(tmp_path, with_peaks=True)
+    first = _call_persist_hydration(service, results_base)
+    assert first.metadata["peaks_inserted"] == 1
+    assert first.metadata["zero_result_run"] is False
+
+    # Round 2: same directory, the fit now accepts nothing.
+    _hydration_results_dir(tmp_path, with_peaks=False)
+    second = _call_persist_hydration(service, results_base)
+
+    assert second.metadata["peaks_inserted"] == 0
+    assert second.metadata["zero_result_run"] is True
+    assert any("were cleared" in w for w in second.warnings)
+
+    with get_session(engine) as session:
+        remaining = session.query(FittedPeakORM).filter_by(
+            fit_modality="hydration"
+        ).all()
+    assert remaining == [], "the vetoed peak must not survive the re-run"
+
+
+def test_persist_hydration_zero_result_leaves_other_domains_alone(
+    populated_db, tmp_path
+):
+    """Clearing is domain-scoped, exactly like the normal idempotent write."""
+    engine, spectrum_ids = populated_db
+    with get_session(engine) as session:
+        session.add(FittedPeakORM(
+            id=str(uuid.uuid4()),
+            spectrum_id=spectrum_ids[0],
+            peak_type="gaussian",
+            fit_modality="minerals",
+            center_cm1=1085.0,
+            amplitude=1500.0,
+            fwhm_cm1=30.0,
+        ))
+
+    service = _make_service(engine)
+    results_base = _hydration_results_dir(tmp_path, with_peaks=False)
+    _call_persist_hydration(service, results_base)
+
+    with get_session(engine) as session:
+        assert session.query(FittedPeakORM).filter_by(fit_modality="minerals").count() == 1
+
+
+def test_persist_hydration_without_a_summary_still_raises(populated_db, tmp_path):
+    """No per-point CSVs AND no summary means the fit never ran — still an error."""
+    engine, _ = populated_db
+    results_base = tmp_path / "results_never_fitted"
+    (results_base / "hydration_fit").mkdir(parents=True)
+
+    service = _make_service(engine)
+    with pytest.raises(FittingError) as exc_info:
+        _call_persist_hydration(service, results_base)
+
+    assert "No fitted peak CSVs found" in str(exc_info.value)

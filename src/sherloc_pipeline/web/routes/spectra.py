@@ -24,6 +24,7 @@ from sherloc_pipeline.core.mask_application import (
 from sherloc_pipeline.core.preprocessing import (
     DespikeParams,
     apply_mask_replacement,
+    despike_params_from_config,
     despike_r1_spectrum,
 )
 from sherloc_pipeline.database.models import ScanORM, ScanPointORM, SpectrumORM
@@ -127,55 +128,11 @@ def _despike_interpolation_method(config) -> str:
 def _modz_params_from_config(config) -> DespikeParams:
     """Build modz ``DespikeParams`` from the bundled config defaults.
 
-    Resolves ``preprocessing.despike`` the same way the rest of the web tier
-    reads config (``getattr`` then ``.get``, tolerant of the dataclass-style
-    config and the dict-style test stub). Any key the config omits falls back
-    to the ``DespikeParams`` field default, so a minimal config still yields a
-    valid set of parameters — matching the CLI pipeline's legacy modz
-    defaults.
+    Delegates to :func:`core.preprocessing.despike_params_from_config`, the
+    single source of truth every despiker caller shares, so this route cannot
+    drift from the CLI pipeline or the hydration cosmic-ray veto.
     """
-    pp = getattr(config, "preprocessing", None) or {}
-    despike = pp.get("despike", {}) if hasattr(pp, "get") else {}
-    if not hasattr(despike, "get"):
-        despike = {}
-    defaults = DespikeParams()
-
-    def _get(key, fallback):
-        val = despike.get(key, None)
-        return fallback if val is None else val
-
-    def _tuple(key, fallback):
-        val = despike.get(key, None)
-        return fallback if val is None else tuple(val)
-
-    return DespikeParams(
-        window_size=int(_get("window_size", defaults.window_size)),
-        zscore_threshold=float(_get("zscore_threshold", defaults.zscore_threshold)),
-        max_iterations=int(_get("max_iterations", defaults.max_iterations)),
-        interpolation_method=str(
-            _get("interpolation_method", defaults.interpolation_method)
-        ),
-        run_length_max=int(_get("run_length_max", defaults.run_length_max)),
-        laser_window=_tuple("laser_window", defaults.laser_window),
-        sulfate_center_window=_tuple(
-            "sulfate_center_window", defaults.sulfate_center_window
-        ),
-        sulfate_guard_enable=bool(
-            _get("sulfate_guard_enable", defaults.sulfate_guard_enable)
-        ),
-        sulfate_guard_search=_tuple(
-            "sulfate_guard_search", defaults.sulfate_guard_search
-        ),
-        sulfate_guard_min_prominence=float(
-            _get("sulfate_guard_min_prominence", defaults.sulfate_guard_min_prominence)
-        ),
-        sulfate_guard_min_halfwidth=float(
-            _get("sulfate_guard_min_halfwidth", defaults.sulfate_guard_min_halfwidth)
-        ),
-        sulfate_guard_max_halfwidth=float(
-            _get("sulfate_guard_max_halfwidth", defaults.sulfate_guard_max_halfwidth)
-        ),
-    )
+    return despike_params_from_config(config)
 
 
 def _modz_params_dict(params: DespikeParams) -> dict:

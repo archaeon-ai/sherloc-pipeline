@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from sherloc_pipeline.core.hydration_veto import HydrationVetoConfig
+from sherloc_pipeline.core.preprocessing import despike_params_from_config
 from sherloc_pipeline.services.fitting import (
     _despike_params_from_config,
     _fit_point_hydration,
@@ -88,11 +89,11 @@ def _fit_cfg_oh():
     }
 
 
-def _run_worker(x, y, tmp_path, veto_cfg):
+def _run_worker(x, y, tmp_path, veto_cfg, despike_params=None, point_idx=1):
     oh_roi = (2800.0, 3900.0)
     oh_plot = (2600.0, 4000.0)
     return _fit_point_hydration(
-        {"point_idx": 1, "y": y},
+        {"point_idx": point_idx, "y": y},
         x=x,
         fit_cfg_oh=_fit_cfg_oh(),
         oh_roi=oh_roi,
@@ -109,6 +110,14 @@ def _run_worker(x, y, tmp_path, veto_cfg):
         target="Test_Target",
         scan="detail_1",
         veto_cfg=veto_cfg,
+        despike_params=despike_params,
+    )
+
+
+def _point_artifacts(tmp_path, point_idx=1):
+    return (
+        tmp_path / f"0921_Test_Target_detail_1_R1_point{point_idx}_hydration_peaks.csv",
+        tmp_path / f"0921_Test_Target_detail_1_R1_point{point_idx}_hydration_fit.png",
     )
 
 
@@ -242,8 +251,68 @@ class TestPipelineOverlayAfterVeto:
         assert captured["model"][cr_idx] > 0.05 * captured["model"][band_idx]
 
 
-def _map_config(enabled, action="reject"):
-    return {
+class TestStaleArtifactsClearedOnRerun:
+    """Re-running into a populated results directory must not leave a ghost.
+
+    Per-point artifacts are only written when peaks survive, so turning the veto
+    on for a scan that was previously fitted with it off would otherwise leave
+    the earlier CSV and PNG in place — and ``persist_raman_peaks`` rediscovers
+    exactly that CSV, restoring the rejected cosmic ray to the database.
+    """
+
+    def test_off_then_on_removes_the_earlier_csv_and_png(self, tmp_path):
+        x = _hydration_axis()
+        y = _cosmic_ray_only_spectrum(x)
+        peaks_csv, png = _point_artifacts(tmp_path)
+
+        # Round 1: veto off — the CR is accepted and both artifacts land.
+        off = _run_worker(x, y, tmp_path, None)
+        assert off["accepted_peaks"]
+        assert peaks_csv.exists() and png.exists()
+
+        # Round 2: same directory, veto on — nothing survives, so nothing
+        # from round 1 may survive either.
+        on = _run_worker(
+            x, y, tmp_path, HydrationVetoConfig(enabled=True, fwhm_floor_cm1=FWHM_FLOOR)
+        )
+        assert on["accepted_peaks"] == []
+        assert not peaks_csv.exists(), "stale peak CSV would resurrect the vetoed peak"
+        assert not png.exists(), "stale overlay would still show the vetoed fit"
+
+    def test_surviving_point_still_keeps_its_artifacts(self, tmp_path):
+        """The cleanup is scoped to points with no accepted peaks."""
+        x = _hydration_axis()
+        peaks_csv, png = _point_artifacts(tmp_path)
+
+        _run_worker(x, _cosmic_ray_only_spectrum(x), tmp_path, None)
+        result = _run_worker(
+            x,
+            _broad_hydration_spectrum(x),
+            tmp_path,
+            HydrationVetoConfig(enabled=True, fwhm_floor_cm1=FWHM_FLOOR),
+        )
+
+        assert result["accepted_peaks"]
+        assert peaks_csv.exists() and png.exists()
+
+    def test_cleanup_is_a_noop_when_nothing_was_written(self, tmp_path):
+        """No prior run: the no-detection path must not raise on missing files."""
+        x = _hydration_axis()
+        peaks_csv, png = _point_artifacts(tmp_path)
+
+        result = _run_worker(
+            x,
+            _cosmic_ray_only_spectrum(x),
+            tmp_path,
+            HydrationVetoConfig(enabled=True, fwhm_floor_cm1=FWHM_FLOOR),
+        )
+
+        assert result["accepted_peaks"] == []
+        assert not peaks_csv.exists() and not png.exists()
+
+
+def _map_config(enabled, action="reject", preprocessing=None):
+    config = {
         "fitting": {
             "hydration_fit_range": [2800, 3900],
             "hydration_fwhm_min_cm1": FWHM_FLOOR,
@@ -255,6 +324,17 @@ def _map_config(enabled, action="reject"):
             "hydration_cr_veto": {"enabled": enabled, "action": action},
         }
     }
+    if preprocessing is not None:
+        config["preprocessing"] = preprocessing
+    return config
+
+
+# A supported preprocessing override: raising the robust z-score threshold this
+# far means the classical despiker flags nothing, so the veto has no spike
+# evidence and must let the cosmic ray through. It is the cleanest observable
+# proof that a path actually read preprocessing.despike rather than silently
+# using DespikeParams().
+BLIND_DESPIKE = {"despike": {"zscore_threshold": 1.0e6, "run_length_max": 9}}
 
 
 class TestMapModeQuickFit:
@@ -323,6 +403,61 @@ class TestMapModeQuickFit:
         assert result.peaks
         for peak in result.peaks:
             assert "cr_vetoed" not in peak
+
+
+class TestNonDefaultDespikeParamsCrossPath:
+    """A supported preprocessing.despike override must reach every veto path.
+
+    The veto's verdict is a function of the despiker's spike mask, so if one
+    path built ``DespikeParams`` from config and another hard-coded the
+    dataclass defaults, the same spectrum and the same veto config would give
+    different answers depending on which path fitted it. Each path is asserted
+    twice: default config vetoes the cosmic ray, the override spares it.
+    """
+
+    def test_pipeline_worker_honours_the_override(self, tmp_path):
+        x = _hydration_axis()
+        y = _cosmic_ray_only_spectrum(x)
+        veto = HydrationVetoConfig(enabled=True, fwhm_floor_cm1=FWHM_FLOOR)
+
+        default_params = despike_params_from_config({})
+        override_params = despike_params_from_config({"preprocessing": BLIND_DESPIKE})
+
+        vetoed = _run_worker(x, y, tmp_path, veto, default_params, point_idx=1)
+        spared = _run_worker(x, y, tmp_path, veto, override_params, point_idx=2)
+
+        assert vetoed["accepted_peaks"] == []
+        assert spared["accepted_peaks"], "the override must disarm the veto"
+
+    def test_map_mode_honours_the_override(self):
+        x = _hydration_axis()
+        y = _cosmic_ray_only_spectrum(x)
+
+        vetoed = _fit_raman_domain(
+            x, y, _map_config(True), "hydration",
+            preprocessed=True, raw_intensity_r1=y,
+        )
+        spared = _fit_raman_domain(
+            x, y, _map_config(True, preprocessing=BLIND_DESPIKE), "hydration",
+            preprocessed=True, raw_intensity_r1=y,
+        )
+
+        assert vetoed.peaks == []
+        assert spared.peaks, "the override must disarm the veto"
+
+    def test_every_path_builds_the_same_complete_params(self):
+        """All four callers resolve identical, fully-populated parameters."""
+        config = {"preprocessing": BLIND_DESPIKE}
+        shared = despike_params_from_config(config)
+
+        # services/fitting.py's alias and the web modz route's alias.
+        from sherloc_pipeline.web.routes.spectra import _modz_params_from_config
+
+        assert _despike_params_from_config(config) == shared
+        assert _modz_params_from_config(config) == shared
+        # The fields an incomplete builder used to drop are carried through.
+        assert shared.run_length_max == 9
+        assert shared.zscore_threshold == pytest.approx(1.0e6)
 
 
 class TestDespikeParamsFromConfig:

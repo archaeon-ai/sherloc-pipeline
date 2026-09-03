@@ -31,6 +31,7 @@ import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from sherloc_pipeline.config import load_config
 from sherloc_pipeline.core.calibration import (
     calculate_loupe_wavelength_wavenumber,
     get_region_wavelength_mask,
@@ -43,6 +44,7 @@ from sherloc_pipeline.core.hydration_veto import (
     despike_for_veto,
     evaluate_hydration_peak,
 )
+from sherloc_pipeline.core.preprocessing import despike_params_from_config
 from sherloc_pipeline.database.models import (
     FittedPeakORM,
     ScanPointORM,
@@ -73,6 +75,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--mask-min-drop-ratio", type=float, default=0.10)
     parser.add_argument("--center-window-cm1", type=float, default=15.0)
+    parser.add_argument(
+        "--config",
+        default=None,
+        type=Path,
+        help=(
+            "Pipeline config YAML whose preprocessing.despike section supplies "
+            "the despiker parameters (default: the bundled config, i.e. the "
+            "same parameters the pipeline and web paths use)"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -111,6 +123,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     config = _config_from_args(args)
+    # The sweep must despike with the parameters the vetoing paths despike with,
+    # otherwise the ratified thresholds are measured against a different mask.
+    despike_params = despike_params_from_config(load_config(args.config))
 
     wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
     r1_mask = get_region_wavelength_mask(wavelength, "R1")
@@ -158,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             y = y_full[r1_mask]
 
-            despiked, spike_mask = despike_for_veto(x, y)
+            despiked, spike_mask = despike_for_veto(x, y, despike_params)
             verdict = evaluate_hydration_peak(
                 peak.center_cm1, fwhm, x, y, despiked, spike_mask, config
             )

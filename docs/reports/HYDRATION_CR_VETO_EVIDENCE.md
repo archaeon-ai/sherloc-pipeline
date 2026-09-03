@@ -34,6 +34,22 @@ the model permits. This is reported as a flag and **never** rejects on its own.
 `action: "reject"` drops an implicated candidate; `action: "flag"` keeps it and
 only annotates it. Bound pinning is flag-only under both settings.
 
+**Despiker parameters are shared, not re-declared.** The mask a verdict rests on
+is only comparable across paths if every path despikes the same way, so all of
+them — the three above, the web modz preview, and the sweep utility below —
+build their `DespikeParams` through `core/preprocessing.despike_params_from_config()`.
+It resolves *every* field of `preprocessing.despike` (including `run_length_max`
+and the laser/sulfate guard windows), so an operator override changes the veto
+identically everywhere or nowhere. Pass `--config` to the sweep if the database
+was fitted under a non-default config.
+
+**Turning the flag on for an already-fitted scan.** Re-fitting deletes the
+per-point CSV, overlay PNG and accepted-peaks summary for any point that no
+longer has an accepted peak, and `persist_raman_peaks()` reads a run with a scan
+summary but no per-point CSVs as a zero result that clears the domain's existing
+database rows. Without both, the previous run's artifacts would be rediscovered
+and the vetoed peak restored.
+
 ## Proposed thresholds
 
 | Parameter | Proposed | Rationale |

@@ -27,6 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   science decision. When a veto removes a component the model curve, residual,
   R2 and the fit overlay are all rebuilt from the surviving peaks, so a vetoed
   cosmic ray is never still plotted or exported alongside a zero-peak verdict.
+  Every despiker caller — pipeline, map mode, web point fit, web modz preview
+  and the evidence sweep — resolves its parameters through the single
+  `core/preprocessing.despike_params_from_config()`, so a supported
+  `preprocessing.despike` override cannot produce different veto verdicts on
+  different paths. Re-fitting into a populated results directory now removes
+  the per-point CSV, overlay PNG and accepted-peaks summary that a run no
+  longer produces, and `persist_raman_peaks()` treats a fit that accepted
+  nothing (scan summary present, no per-point CSVs) as a zero result that
+  clears the domain's existing rows rather than an error; turning the veto on
+  for an already-fitted scan therefore removes the rejected peak from the
+  database instead of resurrecting it from a stale artifact.
 
 ### Fixed
 - **Targetless Loupe science scans are detected and safely auditable (#43).**

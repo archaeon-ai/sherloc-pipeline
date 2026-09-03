@@ -53,6 +53,85 @@ class DespikeParams:
     sulfate_guard_max_halfwidth: float = 25.0
 
 
+def _despike_config_mapping(obj) -> Dict[str, Any]:
+    """Coerce a config node to something with ``.get`` (dict, stub, or dataclass)."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "get"):
+        return obj
+    attrs = getattr(obj, "__dict__", None)
+    return attrs if isinstance(attrs, dict) else {}
+
+
+def despike_params_from_config(config) -> DespikeParams:
+    """Build a complete :class:`DespikeParams` from a pipeline config.
+
+    Single source of truth for turning ``preprocessing.despike`` into despiker
+    parameters. Every caller that runs the classical despiker — the CLI
+    pipeline, the hydration cosmic-ray veto (pipeline, map-mode, web point fit),
+    the evidence sweep, and the web modz preview — resolves its parameters here,
+    so a supported ``preprocessing.despike`` override cannot produce different
+    spike masks (and therefore different veto verdicts) on different paths.
+
+    Every field is resolved, including the ones an incomplete builder used to
+    drop (``run_length_max``, the laser/sulfate guard windows). Resolution is
+    tolerant of both the dataclass-style config object and the dict-style test
+    stub, and any omitted key falls back to the :class:`DespikeParams` field
+    default.
+
+    Args:
+        config: Pipeline config object or dict. ``None`` yields pure defaults.
+
+    Returns:
+        A fully-populated :class:`DespikeParams`.
+    """
+    pre = getattr(config, "preprocessing", None)
+    if pre is None and hasattr(config, "get"):
+        pre = config.get("preprocessing")
+    despike = _despike_config_mapping(pre).get("despike", None)
+    despike = _despike_config_mapping(despike)
+    defaults = DespikeParams()
+
+    def _get(key, fallback):
+        val = despike.get(key, None)
+        return fallback if val is None else val
+
+    def _tuple(key, fallback):
+        val = despike.get(key, None)
+        return fallback if val is None else tuple(val)
+
+    return DespikeParams(
+        window_size=int(_get("window_size", defaults.window_size)),
+        zscore_threshold=float(_get("zscore_threshold", defaults.zscore_threshold)),
+        max_iterations=int(_get("max_iterations", defaults.max_iterations)),
+        interpolation_method=str(
+            _get("interpolation_method", defaults.interpolation_method)
+        ),
+        run_length_max=int(_get("run_length_max", defaults.run_length_max)),
+        laser_window=_tuple("laser_window", defaults.laser_window),
+        sulfate_center_window=_tuple(
+            "sulfate_center_window", defaults.sulfate_center_window
+        ),
+        sulfate_guard_enable=bool(
+            _get("sulfate_guard_enable", defaults.sulfate_guard_enable)
+        ),
+        sulfate_guard_search=_tuple(
+            "sulfate_guard_search", defaults.sulfate_guard_search
+        ),
+        sulfate_guard_min_prominence=float(
+            _get("sulfate_guard_min_prominence", defaults.sulfate_guard_min_prominence)
+        ),
+        sulfate_guard_min_halfwidth=float(
+            _get("sulfate_guard_min_halfwidth", defaults.sulfate_guard_min_halfwidth)
+        ),
+        sulfate_guard_max_halfwidth=float(
+            _get("sulfate_guard_max_halfwidth", defaults.sulfate_guard_max_halfwidth)
+        ),
+    )
+
+
 def apply_mask_replacement(
     series: pd.Series,
     row_mask,

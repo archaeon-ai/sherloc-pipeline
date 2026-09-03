@@ -1018,3 +1018,31 @@ async def test_hydration_veto_rebuilds_model_derived_outputs(client, fake_config
     # ...and R2 describes that empty model, not the discarded cosmic-ray fit.
     assert vetoed["r_squared"] != kept["r_squared"]
     assert vetoed["r_squared"] <= 0.0
+
+
+@pytest.mark.asyncio
+async def test_hydration_veto_honours_preprocessing_despike_override(
+    client, fake_config
+):
+    """The endpoint must despike with the configured parameters, not defaults.
+
+    Raising the robust z-score threshold means the despiker flags nothing, so
+    the veto has no spike evidence and the cosmic ray survives. If this endpoint
+    hard-coded ``DespikeParams()`` the override would be ignored here while the
+    pipeline and map-mode paths honoured it, and the same spectrum would get
+    different verdicts depending on which path fitted it (cross-path
+    consistency is asserted in tests/unit/services/test_hydration_veto_paths.py).
+    """
+    wn, intensity = _make_hydration_cr_spectrum()
+    fake_config.fitting["hydration_cr_veto"] = {"enabled": True, "action": "reject"}
+    fake_config.preprocessing["despike"] = {"zscore_threshold": 1.0e6}
+    try:
+        resp = await client.post(
+            "/api/process/fit", json=_hydration_fit_body(wn, intensity)
+        )
+    finally:
+        fake_config.fitting.pop("hydration_cr_veto", None)
+        fake_config.preprocessing.pop("despike", None)
+
+    assert resp.status_code == 200
+    assert resp.json()["peaks"], "the override must disarm the veto"
