@@ -372,3 +372,181 @@ def test_mineral_aicc_summary_write_failure_fails_the_fit(tmp_path, mineral_base
     assert "AICc summary" in str(exc_info.value)
     assert not aicc_csv.exists(), "the previous run's R2 values must not survive"
     assert _read_fit_run_marker(_mineral_marker(mineral_base))["status"] == "running"
+
+
+# --- Reruns over a shrinking point set (#38 review round 8) -----------------
+#
+# Per-point cleanup only reaches points the current run processed. A rerun
+# whose input has *fewer* point columns — a partial re-export, a reprocessed
+# scan that dropped bad points — leaves the vanished points' peak CSVs behind,
+# and `persist_raman_peaks` discovers every matching CSV in the directory. The
+# run must therefore not be allowed to certify a directory it did not fully
+# rewrite.
+
+
+def _multi_point_scan_csv(results_base: Path, points: list) -> Path:
+    """An R1_normalized.csv carrying a cosmic ray in each named point column."""
+    x = np.linspace(1800.0, 4000.0, 256)
+    idx = int(np.argmin(np.abs(x - 3300.0)))
+
+    data = {"raman_shift": x}
+    for n, point in enumerate(points):
+        y = 100.0 + np.random.default_rng(38 + n).normal(0.0, 4.0, size=x.shape)
+        y[idx] += 6000.0
+        y[idx + 1] += 5400.0
+        data[str(point)] = y
+
+    results_base.mkdir(parents=True, exist_ok=True)
+    csv_path = results_base / f"{SOL}_{TARGET}_{SCAN}_R1_normalized.csv"
+    pd.DataFrame(data).to_csv(csv_path, index=False)
+    return csv_path
+
+
+def _hydration_point_paths(results_base, point: int):
+    fit_dir = results_base / "hydration_fit"
+    return (
+        fit_dir / f"{SOL}_{TARGET}_{SCAN}_R1_point{point}_hydration_peaks.csv",
+        fit_dir / f"{SOL}_{TARGET}_{SCAN}_R1_point{point}_hydration_fit.png",
+    )
+
+
+def test_hydration_rerun_over_fewer_points_drops_the_vanished_points(tmp_path):
+    """Point 1's artifacts must not survive a rerun whose input has only point 0."""
+    base = tmp_path / "results" / SCAN
+    _multi_point_scan_csv(base, [0, 1])
+
+    _run_fit(_service(tmp_path, veto_enabled=False), base)
+    kept_csv, kept_png = _hydration_point_paths(base, 0)
+    gone_csv, gone_png = _hydration_point_paths(base, 1)
+    assert kept_csv.exists() and gone_csv.exists()
+
+    # Re-export the scan with point 1 removed, then re-fit into the same dir.
+    _multi_point_scan_csv(base, [0])
+    result = _run_fit(_service(tmp_path, veto_enabled=False), base)
+
+    assert result.metadata["points_fitted"] == 1
+    assert kept_csv.exists() and kept_png.exists()
+    assert not gone_csv.exists(), "stale point-1 peaks would be re-persisted"
+    assert not gone_png.exists(), "stale point-1 overlay would read as current"
+
+    marker = _read_fit_run_marker(_marker_path(base))
+    assert marker["status"] == "completed"
+    assert marker["points_fitted"] == 1
+
+    # What persistence would actually rediscover now matches the run.
+    discovered = _service(tmp_path, veto_enabled=False)._discover_peak_csvs(
+        base / "hydration_fit", SOL, TARGET, SCAN, "R1", "hydration"
+    )
+    assert {idx for _path, idx in discovered} == {0}
+
+
+def test_scan_level_artifacts_survive_the_obsolete_point_sweep(tmp_path):
+    """The sweep is keyed on the `point{i}` token: summaries must be untouched."""
+    base = tmp_path / "results" / SCAN
+    _multi_point_scan_csv(base, [0, 1])
+    _run_fit(_service(tmp_path, veto_enabled=False), base)
+
+    _multi_point_scan_csv(base, [0])
+    _run_fit(_service(tmp_path, veto_enabled=False), base)
+
+    fit_dir = base / "hydration_fit"
+    assert (fit_dir / f"{SOL}_{TARGET}_{SCAN}_R1_hydration_accepted_peaks.csv").exists()
+    assert (base / f"{SOL}_{TARGET}_{SCAN}_R1_hydration_summary.csv").exists()
+    assert _marker_path(base).exists()
+
+
+def test_undeletable_obsolete_point_artifact_blocks_completion(tmp_path):
+    """If the vanished point's CSV cannot be removed, the run must not complete."""
+    base = tmp_path / "results" / SCAN
+    _multi_point_scan_csv(base, [0, 1])
+    _run_fit(_service(tmp_path, veto_enabled=False), base)
+
+    gone_csv, _gone_png = _hydration_point_paths(base, 1)
+    real_unlink = Path.unlink
+
+    def refuse_point1(self, *args, **kwargs):
+        if self == gone_csv:
+            raise PermissionError(13, "Permission denied")
+        return real_unlink(self, *args, **kwargs)
+
+    _multi_point_scan_csv(base, [0])
+    with patch.object(Path, "unlink", refuse_point1):
+        with pytest.raises(Exception) as exc_info:
+            _run_fit(_service(tmp_path, veto_enabled=False), base)
+
+    assert "failed to remove stale artifact" in str(exc_info.value)
+    assert gone_csv.exists(), "the undeletable CSV is exactly the risk"
+    assert _read_fit_run_marker(_marker_path(base))["status"] == "running"
+
+
+def _mineral_multi_point_csv(results_base: Path, points: list) -> Path:
+    """A baselined R1 CSV with one clean band in each named point column."""
+    x = np.linspace(900.0, 1300.0, 400)
+    peak = 900.0 / (1.0 + ((x - 1090.0) / 6.0) ** 2)
+
+    data = {"raman_shift": x}
+    for n, point in enumerate(points):
+        data[str(point)] = peak + np.random.default_rng(38 + n).normal(
+            0.0, 1.0, size=x.shape
+        )
+
+    results_base.mkdir(parents=True, exist_ok=True)
+    csv_path = results_base / f"{SOL}_{TARGET}_{SCAN}_R1_normalized_baselined.csv"
+    pd.DataFrame(data).to_csv(csv_path, index=False)
+    return csv_path
+
+
+def test_mineral_rerun_over_fewer_points_drops_the_vanished_points(tmp_path):
+    """Same guarantee on the minerals path, whose filenames carry the region."""
+    base = tmp_path / "results" / SCAN
+    _mineral_multi_point_csv(base, [0, 1])
+    _run_mineral_fit(_service(tmp_path, veto_enabled=False), base)
+
+    fit_dir = base / "minerals_fit"
+    kept = fit_dir / f"{SOL}_{TARGET}_{SCAN}_R1_point0_fit_peaks.csv"
+    gone = fit_dir / f"{SOL}_{TARGET}_{SCAN}_R1_point1_fit_peaks.csv"
+    assert kept.exists() and gone.exists()
+
+    _mineral_multi_point_csv(base, [0])
+    _run_mineral_fit(_service(tmp_path, veto_enabled=False), base)
+
+    assert kept.exists()
+    assert not gone.exists(), "stale point-1 peaks would be re-persisted"
+    assert _read_fit_run_marker(_mineral_marker(base))["points_fitted"] == 1
+
+
+def test_remove_obsolete_point_artifacts_is_scoped_to_this_scan(tmp_path):
+    """The sweep only touches this scan/region's per-point files."""
+    from sherloc_pipeline.services.fitting import _remove_obsolete_point_artifacts
+
+    fit_dir = tmp_path / "organics_fit"
+    fit_dir.mkdir()
+    stem = f"{SOL}_{TARGET}_{SCAN}_R1"
+    files = {
+        name: fit_dir / name
+        for name in (
+            f"{stem}_point0_organics_dg_peaks.csv",
+            f"{stem}_point0_organics_dg_fit.png",
+            f"{stem}_point7_organics_g_peaks.csv",
+            f"{stem}_point7_organics_g_fit.png",
+            f"{stem}_organics_accepted_peaks.csv",   # scan-level
+            f"{stem}_organics_fit_run.json",         # marker
+            f"{SOL}_{TARGET}_other_scan_R1_point7_organics_g_peaks.csv",
+            f"{SOL}_{TARGET}_{SCAN}_R2_point7_fit_peaks.csv",
+        )
+    }
+    for path in files.values():
+        path.write_text("x")
+    (fit_dir / "subdir").mkdir()
+
+    removed = _remove_obsolete_point_artifacts(
+        fit_dir, sol=SOL, target=TARGET, scan=SCAN, region="R1",
+        fitted_points={0},
+    )
+
+    assert {p.name for p in removed} == {
+        f"{stem}_point7_organics_g_peaks.csv",
+        f"{stem}_point7_organics_g_fit.png",
+    }
+    for name, path in files.items():
+        assert path.exists() == ("point7_organics_g" not in name or "other_scan" in name)

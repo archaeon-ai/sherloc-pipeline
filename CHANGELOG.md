@@ -39,7 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rejected peak from the database instead of resurrecting it from a stale
   artifact. The organics fitter's D+G and G-only per-point exports are
   mutually exclusive and DG is preferred at discovery, so a rerun that changes
-  the outcome now removes the export it did not write. Because persistence
+  the outcome now removes the export it did not write. Per-point cleanup cannot
+  see a point that has left the input entirely, so before writing its completed
+  marker each fit also sweeps the domain directory for artifacts belonging to
+  point indices absent from this run: a re-fit over a reduced or partially
+  re-exported point set can no longer certify a directory that still holds the
+  dropped points' peak CSVs for `persist-peaks` to rediscover. Because persistence
   replaces every row for a domain, each fit now records a run marker
   (`*_<domain>_fit_run.json`) written as `running` when it starts and rewritten
   atomically as `completed` when it finishes; `persist-peaks` refuses a marker

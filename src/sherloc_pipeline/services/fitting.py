@@ -49,7 +49,7 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Set, Tuple
 from uuid import uuid4
 
 import numpy as np
@@ -287,6 +287,53 @@ def _remove_stale_artifacts(paths: List[Path]) -> None:
             raise StaleArtifactError(
                 f"failed to remove stale artifact {path}: {exc}"
             ) from exc
+
+
+def _remove_obsolete_point_artifacts(
+    fit_dir: Path,
+    *,
+    sol: str,
+    target: str,
+    scan: str,
+    region: str,
+    fitted_points: Set[int],
+) -> List[Path]:
+    """Delete per-point artifacts for points this run did not fit.
+
+    ``_remove_stale_artifacts`` only reaches points the current run actually
+    processed: a point that fails, or that newly rejects every candidate,
+    cleans up after itself. It cannot reach a point that is *absent from this
+    run's input* -- a rerun over a reduced or partial point set, or one whose
+    upstream normalized CSV lost columns. Those artifacts would survive under
+    this run's ``completed`` marker, and ``persist_raman_peaks`` rediscovers
+    every matching CSV in the directory, so the vanished points' peaks would be
+    repersisted as if they were current.
+
+    Every per-point artifact is named ``{sol}_{target}_{scan}_{region}_point{i}_...``
+    (peak table and overlay PNG alike), so one filename sweep covers all three
+    domains. Scan-level files -- summaries, averaged-spectrum fits, the run
+    marker -- never carry a ``point{i}`` token and are left alone.
+
+    Returns:
+        The paths removed, for logging.
+
+    Raises:
+        StaleArtifactError: if a file exists and cannot be removed. The fit must
+            fail rather than write a completed marker over an undeleted artifact.
+    """
+    prefix = f"{sol}_{target}_{scan}_{region}_"
+    point_re = re.compile(rf"^{re.escape(prefix)}point(\d+)[_.]")
+
+    obsolete: List[Path] = []
+    for path in sorted(fit_dir.iterdir()):
+        if not path.is_file():
+            continue
+        match = point_re.match(path.name)
+        if match and int(match.group(1)) not in fitted_points:
+            obsolete.append(path)
+
+    _remove_stale_artifacts(obsolete)
+    return obsolete
 
 
 def _fit_run_marker_path(
@@ -1127,6 +1174,20 @@ class FittingService:
                 # outside the try -- a failed removal must fail the fit.
                 _remove_stale_artifacts([acc_csv])
 
+            # Drop artifacts belonging to points that are not in this run's
+            # input at all. Per-point cleanup cannot see them, so without this a
+            # rerun over a reduced point set would certify a directory that
+            # still holds the earlier run's peak CSVs for the dropped points.
+            obsolete = _remove_obsolete_point_artifacts(
+                out_dir, sol=sol, target=target, scan=scan, region=region,
+                fitted_points={inp['point_idx'] for inp in point_inputs},
+            )
+            if obsolete:
+                self.console.print(
+                    f"[yellow]Removed {len(obsolete)} artifact(s) for points no longer "
+                    f"in this scan's input.[/yellow]"
+                )
+
             _write_fit_run_marker(
                 run_marker, domain="minerals",
                 points_fitted=len(point_cols), accepted_peaks=len(accepted_rows),
@@ -1445,6 +1506,20 @@ class FittingService:
                 # outside the try -- a failed removal must fail the fit.
                 _remove_stale_artifacts([acc_csv])
 
+            # Drop artifacts belonging to points that are not in this run's
+            # input at all. Per-point cleanup cannot see them, so without this a
+            # rerun over a reduced point set would certify a directory that
+            # still holds the earlier run's peak CSVs for the dropped points.
+            obsolete = _remove_obsolete_point_artifacts(
+                multifits_dir, sol=sol, target=target, scan=scan, region="R1",
+                fitted_points={inp['point_idx'] for inp in point_inputs},
+            )
+            if obsolete:
+                self.console.print(
+                    f"[yellow]Removed {len(obsolete)} artifact(s) for points no longer "
+                    f"in this scan's input.[/yellow]"
+                )
+
             # Marker last: it certifies that everything above completed.
             _write_fit_run_marker(
                 run_marker, domain="hydration",
@@ -1693,6 +1768,20 @@ class FittingService:
                 # rather than leaving it to be read as current. Deliberately
                 # outside the try -- a failed removal must fail the fit.
                 _remove_stale_artifacts([acc_csv])
+
+            # Drop artifacts belonging to points that are not in this run's
+            # input at all. Per-point cleanup cannot see them, so without this a
+            # rerun over a reduced point set would certify a directory that
+            # still holds the earlier run's peak CSVs for the dropped points.
+            obsolete = _remove_obsolete_point_artifacts(
+                multifits_dir, sol=sol, target=target, scan=scan, region="R1",
+                fitted_points={inp['point_idx'] for inp in point_inputs},
+            )
+            if obsolete:
+                self.console.print(
+                    f"[yellow]Removed {len(obsolete)} artifact(s) for points no longer "
+                    f"in this scan's input.[/yellow]"
+                )
 
             _write_fit_run_marker(
                 run_marker, domain="organics",
