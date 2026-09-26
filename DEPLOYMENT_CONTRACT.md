@@ -295,7 +295,7 @@ invocation `pytest -m "not slow and not docker"` in `.github/workflows/ci.yml`.
   present, retired-var literal absent, secret-shaped values are
   placeholders).
 - `test_alembic_contract.py` — single migration head, and the head is one the
-  served reader accepts (§7). phase-databot's refresh derives its expected
+  served reader accepts (§7). A downstream refresh derives its expected
   database revision from this head.
 - `test_public_mode_unit.py` — `create_app` raises on public-mode DB
   filename mismatch (§6).
