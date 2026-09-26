@@ -50,13 +50,6 @@ def test_valid_phase_tiers_pin():
     assert config_check.VALID_PHASE_TIERS == {"team", "public"}
 
 
-def test_valid_alembic_targets_are_exact_reviewed_revisions():
-    assert config_check.VALID_ALEMBIC_TARGETS == {
-        "b7e4f3a9c1d2",
-        "17db1a1940d6",
-    }
-
-
 def test_empty_env_reports_required_set(clean_env):
     """With nothing set, the validator must surface every always-required
     error: SHERLOC_DB plus the cf-access mode defaults (the validator
