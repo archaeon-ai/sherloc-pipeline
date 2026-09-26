@@ -177,7 +177,7 @@ deliberate decision rather than silent drift. See
 | Current head | `17db1a1940d6` (`drop_file_path_from_context_images`) |
 | Activation-compatible retained-path revision | `b7e4f3a9c1d2` (`prepare_context_images_retained_path_epoch`) |
 | Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade "$SHERLOC_ALEMBIC_TARGET"` → uvicorn |
-| Contract guarantee | Single head (no fork); migrations idempotent |
+| Contract guarantee | Single head (no fork); migrations idempotent; the head is in `config_check.VALID_ALEMBIC_TARGETS` |
 
 Auth0 deployments must set `SHERLOC_ALEMBIC_TARGET` to one of the two exact
 reviewed revisions above. The retained-path revision preserves legacy values
@@ -294,7 +294,9 @@ invocation `pytest -m "not slow and not docker"` in `.github/workflows/ci.yml`.
 - `test_env_template_contract.py` — sanitized env template (REQ set
   present, retired-var literal absent, secret-shaped values are
   placeholders).
-- `test_alembic_contract.py` — single migration head (§7).
+- `test_alembic_contract.py` — single migration head, and the head is one the
+  served reader accepts (§7). A downstream refresh derives its expected
+  database revision from this head.
 - `test_public_mode_unit.py` — `create_app` raises on public-mode DB
   filename mismatch (§6).
 - `test_image_identity.py` — `pyproject.toml::version` matches latest

@@ -105,14 +105,18 @@ def test_at_least_one_merge_migration_exists():
     assert merges, "expected at least one merge migration (tuple down_revision)"
 
 
-def test_single_head_matches_pin():
+def _heads() -> list[str]:
     migrations = _all_migrations()
     all_revisions = {rev for _, rev, _ in migrations}
     referenced_as_parent: set[str] = set()
     for _, _, down in migrations:
         for parent in _down_parents(down):
             referenced_as_parent.add(parent)
-    heads = sorted(all_revisions - referenced_as_parent)
+    return sorted(all_revisions - referenced_as_parent)
+
+
+def test_single_head_matches_pin():
+    heads = _heads()
     assert len(heads) == 1, (
         f"expected exactly one alembic head, found {len(heads)}: {heads}"
     )
@@ -121,4 +125,21 @@ def test_single_head_matches_pin():
         f"alembic head drifted: expected {EXPECTED_HEAD!r}, "
         f"found {head!r}. Update EXPECTED_HEAD in this test and "
         "DEPLOYMENT_CONTRACT.md §7 when adding a migration."
+    )
+
+
+def test_head_is_accepted_by_the_served_reader():
+    """A migration cannot land unless the served reader declares it can read it.
+
+    phase-databot's refresh derives the revision it expects from this head and
+    checks the live database against it, so the head must be one the served
+    reader's config check accepts (phase-databot#253).
+    """
+    from sherloc_pipeline.web import config_check
+
+    heads = _heads()
+    assert len(heads) == 1, heads
+    assert heads[0] in config_check.VALID_ALEMBIC_TARGETS, (
+        f"alembic head {heads[0]!r} is not in config_check.VALID_ALEMBIC_TARGETS; "
+        "add it there once the served reader can read that schema."
     )
