@@ -50,8 +50,15 @@ def build_stub_model_bytes() -> bytes:
             numpy_helper.from_array(stub_weights(), name="w"),
         ],
     )
+    opset_imports = [helper.make_opsetid("", DEFAULT_MANIFEST.opset)]
+    # Pin the IR version to the lowest the certified opset needs. Left to
+    # default, it follows the installed ``onnx`` release, which can run
+    # ahead of what the certified runtime loads (onnx 1.23 writes IR 14;
+    # onnxruntime 1.26 loads up to IR 13).
     model = helper.make_model(
-        graph, opset_imports=[helper.make_opsetid("", DEFAULT_MANIFEST.opset)]
+        graph,
+        opset_imports=opset_imports,
+        ir_version=helper.find_min_ir_version_for(opset_imports),
     )
     onnx.checker.check_model(model)
     return model.SerializeToString()
