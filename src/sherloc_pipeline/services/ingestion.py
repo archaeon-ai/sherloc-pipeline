@@ -422,10 +422,6 @@ class IngestionService:
             # Check if sol exists
             existing_sol = session.get(SolORM, sol_number)
 
-            if existing_sol and not force:
-                stats.sols_skipped = 1
-                return stats
-
             # Create or update sol
             if not existing_sol:
                 sol_orm = SolORM(
@@ -436,9 +432,9 @@ class IngestionService:
                 session.add(sol_orm)
                 session.flush()  # Ensure sol exists before workspace ingestion
             else:
-                # Update timestamp
+                # A parent write also starts SQLite's transaction before the
+                # workspace savepoints, so releasing one cannot commit early.
                 existing_sol.updated_at = datetime.now(timezone.utc)
-
             stats.sols_processed = 1
 
             # Discover workspaces
@@ -449,10 +445,13 @@ class IngestionService:
 
             for workspace_path in workspaces:
                 try:
-                    ws_stats = self._ingest_workspace_internal(
-                        session, workspace_path, sol_number,
-                        force=force, target=lpe_target,
-                    )
+                    # Do not leave a failed workspace's partial rows behind:
+                    # its scan ID would make an ordinary retry skip it forever.
+                    with session.begin_nested():
+                        ws_stats = self._ingest_workspace_internal(
+                            session, workspace_path, sol_number,
+                            force=force, target=lpe_target,
+                        )
                     stats = stats + ws_stats
                 except Exception as e:
                     stats.errors.append(f"Workspace {workspace_path.name}: {e}")
@@ -470,6 +469,13 @@ class IngestionService:
             except Exception as e:
                 stats.errors.append(f"Sol {sol_number} finalization: {e}")
                 logger.exception(f"Error finalizing sol {sol_number} scans")
+
+            # A sol row does not mean every workspace has arrived or succeeded.
+            # Discover on every retry; the workspace-level scan identity check
+            # preserves completed scans unless force was explicitly requested.
+            if existing_sol and not force and not stats.scans_ingested and not stats.errors:
+                stats.sols_processed = 0
+                stats.sols_skipped = 1
 
         return stats
 

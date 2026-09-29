@@ -212,6 +212,30 @@ in `PipelineService.run_full_pipeline()`.
 
 ---
 
+## 13. Sol retries discover workspaces; zip reuse requires matching contents
+
+**Constraint.** A persisted sol is not evidence of complete delivery. Every
+ordinary ingestion retry discovers its workspaces, skips existing scan
+identities, and ingests newly arrived or previously unparsed workspaces.
+Completed scans retain their IDs and associated data. Updating the contents
+of an existing scan still requires an explicit force operation.
+Each workspace write uses a savepoint: failure removes that workspace's
+partial rows while allowing completed siblings to commit and ordinary retries
+to pick up the failed workspace.
+
+`process-new` may reuse an extracted zip only when the complete file list and
+file bytes match the archive. Differences are refused before ingestion or
+fitting, also in dry-run mode; no existing extraction is replaced or deleted.
+To use a newer archive, extract it into a new data directory and pass that
+directory with `--data-dir` while retaining the same `--database`.
+
+**Where defined.** `services/ingestion.py`, `services/loupe_archive.py`, and
+the `process-new` command in `cli/app.py`.
+
+**How to verify.** `pytest tests/unit/cli/test_incremental_ingestion.py`.
+
+---
+
 ## When to update this document
 
 Update INVARIANTS.md in the same commit when:

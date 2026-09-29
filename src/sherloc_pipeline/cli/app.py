@@ -1057,8 +1057,10 @@ def process_new_cmd(
             sol_dir = loupe_data_root / sol_dir_name
 
             if sol_dir.exists():
+                from sherloc_pipeline.services.loupe_archive import verify_existing_extraction
+                verify_existing_extraction(path, sol_dir)
                 console.print(f"[yellow]Directory already exists: {sol_dir}[/yellow]")
-                console.print("  Skipping extraction, using existing directory.")
+                console.print("  Archive contents match; using existing directory.")
             else:
                 if dry_run:
                     console.print(f"[cyan]Would extract:[/cyan] {path} -> {loupe_data_root}/")
