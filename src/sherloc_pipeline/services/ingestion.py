@@ -262,7 +262,9 @@ class IngestionService:
             force: If True, re-ingest even if sol already exists
 
         Returns:
-            ServiceResult with ingestion summary
+            ServiceResult with ingestion summary, success flag and collected errors.
+            Workspace or finalization errors report failure even if partial data
+            was ingested.
 
         Raises:
             IngestionError: If ingestion fails
@@ -283,7 +285,12 @@ class IngestionService:
         except Exception as e:
             raise IngestionError(f"Failed to ingest sol {sol_number}: {e}", sol=sol_number)
 
-        if stats.sols_skipped:
+        if stats.errors:
+            summary = (
+                f"Ingestion incomplete for sol {sol_number}: {len(stats.errors)} error(s), "
+                f"{stats.scans_ingested} scans, {stats.points_ingested} points"
+            )
+        elif stats.sols_skipped:
             summary = f"Sol {sol_number} already exists (skipped)"
         else:
             summary = (
@@ -297,12 +304,13 @@ class IngestionService:
             summary=summary,
             warnings=stats.warnings,
             metadata={
-                "success": True,
+                "success": not stats.errors,
                 "sol_number": sol_number,
                 "scans_ingested": stats.scans_ingested,
                 "scans_skipped": stats.scans_skipped,
                 "points_ingested": stats.points_ingested,
                 "spectra_ingested": stats.spectra_ingested,
+                "errors": stats.errors,
             },
         )
 

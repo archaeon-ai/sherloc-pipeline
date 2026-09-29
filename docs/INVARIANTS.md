@@ -83,6 +83,14 @@ results, missing fits, NaN propagation). A single
 `except (FooError, BarError):` makes the failure mode legible to the next
 reader.
 
+Single-sol ingestion reports collected workspace and finalization errors in
+`ServiceResult.metadata.errors`, sets `metadata.success` to `false`, and labels
+the summary incomplete. `process-new` stops before processing scans when that
+flag is false and exits 1. In JSON mode it emits an `IngestionError` on stderr
+with the sol and error list in `context`; successful and skipped ingests keep
+their existing behavior. Partial data may already have been committed: this
+error signal does not promise a rollback.
+
 **How to verify.** `git grep -nE '^[[:space:]]*except:' src/` — should return
 no matches.
 

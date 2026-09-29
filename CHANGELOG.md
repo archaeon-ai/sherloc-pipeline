@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `process-new` reuses a zip's existing extraction only when its complete file
   inventory and contents match. A mismatch exits nonzero before ingestion or
   fitting, including in dry-run mode, and leaves existing files untouched.
+- **Single-sol ingestion reports partial failures (#58).** Workspace parsing
+  and scan finalization errors now set `success: false`, retain the collected
+  errors, and produce an incomplete summary. `process-new` exits 1 before scan
+  processing; `sherloc --json process-new ...` reports an `IngestionError` on
+  stderr with `context.sol` and `context.errors`. Partial data remains in the
+  database; this change corrects error reporting rather than transaction scope.
 - **Targetless Loupe science scans are detected and safely auditable (#43).**
   Direct workspace ingestion now resolves the sol-level `.lpe` target just as
   whole-sol ingestion does, and any detail/survey scan still lacking a target
