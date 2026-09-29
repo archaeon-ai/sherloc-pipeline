@@ -1,24 +1,32 @@
-work_package: "sherloc-pipeline#59: plain retries ingest later and repaired workspaces"
-branch: 59-incremental-ingestion
-pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/85
-head: edb3a9e16794c52b12cfa29c2cdacac4b97406da
-status: Implementation complete; awaiting CI and external review.
+work_package: "sherloc-pipeline#69: structured process-new execution exits"
+branch: 69-process-new-json
+pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/86
+head: 1f2a44a290327e509fc011761b2ab7a0b1783479
+status: Producer implemented; draft held for the driver consumer update and external review.
 sessions_so_far: 1
 session_date: 2026-09-29
+track_session: 5
 open_decisions: []
-next_action: Address CI failures or external review findings on PR 85; the external reviewer reviews and merges the exact final head.
+next_action: >-
+  Address any review findings or failing CI on PR 86 first. Once workspace
+  capacity permits, prepare the phase-databot issue 236 consumer change to parse
+  stdout error envelopes and processing_status/count metadata, removing console
+  text matching. Keep PR 86 draft until that companion is ready and reviewed.
 last_verified:
-  at: "2026-09-29T20:40:29+00:00"
-  source_head: edb3a9e16794c52b12cfa29c2cdacac4b97406da
+  at: "2026-09-29T22:07:44.846303+00:00"
+  source_head: 1f2a44a290327e509fc011761b2ab7a0b1783479
   checks:
-    - Four service regression cases fail on original source, including a failure after workspace rows are written.
-    - Eight zip mismatch cases fail on original source, including dry-run cases; fresh and identical archives pass.
-    - Final source passes 69 checks including 18 synthetic regression cases, CLI despike dispatch, architecture and fixture provenance.
-    - Earlier affected-suite run passes 98 checks, including 30 existing database ingestion cases; final source adds the real CLI retry case and restores the parent transaction write before savepoints.
-    - Ruff, diff checks, fixture provenance (86 tracked data files) and the installed pre-commit hook pass.
-    - First post-push CI snapshot at state head 62ae071 reports the test job pending; no waiting or merge.
+    - Twelve synthetic regression cases fail on original producer 94c2d7d, after correcting required scan fixture columns and foreign keys.
+    - Final source passes 73 tests covering 15 JSON exits/options cases, ingestion success/failure, trim overrides, fitting options and despike dispatch.
+    - Earlier affected run passes 54 tests including archive retries, fittable selection and CLI envelope contract; those suites were not rerun on final source.
+    - Ruff across repository, diff checks and fixture provenance for 86 tracked data files pass.
+    - Real subprocess validation exits 1 with exactly one parseable stdout JSON document.
+    - Installed fixture-provenance pre-commit hook passes on source commit.
+    - First post-push CI run 36637641714 at source head is pending; final state-head snapshot follows on PR 86, without waiting.
 limitations:
-  - The full local suite has not been run; the affected suites are green.
-  - Existing scan contents are preserved; deliberate replacement still needs force.
-  - No merge by this implementation track; the external reviewer handles review and merge.
-  - Existing stale branch and root Docker entrypoint hygiene findings are outside this issue.
+  - Acceptance criterion 3 is unfinished; the producer must not merge or ship without its driver consumer update.
+  - The existing consumer parses error envelopes on stderr; this command now emits them on stdout.
+  - Argument parsing and help remain Typer's own interface; JSON envelopes cover command execution exits.
+  - No full local-suite result is claimed; validation uses synthetic documents and temporary stores.
+  - Workspace census reached 18 during this session; no consumer worktree was opened.
+  - One existing stale local branch remains outside this work package.
