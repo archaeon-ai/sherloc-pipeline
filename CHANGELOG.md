@@ -57,6 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a directory with no CSVs is an error, as before.
 
 ### Fixed
+- **Plain sol retries pick up later and repaired Loupe workspaces (#59).**
+  An existing sol no longer bypasses workspace discovery. Previously ingested
+  scan identities are skipped, preserving their rows and associated data;
+  new or previously unparsed workspaces are ingested without `--force`.
+  Failed workspace writes roll back independently so their partial scan rows
+  cannot block a plain retry; successful sibling workspaces remain committed.
+  `process-new` reuses a zip's existing extraction only when its complete file
+  inventory and contents match. A mismatch exits nonzero before ingestion or
+  fitting, including in dry-run mode, and leaves existing files untouched.
 - **Targetless Loupe science scans are detected and safely auditable (#43).**
   Direct workspace ingestion now resolves the sol-level `.lpe` target just as
   whole-sol ingestion does, and any detail/survey scan still lacking a target
