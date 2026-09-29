@@ -1,11 +1,12 @@
 work_package: "sherloc-pipeline#59: plain retries ingest later and repaired workspaces"
 branch: 59-incremental-ingestion
+pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/85
 head: edb3a9e16794c52b12cfa29c2cdacac4b97406da
 status: Implementation complete; awaiting CI and external review.
 sessions_so_far: 1
 session_date: 2026-09-29
 open_decisions: []
-next_action: Open the pull request, then address CI failures or external review findings on the exact head.
+next_action: Address CI failures or external review findings on PR 85; the external reviewer reviews and merges the exact final head.
 last_verified:
   at: "2026-09-29T20:40:29+00:00"
   source_head: edb3a9e16794c52b12cfa29c2cdacac4b97406da
@@ -15,6 +16,7 @@ last_verified:
     - Final source passes 69 checks including 18 synthetic regression cases, CLI despike dispatch, architecture and fixture provenance.
     - Earlier affected-suite run passes 98 checks, including 30 existing database ingestion cases; final source adds the real CLI retry case and restores the parent transaction write before savepoints.
     - Ruff, diff checks, fixture provenance (86 tracked data files) and the installed pre-commit hook pass.
+    - First post-push CI snapshot at state head 62ae071 reports the test job pending; no waiting or merge.
 limitations:
   - The full local suite has not been run; the affected suites are green.
   - Existing scan contents are preserved; deliberate replacement still needs force.
