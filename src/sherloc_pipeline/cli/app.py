@@ -1121,14 +1121,31 @@ def process_new_cmd(
             for ws in workspaces:
                 console.print(f"    - {ws.parent.name}/{ws.name}")
         else:
-            console.print(f"\n[bold]Step 1: Ingesting sol {sol_number}...[/bold]")
+            ingest_console = Console(stderr=True) if json_mode else console
+            ingest_console.print(f"\n[bold]Step 1: Ingesting sol {sol_number}...[/bold]")
             service = IngestionService(
-                console=console,
+                console=ingest_console,
                 database_path=db_path,
                 include_spectra=True,
                 ingestion_mode="all_regions",
             )
             result = service.ingest_sol(sol_dir, force=False)
+            if not result.metadata.get("success", True):
+                errors = result.metadata.get("errors", [])
+                if json_mode:
+                    err_out = CLIError(
+                        pipeline_version=_pipeline_version,
+                        error_type="IngestionError",
+                        message=result.summary,
+                        context={"sol": sol_number, "errors": errors},
+                        exit_code=1,
+                    )
+                    print(json.dumps(err_out.model_dump(), default=str), file=sys.stderr)
+                else:
+                    console.print(f"\n[red]Process-new failed: {result.summary}[/red]")
+                    for error in errors:
+                        console.print(f"  - {error}", markup=False)
+                raise typer.Exit(code=1)
             console.print(f"  [green]{result.summary}[/green]")
 
         # Step 3: Run pipeline on fittable science scans.
