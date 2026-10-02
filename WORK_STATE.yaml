@@ -1,6 +1,6 @@
 work_package: 'sherloc-pipeline#87: bound test temporary files'
 branch: 87-test-temp-hygiene
-head: 94c2d7d0fa3ce7f3715cd6c60ae227126b1a4586 (base; implementation checkpoint follows)
+head: bdc15845b72225aaa4298a39996d7ef8798b4e20 (tested implementation; final state checkpoint follows)
 session: 9 of at most 16 on 2026-10-02
 sessions_so_far: 1
 status: Implementation verified locally; draft for self-review and CI evidence.
@@ -9,7 +9,7 @@ next_action: Consume the bounded code-review result once, answer findings, and i
   job-temp and collection-guard evidence from completed CI before requesting exact-head lead review. Never
   wait or merge on this track.
 last_verified:
-  at: '2026-10-02T17:22:16.294384+00:00'
+  at: '2026-10-02T17:23:24.740341+00:00'
   checks:
   - Five focused tests pass in 0.05 seconds. Original configuration and workflows produce four failures
     and one passing control.
@@ -21,12 +21,22 @@ last_verified:
   - Tests use synthetic inputs, read-only source, unavailable data mounts/network, and an explicit disposable
     basetemp. All owned writable test roots removed.
   - 30 GB free before tests. No full local suite, package installation or operational run.
+  - 'Initial-push CI snapshot: test pending; final checkpoint snapshot recorded on the PR. No waiting
+    or green claim.'
 review:
   round: 1
   model: gpt-5.6-sol
   verdict: Pending bounded --diff self-review; lead owns external exact-head review and merge.
+  artifact: /tmp/astra3-20261002-session9/working-tree-codex-review-r1.md
+  output: /tmp/astra3-20261002-session9/review.md
+  contract: /tmp/astra3-20261002-session9/review-status.txt
+  reviewed_head: Final state checkpoint SHA recorded in /tmp/astra3-20261002-session9/review-head.txt
+    before launch.
 limitations:
 - Final-head CI and its job-temp log are not yet confirmed.
 - Local untracked agent instructions should carry the same targeted-test rule as CONTRIBUTING.md; no local
   instruction file was changed.
 - One preexisting deleted-upstream branch retained; no merged feature worktree needs cleanup.
+pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/88
+intake: Completed prior test-temp self-review had no new findings; its guarded instruction and pending
+  CI acceptance remain unresolved. Next ordered issue was open, unclaimed and had no closing PR.
