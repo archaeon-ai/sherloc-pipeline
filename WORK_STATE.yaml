@@ -1,26 +1,19 @@
 work_package: "sherloc-pipeline#87: bound test temporary files"
 branch: 87-test-temp-hygiene
 pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/88
-head: 42fc65d0b7b086290dd9c0026503e976b311eee0
-status: Implementation verified locally; review follow-up and CI evidence pending.
-sessions_so_far: 2
+head: 5e0c34fcd5d2963d81141bccf06d909149d3a86f
+status: Test temporary-file changes implemented and validated in CI.
 open_decisions: []
-next_action: Read the follow-up review, address any findings, and inspect completed CI for the printed job-owned basetemp and successful collection guard before requesting review.
+next_action: Verify the updated pull request's checks and resolve any remaining findings.
 last_verified:
-  at: "2026-10-02T17:37:24Z"
-  source_head: 42fc65d0b7b086290dd9c0026503e976b311eee0
+  at: "2026-10-02T17:53:59Z"
+  source_head: 5e0c34fcd5d2963d81141bccf06d909149d3a86f
   checks:
     - Five focused synthetic tests pass. The original settings and workflows fail four cases and pass one control.
     - Removing either retention setting separately fails one regression case and passes four controls.
     - Both workflow commands correctly quote a temporary path containing spaces; basetemp is on argv and absent from inherited addopts.
     - The collection guard command is unchanged and does not pass basetemp.
     - Ruff, fixture provenance and diff checks pass on the implementation.
-    - CI is running; its lint and provenance steps pass, but tests and the collection guard are incomplete.
-review:
-  round: 2
-  verdict: Follow-up pending.
-  prior_finding: F1 addressed by removing private workflow details and local paths from this state file.
-  head_semantics: The head fields identify the last verified implementation, before this documentation-only checkpoint.
-limitations:
-  - Completed CI temp evidence, collection-guard success and final-head green CI remain unconfirmed.
-  - Untracked local agent instructions should carry the targeted-test rule from CONTRIBUTING.md.
+    - CI passed 3531 tests, with 225 skipped and 18 deselected.
+    - CI printed a pytest basetemp under RUNNER_TEMP; the absolute-local-path collection guard passed.
+  ci_run: https://github.com/archaeon-ai/sherloc-pipeline/actions/runs/37042151511
