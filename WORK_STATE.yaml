@@ -1,42 +1,26 @@
-work_package: 'sherloc-pipeline#87: bound test temporary files'
+work_package: "sherloc-pipeline#87: bound test temporary files"
 branch: 87-test-temp-hygiene
-head: bdc15845b72225aaa4298a39996d7ef8798b4e20 (tested implementation; final state checkpoint follows)
-session: 9 of at most 16 on 2026-10-02
-sessions_so_far: 1
-status: Implementation verified locally; draft for self-review and CI evidence.
-open_decisions: []
-next_action: Consume the bounded code-review result once, answer findings, and inspect CI once. Record
-  job-temp and collection-guard evidence from completed CI before requesting exact-head lead review. Never
-  wait or merge on this track.
-last_verified:
-  at: '2026-10-02T17:23:24.740341+00:00'
-  checks:
-  - Five focused tests pass in 0.05 seconds. Original configuration and workflows produce four failures
-    and one passing control.
-  - Removing either retention setting separately produces one failure and four passes.
-  - Both workflow commands execute against a fake pytest and correctly quote a job temp path containing
-    spaces. Basetemp is on argv and absent from inherited addopts.
-  - Collection guard remains unchanged and does not pass basetemp.
-  - Ruff, fixture provenance (86 data files), and diff checks pass.
-  - Tests use synthetic inputs, read-only source, unavailable data mounts/network, and an explicit disposable
-    basetemp. All owned writable test roots removed.
-  - 30 GB free before tests. No full local suite, package installation or operational run.
-  - 'Initial-push CI snapshot: test pending; final checkpoint snapshot recorded on the PR. No waiting
-    or green claim.'
-review:
-  round: 1
-  model: gpt-5.6-sol
-  verdict: Pending bounded --diff self-review; lead owns external exact-head review and merge.
-  artifact: /tmp/astra3-20261002-session9/working-tree-codex-review-r1.md
-  output: /tmp/astra3-20261002-session9/review.md
-  contract: /tmp/astra3-20261002-session9/review-status.txt
-  reviewed_head: Final state checkpoint SHA recorded in /tmp/astra3-20261002-session9/review-head.txt
-    before launch.
-limitations:
-- Final-head CI and its job-temp log are not yet confirmed.
-- Local untracked agent instructions should carry the same targeted-test rule as CONTRIBUTING.md; no local
-  instruction file was changed.
-- One preexisting deleted-upstream branch retained; no merged feature worktree needs cleanup.
 pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/88
-intake: Completed prior test-temp self-review had no new findings; its guarded instruction and pending
-  CI acceptance remain unresolved. Next ordered issue was open, unclaimed and had no closing PR.
+head: 42fc65d0b7b086290dd9c0026503e976b311eee0
+status: Implementation verified locally; review follow-up and CI evidence pending.
+sessions_so_far: 2
+open_decisions: []
+next_action: Read the follow-up review, address any findings, and inspect completed CI for the printed job-owned basetemp and successful collection guard before requesting review.
+last_verified:
+  at: "2026-10-02T17:37:24Z"
+  source_head: 42fc65d0b7b086290dd9c0026503e976b311eee0
+  checks:
+    - Five focused synthetic tests pass. The original settings and workflows fail four cases and pass one control.
+    - Removing either retention setting separately fails one regression case and passes four controls.
+    - Both workflow commands correctly quote a temporary path containing spaces; basetemp is on argv and absent from inherited addopts.
+    - The collection guard command is unchanged and does not pass basetemp.
+    - Ruff, fixture provenance and diff checks pass on the implementation.
+    - CI is running; its lint and provenance steps pass, but tests and the collection guard are incomplete.
+review:
+  round: 2
+  verdict: Follow-up pending.
+  prior_finding: F1 addressed by removing private workflow details and local paths from this state file.
+  head_semantics: The head fields identify the last verified implementation, before this documentation-only checkpoint.
+limitations:
+  - Completed CI temp evidence, collection-guard success and final-head green CI remain unconfirmed.
+  - Untracked local agent instructions should carry the targeted-test rule from CONTRIBUTING.md.
