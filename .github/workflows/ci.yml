@@ -50,7 +50,10 @@ jobs:
       # smoke is excluded even if `slow` is dropped on a future test.
       # --durations keeps the slowest tests visible in every run so a stage
       # silently un-stubbed or a new heavy test shows up before the bill does.
-      - run: pytest -m "not slow and not docker" --durations=25
+      - name: Run tests
+        run: |
+          printf 'pytest temp: %s\n' "$RUNNER_TEMP/pytest"
+          pytest --basetemp="$RUNNER_TEMP/pytest" -m "not slow and not docker" --durations=25
       - name: Guard against tests reading absolute local paths
         run: |
           # Catch hardcoded operator-local paths in test IDs / parametrize values.

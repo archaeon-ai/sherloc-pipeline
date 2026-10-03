@@ -40,4 +40,6 @@ jobs:
       - name: Build runtime image
         run: docker build --target runtime -t sherloc-pipeline:contract-test .
       - name: Run contract smoke (Cases A-E)
-        run: pytest -m docker tests/contract/test_container_smoke.py -v
+        run: |
+          printf 'pytest temp: %s\n' "$RUNNER_TEMP/pytest"
+          pytest --basetemp="$RUNNER_TEMP/pytest" -m docker tests/contract/test_container_smoke.py -v
