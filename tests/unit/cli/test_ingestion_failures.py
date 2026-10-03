@@ -102,12 +102,13 @@ def test_successful_and_skipped_sol_remain_successful(synthetic_sol, tmp_path):
     assert service.get_database_stats()["scans"] == 2
 
 
-def test_process_new_continues_after_successful_ingestion(synthetic_sol, tmp_path, monkeypatch):
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_process_new_continues_after_successful_ingestion(synthetic_sol, tmp_path, monkeypatch, json_mode):
     pipeline = Mock()
     pipeline.return_value.run_full_pipeline.return_value = ServiceResult(summary="Synthetic fit")
     monkeypatch.setattr(cli, "PipelineService", pipeline)
 
-    result = CliRunner().invoke(cli.app, [
+    result = CliRunner().invoke(cli.app, (["--json"] if json_mode else []) + [
         "process-new", str(synthetic_sol), "--database", str(tmp_path / "test.db"),
         "--data-dir", str(tmp_path), "--results-dir", str(tmp_path / "results"),
     ])
@@ -116,7 +117,11 @@ def test_process_new_continues_after_successful_ingestion(synthetic_sol, tmp_pat
     calls = pipeline.return_value.run_full_pipeline.call_args_list
     assert {call.kwargs["scan"] for call in calls} == {"detail_good", "detail_bad"}
     assert all(call.kwargs["target"] == "Synthetic Rock" for call in calls)
-    assert "2 scan(s) processed" in result.output
+    if json_mode:
+        assert json.loads(result.stdout)["result"]["scans_processed"] == 2
+        assert "Ingested sol 1" in result.stderr
+    else:
+        assert "2 scan(s) processed" in result.output
 
 
 @pytest.mark.parametrize("failure", ["workspace", "finalization", "both"])
@@ -141,12 +146,12 @@ def test_process_new_stops_on_ingestion_errors(
     select_scans.assert_not_called()
     pipeline.assert_not_called()
     if json_mode:
-        error = json.loads(result.stderr.splitlines()[-1])
+        error = json.loads(result.stdout)
         assert error["error_type"] == "IngestionError"
         assert error["exit_code"] == 1
         assert error["context"]["sol"] == 1
         assert_errors(error["context"]["errors"], failure)
-        assert result.stdout == ""
+        assert "Step 1: Ingesting" in result.stderr
     else:
         assert "Process-new failed" in result.output
         if failure in ("workspace", "both"):

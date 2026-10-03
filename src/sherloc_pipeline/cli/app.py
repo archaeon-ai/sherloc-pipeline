@@ -1026,22 +1026,43 @@ def process_new_cmd(
         sherloc process-new ./data/loupe/sol_1771 --model-selection ftest
     """
     import zipfile
+    from contextlib import redirect_stdout
 
     json_mode = (ctx.obj or {}).get("json", False)
     if json_mode:
         import logging as _logging
         _logging.basicConfig(stream=sys.stderr)
 
+    # Keep the command and its services on the same diagnostic stream.
+    console = Console(stderr=json_mode)
+    t0 = time.monotonic()
+
+    def emit_result(sol, scans_processed=0, errors=None, **metadata):
+        if json_mode:
+            output = CLIResult(
+                pipeline_version=_pipeline_version,
+                command="process-new",
+                result={
+                    "sol": sol,
+                    "scans_processed": scans_processed,
+                    "elapsed_seconds": round(time.monotonic() - t0, 1),
+                    "errors": errors or [],
+                },
+                metadata=metadata,
+            )
+            print(json.dumps(output.model_dump(), default=str))
+
     try:
-        _apply_trim_pct_override(trim_pct)
-        _apply_model_selection_override(model_selection)
-        _apply_despike_method_override(despike_method)
+        # The shared override helpers use the module console; route their
+        # messages without changing other commands' or later invocations' IO.
+        with redirect_stdout(sys.stderr if json_mode else sys.stdout):
+            _apply_trim_pct_override(trim_pct)
+            _apply_model_selection_override(model_selection)
+            _apply_despike_method_override(despike_method)
         path = Path(path).absolute()
-        t0 = time.monotonic()
 
         if not path.exists():
-            console.print(f"[red]Path not found: {path}[/red]")
-            raise typer.Exit(code=1)
+            raise ValueError(f"Path not found: {path}")
 
         db_path = database or Path("./phase.db")
 
@@ -1070,8 +1091,7 @@ def process_new_cmd(
                         zf.extractall(loupe_data_root)
                     if not sol_dir.exists():
                         # Check if zip extracted to a differently named directory
-                        console.print(f"[red]Expected directory {sol_dir} not found after extraction[/red]")
-                        raise typer.Exit(code=1)
+                        raise ValueError(f"Expected directory {sol_dir} not found after extraction")
                     console.print(f"  Extracted to {sol_dir}")
         else:
             sol_dir = path
@@ -1097,18 +1117,18 @@ def process_new_cmd(
                 for ws in ws_dirs:
                     console.print(f"    - {ws}")
             console.print(f"\n[yellow]DRY RUN — no changes made[/yellow]")
+            from sherloc_pipeline.models.ingestion import extract_sol_from_path
+            emit_result(extract_sol_from_path(sol_dir), dry_run=True)
             raise typer.Exit(code=0)
 
         if not sol_dir.is_dir():
-            console.print(f"[red]Not a directory: {sol_dir}[/red]")
-            raise typer.Exit(code=1)
+            raise ValueError(f"Not a directory: {sol_dir}")
 
         # Extract sol number
         from sherloc_pipeline.models.ingestion import extract_sol_from_path
         sol_number = extract_sol_from_path(sol_dir)
         if sol_number is None:
-            console.print(f"[red]Cannot extract sol number from: {sol_dir}[/red]")
-            raise typer.Exit(code=1)
+            raise ValueError(f"Cannot extract sol number from: {sol_dir}")
 
         # Step 2: Ingest
         if skip_ingest:
@@ -1123,10 +1143,9 @@ def process_new_cmd(
             for ws in workspaces:
                 console.print(f"    - {ws.parent.name}/{ws.name}")
         else:
-            ingest_console = Console(stderr=True) if json_mode else console
-            ingest_console.print(f"\n[bold]Step 1: Ingesting sol {sol_number}...[/bold]")
+            console.print(f"\n[bold]Step 1: Ingesting sol {sol_number}...[/bold]")
             service = IngestionService(
-                console=ingest_console,
+                console=console,
                 database_path=db_path,
                 include_spectra=True,
                 ingestion_mode="all_regions",
@@ -1142,12 +1161,12 @@ def process_new_cmd(
                         context={"sol": sol_number, "errors": errors},
                         exit_code=1,
                     )
-                    print(json.dumps(err_out.model_dump(), default=str), file=sys.stderr)
+                    print(json.dumps(err_out.model_dump(), default=str))
                 else:
                     console.print(f"\n[red]Process-new failed: {result.summary}[/red]")
                     for error in errors:
                         console.print(f"  - {error}", markup=False)
-                raise typer.Exit(code=1)
+                sys.exit(1)
             console.print(f"  [green]{result.summary}[/green]")
 
         # Step 3: Run pipeline on fittable science scans.
@@ -1176,6 +1195,16 @@ def process_new_cmd(
                 console.print("  All scans for this sol:")
                 for scn, tgt, ttype in all_scans:
                     console.print(f"    {scn}: target={tgt}, type={ttype}")
+            targetless = sum(not (target or "").strip() for _, target, _ in all_scans)
+            status = (
+                "empty-ingest" if not all_scans else
+                "no-target-scans" if targetless else "no-science-scans"
+            )
+            emit_result(
+                sol_number, processing_status=status,
+                scans_available=len(all_scans), targetless_scans=targetless,
+                dry_run=dry_run,
+            )
             raise typer.Exit(code=0)
 
         if dry_run:
@@ -1183,6 +1212,7 @@ def process_new_cmd(
             for sol_num, tgt, scn in scans:
                 console.print(f"  - {scn} (target={tgt})")
             console.print(f"\n[yellow]DRY RUN — no changes made[/yellow]")
+            emit_result(sol_number, dry_run=True, scans_selected=len(scans))
             raise typer.Exit(code=0)
 
         console.print(f"\n[bold]Step 2: Running pipeline on {len(scans)} science scan(s)...[/bold]")
@@ -1207,18 +1237,7 @@ def process_new_cmd(
         # Summary
         elapsed = time.monotonic() - t0
         if json_mode:
-            import json as json_mod
-            output = CLIResult(
-                pipeline_version=_pipeline_version,
-                command="process-new",
-                result={
-                    "sol": sol_number,
-                    "scans_processed": len(scans),
-                    "elapsed_seconds": round(elapsed, 1),
-                    "errors": total_errors,
-                },
-            )
-            print(json_mod.dumps(output.model_dump(), default=str))
+            emit_result(sol_number, len(scans), total_errors)
         else:
             console.print(f"\n[bold]Done:[/bold] sol {sol_number}, {len(scans)} scan(s) processed in {elapsed:.1f}s")
             if total_errors:
@@ -1236,11 +1255,20 @@ def process_new_cmd(
                 message=e.message,
                 exit_code=1,
             )
-            print(json_mod.dumps(err_out.model_dump(), default=str), file=sys.stderr)
+            print(json_mod.dumps(err_out.model_dump(), default=str))
         else:
             console.print(f"\n[red]Process-new failed: {e.message}[/red]")
         sys.exit(1)
-    except typer.Exit:
+    except typer.Exit as e:
+        # Option helpers reject invalid overrides before any work starts.
+        if json_mode and e.exit_code != 0:
+            error = CLIError(
+                pipeline_version=_pipeline_version,
+                error_type="ValueError",
+                message="Invalid process-new option",
+                exit_code=e.exit_code,
+            )
+            print(json.dumps(error.model_dump(), default=str))
         raise
     except Exception as e:
         if json_mode:
@@ -1251,7 +1279,7 @@ def process_new_cmd(
                 message=str(e),
                 exit_code=1,
             )
-            print(json_mod.dumps(err_out.model_dump(), default=str), file=sys.stderr)
+            print(json_mod.dumps(err_out.model_dump(), default=str))
         else:
             console.print(f"\n[red]Process-new failed: {e}[/red]")
         sys.exit(1)

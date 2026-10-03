@@ -86,10 +86,21 @@ reader.
 Single-sol ingestion reports collected workspace and finalization errors in
 `ServiceResult.metadata.errors`, sets `metadata.success` to `false`, and labels
 the summary incomplete. `process-new` stops before processing scans when that
-flag is false and exits 1. In JSON mode it emits an `IngestionError` on stderr
+flag is false and exits 1. In JSON mode it emits an `IngestionError` on stdout
 with the sol and error list in `context`; successful and skipped ingests keep
 their existing behavior. Partial data may already have been committed: this
 error signal does not promise a rollback.
+
+For `--json process-new`, every command execution exit emits exactly one
+`CLIResult` or `CLIError` document on stdout. Progress and service diagnostics
+use stderr. Argument parsing and `--help` remain Typer's own interface.
+The no-fittable-scans result retains the standard sol/count/elapsed/errors
+quartet; metadata adds `scans_available`, `targetless_scans`, and
+`processing_status` (`no-science-scans`, `no-target-scans`, or `empty-ingest`).
+These distinguish a populated sol of non-science scans from missing ingestion
+or target attribution. Dry runs emit a result with `metadata.dry_run=true`
+and zero processed scans; an unresolvable preview sol is null. Consumers must
+check the reason, rather than treating every zero-count success as usable data.
 
 **How to verify.** `git grep -nE '^[[:space:]]*except:' src/` — should return
 no matches.
