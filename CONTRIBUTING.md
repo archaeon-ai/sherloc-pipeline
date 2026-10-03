@@ -11,8 +11,12 @@ cd sherloc-pipeline
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e .[dev]
 pre-commit install
-pytest -m "not slow"
+pytest tests/<area>
 ```
+
+Run the tests for the area you changed locally (`pytest tests/<area>`); the full
+suite runs in CI. Pytest keeps only failed tests' temporary folders from the
+last run. CI places test temp in the runner's per-job folder.
 
 `pre-commit install` is required — it activates the local hooks described under
 [Public-repo discipline](#public-repo-discipline) below.

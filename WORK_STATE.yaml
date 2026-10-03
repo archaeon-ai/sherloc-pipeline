@@ -1,24 +1,19 @@
-work_package: "sherloc-pipeline#59: plain retries ingest later and repaired workspaces"
-branch: 59-incremental-ingestion
-pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/85
-head: edb3a9e16794c52b12cfa29c2cdacac4b97406da
-status: Implementation complete; awaiting CI and external review.
-sessions_so_far: 1
-session_date: 2026-09-29
+work_package: "sherloc-pipeline#87: bound test temporary files"
+branch: 87-test-temp-hygiene
+pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/88
+head: 5e0c34fcd5d2963d81141bccf06d909149d3a86f
+status: Test temporary-file changes implemented and validated in CI.
 open_decisions: []
-next_action: Address CI failures or external review findings on PR 85; the external reviewer reviews and merges the exact final head.
+next_action: Verify the updated pull request's checks and resolve any remaining findings.
 last_verified:
-  at: "2026-09-29T20:40:29+00:00"
-  source_head: edb3a9e16794c52b12cfa29c2cdacac4b97406da
+  at: "2026-10-02T17:53:59Z"
+  source_head: 5e0c34fcd5d2963d81141bccf06d909149d3a86f
   checks:
-    - Four service regression cases fail on original source, including a failure after workspace rows are written.
-    - Eight zip mismatch cases fail on original source, including dry-run cases; fresh and identical archives pass.
-    - Final source passes 69 checks including 18 synthetic regression cases, CLI despike dispatch, architecture and fixture provenance.
-    - Earlier affected-suite run passes 98 checks, including 30 existing database ingestion cases; final source adds the real CLI retry case and restores the parent transaction write before savepoints.
-    - Ruff, diff checks, fixture provenance (86 tracked data files) and the installed pre-commit hook pass.
-    - First post-push CI snapshot at state head 62ae071 reports the test job pending; no waiting or merge.
-limitations:
-  - The full local suite has not been run; the affected suites are green.
-  - Existing scan contents are preserved; deliberate replacement still needs force.
-  - No merge by this implementation track; the external reviewer handles review and merge.
-  - Existing stale branch and root Docker entrypoint hygiene findings are outside this issue.
+    - Five focused synthetic tests pass. The original settings and workflows fail four cases and pass one control.
+    - Removing either retention setting separately fails one regression case and passes four controls.
+    - Both workflow commands correctly quote a temporary path containing spaces; basetemp is on argv and absent from inherited addopts.
+    - The collection guard command is unchanged and does not pass basetemp.
+    - Ruff, fixture provenance and diff checks pass on the implementation.
+    - CI passed 3531 tests, with 225 skipped and 18 deselected.
+    - CI printed a pytest basetemp under RUNNER_TEMP; the absolute-local-path collection guard passed.
+  ci_run: https://github.com/archaeon-ai/sherloc-pipeline/actions/runs/37042151511
