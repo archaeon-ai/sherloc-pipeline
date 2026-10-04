@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `--json process-new` now writes one result or error document to stdout on
+  validation, ingestion failure, empty selection, dry-run, and pipeline exits.
+  Progress goes to stderr, including option overrides and service output.
+  Empty selections include counts and a reason in metadata so callers can
+  distinguish non-science scans, targetless scans, and an empty ingest. Error
+  consumers must read stdout; other commands' output contracts are unchanged.
+
 ### Added
 - **Cosmic-ray veto for hydration fitting, feature-flagged and default OFF (#38).**
   A cosmic ray inside the 2800-3900 cm-1 OH-stretch window clears the R2 and

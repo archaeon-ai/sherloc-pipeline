@@ -1,19 +1,32 @@
-work_package: "sherloc-pipeline#87: bound test temporary files"
-branch: 87-test-temp-hygiene
-pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/88
-head: 5e0c34fcd5d2963d81141bccf06d909149d3a86f
-status: Test temporary-file changes implemented and validated in CI.
+work_package: "sherloc-pipeline#69: structured process-new execution exits"
+branch: 69-process-new-json
+pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/86
+head: 1f2a44a290327e509fc011761b2ab7a0b1783479
+status: Producer implemented; draft held for the driver consumer update and external review.
+sessions_so_far: 1
+session_date: 2026-09-29
+track_session: 5
 open_decisions: []
-next_action: Verify the updated pull request's checks and resolve any remaining findings.
+next_action: >-
+  Address any review findings or failing CI on PR 86 first. Once workspace
+  capacity permits, prepare the phase-databot issue 236 consumer change to parse
+  stdout error envelopes and processing_status/count metadata, removing console
+  text matching. Keep PR 86 draft until that companion is ready and reviewed.
 last_verified:
-  at: "2026-10-02T17:53:59Z"
-  source_head: 5e0c34fcd5d2963d81141bccf06d909149d3a86f
+  at: "2026-09-29T22:07:44.846303+00:00"
+  source_head: 1f2a44a290327e509fc011761b2ab7a0b1783479
   checks:
-    - Five focused synthetic tests pass. The original settings and workflows fail four cases and pass one control.
-    - Removing either retention setting separately fails one regression case and passes four controls.
-    - Both workflow commands correctly quote a temporary path containing spaces; basetemp is on argv and absent from inherited addopts.
-    - The collection guard command is unchanged and does not pass basetemp.
-    - Ruff, fixture provenance and diff checks pass on the implementation.
-    - CI passed 3531 tests, with 225 skipped and 18 deselected.
-    - CI printed a pytest basetemp under RUNNER_TEMP; the absolute-local-path collection guard passed.
-  ci_run: https://github.com/archaeon-ai/sherloc-pipeline/actions/runs/37042151511
+    - Twelve synthetic regression cases fail on original producer 94c2d7d, after correcting required scan fixture columns and foreign keys.
+    - Final source passes 73 tests covering 15 JSON exits/options cases, ingestion success/failure, trim overrides, fitting options and despike dispatch.
+    - Earlier affected run passes 54 tests including archive retries, fittable selection and CLI envelope contract; those suites were not rerun on final source.
+    - Ruff across repository, diff checks and fixture provenance for 86 tracked data files pass.
+    - Real subprocess validation exits 1 with exactly one parseable stdout JSON document.
+    - Installed fixture-provenance pre-commit hook passes on source commit.
+    - First post-push CI run 36637641714 at source head is pending; final state-head snapshot follows on PR 86, without waiting.
+limitations:
+  - Acceptance criterion 3 is unfinished; the producer must not merge or ship without its driver consumer update.
+  - The existing consumer parses error envelopes on stderr; this command now emits them on stdout.
+  - Argument parsing and help remain Typer's own interface; JSON envelopes cover command execution exits.
+  - No full local-suite result is claimed; validation uses synthetic documents and temporary stores.
+  - Workspace census reached 18 during this session; no consumer worktree was opened.
+  - One existing stale local branch remains outside this work package.
