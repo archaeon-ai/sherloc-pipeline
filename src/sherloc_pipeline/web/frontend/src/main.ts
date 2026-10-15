@@ -1,7 +1,7 @@
 import './styles/global.css';
 import App from './App.svelte';
 import { bootstrapAuth } from './lib/auth';
-import { features } from './lib/stores';
+import { currentHash, features } from './lib/stores';
 import type { ConfigResponse } from './lib/types';
 
 // Resolve auth backend BEFORE mounting the app so the first wave of
@@ -36,6 +36,9 @@ async function bootstrap(): Promise<App> {
       role_claim_uri: null,
     });
   }
+  // The Auth0 callback may have restored a pre-login URL (e.g. #/open...);
+  // replaceState fires no hashchange, so resync the route store before mount.
+  currentHash.set(window.location.hash || '#/');
   return new App({ target: document.getElementById('app')! });
 }
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { navigate } from '../lib/stores';
+  import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
   import {
     getScan,
     getScanPoints,
@@ -279,21 +280,22 @@
       const ptRes = await getScanPoints(scanId);
       points = ptRes.points;
 
-      // Pre-select point from query param (before first loadSpectrum)
-      const pointParam = queryParams?.point;
-      if (pointParam !== undefined) {
-        const idx = parseInt(pointParam, 10);
-        if (!isNaN(idx) && points.some((p) => p.point_index === idx)) {
-          selectionMode = 'point';
-          selectedPointIdx = idx;
-          selectedIndices = [idx];
-          pointSelection.set({ mode: 'point', pointIdx: idx, indices: [idx] });
-        }
-      }
+      // Validate deep links before fetching any spectrum; never fall back to
+      // the scan average when a requested point is missing or malformed.
+      const selection = parseLinkSelection(queryParams);
+      validateLinkSelection(selection, points);
+      selectionMode = selection.mode;
+      selectedIndices = selection.indices;
+      selectedPointIdx = selection.mode === 'point' ? selection.indices[0] : null;
+      pointSelection.set({
+        mode: selectionMode,
+        indices: selectedIndices.length ? selectedIndices : undefined,
+        pointIdx: selectedPointIdx ?? undefined,
+      });
 
       await loadSpectrum();
     } catch (e) {
-      if (e instanceof ApiError) {
+      if (e instanceof Error) {
         error = e.message;
       } else {
         error = 'Failed to load scan';

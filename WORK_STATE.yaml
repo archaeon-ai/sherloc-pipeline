@@ -1,32 +1,10 @@
-work_package: "sherloc-pipeline#69: structured process-new execution exits"
-branch: 69-process-new-json
-pull_request: https://github.com/archaeon-ai/sherloc-pipeline/pull/86
-head: 1f2a44a290327e509fc011761b2ab7a0b1783479
-status: Producer implemented; draft held for the driver consumer update and external review.
-sessions_so_far: 1
-session_date: 2026-09-29
-track_session: 5
+work_package: "sherloc-pipeline#54: F3 scan resolver route"
+branch: 54-resolver-route
+pr_url: https://github.com/archaeon-ai/sherloc-pipeline/pull/93
+head: 10eb8ec  # pre-fix head; round-1 review target
 open_decisions: []
-next_action: >-
-  Address any review findings or failing CI on PR 86 first. Once workspace
-  capacity permits, prepare the phase-databot issue 236 consumer change to parse
-  stdout error envelopes and processing_status/count metadata, removing console
-  text matching. Keep PR 86 draft until that companion is ready and reviewed.
+next_action: "Post the round-1 response comment and run Codex review round 2 on the fix head."
 last_verified:
-  at: "2026-09-29T22:07:44.846303+00:00"
-  source_head: 1f2a44a290327e509fc011761b2ab7a0b1783479
-  checks:
-    - Twelve synthetic regression cases fail on original producer 94c2d7d, after correcting required scan fixture columns and foreign keys.
-    - Final source passes 73 tests covering 15 JSON exits/options cases, ingestion success/failure, trim overrides, fitting options and despike dispatch.
-    - Earlier affected run passes 54 tests including archive retries, fittable selection and CLI envelope contract; those suites were not rerun on final source.
-    - Ruff across repository, diff checks and fixture provenance for 86 tracked data files pass.
-    - Real subprocess validation exits 1 with exactly one parseable stdout JSON document.
-    - Installed fixture-provenance pre-commit hook passes on source commit.
-    - First post-push CI run 36637641714 at source head is pending; final state-head snapshot follows on PR 86, without waiting.
-limitations:
-  - Acceptance criterion 3 is unfinished; the producer must not merge or ship without its driver consumer update.
-  - The existing consumer parses error envelopes on stderr; this command now emits them on stdout.
-  - Argument parsing and help remain Typer's own interface; JSON envelopes cover command execution exits.
-  - No full local-suite result is claimed; validation uses synthetic documents and temporary stores.
-  - Workspace census reached 18 during this session; no consumer worktree was opened.
-  - One existing stale local branch remains outside this work package.
+  at: "2026-10-15T22:53:00Z"
+  what: "Round-1 F1 fix (Auth0 appState return URL): full frontend run 213/213, same pre-existing MapSpectrumPanel unhandled rejection; svelte-check unchanged at 4 errors in PdsBrowser.svelte."
+  how: "npx vitest run; npm run check (niced), pitch lane."

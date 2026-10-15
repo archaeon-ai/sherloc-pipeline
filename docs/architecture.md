@@ -165,6 +165,51 @@ Long-running fits in Map Mode are dispatched onto a 1-worker
 `ThreadPoolExecutor`; progress streams to clients via
 `ws_map.MapJobRegistry` over a WebSocket.
 
+### Browser routes and links from PHASE
+
+The SPA uses hash routes. PHASE can open a scan without knowing its pipeline
+UUID by linking to `#/open?scan_name=<encoded-name>&sol=<sol>&point=<index>`.
+Use `points=<index>,<index>,...` for a subset of a **single scan**. These examples
+use an invented scan and sol:
+
+```text
+https://sherloc.m2020-phase.net/#/open?scan_name=Testrock_detail&sol=42424&point=0
+https://sherloc-public.m2020-phase.net/#/open?scan_name=Testrock_detail&sol=42424&points=0,2,7
+```
+
+Choose the host for the viewer's tier: team → `sherloc.m2020-phase.net`, public
+→ `sherloc-public.m2020-phase.net`. Authentication uses that host's existing
+flow. The resolver searches only scans visible in that tier; it never retries
+on another host. Build query strings with `URLSearchParams` (or encode each
+value with `encodeURIComponent`) so spaces, `&`, `+`, and `%` in names survive:
+
+```js
+const query = new URLSearchParams({ scan_name: 'Testrock_detail', sol: '42424', points: '0,2,7' });
+const url = `https://sherloc.m2020-phase.net/#/open?${query}`;
+```
+
+The resolver calls `GET /api/scans?scan_name=<encoded-name>&sol=<sol>` using
+the existing list API. `scan_name` is an exact, case-sensitive match (no
+substring, wildcard, or space/underscore normalization). The response retains
+the list API's `scans`, `total`, `offset`, and `limit` fields; the resolver reads
+all pages before deciding whether the match is unique. An unavailable scan
+returns an empty list and displays **No scan found ... in this tier**. Multiple
+matches are listed with target, scan name, sol, point count, class, type, and IDs;
+the user must choose one. The resolver does not guess from target or point count.
+
+A unique match or explicit choice replaces the resolver history entry with
+`#/scan/<uuid>/workbench?point=N` or `#/scan/<uuid>/workbench?points=A,B,C`.
+Indices are zero-based, nonnegative whole numbers. `point` selects one spectrum;
+`points` starts the Workbench in subset averaging mode, even for a one-item
+list. Repeated indices are removed, preserving their first occurrence. Sol is
+also a nonnegative whole number. Missing name/sol, malformed numbers, empty
+lists, and simultaneous `point` and `points` parameters show an error. Missing
+point indices show an out-of-range error, including holes in sparse scans;
+the resolver and direct Workbench links both reject them. Omitting both point
+parameters opens the scan average. Changing either selection parameter for an
+already open Workbench reloads that selection. Cross-scan subsets are a separate
+feature (F4).
+
 ## Deployment notes
 
 - `scripts/serve.sh` is the canonical launch script. It binds uvicorn
