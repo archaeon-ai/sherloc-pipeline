@@ -18,7 +18,7 @@ import { render, fireEvent, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { get } from 'svelte/store';
 import * as api from '../lib/api';
-import { processingState } from '../lib/processingStore';
+import { pointSelection, processingState } from '../lib/processingStore';
 import type { BadpixResponse, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
@@ -194,6 +194,42 @@ beforeEach(() => {
 
 afterEach(() => {
   HTMLCanvasElement.prototype.getContext = originalGetContext;
+});
+
+describe('ProcessingWorkbench deep links', () => {
+  it('loads the requested subset before any average and updates selection state', async () => {
+    vi.mocked(api.getScanPoints).mockResolvedValue({
+      schema_version: '1.0.0', scan_id: SCAN_ID,
+      points: [fakePoint(0), fakePoint(7)], n_points: 2,
+    });
+    const subset = vi.spyOn(api, 'postSubsetAverage').mockResolvedValue(fakeSpectrum(INTENSITY_A));
+    render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { points: '7,0,7' } });
+    await flush();
+    expect(subset).toHaveBeenCalledWith(SCAN_ID, expect.objectContaining({ point_indices: [7, 0] }));
+    expect(getAvg).not.toHaveBeenCalled();
+    expect(get(pointSelection)).toEqual({ mode: 'subset', indices: [7, 0], pointIdx: undefined });
+  });
+
+  it('loads point zero directly', async () => {
+    const point = vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(fakeSpectrum(INTENSITY_A));
+    render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } });
+    await flush();
+    expect(point).toHaveBeenCalledWith(SCAN_ID, 0, expect.anything());
+    expect(getAvg).not.toHaveBeenCalled();
+  });
+
+  it.each<Record<string, string>>([{ point: '1' }, { points: '0,7' }, { point: '0tail' }, { points: '' }])(
+    'shows an error without fetching a spectrum for %j', async (queryParams) => {
+      const point = vi.spyOn(api, 'getPointSpectrum');
+      const subset = vi.spyOn(api, 'postSubsetAverage');
+      render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams });
+      await flush();
+      expect(screen.getByText(/Point index/)).toBeInTheDocument();
+      expect(getAvg).not.toHaveBeenCalled();
+      expect(point).not.toHaveBeenCalled();
+      expect(subset).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('ProcessingWorkbench despike fetch semantics (PR #7 F2/F3)', () => {

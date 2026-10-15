@@ -12,6 +12,7 @@
   import { getAccessMode } from './lib/api';
   import Navigation from './components/Navigation.svelte';
   import ScanBrowser from './components/ScanBrowser.svelte';
+  import ScanResolver from './components/ScanResolver.svelte';
   import FittingWorkspace from './components/FittingWorkspace.svelte';
   import BaselineWorkspace from './components/BaselineWorkspace.svelte';
   import ProcessingWorkbench from './components/ProcessingWorkbench.svelte';
@@ -76,8 +77,12 @@
 <main>
   {#if route.page === 'browser'}
     <ScanBrowser />
+  {:else if route.page === 'open'}
+    {#key $currentHash}
+      <ScanResolver queryParams={route.queryParams ?? {}} />
+    {/key}
   {:else if route.page === 'workbench' && route.scanId}
-    {#key route.scanId + (route.queryParams?.point ?? '')}
+    {#key JSON.stringify([route.scanId, route.queryParams?.point, route.queryParams?.points])}
       <ProcessingWorkbench scanId={route.scanId} queryParams={route.queryParams ?? {}} />
     {/key}
   {:else if route.page === 'fit' && route.scanId}

@@ -472,6 +472,7 @@ export type WsMessage =
 
 export interface ScanFilterParams {
   sol?: number;
+  scan_name?: string;
   sol_from?: number;
   sol_to?: number;
   target?: string;

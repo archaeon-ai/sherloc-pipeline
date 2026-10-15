@@ -50,7 +50,7 @@ export const healthIndicator = derived(healthStatus, ($h) => {
 
 // --- Route parsing ---
 export interface ParsedRoute {
-  page: 'browser' | 'fit' | 'baseline' | 'workbench' | 'pds' | 'map';
+  page: 'browser' | 'open' | 'fit' | 'baseline' | 'workbench' | 'pds' | 'map';
   scanId?: string;
   queryParams?: Record<string, string>;
 }
@@ -80,6 +80,7 @@ export const parsedRoute = derived(currentHash, ($hash): ParsedRoute => {
   if (scanBaselineMatch) return { page: 'baseline', scanId: scanBaselineMatch[1], queryParams };
 
   if (path === '/pds') return { page: 'pds', queryParams };
+  if (path === '/open') return { page: 'open', queryParams };
 
   return { page: 'browser', queryParams };
 });

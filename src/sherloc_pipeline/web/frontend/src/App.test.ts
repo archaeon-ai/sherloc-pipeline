@@ -5,11 +5,12 @@
 // file pins down the fix: `navigate('#/')` fires the moment the route
 // sees `pds` while features.pds_browser is false.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, waitFor } from '@testing-library/svelte';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import App from './App.svelte';
 import { accessMode, accessModeResolved, features, currentHash } from './lib/stores';
+import * as api from './lib/api';
 
 beforeEach(() => {
   accessMode.set('internal');
@@ -24,7 +25,37 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('blocked in test')));
 });
 
+afterEach(() => { vi.restoreAllMocks(); });
+
 describe('App routing', () => {
+  it('preserves a resolver link during public-mode startup and reopens changed links', async () => {
+    vi.spyOn(api, 'getAccessMode').mockResolvedValue({ schema_version: '1.0.0', access_mode: 'public' });
+    const lookup = vi.spyOn(api, 'getScans').mockResolvedValue({
+      schema_version: '1.0.0', scans: [], total: 0, offset: 0, limit: 200,
+    });
+    const hash = '#/open?scan_name=Testrock_detail&sol=42424&point=0';
+    window.history.replaceState(null, '', hash);
+    currentHash.set(hash);
+    render(App);
+    expect(await screen.findByRole('alert')).toHaveTextContent('No scan found');
+    expect(window.location.hash).toBe(hash);
+
+    window.location.hash = '#/open?scan_name=Testrock_detail&sol=42425&points=0,2';
+    await waitFor(() => expect(lookup).toHaveBeenLastCalledWith(expect.objectContaining({ sol: 42425 })));
+  });
+
+  it('remounts the Workbench when only the subset changes', async () => {
+    const load = vi.spyOn(api, 'getScan').mockRejectedValue(new Error('Synthetic scan unavailable'));
+    vi.spyOn(api, 'getBadpixChannels').mockRejectedValue(new Error('No synthetic channels'));
+    const hash = '#/scan/test-id/workbench?points=0,2';
+    window.history.replaceState(null, '', hash);
+    currentHash.set(hash);
+    render(App);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+    window.location.hash = '#/scan/test-id/workbench?points=0,7';
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  });
+
   it('preserves the public-mode default redirect when a saved scan filter exists', async () => {
     sessionStorage.setItem('sherloc.scanBrowserHash', '#/?target=Amherst');
     vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL) => {

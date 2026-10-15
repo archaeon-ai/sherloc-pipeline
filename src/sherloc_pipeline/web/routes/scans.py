@@ -88,6 +88,7 @@ def _count_ml_masks(session: Session, scan_id: str) -> int:
 def list_scans(
     request: Request,
     sol: Optional[int] = Query(None),
+    scan_name: Optional[str] = Query(None, min_length=1),
     sol_from: Optional[int] = Query(None),
     sol_to: Optional[int] = Query(None),
     target: Optional[str] = Query(None),
@@ -99,7 +100,7 @@ def list_scans(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ) -> ScanListResponse:
-    """List scans with optional filters and pagination."""
+    """List visible scans; scan_name is exact and combines with sol for deep links."""
     if scan_class is not None and scan_class not in VALID_SCAN_CLASSES:
         raise HTTPException(status_code=400, detail=f"Invalid scan_class: {scan_class}")
     if sol_from is not None and sol_to is not None and sol_from > sol_to:
@@ -119,6 +120,9 @@ def list_scans(
 
     if sol is not None:
         q = q.filter(ScanORM.sol_number == sol)
+    if scan_name is not None:
+        # Shared viewer identity: exact name + sol, without target normalization.
+        q = q.filter(ScanORM.scan_name == scan_name)
     if sol_from is not None:
         q = q.filter(ScanORM.sol_number >= sol_from)
     if sol_to is not None:
@@ -168,7 +172,7 @@ def list_scans(
     message: Optional[str] = None
     has_filters = any(
         v is not None
-        for v in (sol, sol_from, sol_to, target, scan_class, scan_type, processing_status)
+        for v in (sol, scan_name, sol_from, sol_to, target, scan_class, scan_type, processing_status)
     )
     if total == 0 and not has_filters:
         message = "No data ingested yet. See 'sherloc init --help' to bootstrap."
