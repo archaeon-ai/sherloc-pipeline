@@ -1,10 +1,10 @@
 work_package: "sherloc-pipeline#54: F3 scan resolver route"
 branch: 54-resolver-route
-pr_url: null
-head: ff85491
+pr_url: https://github.com/archaeon-ai/sherloc-pipeline/pull/93
+head: 10eb8ec  # pre-fix head; round-1 review target
 open_decisions: []
-next_action: "Open the PR, run CI and external review; list the existing PdsBrowser type errors and MapSpectrumPanel unhandled rejection as residue (both reproduce on main 12dc8ec)."
+next_action: "Post the round-1 response comment and run Codex review round 2 on the fix head."
 last_verified:
-  at: "2026-10-15T21:20:00Z"
-  what: "36 backend tests pass; full frontend run 205/205 with one unhandled rejection from unchanged MapSpectrumPanel.test.ts; type check 4 errors in unchanged PdsBrowser.svelte. Both older problems reproduce on main 12dc8ec."
-  how: "pytest tests/unit/web/test_scan_lookup.py tests/unit/web/test_scans.py; npx vitest run; npm run check; run by the pitch lane on the local branch before rebase onto main 69a5746."
+  at: "2026-10-15T22:53:00Z"
+  what: "Round-1 F1 fix (Auth0 appState return URL): full frontend run 213/213, same pre-existing MapSpectrumPanel unhandled rejection; svelte-check unchanged at 4 errors in PdsBrowser.svelte."
+  how: "npx vitest run; npm run check (niced), pitch lane."

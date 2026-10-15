@@ -98,6 +98,21 @@ export function _resetForTests(): void {
 // Auth0 backend
 // ---------------------------------------------------------------
 
+interface LoginAppState {
+  returnTo?: string;
+}
+
+/** Same-origin path to restore after login; anything else, or the callback
+ *  path itself, falls back to the app root. */
+export function safeReturnTo(returnTo: unknown): string {
+  if (typeof returnTo !== 'string' || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
+    return '/';
+  }
+  const url = new URL(returnTo, window.location.origin);
+  if (url.origin !== window.location.origin || url.pathname === '/auth/callback') return '/';
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
   if (!cfg.auth0_domain || !cfg.auth0_client_id || !cfg.auth0_audience) {
     throw new Error(
@@ -137,11 +152,10 @@ async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
   const isCallback = params.has('code') && params.has('state');
   if (isCallback) {
     try {
-      await client.handleRedirectCallback();
-      // Strip auth params AND the /auth/callback path so the address bar
-      // shows the app root after login. (Future: preserve the user's
-      // original requested URL via Auth0 appState.)
-      window.history.replaceState({}, document.title, '/');
+      const result = await client.handleRedirectCallback<LoginAppState>();
+      // Strip auth params AND the /auth/callback path, returning the user to
+      // the URL they started login from (e.g. a #/open resolver link).
+      window.history.replaceState({}, document.title, safeReturnTo(result.appState?.returnTo));
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Auth0 redirect callback failed:', err);
@@ -193,7 +207,10 @@ async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
       }
     },
     async login(): Promise<void> {
-      await client.loginWithRedirect();
+      const { pathname, search, hash } = window.location;
+      await client.loginWithRedirect<LoginAppState>({
+        appState: { returnTo: `${pathname}${search}${hash}` },
+      });
     },
     async logout(): Promise<void> {
       await client.logout({
