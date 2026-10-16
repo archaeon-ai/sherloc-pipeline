@@ -7,9 +7,10 @@ schema probes). If a migration or a model change drops or renames one of these, 
 refresh fails in production; this test makes it fail here first.
 
 Both ways this package builds the tables are checked: the Alembic chain to head
-(what ``sherloc init`` and every live database use) and ``create_all_tables``.
-The Alembic upgrade runs directly, not through ``init_database``, which falls back
-to ``create_all`` when a migration fails and would hide a broken chain.
+(the path ``sherloc init`` takes when the upgrade succeeds) and ``create_all_tables``
+(what ``init_database`` falls back to when a migration fails). The Alembic upgrade
+runs directly, not through ``init_database``, because that fallback would hide a
+broken chain.
 
 When phase-databot starts reading another table or column, add it here.
 """
