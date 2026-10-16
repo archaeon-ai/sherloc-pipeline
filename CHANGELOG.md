@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.0] - 2026-10-15
+
+### Added
+- **`#/open` resolver route for Viewer hand-off (#54, #93).** `/#/open?scan_name=&sol=&point=` looks up
+  the scan by name and sol in the current tier and opens it with that point selected, so the PHASE Viewer's
+  "Open in SHERLOC Pipeline" link lands on the right spectrum. When several scans match, it lists them to
+  choose from; an unknown scan or point shows an error instead of opening anything. The link survives the
+  Auth0 sign-in redirect.
+
 ### Fixed
 - `--json process-new` now writes one result or error document to stdout on
   validation, ingestion failure, empty selection, dry-run, and pipeline exits.
@@ -14,8 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Empty selections include counts and a reason in metadata so callers can
   distinguish non-science scans, targetless scans, and an empty ingest. Error
   consumers must read stdout; other commands' output contracts are unchanged.
-
-### Added
 - **Cosmic-ray veto for hydration fitting, feature-flagged and default OFF (#38).**
   A cosmic ray inside the 2800-3900 cm-1 OH-stretch window clears the R2 and
   F-test gates and is reported as a hydration feature with its FWHM pinned at
@@ -251,15 +258,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_700-1200` naming) and the filename tokens derive from it, so a non-default
   range self-describes. Render-only: same peaks, same model array, no refit —
   only R² is rescoped to the displayed window. No new flags.
-- **Optional atomic delivery handoff.** A successful `full-pipeline` run now
-  records an explicit `not_configured` skip by default. When
-  `SHERLOC_HANDOFF_DIR` is set, it inventories the completed scan's raw ACI
-  PNGs, any mirrored colorized workspace PNGs, and required `spatial.csv` /
-  `loupe.csv` companions, then atomically publishes a versioned
-  `<run_id>.ready` manifest with portable locators and byte evidence. Invalid
-  sources or an unwritable destination fail the run; no existing serving,
-  ingestion, or database behavior is changed when the variable is absent.
-
 ### Fixed
 - **Scan-context resolution now tolerates raw Loupe dir/manifest typos
   (#16).** `process-new`/`full-pipeline` preprocessing could fail to
@@ -272,6 +270,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no exact match is found, resolving only when a single candidate is
   unambiguously closest — ambiguous or too-distant cases still fail with
   the existing clear error rather than guessing.
+
+## [5.6.0] - 2026-07-29
+
+### Added
+- **Optional atomic delivery handoff.** A successful `full-pipeline` run now
+  records an explicit `not_configured` skip by default. When
+  `SHERLOC_HANDOFF_DIR` is set, it inventories the completed scan's raw ACI
+  PNGs, any mirrored colorized workspace PNGs, and required `spatial.csv` /
+  `loupe.csv` companions, then atomically publishes a versioned
+  `<run_id>.ready` manifest with portable locators and byte evidence. Invalid
+  sources or an unwritable destination fail the run; no existing serving,
+  ingestion, or database behavior is changed when the variable is absent.
 
 ## [5.5.0] - 2026-07-10
 
