@@ -320,9 +320,11 @@ def test_health_endpoint_unauthenticated(monkeypatch, tmp_path):
 
 
 def test_config_endpoint_unauthenticated(monkeypatch, tmp_path):
+    """Signed out, only the bootstrap subset answers; the full config is a 401."""
     _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL)
     with _build_app(tmp_path) as client:
-        resp = client.get("/api/config")
+        assert client.get("/api/config").status_code == 401
+        resp = client.get("/api/config/bootstrap")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["auth"]["auth_mode"] == "auth0"

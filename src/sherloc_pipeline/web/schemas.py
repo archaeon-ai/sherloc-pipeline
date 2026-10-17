@@ -554,6 +554,14 @@ class ConfigResponse(BaseModel):
     features: FeaturesConfig = FeaturesConfig()
 
 
+class BootstrapConfigResponse(BaseModel):
+    """The anonymous subset of /api/config: what the SPA needs before login."""
+
+    schema_version: str = API_SCHEMA_VERSION
+    auth: AuthConfig
+    features: FeaturesConfig = FeaturesConfig()
+
+
 # ---------------------------------------------------------------------------
 # Health DTO
 # ---------------------------------------------------------------------------
@@ -579,7 +587,8 @@ class HealthResponse(BaseModel):
     status: str
     timestamp: str
     pipeline_version: str
-    checks: Dict[str, HealthCheck]
+    # Empty for an anonymous caller: status and version only.
+    checks: Dict[str, HealthCheck] = {}
 
 
 # ---------------------------------------------------------------------------

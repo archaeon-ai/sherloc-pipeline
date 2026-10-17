@@ -43,6 +43,14 @@ export interface AuthSession {
 /** Module-level singleton; initialized on first bootstrapAuth() call. */
 let session: AuthSession | null = null;
 
+/** Set when bootstrap sent a signed-out visitor to the Auth0 login page. */
+let loginRedirectStarted = false;
+
+/** True when the page is leaving for the login page; main.ts skips mounting. */
+export function redirectingToLogin(): boolean {
+  return loginRedirectStarted;
+}
+
 // Auth-readiness gate: protected-resource helpers (fetchAciImage, getMapLayers
 // in api.ts) await this promise before checking session state, so the first
 // component mount cannot race the auth bootstrap into anonymous protected
@@ -86,6 +94,7 @@ export function getSession(): AuthSession | null {
 /** Test-only seam to drop the singleton between scenarios. */
 export function _resetForTests(): void {
   session = null;
+  loginRedirectStarted = false;
   // Reset the bootstrap-readiness gate so the next bootstrapAuth() call
   // settles a fresh promise (consumers see the new reference via TS
   // live-binding for let exports).
@@ -191,6 +200,17 @@ async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
           (err as Error)?.message?.slice(0, 200) ?? '',
         );
       }
+    }
+    // Sign in first: a visitor with no session goes straight to the login
+    // page (public sign-up is offered there), returning to this URL. An
+    // Auth0 error return (e.g. the visitor cancelled) stays on the page
+    // with its Log in button, so the redirect cannot loop.
+    if (!params.has('error') && !(await client.isAuthenticated())) {
+      loginRedirectStarted = true;
+      const { pathname, search, hash } = window.location;
+      await client.loginWithRedirect<LoginAppState>({
+        appState: { returnTo: `${pathname}${search}${hash}` },
+      });
     }
   }
 

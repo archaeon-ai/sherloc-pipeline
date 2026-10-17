@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import func
 
 from sherloc_pipeline.database.models import ScanORM, SpectrumORM
@@ -11,10 +11,39 @@ from sherloc_pipeline.web.schemas import API_SCHEMA_VERSION, HealthCheck, Health
 router = APIRouter(prefix="/api", tags=["health"])
 
 
+def _authenticated(request: Request) -> bool:
+    """True when the request carries a valid credential (always in dev mode).
+
+    Monitoring probes send none; they are not run through the validator, so
+    they leave no failed-auth log line.
+    """
+    import os
+
+    from sherloc_pipeline.web.auth import require_authenticated_request
+
+    mode = os.environ.get("SHERLOC_AUTH_MODE", "cf-access")
+    has_credential = bool(
+        request.headers.get("authorization") or request.headers.get("cf-access-jwt-assertion")
+    )
+    if mode != "dev" and not has_credential:
+        return False
+    try:
+        require_authenticated_request(request)
+    except HTTPException:
+        return False
+    return True
+
+
 @router.get("/health", response_model=HealthResponse)
 def health(request: Request) -> HealthResponse:
-    """System health check."""
-    engine = request.app.state.engine
+    """System health check.
+
+    An anonymous caller gets status and version only. The per-check detail
+    (counts, queue depth, config hash) needs an authenticated request; the
+    database path is never returned.
+    """
+    detailed = _authenticated(request)
+
     config = request.app.state.config
     job_queue = request.app.state.job_queue
 
@@ -26,10 +55,8 @@ def health(request: Request) -> HealthResponse:
         session = request.state.db
         n_scans = session.query(func.count(ScanORM.id)).scalar() or 0
         n_spectra = session.query(func.count(SpectrumORM.id)).scalar() or 0
-        db_path = str(engine.url).replace("sqlite:///", "")
         checks["database"] = HealthCheck(
             status="ok",
-            path=db_path if db_path else None,
             n_scans=n_scans,
             n_spectra=n_spectra,
         )
@@ -65,5 +92,5 @@ def health(request: Request) -> HealthResponse:
         status=overall,
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         pipeline_version=__version__,
-        checks=checks,
+        checks=checks if detailed else {},
     )

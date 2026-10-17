@@ -10,6 +10,7 @@ from sherloc_pipeline.web.schemas import (
     API_SCHEMA_VERSION,
     AccessModeResponse,
     AuthConfig,
+    BootstrapConfigResponse,
     ConfigResponse,
     FeaturesConfig,
 )
@@ -32,7 +33,10 @@ def feature_pds_browser_enabled() -> bool:
     """
     return os.environ.get("SHERLOC_FEATURE_PDS_BROWSER", "").strip().lower() != _FEATURE_DISABLED
 
+# Anonymous: the SPA bootstrap and the access mode.
 router = APIRouter(prefix="/api", tags=["config"])
+# Authenticated: the full pipeline configuration (app.py adds the auth dependency).
+protected_router = APIRouter(prefix="/api", tags=["config"])
 
 
 def _build_auth_config() -> AuthConfig:
@@ -66,7 +70,20 @@ def _build_auth_config() -> AuthConfig:
     )
 
 
-@router.get("/config", response_model=ConfigResponse)
+@router.get("/config/bootstrap", response_model=BootstrapConfigResponse)
+def get_bootstrap_config() -> BootstrapConfigResponse:
+    """The auth and feature blocks only, for the SPA before login (§13.4).
+
+    Nothing else here is public: the full configuration is /api/config,
+    which requires an authenticated request.
+    """
+    return BootstrapConfigResponse(
+        auth=_build_auth_config(),
+        features=FeaturesConfig(pds_browser=feature_pds_browser_enabled()),
+    )
+
+
+@protected_router.get("/config", response_model=ConfigResponse)
 def get_config(request: Request) -> ConfigResponse:
     """Return the currently active fitting and preprocessing configuration.
 

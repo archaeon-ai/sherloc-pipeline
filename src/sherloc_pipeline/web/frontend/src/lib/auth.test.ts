@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAuth0Client } from '@auth0/auth0-spa-js';
-import { _resetForTests, bootstrapAuth, safeReturnTo } from './auth';
+import { _resetForTests, bootstrapAuth, redirectingToLogin, safeReturnTo } from './auth';
 import type { AuthConfig } from './types';
 
 vi.mock('@auth0/auth0-spa-js', () => ({ createAuth0Client: vi.fn() }));
@@ -58,6 +58,42 @@ describe('Auth0 login round trip', () => {
     vi.mocked(createAuth0Client).mockResolvedValue(fakeClient() as never);
     await bootstrapAuth(cfg);
     expect(`${window.location.pathname}${window.location.search}${window.location.hash}`).toBe('/');
+  });
+});
+
+describe('Sign in first (auth0 mode)', () => {
+  it('sends a signed-out visitor to the login page, returning to the same link', async () => {
+    window.history.replaceState(null, '', resolverPath);
+    const client = fakeClient();
+    vi.mocked(createAuth0Client).mockResolvedValue(client as never);
+    await bootstrapAuth(cfg);
+    expect(client.loginWithRedirect).toHaveBeenCalledWith({ appState: { returnTo: resolverPath } });
+    expect(redirectingToLogin()).toBe(true);
+  });
+
+  it('does not redirect a signed-in visitor', async () => {
+    const client = fakeClient();
+    client.getTokenSilently.mockResolvedValue('token');
+    client.isAuthenticated.mockResolvedValue(true);
+    vi.mocked(createAuth0Client).mockResolvedValue(client as never);
+    await bootstrapAuth(cfg);
+    expect(client.loginWithRedirect).not.toHaveBeenCalled();
+    expect(redirectingToLogin()).toBe(false);
+  });
+
+  it('does not loop when Auth0 returns an error', async () => {
+    window.history.replaceState(null, '', '/auth/callback?error=access_denied&state=s');
+    const client = fakeClient();
+    vi.mocked(createAuth0Client).mockResolvedValue(client as never);
+    await bootstrapAuth(cfg);
+    expect(client.loginWithRedirect).not.toHaveBeenCalled();
+    expect(redirectingToLogin()).toBe(false);
+  });
+
+  it('never redirects in dev or cf-access mode', async () => {
+    await bootstrapAuth({ ...cfg, auth_mode: 'dev' });
+    expect(createAuth0Client).not.toHaveBeenCalled();
+    expect(redirectingToLogin()).toBe(false);
   });
 });
 
