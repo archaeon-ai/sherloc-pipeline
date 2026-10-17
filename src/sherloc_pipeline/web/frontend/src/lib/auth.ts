@@ -50,7 +50,7 @@ let loginRedirectStarted = false;
 
 /** Why Auth0 refused a sign-in, from the callback's `error` and
  *  `error_description`. The wording mirrors the PHASE Worker's pages. */
-export type AuthErrorKind = 'team_required' | 'verify_email' | 'team_pending' | 'generic';
+export type AuthErrorKind = 'team_required' | 'verify_email' | 'team_pending' | 'denied' | 'generic';
 
 export interface AuthCallbackError {
   kind: AuthErrorKind;
@@ -67,14 +67,15 @@ export function authCallbackError(): AuthCallbackError | null {
 }
 
 /** Same rules as the Worker's classifyAccessDeniedReason (m2020-phase
- *  viewer-worker/src/oauth.ts); anything unrecognized is generic. */
+ *  viewer-worker/src/oauth.ts). An unrecognized `access_denied` is
+ *  `denied` (the Worker's generic page); any other error is `generic`. */
 export function classifyAuthError(error: string | null, description: string): AuthErrorKind {
   if (error !== 'access_denied') return 'generic';
   const lower = description.toLowerCase();
   if (/verify[\s\S]{0,40}email/.test(lower)) return 'verify_email';
   if (/under[\s\S]{0,10}review/.test(lower)) return 'team_pending';
   if (/team[\s\S]{0,20}membership/.test(lower)) return 'team_required';
-  return 'generic';
+  return 'denied';
 }
 
 /**

@@ -163,7 +163,7 @@ describe('Auth0 error return (#308)', () => {
     expect(classifyAuthError('access_denied', 'Team membership required for this application.')).toBe('team_required');
     expect(classifyAuthError('access_denied', 'Please verify your email before logging in.')).toBe('verify_email');
     expect(classifyAuthError('access_denied', 'Your team request is under review.')).toBe('team_pending');
-    expect(classifyAuthError('access_denied', 'something else')).toBe('generic');
+    expect(classifyAuthError('access_denied', 'something else')).toBe('denied');
     expect(classifyAuthError('login_required', 'Team membership required')).toBe('generic');
   });
 

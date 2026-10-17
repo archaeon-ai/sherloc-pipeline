@@ -4,4 +4,4 @@ head: "pending"
 open_decisions:
   - "v5.7.2 tag + roll of both hosts: Ken (via PM)"
 next_action: "Open PR, Codex review, merge on exact-head GO + green; no deploy"
-last_verified: "2026-10-17T09:54:52-07:00 — frontend vitest 231 passed; svelte-check 4 errors, same as main (none in changed files)"
+last_verified: "2026-10-17T09:54:52-07:00 — frontend vitest 235 passed; svelte-check 4 errors, same as main (none in changed files)"

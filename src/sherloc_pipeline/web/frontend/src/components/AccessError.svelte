@@ -28,6 +28,14 @@
         'Thanks for requesting Mars 2020 team-tier access. The platform operator received a notification of your ' +
         'signup and will review the request. You’ll get an email once your account is approved.',
     },
+    denied: {
+      title: 'Access denied — PHASE',
+      heading: 'Access denied',
+      body:
+        'Your sign-in attempt was rejected. ' +
+        'If you just signed up, you may need to verify your email address first — check your inbox for a verification link. ' +
+        'Otherwise, contact the platform operator.',
+    },
     generic: {
       title: 'Sign-in failed — PHASE',
       heading: 'Sign-in did not complete',
@@ -47,8 +55,10 @@
   <div class="card access-card">
     <h1>{copy.heading}</h1>
     <p>{copy.body}</p>
-    {#if error.kind === 'team_required' || error.kind === 'team_pending'}
+    {#if error.kind === 'team_required'}
       <p><a href={PUBLIC_SITE}>Go to the public SHERLOC site</a></p>
+    {:else if error.kind === 'team_pending'}
+      <p>In the meantime, you can explore the public-tier tools at <a href={PUBLIC_SITE}>sherloc-public.m2020-phase.net</a>.</p>
     {/if}
     {#if error.kind === 'team_required'}
       <p><button type="button" class="link-button" on:click={() => signIn('login')}>Sign in with a different account</button></p>
