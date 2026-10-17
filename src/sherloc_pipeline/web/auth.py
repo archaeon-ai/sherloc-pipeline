@@ -498,6 +498,11 @@ WS_BEARER_PROTOCOL = "bearer"
 #: Close codes for a refused handshake (4000-4999 are application codes).
 WS_CLOSE_UNAUTHENTICATED = 4401
 WS_CLOSE_FORBIDDEN = 4403
+_WS_CLOSE_REASONS = {
+    WS_CLOSE_UNAUTHENTICATED: "Authentication required",
+    WS_CLOSE_FORBIDDEN: "Forbidden",
+    1011: "Authentication unavailable",
+}
 
 
 def _extract_websocket_token(websocket: WebSocket, mode: str) -> Optional[str]:
@@ -538,7 +543,10 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
             403: WS_CLOSE_FORBIDDEN,
         }.get(exc.status_code, 1011)
         await websocket.accept(subprotocol=subprotocol)
-        await websocket.close(code=code, reason=str(exc.detail))
+        # Fixed reasons only: the client is unauthenticated, so the
+        # exception detail (which credential failed, the role name, a
+        # missing config variable) must not reach it.
+        await websocket.close(code=code, reason=_WS_CLOSE_REASONS[code])
         raise WebSocketAuthRejected(code) from None
     return subprotocol
 

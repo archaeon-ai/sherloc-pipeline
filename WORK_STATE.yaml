@@ -1,7 +1,7 @@
 work_package: "sherloc hosts: sign in before anything is served (Ken 2026-10-16)"
 branch: "public-force-signin (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/96)"
-head: "95517e2"
+head: "a9670fb"
 open_decisions:
   - "Edge gate (orange-cloud + Worker/Access) for a curl-visible 302: Ken"
-next_action: "Codex r3 on the F5 fix (WS refusal accept-then-close), then CI; merge on GO plus green; Ken tags v5.7.1 and rolls both hosts (PR body)"
+next_action: "Codex r4 on the F6 fix (fixed WS close reasons), then CI; merge on GO plus green; Ken tags v5.7.1 and rolls both hosts (PR body)"
 last_verified: "2026-10-16T22:50:54-07:00 — tests/unit (not slow) 3128 passed, 17 skipped; frontend vitest 222 passed; svelte-check 4 errors, same as main"

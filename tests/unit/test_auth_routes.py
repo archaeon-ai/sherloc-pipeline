@@ -735,6 +735,35 @@ def test_websocket_refusal_reaches_the_client_as_a_close_code(
             with pytest.raises(WebSocketDisconnect) as excinfo:
                 ws.receive_text()
     assert excinfo.value.code == 4401
+    assert excinfo.value.reason == "Authentication required"
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
+def test_websocket_refusal_reasons_carry_no_auth_detail(
+    monkeypatch, tmp_path, httpx_mock, signing_key, path
+):
+    """Wrong role and misconfiguration close with fixed reasons: no role
+    name, no exception text, no config variable names."""
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL, access_mode="internal")
+    httpx_mock.add_response(
+        url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]}
+    )
+    token = _mint(signing_key, identity=[])
+    with _build_app(tmp_path) as client:
+        with client.websocket_connect(path, subprotocols=["bearer", token]) as ws:
+            with pytest.raises(WebSocketDisconnect) as excinfo:
+                ws.receive_text()
+    assert (excinfo.value.code, excinfo.value.reason) == (4403, "Forbidden")
+
+    _reset_validator_for_tests()
+    monkeypatch.delenv("SHERLOC_AUTH0_DOMAIN")
+    with _build_app(tmp_path) as client:
+        with client.websocket_connect(path, subprotocols=["bearer", token]) as ws:
+            with pytest.raises(WebSocketDisconnect) as excinfo:
+                ws.receive_text()
+    assert excinfo.value.code == 1011
+    assert excinfo.value.reason == "Authentication unavailable"
+    assert "SHERLOC" not in excinfo.value.reason
 
 
 @pytest.mark.parametrize("path", _WS_PATHS)
