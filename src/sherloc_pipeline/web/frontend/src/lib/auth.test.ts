@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAuth0Client } from '@auth0/auth0-spa-js';
 import {
   _resetForTests,
+  authCallbackError,
   bootstrapAuth,
+  classifyAuthError,
   openWithWsAuth,
   redirectingToLogin,
   safeReturnTo,
@@ -112,6 +114,70 @@ describe('Sign in first (auth0 mode)', () => {
     await bootstrapAuth({ ...cfg, auth_mode: 'dev' });
     expect(createAuth0Client).not.toHaveBeenCalled();
     expect(redirectingToLogin()).toBe(false);
+  });
+});
+
+describe('Auth0 error return (#308)', () => {
+  const teamDenied =
+    '/auth/callback?error=access_denied&error_description=Team%20membership%20required%20for%20this%20application.&state=s';
+
+  it('records team_required, keeps the start URL and leaves the callback URL', async () => {
+    window.history.replaceState(null, '', teamDenied);
+    const client = fakeClient();
+    const err = Object.assign(new Error('Team membership required'), { appState: { returnTo: resolverPath } });
+    client.handleRedirectCallback.mockRejectedValue(err);
+    vi.mocked(createAuth0Client).mockResolvedValue(client as never);
+    await bootstrapAuth(cfg);
+    expect(authCallbackError()).toEqual({ kind: 'team_required', returnTo: resolverPath });
+    expect(`${window.location.pathname}${window.location.search}${window.location.hash}`).toBe(resolverPath);
+    expect(client.loginWithRedirect).not.toHaveBeenCalled();
+    expect(client.getTokenSilently).not.toHaveBeenCalled();
+    expect(redirectingToLogin()).toBe(false);
+  });
+
+  it('falls back to the app root when the transaction is gone', async () => {
+    window.history.replaceState(null, '', teamDenied);
+    const client = fakeClient();
+    client.handleRedirectCallback.mockRejectedValue(new Error('missing_transaction'));
+    vi.mocked(createAuth0Client).mockResolvedValue(client as never);
+    await bootstrapAuth(cfg);
+    expect(authCallbackError()?.returnTo).toBe('/');
+    expect(window.location.pathname).toBe('/');
+  });
+
+  it('any other error is generic', async () => {
+    window.history.replaceState(null, '', '/auth/callback?error=server_error&state=s');
+    vi.mocked(createAuth0Client).mockResolvedValue(fakeClient() as never);
+    await bootstrapAuth(cfg);
+    expect(authCallbackError()?.kind).toBe('generic');
+  });
+
+  it('a successful callback records no error', async () => {
+    window.history.replaceState(null, '', '/auth/callback?code=c&state=s');
+    vi.mocked(createAuth0Client).mockResolvedValue(fakeClient() as never);
+    await bootstrapAuth(cfg);
+    expect(authCallbackError()).toBeNull();
+  });
+
+  it('classifies like the Worker', () => {
+    expect(classifyAuthError('access_denied', 'Team membership required for this application.')).toBe('team_required');
+    expect(classifyAuthError('access_denied', 'Please verify your email before logging in.')).toBe('verify_email');
+    expect(classifyAuthError('access_denied', 'Your team request is under review.')).toBe('team_pending');
+    expect(classifyAuthError('access_denied', 'something else')).toBe('denied');
+    expect(classifyAuthError('login_required', 'Team membership required')).toBe('generic');
+  });
+
+  it('login can force the Auth0 login screen and return to a given URL', async () => {
+    const client = fakeClient();
+    client.getTokenSilently.mockResolvedValue('token');
+    client.isAuthenticated.mockResolvedValue(true);
+    vi.mocked(createAuth0Client).mockResolvedValue(client as never);
+    const session = await bootstrapAuth(cfg);
+    await session.login({ prompt: 'login', returnTo: resolverPath });
+    expect(client.loginWithRedirect).toHaveBeenCalledWith({
+      appState: { returnTo: resolverPath },
+      authorizationParams: { prompt: 'login' },
+    });
   });
 });
 

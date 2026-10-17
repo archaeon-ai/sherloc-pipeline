@@ -1,6 +1,7 @@
 import './styles/global.css';
 import App from './App.svelte';
-import { bootstrapAuth, redirectingToLogin } from './lib/auth';
+import AccessError from './components/AccessError.svelte';
+import { authCallbackError, bootstrapAuth, redirectingToLogin } from './lib/auth';
 import { currentHash, features } from './lib/stores';
 import type { BootstrapConfigResponse } from './lib/types';
 
@@ -12,7 +13,7 @@ import type { BootstrapConfigResponse } from './lib/types';
 // mode. If that fetch fails we fall through to a passthrough cf-access
 // session — the legacy code path — so a backend in trouble degrades
 // to "anonymous" rather than blocking page load.
-async function bootstrap(): Promise<App | null> {
+async function bootstrap(): Promise<App | AccessError | null> {
   try {
     const res = await fetch('/api/config/bootstrap', { headers: { Accept: 'application/json' } });
     if (res.ok) {
@@ -42,6 +43,9 @@ async function bootstrap(): Promise<App | null> {
   currentHash.set(window.location.hash || '#/');
   // Signed out in auth0 mode: the browser is on its way to the login page.
   if (redirectingToLogin()) return null;
+  // Auth0 refused the sign-in: say why instead of mounting an empty app.
+  const refused = authCallbackError();
+  if (refused) return new AccessError({ target: document.getElementById('app')!, props: { error: refused } });
   return new App({ target: document.getElementById('app')! });
 }
 

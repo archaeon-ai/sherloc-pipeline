@@ -1,7 +1,7 @@
-work_package: "sherloc hosts: sign in before anything is served (Ken 2026-10-16)"
-branch: "public-force-signin (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/96)"
-head: "a9670fb"
+work_package: "SHERLOC refused sign-in page (m2020-phase#308 item 1; PM 2026-10-17)"
+branch: "sherloc-access-denied-page"
+head: "pending"
 open_decisions:
-  - "Edge gate (orange-cloud + Worker/Access) for a curl-visible 302: Ken"
-next_action: "Codex r4 on the F6 fix (fixed WS close reasons), then CI; merge on GO plus green; Ken tags v5.7.1 and rolls both hosts (PR body)"
-last_verified: "2026-10-16T22:50:54-07:00 — tests/unit (not slow) 3128 passed, 17 skipped; frontend vitest 222 passed; svelte-check 4 errors, same as main"
+  - "v5.7.2 tag + roll of both hosts: Ken (via PM)"
+next_action: "Open PR, Codex review, merge on exact-head GO + green; no deploy"
+last_verified: "2026-10-17T09:54:52-07:00 — frontend vitest 235 passed; svelte-check 4 errors, same as main (none in changed files)"

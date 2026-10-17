@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.2] - 2026-10-17
+
+### Fixed
+- **A refused sign-in says why.** When Auth0 refuses a sign-in (for example a public account on the team host),
+  the app shows a "Team membership required" page instead of the empty Scan Browser with a raw HTTP 401. The
+  page links to the public SHERLOC site and offers "Sign in with a different account" (Auth0 shows its login
+  screen even with a live session), using the same wording as the PHASE Worker's page. Unverified-email and
+  team-request-under-review refusals get the Worker's wording for those cases, and any other `access_denied` gets
+  the Worker's "Access denied" page; any other callback error gets a plain message with a sign-in retry. The callback URL is replaced by the page the visitor started from, so a
+  reload does not replay it, and a retry returns there (m2020-phase#308).
+
 ## [5.7.1] - 2026-10-16
 
 ### Security
