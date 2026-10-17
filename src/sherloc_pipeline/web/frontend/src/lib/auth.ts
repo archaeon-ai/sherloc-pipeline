@@ -27,8 +27,10 @@ export interface AuthSession {
   /** Returns an access token suitable for `Authorization: Bearer ...`,
    *  or "" when no token is needed (cf-access mode). */
   getToken(): Promise<string>;
-  /** Triggers an interactive login flow (auth0 mode only). */
-  login(): Promise<void>;
+  /** Triggers an interactive login flow (auth0 mode only). `prompt: 'login'`
+   *  shows the Auth0 login screen even with a live Auth0 session (sign in
+   *  with a different account); `returnTo` overrides the current URL. */
+  login(options?: { prompt?: 'login'; returnTo?: string }): Promise<void>;
   /** Logs the user out (auth0 mode only). */
   logout(): Promise<void>;
   /** True when the user has a valid session (auth0 mode); always
@@ -45,6 +47,35 @@ let session: AuthSession | null = null;
 
 /** Set when bootstrap sent a signed-out visitor to the Auth0 login page. */
 let loginRedirectStarted = false;
+
+/** Why Auth0 refused a sign-in, from the callback's `error` and
+ *  `error_description`. The wording mirrors the PHASE Worker's pages. */
+export type AuthErrorKind = 'team_required' | 'verify_email' | 'team_pending' | 'generic';
+
+export interface AuthCallbackError {
+  kind: AuthErrorKind;
+  /** Same-origin URL the visitor started from; a retry returns there. */
+  returnTo: string;
+}
+
+/** Set when Auth0 returned to /auth/callback with an error; main.ts then
+ *  shows the access page instead of the app. */
+let callbackError: AuthCallbackError | null = null;
+
+export function authCallbackError(): AuthCallbackError | null {
+  return callbackError;
+}
+
+/** Same rules as the Worker's classifyAccessDeniedReason (m2020-phase
+ *  viewer-worker/src/oauth.ts); anything unrecognized is generic. */
+export function classifyAuthError(error: string | null, description: string): AuthErrorKind {
+  if (error !== 'access_denied') return 'generic';
+  const lower = description.toLowerCase();
+  if (/verify[\s\S]{0,40}email/.test(lower)) return 'verify_email';
+  if (/under[\s\S]{0,10}review/.test(lower)) return 'team_pending';
+  if (/team[\s\S]{0,20}membership/.test(lower)) return 'team_required';
+  return 'generic';
+}
 
 /**
  * Open a WebSocket with the access token offered as the `bearer`
@@ -111,6 +142,7 @@ export function getSession(): AuthSession | null {
 export function _resetForTests(): void {
   session = null;
   loginRedirectStarted = false;
+  callbackError = null;
   // Reset the bootstrap-readiness gate so the next bootstrapAuth() call
   // settles a fresh promise (consumers see the new reference via TS
   // live-binding for let exports).
@@ -175,7 +207,24 @@ async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
   // so the bootstrap runs whenever Auth0 lands the user there.
   const params = new URLSearchParams(window.location.search);
   const isCallback = params.has('code') && params.has('state');
-  if (isCallback) {
+  if (!isCallback && window.location.pathname === '/auth/callback' && params.has('error')) {
+    // Auth0 refused the sign-in (for example a public account on the team
+    // host). Settle the login transaction to recover where the visitor
+    // started, record why, and leave the callback URL so a reload does not
+    // replay it.
+    let returnTo: unknown;
+    try {
+      const result = await client.handleRedirectCallback<LoginAppState>();
+      returnTo = result.appState?.returnTo;
+    } catch (err) {
+      returnTo = (err as { appState?: LoginAppState })?.appState?.returnTo;
+    }
+    callbackError = {
+      kind: classifyAuthError(params.get('error'), params.get('error_description') ?? ''),
+      returnTo: safeReturnTo(returnTo),
+    };
+    window.history.replaceState({}, document.title, callbackError.returnTo);
+  } else if (isCallback) {
     try {
       const result = await client.handleRedirectCallback<LoginAppState>();
       // Strip auth params AND the /auth/callback path, returning the user to
@@ -252,10 +301,11 @@ async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
         return '';
       }
     },
-    async login(): Promise<void> {
+    async login(options?: { prompt?: 'login'; returnTo?: string }): Promise<void> {
       const { pathname, search, hash } = window.location;
       await client.loginWithRedirect<LoginAppState>({
-        appState: { returnTo: `${pathname}${search}${hash}` },
+        appState: { returnTo: options?.returnTo ?? `${pathname}${search}${hash}` },
+        ...(options?.prompt ? { authorizationParams: { prompt: options.prompt } } : {}),
       });
     },
     async logout(): Promise<void> {
