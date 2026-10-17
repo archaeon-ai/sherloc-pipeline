@@ -135,6 +135,10 @@ def create_app(
         title="SHERLOC Pipeline API",
         version=API_SCHEMA_VERSION,
         lifespan=lifespan,
+        # Served below behind the auth dependency, not anonymously.
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
 
     # Eagerly set state so it's available even without lifespan (e.g. test clients)
@@ -253,9 +257,9 @@ def create_app(
     from sherloc_pipeline.web import ws_map as ws_map_module
 
     # Public endpoints — no per-request auth dependency.
-    # /api/health is the load-balancer / monitoring probe; /api/config is
-    # the SPA bootstrap call that runs BEFORE login to learn how to
-    # initialise auth (§13.4).
+    # /api/health is the load-balancer / monitoring probe (status and
+    # version only when anonymous); /api/config/bootstrap is the SPA call
+    # that runs BEFORE login to learn how to initialise auth (§13.4).
     app.include_router(health_routes.router)
     app.include_router(config_routes.router)
 
@@ -268,6 +272,32 @@ def create_app(
     from sherloc_pipeline.web.auth import require_authenticated_request
 
     auth_dep = [Depends(require_authenticated_request)]
+    app.include_router(config_routes.protected_router, dependencies=auth_dep)
+
+    # API docs and schema: authenticated like the data API.
+    from fastapi import HTTPException
+    from fastapi.openapi.docs import get_swagger_ui_html
+
+    @app.get("/openapi.json", include_in_schema=False, dependencies=auth_dep)
+    def openapi_schema():
+        return JSONResponse(app.openapi())
+
+    @app.get("/docs", include_in_schema=False, dependencies=auth_dep)
+    def swagger_ui():
+        return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Swagger UI")
+
+    # The other docs variants (ReDoc, the Swagger OAuth2 redirect,
+    # trailing-slash forms) are retired: a 404, never the SPA shell. A
+    # browser cannot attach the Auth0 bearer token to a top-level
+    # navigation, so in auth0 mode /docs and /openapi.json are for
+    # API clients that send the token, not for browsing.
+    @app.get("/redoc", include_in_schema=False)
+    @app.get("/redoc/{rest:path}", include_in_schema=False)
+    @app.get("/docs/{rest:path}", include_in_schema=False)
+    @app.get("/openapi.json/", include_in_schema=False)
+    def retired_docs():
+        raise HTTPException(status_code=404, detail="Not Found")
+
     app.include_router(scan_routes.router, dependencies=auth_dep)
     app.include_router(spectra_routes.router, dependencies=auth_dep)
     app.include_router(processing_routes.router, dependencies=auth_dep)
@@ -277,14 +307,14 @@ def create_app(
     app.include_router(jobs_routes.router, dependencies=auth_dep)
     app.include_router(map_routes.router, dependencies=auth_dep)
 
-    # user_routes does its own auth via _resolve_user; F4 follow-up
-    # will unify it onto require_authenticated_request once the
-    # sub-vs-email identity-key change lands.
-    app.include_router(user_routes.router)
+    # user_routes resolves the identity itself via _resolve_user; the
+    # router-level dependency makes an anonymous request a 401 first.
+    app.include_router(user_routes.router, dependencies=auth_dep)
 
-    # WebSocket routes use a per-job submitter_token (browsers cannot
-    # set Authorization headers on the WS handshake). WS auth is a
-    # separate concern and out of scope for the per-request HTTP dep.
+    # WebSocket routes authenticate the handshake themselves
+    # (web/auth.authenticate_websocket): browsers cannot set an
+    # Authorization header on a WebSocket, so the token rides in the
+    # subprotocol. The per-job submitter_token only authorizes cancel.
     app.include_router(ws_module.router)
     app.include_router(ws_map_module.router)
 

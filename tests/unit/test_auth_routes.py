@@ -272,19 +272,94 @@ def test_audience_cross_rejected_at_public_host(
 
 
 # ---------------------------------------------------------------------------
-# Anonymous (no Authorization header) in auth0 mode → 200, empty preferences
+# Signed out (no Authorization header) in auth0 mode: everything but the
+# SPA bootstrap, the access mode and a minimal health probe is a 401
 # ---------------------------------------------------------------------------
 
 
-def test_auth0_anonymous_request_is_anonymous_not_rejected(
-    monkeypatch, tmp_path
-):
-    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL)
+@pytest.mark.parametrize("access_mode", ["internal", "public"])
+@pytest.mark.parametrize(
+    "path",
+    ["/docs", "/openapi.json", "/api/config", "/api/user/preferences", "/api/user/profiles"],
+)
+def test_auth0_signed_out_request_is_rejected(monkeypatch, tmp_path, path, access_mode):
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode=access_mode)
     with _build_app(tmp_path) as client:
-        # No Authorization header at all.
-        resp = client.get("/api/user/preferences")
+        resp = client.get(path)
+    assert resp.status_code == 401, (path, resp.status_code, resp.text[:200])
+
+
+@pytest.mark.parametrize("auth_mode", ["auth0", "dev"])
+@pytest.mark.parametrize(
+    "path",
+    ["/redoc", "/redoc/", "/docs/", "/docs/oauth2-redirect", "/openapi.json/"],
+)
+def test_retired_docs_variants_are_404_not_the_spa(monkeypatch, tmp_path, path, auth_mode):
+    """Only /docs and /openapi.json exist (behind auth); other variants
+    must not fall through to the SPA catch-all or serve a schema."""
+    if auth_mode == "auth0":
+        _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode="public")
+    else:
+        monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>spa-shell</html>")
+    engine = get_engine(str(tmp_path / "docs.db"))
+    create_all_tables(engine)
+    with TestClient(create_app(engine=engine, frontend_dist=dist)) as client:
+        resp = client.get(path, follow_redirects=False)
+    assert resp.status_code == 404, (path, resp.status_code, resp.text[:200])
+    assert "spa-shell" not in resp.text and "openapi" not in resp.text.lower()
+
+
+def test_auth0_signed_out_health_is_status_and_version_only(monkeypatch, tmp_path):
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode="public")
+    with _build_app(tmp_path) as client:
+        resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json()["preferences"] == []
+    data = resp.json()
+    assert data["checks"] == {}
+    assert data["status"] in ("ok", "degraded", "error")
+    assert data["pipeline_version"]
+    assert "n_scans" not in resp.text and "path" not in resp.text
+
+
+def test_auth0_signed_out_bootstrap_carries_only_auth_and_features(monkeypatch, tmp_path):
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode="public")
+    with _build_app(tmp_path) as client:
+        resp = client.get("/api/config/bootstrap")
+    assert resp.status_code == 200
+    assert set(resp.json()) == {"schema_version", "auth", "features"}
+
+
+def test_auth0_signed_in_health_has_checks_but_no_db_path(
+    monkeypatch, tmp_path, httpx_mock, signing_key
+):
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode="public")
+    httpx_mock.add_response(url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]})
+    token = _mint(signing_key, audience=AUTH0_AUDIENCE_PUBLIC, identity=[])
+    with _build_app(tmp_path) as client:
+        resp = client.get("/api/health", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    db = resp.json()["checks"]["database"]
+    assert db["status"] == "ok" and db.get("path") is None
+
+
+@pytest.mark.parametrize("path", ["/docs", "/openapi.json", "/api/config", "/api/user/preferences",
+                                  "/api/user/profiles"])
+def test_dev_mode_still_serves_without_a_token(monkeypatch, tmp_path, path):
+    monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
+    with _build_app(tmp_path) as client:
+        resp = client.get(path)
+    assert resp.status_code == 200, (path, resp.text[:200])
+
+
+def test_dev_mode_health_keeps_detail_without_db_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
+    with _build_app(tmp_path) as client:
+        data = client.get("/api/health").json()
+    assert data["checks"]["database"]["status"] == "ok"
+    assert data["checks"]["database"].get("path") is None
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +372,7 @@ def test_api_config_in_auth0_mode_populates_auth_block(
 ):
     _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL)
     with _build_app(tmp_path) as client:
-        resp = client.get("/api/config")
+        resp = client.get("/api/config/bootstrap")
     assert resp.status_code == 200, resp.text
     auth = resp.json()["auth"]
     assert auth["auth_mode"] == "auth0"
@@ -321,7 +396,7 @@ def test_api_config_in_cf_access_mode_returns_null_auth0_fields(
     monkeypatch.delenv("SHERLOC_AUTH0_AUDIENCE", raising=False)
 
     with _build_app(tmp_path) as client:
-        resp = client.get("/api/config")
+        resp = client.get("/api/config/bootstrap")
     assert resp.status_code == 200
     auth = resp.json()["auth"]
     assert auth["auth_mode"] == "cf-access"
@@ -334,6 +409,7 @@ def test_api_config_in_cf_access_mode_returns_null_auth0_fields(
 def test_api_config_in_dev_mode(monkeypatch, tmp_path):
     monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
     with _build_app(tmp_path) as client:
+        assert client.get("/api/config/bootstrap").json()["auth"]["auth_mode"] == "dev"
         resp = client.get("/api/config")
     assert resp.status_code == 200
     assert resp.json()["auth"]["auth_mode"] == "dev"
@@ -599,3 +675,162 @@ def test_public_mode_accepts_any_valid_token(
             headers={"Authorization": f"Bearer {token}"},
         )
     assert resp.status_code == 200, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Tier: a public-account token never opens the team host
+# ---------------------------------------------------------------------------
+
+
+def test_team_host_rejects_a_valid_public_account_token(
+    monkeypatch, tmp_path, httpx_mock, signing_key
+):
+    """A token minted for the public API (any signed-up account, no role) is
+    refused by the team host: wrong audience, 401, before any role check."""
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL, access_mode="internal")
+    httpx_mock.add_response(
+        url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]}
+    )
+    token = _mint(signing_key, audience=AUTH0_AUDIENCE_PUBLIC, identity=[])
+    with _build_app(tmp_path) as client:
+        resp = client.get("/api/scans", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401, resp.text
+
+
+# ---------------------------------------------------------------------------
+# WebSockets: the handshake is authenticated like an HTTP request
+# ---------------------------------------------------------------------------
+
+from starlette.websockets import WebSocketDisconnect  # noqa: E402
+
+_WS_PATHS = ["/api/ws/jobs/no-such-job", "/ws/map/no-such-job"]
+
+
+def _ws_close_code(client: TestClient, path: str, **kwargs) -> int:
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(path, **kwargs) as ws:
+            ws.receive_text()
+    return excinfo.value.code
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
+def test_signed_out_websocket_is_refused_before_the_job_lookup(
+    monkeypatch, tmp_path, path
+):
+    """No token: 4401, not 4004 -- an unknown job id reveals nothing."""
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL)
+    with _build_app(tmp_path) as client:
+        assert _ws_close_code(client, path) == 4401
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
+def test_websocket_refusal_reaches_the_client_as_a_close_code(
+    monkeypatch, tmp_path, path
+):
+    """The refusal is accept-then-close, so a browser sees 4401 rather than
+    a bare HTTP 403 (which surfaces as 1006 and would be retried)."""
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL)
+    with _build_app(tmp_path) as client:
+        with client.websocket_connect(path) as ws:  # handshake completes
+            with pytest.raises(WebSocketDisconnect) as excinfo:
+                ws.receive_text()
+    assert excinfo.value.code == 4401
+    assert excinfo.value.reason == "Authentication required"
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
+def test_websocket_refusal_reasons_carry_no_auth_detail(
+    monkeypatch, tmp_path, httpx_mock, signing_key, path
+):
+    """Wrong role and misconfiguration close with fixed reasons: no role
+    name, no exception text, no config variable names."""
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL, access_mode="internal")
+    httpx_mock.add_response(
+        url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]}
+    )
+    token = _mint(signing_key, identity=[])
+    with _build_app(tmp_path) as client:
+        with client.websocket_connect(path, subprotocols=["bearer", token]) as ws:
+            with pytest.raises(WebSocketDisconnect) as excinfo:
+                ws.receive_text()
+    assert (excinfo.value.code, excinfo.value.reason) == (4403, "Forbidden")
+
+    _reset_validator_for_tests()
+    monkeypatch.delenv("SHERLOC_AUTH0_DOMAIN")
+    with _build_app(tmp_path) as client:
+        with client.websocket_connect(path, subprotocols=["bearer", token]) as ws:
+            with pytest.raises(WebSocketDisconnect) as excinfo:
+                ws.receive_text()
+    assert excinfo.value.code == 1011
+    assert excinfo.value.reason == "Authentication unavailable"
+    assert "SHERLOC" not in excinfo.value.reason
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
+def test_signed_out_websocket_is_refused_in_cf_access_mode(
+    monkeypatch, tmp_path, path
+):
+    monkeypatch.setenv("SHERLOC_AUTH_MODE", "cf-access")
+    monkeypatch.setenv("SHERLOC_CF_TEAM_DOMAIN", "example.cloudflareaccess.com")
+    monkeypatch.setenv("SHERLOC_CF_AUDIENCE", "aud-test")
+    with _build_app(tmp_path) as client:
+        assert _ws_close_code(client, path) == 4401
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
+def test_team_websocket_refuses_a_public_account_token(
+    monkeypatch, tmp_path, httpx_mock, signing_key, path
+):
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL, access_mode="internal")
+    httpx_mock.add_response(
+        url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]}
+    )
+    token = _mint(signing_key, audience=AUTH0_AUDIENCE_PUBLIC, identity=[])
+    with _build_app(tmp_path) as client:
+        assert _ws_close_code(client, path, subprotocols=["bearer", token]) == 4401
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
+def test_team_websocket_refuses_a_token_without_the_team_role(
+    monkeypatch, tmp_path, httpx_mock, signing_key, path
+):
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL, access_mode="internal")
+    httpx_mock.add_response(
+        url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]}
+    )
+    token = _mint(signing_key, identity=[])
+    with _build_app(tmp_path) as client:
+        assert _ws_close_code(client, path, subprotocols=["bearer", token]) == 4403
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
+def test_team_websocket_with_a_team_token_reaches_the_job_lookup(
+    monkeypatch, tmp_path, httpx_mock, signing_key, path
+):
+    """A valid team session passes the handshake; the unknown job id then
+    closes with 4004, which only happens after authentication."""
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL, access_mode="internal")
+    httpx_mock.add_response(
+        url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]}
+    )
+    token = _mint(signing_key, identity=["phase:team-member"])
+    with _build_app(tmp_path) as client:
+        assert _ws_close_code(client, path, subprotocols=["bearer", token]) == 4004
+
+
+def test_team_websocket_accepts_a_team_token_and_echoes_the_bearer_subprotocol(
+    monkeypatch, tmp_path, httpx_mock, signing_key
+):
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL, access_mode="internal")
+    httpx_mock.add_response(
+        url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]}
+    )
+    token = _mint(signing_key, identity=["phase:team-member"])
+    with _build_app(tmp_path) as client:
+        job = client.app.state.job_queue.submit("scan-x", lambda: {})
+        with client.websocket_connect(
+            f"/api/ws/jobs/{job.job_id}", subprotocols=["bearer", token]
+        ) as ws:
+            assert ws.accepted_subprotocol == "bearer"
+            msg = ws.receive_json()
+            assert msg["type"]

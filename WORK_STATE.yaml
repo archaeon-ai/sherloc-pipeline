@@ -1,10 +1,7 @@
-work_package: "sherloc-pipeline#54: F3 scan resolver route"
-branch: 54-resolver-route
-pr_url: https://github.com/archaeon-ai/sherloc-pipeline/pull/93
-head: 10eb8ec  # pre-fix head; round-1 review target
-open_decisions: []
-next_action: "Post the round-1 response comment and run Codex review round 2 on the fix head."
-last_verified:
-  at: "2026-10-15T22:53:00Z"
-  what: "Round-1 F1 fix (Auth0 appState return URL): full frontend run 213/213, same pre-existing MapSpectrumPanel unhandled rejection; svelte-check unchanged at 4 errors in PdsBrowser.svelte."
-  how: "npx vitest run; npm run check (niced), pitch lane."
+work_package: "sherloc hosts: sign in before anything is served (Ken 2026-10-16)"
+branch: "public-force-signin (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/96)"
+head: "a9670fb"
+open_decisions:
+  - "Edge gate (orange-cloud + Worker/Access) for a curl-visible 302: Ken"
+next_action: "Codex r4 on the F6 fix (fixed WS close reasons), then CI; merge on GO plus green; Ken tags v5.7.1 and rolls both hosts (PR body)"
+last_verified: "2026-10-16T22:50:54-07:00 — tests/unit (not slow) 3128 passed, 17 skipped; frontend vitest 222 passed; svelte-check 4 errors, same as main"

@@ -361,6 +361,13 @@ export interface ConfigResponse {
   features?: FeaturesConfig;
 }
 
+/** GET /api/config/bootstrap: the anonymous subset the SPA needs before login. */
+export interface BootstrapConfigResponse {
+  schema_version: string;
+  auth: AuthConfig;
+  features?: FeaturesConfig;
+}
+
 // --- Auth (§13.4) ---
 
 export type AuthMode = 'auth0' | 'cf-access' | 'dev';

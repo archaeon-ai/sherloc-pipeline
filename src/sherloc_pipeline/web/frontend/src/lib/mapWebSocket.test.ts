@@ -26,7 +26,10 @@ class FakeWebSocket {
   onclose: ((event: { code: number }) => void) | null = null;
   onerror: (() => void) | null = null;
 
-  constructor(public readonly url: string) {
+  constructor(
+    public readonly url: string,
+    public readonly protocols?: string[],
+  ) {
     FakeWebSocket.instances.push(this);
   }
 
@@ -173,6 +176,17 @@ describe('MapWebSocket reconnect', () => {
     new MapWebSocket('/ws/map/mf_gone', handlers, 5, 10);
 
     FakeWebSocket.instances[0].drop(4004); // job not found
+    await settleReconnects();
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(handlers.onDisconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([4401, 4403])('does not retry a sign-in refusal (%i)', async (code) => {
+    const handlers = makeHandlers();
+    new MapWebSocket('/ws/map/mf_1', handlers, 5, 10);
+
+    FakeWebSocket.instances[0].drop(code);
     await settleReconnects();
 
     expect(FakeWebSocket.instances).toHaveLength(1);
