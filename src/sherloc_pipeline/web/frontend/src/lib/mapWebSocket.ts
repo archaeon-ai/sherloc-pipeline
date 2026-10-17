@@ -14,6 +14,7 @@ import type {
   WSJobFailed,
   WSJobCancelled,
 } from './types/map';
+import { openWithWsAuth } from './auth';
 
 /**
  * Reconnect attempts before the client gives up on the socket and leaves
@@ -33,9 +34,10 @@ export const MAP_WS_RECONNECT_BASE_MS = 1000;
 
 /**
  * Close codes the server uses to refuse a socket outright (public mode,
- * unknown job). Retrying those just repeats the refusal.
+ * unknown job, not signed in, missing role). Retrying those just repeats
+ * the refusal.
  */
-const FATAL_CLOSE_CODES = [4003, 4004];
+const FATAL_CLOSE_CODES = [4003, 4004, 4401, 4403];
 
 export interface MapWSHandlers {
   onJobStarted: (msg: WSJobStarted) => void;
@@ -92,7 +94,13 @@ export class MapWebSocket {
     const sep = this.wsUrl.includes('?') ? '&' : '?';
     const resume = this.lastSeq >= 0 ? `${sep}last_seq=${this.lastSeq}` : '';
     const fullUrl = `${protocol}//${window.location.host}${this.wsUrl}${resume}`;
-    const ws = new WebSocket(fullUrl);
+    openWithWsAuth((protocols) => {
+      if (!this.closedByClient) this.open(fullUrl, protocols);
+    });
+  }
+
+  private open(fullUrl: string, protocols?: string[]): void {
+    const ws = new WebSocket(fullUrl, protocols);
     this.ws = ws;
 
     const attempt = this.reconnects;

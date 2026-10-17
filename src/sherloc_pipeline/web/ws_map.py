@@ -22,6 +22,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from sherloc_pipeline.services.map_fitting import PointFitResult
+from sherloc_pipeline.web.auth import WebSocketAuthRejected, authenticate_websocket
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["websocket"])
@@ -869,6 +870,12 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=4003, reason="WebSocket not available in public mode")
         return
 
+    # Sign-in first, before the job id is even looked up.
+    try:
+        subprotocol = await authenticate_websocket(websocket)
+    except WebSocketAuthRejected:
+        return
+
     # Look up job in registry
     registry: MapJobRegistry = websocket.app.state.map_registry
     ctx = registry.get(job_id)
@@ -876,7 +883,7 @@ async def map_ws(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=4004, reason="Job not found")
         return
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=subprotocol)
 
     # Resume point. Absent (or unparseable) means "replay everything
     # buffered": a client connecting mid-job has no history, and the

@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/api/config/access-mode` and `/api/health` with status and version only. `/api/config`, `/docs`,
   `/openapi.json` and `/api/user/*` need a token, as the data routes already did. `/api/health` no longer
   returns the database path, and its per-check detail needs a token. Dev mode is unchanged.
+- **WebSockets need sign-in too.** `/api/ws/jobs/{id}` and `/ws/map/{id}` now authenticate the handshake
+  like an HTTP request, before the job is looked up: the SPA offers the access token as the `bearer`
+  subprotocol (cf-access reads the edge header). Refused handshakes close with 4401 (no or invalid token) or
+  4403 (missing role), and the client does not retry them.
+- **Retired docs variants.** `/redoc`, `/docs/...` (including the Swagger OAuth2 redirect) and
+  `/openapi.json/` return 404 instead of the SPA shell. In Auth0 mode `/docs` and `/openapi.json` are for API
+  clients that send the bearer token; a browser cannot attach it to a page load.
+
+### Fixed
+- If the sign-in redirect cannot start, the app mounts with its Log in button instead of a blank page.
 
 ## [5.7.0] - 2026-10-15
 

@@ -37,7 +37,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Protocol
 
 import jwt
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, WebSocket
 from jwt.exceptions import InvalidTokenError, PyJWKClientError
 
 # §2.6.1 contract: imported from the package, not redefined here.
@@ -411,7 +411,16 @@ def require_authenticated_request(request: Request) -> TokenClaims:
     - Token valid + missing required role         → 403 (G18.11.role-required, .no-role)
     """
     mode = os.environ.get("SHERLOC_AUTH_MODE", "cf-access")
+    return _authenticate_token(_extract_request_token(request, mode), mode)
 
+
+def _authenticate_token(token: Optional[str], mode: str) -> TokenClaims:
+    """Validate ``token`` and the role-per-API for ``mode``.
+
+    Shared by the HTTP dependency and the WebSocket handshake; raises
+    ``HTTPException`` with the status codes listed on
+    ``require_authenticated_request``.
+    """
     if mode == "dev":
         # DevValidator ignores the token; synthetic claims always pass.
         try:
@@ -421,7 +430,6 @@ def require_authenticated_request(request: Request) -> TokenClaims:
         logger.debug("authn ok sub=%s", claims.sub)
         return claims
 
-    token = _extract_request_token(request, mode)
     if not token:
         # A missing-credential 401 must
         # surface a ``WWW-Authenticate: Bearer realm=...`` header.
@@ -476,3 +484,63 @@ def require_authenticated_request(request: Request) -> TokenClaims:
     # §2.6.1: successful validation logs the sub claim only.
     logger.debug("authn ok sub=%s", claims.sub)
     return claims
+
+
+# ---------------------------------------------------------------------------
+# WebSocket handshake authentication
+# ---------------------------------------------------------------------------
+
+#: Subprotocol carrying the Auth0 access token. Browsers cannot set an
+#: ``Authorization`` header on a WebSocket, so the SPA offers
+#: ``["bearer", <token>]`` and the server echoes ``"bearer"`` back.
+WS_BEARER_PROTOCOL = "bearer"
+
+#: Close codes for a refused handshake (4000-4999 are application codes).
+WS_CLOSE_UNAUTHENTICATED = 4401
+WS_CLOSE_FORBIDDEN = 4403
+
+
+def _extract_websocket_token(websocket: WebSocket, mode: str) -> Optional[str]:
+    if mode == "cf-access":
+        return websocket.headers.get("Cf-Access-Jwt-Assertion")
+    offered = [
+        p.strip()
+        for p in websocket.headers.get("Sec-WebSocket-Protocol", "").split(",")
+        if p.strip()
+    ]
+    if len(offered) == 2 and offered[0] == WS_BEARER_PROTOCOL:
+        return offered[1]
+    return None
+
+
+async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
+    """Authenticate a WebSocket handshake the same way as an HTTP request.
+
+    Call before ``accept()``. On success returns the subprotocol to pass
+    to ``accept(subprotocol=...)`` (``None`` when the client offered
+    none). On failure closes the socket with 4401 (no or invalid
+    credential), 4403 (missing role) or 1011 (auth unavailable or
+    misconfigured) and raises ``WebSocketAuthRejected``.
+    """
+    mode = os.environ.get("SHERLOC_AUTH_MODE", "cf-access")
+    token = _extract_websocket_token(websocket, mode)
+    try:
+        _authenticate_token(token, mode)
+    except HTTPException as exc:
+        code = {
+            401: WS_CLOSE_UNAUTHENTICATED,
+            403: WS_CLOSE_FORBIDDEN,
+        }.get(exc.status_code, 1011)
+        await websocket.close(code=code, reason=str(exc.detail))
+        raise WebSocketAuthRejected(code) from None
+    if mode not in ("cf-access", "dev") and token:
+        return WS_BEARER_PROTOCOL
+    return None
+
+
+class WebSocketAuthRejected(Exception):
+    """The handshake was refused and the socket is already closed."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(code)
+        self.code = code

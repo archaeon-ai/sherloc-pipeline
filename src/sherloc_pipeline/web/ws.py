@@ -10,6 +10,7 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from sherloc_pipeline.web.auth import WebSocketAuthRejected, authenticate_websocket
 from sherloc_pipeline.web.jobs import JobQueue, JobStatus
 
 router = APIRouter(tags=["websocket"])
@@ -29,6 +30,12 @@ async def job_ws(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=4003, reason="WebSocket not available in public mode")
         return
 
+    # Sign-in first, before the job id is even looked up.
+    try:
+        subprotocol = await authenticate_websocket(websocket)
+    except WebSocketAuthRejected:
+        return
+
     job_queue: JobQueue = websocket.app.state.job_queue
     state = job_queue.get(job_id)
 
@@ -36,7 +43,7 @@ async def job_ws(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=4004, reason="Job not found")
         return
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=subprotocol)
 
     last_seq = -1
     last_heartbeat = time.monotonic()

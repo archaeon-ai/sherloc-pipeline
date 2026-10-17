@@ -3,6 +3,10 @@
 // ============================================================
 
 import type { WsMessage } from './types';
+import { openWithWsAuth } from './auth';
+
+/** Server refusals (public mode, unknown job, signed out, missing role). */
+const FATAL_CLOSE_CODES = [4003, 4004, 4401, 4403];
 
 export type WsCallback = (msg: WsMessage) => void;
 
@@ -30,9 +34,14 @@ export class JobWebSocket {
 
   private connect(): void {
     if (this.closed) return;
+    openWithWsAuth((protocols) => this.open(protocols));
+  }
+
+  private open(protocols?: string[]): void {
+    if (this.closed) return;
 
     try {
-      this.ws = new WebSocket(this.getWsUrl());
+      this.ws = new WebSocket(this.getWsUrl(), protocols);
     } catch {
       this.handleReconnect();
       return;
@@ -49,8 +58,8 @@ export class JobWebSocket {
       }
     };
 
-    this.ws.onclose = () => {
-      if (!this.closed) {
+    this.ws.onclose = (event: CloseEvent) => {
+      if (!this.closed && !FATAL_CLOSE_CODES.includes(event?.code)) {
         this.handleReconnect();
       }
       this.onClose?.();

@@ -551,6 +551,13 @@ class _StubApp:
         self.state = SimpleNamespace(map_registry=registry, access_mode=access_mode)
 
 
+@pytest.fixture(autouse=True)
+def _dev_auth(monkeypatch):
+    # These tests drive the streaming logic; handshake auth is covered in
+    # tests/unit/test_auth_routes.py.
+    monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
+
+
 class _StubWebSocket:
     """Minimal stand-in for a Starlette WebSocket."""
 
@@ -564,6 +571,7 @@ class _StubWebSocket:
     ):
         self.app = _StubApp(registry, access_mode)
         self.query_params = query_params or {}
+        self.headers: dict[str, str] = {}
         self.sent: list[dict] = []
         self.accepted = False
         self.closed: tuple[int, str] | None = None
@@ -571,7 +579,7 @@ class _StubWebSocket:
         for raw in client_messages or []:
             self._inbound.put_nowait(raw)
 
-    async def accept(self) -> None:
+    async def accept(self, subprotocol: str | None = None) -> None:
         self.accepted = True
 
     async def send_json(self, data: dict) -> None:

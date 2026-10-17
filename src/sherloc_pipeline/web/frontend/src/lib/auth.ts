@@ -46,6 +46,22 @@ let session: AuthSession | null = null;
 /** Set when bootstrap sent a signed-out visitor to the Auth0 login page. */
 let loginRedirectStarted = false;
 
+/**
+ * Open a WebSocket with the access token offered as the `bearer`
+ * subprotocol: browsers cannot set Authorization on a WebSocket, and the
+ * server echoes `bearer` back. Without an Auth0 session `open` runs at
+ * once with no subprotocol (cf-access authenticates at the edge; dev
+ * needs nothing).
+ */
+export function openWithWsAuth(open: (protocols?: string[]) => void): void {
+  const s = session;
+  if (!s || s.mode !== 'auth0') {
+    open();
+    return;
+  }
+  void s.getToken().then((token) => open(token ? ['bearer', token] : undefined));
+}
+
 /** True when the page is leaving for the login page; main.ts skips mounting. */
 export function redirectingToLogin(): boolean {
   return loginRedirectStarted;
@@ -204,13 +220,23 @@ async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
     // Sign in first: a visitor with no session goes straight to the login
     // page (public sign-up is offered there), returning to this URL. An
     // Auth0 error return (e.g. the visitor cancelled) stays on the page
-    // with its Log in button, so the redirect cannot loop.
+    // with its Log in button, so the redirect cannot loop. If the redirect
+    // cannot start, the app mounts with its Log in button instead of
+    // leaving a blank page.
     if (!params.has('error') && !(await client.isAuthenticated())) {
-      loginRedirectStarted = true;
       const { pathname, search, hash } = window.location;
-      await client.loginWithRedirect<LoginAppState>({
-        appState: { returnTo: `${pathname}${search}${hash}` },
-      });
+      try {
+        await client.loginWithRedirect<LoginAppState>({
+          appState: { returnTo: `${pathname}${search}${hash}` },
+        });
+        loginRedirectStarted = true;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          'Login redirect failed:',
+          (err as Error)?.message?.slice(0, 200) ?? '',
+        );
+      }
     }
   }
 
