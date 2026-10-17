@@ -724,6 +724,20 @@ def test_signed_out_websocket_is_refused_before_the_job_lookup(
 
 
 @pytest.mark.parametrize("path", _WS_PATHS)
+def test_websocket_refusal_reaches_the_client_as_a_close_code(
+    monkeypatch, tmp_path, path
+):
+    """The refusal is accept-then-close, so a browser sees 4401 rather than
+    a bare HTTP 403 (which surfaces as 1006 and would be retried)."""
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL)
+    with _build_app(tmp_path) as client:
+        with client.websocket_connect(path) as ws:  # handshake completes
+            with pytest.raises(WebSocketDisconnect) as excinfo:
+                ws.receive_text()
+    assert excinfo.value.code == 4401
+
+
+@pytest.mark.parametrize("path", _WS_PATHS)
 def test_signed_out_websocket_is_refused_in_cf_access_mode(
     monkeypatch, tmp_path, path
 ):

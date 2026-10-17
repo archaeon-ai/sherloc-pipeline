@@ -518,12 +518,18 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
 
     Call before ``accept()``. On success returns the subprotocol to pass
     to ``accept(subprotocol=...)`` (``None`` when the client offered
-    none). On failure closes the socket with 4401 (no or invalid
-    credential), 4403 (missing role) or 1011 (auth unavailable or
-    misconfigured) and raises ``WebSocketAuthRejected``.
+    none). On failure accepts and immediately closes with 4401 (no or
+    invalid credential), 4403 (missing role) or 1011 (auth unavailable
+    or misconfigured), sending nothing else, and raises
+    ``WebSocketAuthRejected``. Accepting first is what lets the code
+    reach the browser: a close before ``accept()`` becomes a bare HTTP
+    403 and the client sees only 1006, which it would retry.
     """
     mode = os.environ.get("SHERLOC_AUTH_MODE", "cf-access")
     token = _extract_websocket_token(websocket, mode)
+    subprotocol = (
+        WS_BEARER_PROTOCOL if mode not in ("cf-access", "dev") and token else None
+    )
     try:
         _authenticate_token(token, mode)
     except HTTPException as exc:
@@ -531,11 +537,10 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
             401: WS_CLOSE_UNAUTHENTICATED,
             403: WS_CLOSE_FORBIDDEN,
         }.get(exc.status_code, 1011)
+        await websocket.accept(subprotocol=subprotocol)
         await websocket.close(code=code, reason=str(exc.detail))
         raise WebSocketAuthRejected(code) from None
-    if mode not in ("cf-access", "dev") and token:
-        return WS_BEARER_PROTOCOL
-    return None
+    return subprotocol
 
 
 class WebSocketAuthRejected(Exception):
