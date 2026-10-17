@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.1] - 2026-10-16
+
+### Security
+- **Sign in before anything is served.** In Auth0 mode a signed-out visitor goes straight to the sign-in page
+  (sign-up is offered there on the public host) and comes back to the same link after signing in. Signed out,
+  the API now answers only `/api/config/bootstrap` (the auth and feature blocks the SPA needs to start sign-in),
+  `/api/config/access-mode` and `/api/health` with status and version only. `/api/config`, `/docs`,
+  `/openapi.json` and `/api/user/*` need a token, as the data routes already did. `/api/health` no longer
+  returns the database path, and its per-check detail needs a token. Dev mode is unchanged.
+
 ## [5.7.0] - 2026-10-15
 
 ### Added
