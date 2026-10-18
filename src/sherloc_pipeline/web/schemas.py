@@ -21,7 +21,7 @@ class BaselineParamsSchema(BaseModel):
 
     method: str = Field(default="aspls", description="Baseline algorithm.")
     lam: float = Field(default=1_000_000.0, description="Smoothness parameter.")
-    max_iter: int = Field(default=10, description="Maximum iterations.")
+    max_iter: int = Field(default=10, ge=1, le=50, description="Maximum iterations.")
     wavenumber_range: Optional[List[float]] = Field(
         default=None,
         min_length=2,
@@ -655,8 +655,17 @@ class MapFitRequest(BaseModel):
     """Request to start map-mode fitting."""
 
     scan_id: str
-    domains: List[str]  # ["minerals", "organics", "hydration", "fluorescence"]
+    domains: List[Literal["minerals", "organics", "hydration", "fluorescence"]] = Field(
+        min_length=1, max_length=4, description="Unique fitting domains."
+    )
     point_indices: Optional[List[int]] = None  # null = all points
+
+    @field_validator("domains")
+    @classmethod
+    def unique_domains(cls, value: List[str]) -> List[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("domains must be unique")
+        return value
 
 
 class MapFitResponse(BaseModel):
