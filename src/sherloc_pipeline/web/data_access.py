@@ -1,9 +1,8 @@
 """Data access gating service for public vs internal mode.
 
 In ``internal`` mode (default), all data is accessible. In ``public`` mode,
-Loupe-sourced records are filtered out so that only PDS4-sourced data is
-returned. This ensures that proprietary Loupe workspace data is not exposed
-through the public-facing API.
+only explicitly allowlisted PDS4-sourced records are accessible. Missing,
+null, and unrecognized sources are denied by the public-facing API.
 """
 
 import logging
@@ -15,13 +14,15 @@ from sherloc_pipeline.database.models import ScanORM
 
 logger = logging.getLogger(__name__)
 
+PUBLIC_DATA_SOURCES = ("pds4",)
+
 
 class DataAccessService:
     """Gates data queries based on the configured access mode.
 
     Args:
         access_mode: ``"internal"`` (all data) or ``"public"``
-            (PDS-only, no Loupe data).
+            (allowlisted PDS4 data only).
     """
 
     def __init__(self, access_mode: Literal["internal", "public"] = "internal"):
@@ -33,8 +34,12 @@ class DataAccessService:
         return self.access_mode == "public"
 
     def validate_scan_access(self, scan) -> None:
-        """Raise HTTPException(403) if scan is Loupe-sourced and mode is public."""
-        if self.is_public and getattr(scan, "data_source", None) == "loupe":
+        """In public mode, raise 403 unless the scan's source is allowlisted.
+
+        Missing, null, and unrecognized sources are denied. Internal mode
+        permits every source.
+        """
+        if self.is_public and getattr(scan, "data_source", None) not in PUBLIC_DATA_SOURCES:
             from fastapi import HTTPException
 
             raise HTTPException(
@@ -45,7 +50,8 @@ class DataAccessService:
     def filter_scans_query(self, query: Query) -> Query:
         """Apply access-mode filtering to a scans query.
 
-        In public mode, excludes scans whose ``data_source`` is ``"loupe"``.
+        Public mode keeps only allowlisted sources, excluding null and
+        unrecognized values. Internal mode returns the query unchanged.
 
         Args:
             query: SQLAlchemy query over :class:`ScanORM`.
@@ -54,5 +60,5 @@ class DataAccessService:
             The (possibly filtered) query.
         """
         if self.is_public:
-            query = query.filter(ScanORM.data_source != "loupe")
+            query = query.filter(ScanORM.data_source.in_(PUBLIC_DATA_SOURCES))
         return query
