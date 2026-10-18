@@ -626,7 +626,8 @@ def _apply_laser_normalization(
         .filter(ScanPointORM.scan_id == scan_id)
         .all()
     )
-    pd_map = {p.point_index: p.photodiode_mean for p in points if p.photodiode_mean is not None}
+    pd_map = {p.point_index: p.photodiode_mean for p in points
+              if p.photodiode_mean is not None and np.isfinite(p.photodiode_mean)}
 
     if not pd_map:
         # No photodiode data — return unnormalized

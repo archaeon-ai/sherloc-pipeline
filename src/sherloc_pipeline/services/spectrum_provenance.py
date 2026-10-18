@@ -62,12 +62,14 @@ def build_spectrum_provenance(
                            "interpolation": despike_interpolation})
     if region == "R123":
         processing.append({"step": "r123_stitch", "method": "overlap_sum", "regions": ["R1", "R2", "R3"]})
-    if normalization_applied and spectrum_type == "dark_subtracted":
+    if spectrum_type == "dark_subtracted" and (aggregation is not None or normalization_applied):
         pd_by_index = {sp.scan_point.point_index: sp.scan_point.photodiode_mean for sp, _ in rows}
         processing.append({
-            "step": "laser_normalization", "max_photodiode": max_photodiode,
-            "factors": {str(idx): max_photodiode / pd if pd and pd > 0 else 1.0
-                        for idx, pd in pd_by_index.items()},
+            "step": "laser_normalization", "applied": normalization_applied,
+            "max_photodiode": max_photodiode,
+            "factors": {str(idx): max_photodiode / pd if pd and np.isfinite(pd) and pd > 0 else 1.0
+                        for idx, pd in pd_by_index.items()} if normalization_applied else {},
+            "unavailable_reason": None if normalization_applied else "missing_finite_positive_photodiode",
         })
     if aggregation is not None:
         processing.append({"step": "aggregate", **aggregation})

@@ -332,6 +332,48 @@ async def test_subset_rejects_duplicate_indices(axis_client, region):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["average", "subset"])
+@pytest.mark.parametrize("reading", [float("nan"), float("inf"), -float("inf")])
+async def test_nonfinite_photodiodes_leave_normalization_unavailable(axis_client, axis_db, monkeypatch, mode, reading):
+    with Session(axis_db) as session:
+        session.get(ScanORM, SCAN_ID).data_source = "loupe"
+        for row in session.query(SpectrumORM).all():
+            row.spectrum_type = "dark_subtracted"
+        session.commit()
+    # SQLite turns NaN into NULL; supply non-finite readings at the query boundary.
+    pd_session = MagicMock()
+    pd_session.query.return_value.filter.return_value.all.return_value = [
+        SimpleNamespace(point_index=idx, photodiode_mean=reading) for idx in range(2)
+    ]
+    normalize = spectra._apply_laser_normalization
+    monkeypatch.setattr(spectra, "_apply_laser_normalization", lambda session, scan_id, arrays:
+                        normalize(pd_session, scan_id, arrays))
+    response = await request_trace(axis_client, mode, "R1")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    np.testing.assert_array_equal(data["intensity"], np.full(data["n_channels"], 2))
+    step = next(s for s in data["provenance"]["processing_chain"] if s["step"] == "laser_normalization")
+    assert step["applied"] is False
+    assert step["max_photodiode"] is None
+    assert step["factors"] == {}
+    assert step["unavailable_reason"] == "missing_finite_positive_photodiode"
+
+
+def test_mixed_photodiodes_treat_nonfinite_as_missing():
+    session = MagicMock()
+    session.query.return_value.filter.return_value.all.return_value = [
+        SimpleNamespace(point_index=idx, photodiode_mean=value)
+        for idx, value in enumerate([float("nan"), float("inf"), 2, 4])
+    ]
+    arrays, applied, maximum = spectra._apply_laser_normalization(
+        session, SCAN_ID, [(idx, np.array([3.])) for idx in range(4)],
+    )
+    assert applied is True
+    assert maximum == 4
+    np.testing.assert_array_equal(arrays, [[3], [3], [6], [3]])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("origin", ["loupe", None])
 async def test_loupe_and_unknown_origin_are_not_invented(axis_client, axis_db, origin):
     with Session(axis_db) as session:
