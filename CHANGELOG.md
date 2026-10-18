@@ -32,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed or stale selections cannot relabel a committed trace, and undo/reset restores the trace's provenance
   together with its processing (#105, #99).
 - **Export and processing details (#105, #99).**
-  - CSV exports add wavelength, detector channel and unit columns, with the same provenance object as the JSON.
+  - CSV exports add wavelength and detector-channel columns plus unit metadata, with the same provenance object
+    as the JSON.
   - Duplicate subset indices are rejected with 422.
   - Normalization reports unavailable or partial evidence, and treats non-finite photodiode values as missing.
   - Fit provenance records the resolved defaults, the baseline/configuration branch actually used, and the
