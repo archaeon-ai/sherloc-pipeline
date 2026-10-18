@@ -103,6 +103,7 @@ packaging==26.2
     #   scikit-image
 pandas==3.0.2
     # via sherloc-pipeline (pyproject.toml)
+# Auth revisions here, in pyproject.toml, and in Dockerfile must move together.
 phase-platform-auth @ git+https://github.com/archaeon-ai/phase-platform-auth@890be041d7b4e6144a3a132df38bf02e5b599d53
     # via sherloc-pipeline (pyproject.toml)
 pillow==12.2.0
