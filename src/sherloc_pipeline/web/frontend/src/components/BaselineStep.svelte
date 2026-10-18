@@ -30,7 +30,7 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
   export let visibleRange: [number, number] | null = null;
 
   const dispatch = createEventDispatcher<{
-    apply: { corrected: number[]; baseline: number[]; params: BaselineParams };
+    apply: { corrected: number[]; baseline: number[]; params: BaselineParams; inputIntensity: number[] };
     toggle: { enabled: boolean };
   }>();
 
@@ -95,6 +95,7 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
     }
     const sequence = ++computationSequence;
     const gen = inputGeneration;
+    const inputIntensity = intensity;
     computing = true;
     error = '';
     try {
@@ -113,6 +114,7 @@ smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>
       if (sequence !== computationSequence || gen !== inputGeneration) return;
       appliedRange = result.params_used.wavenumber_range ?? null;
       dispatch('apply', {
+        inputIntensity,
         corrected: result.corrected,
         baseline: result.baseline,
         params: result.params_used,

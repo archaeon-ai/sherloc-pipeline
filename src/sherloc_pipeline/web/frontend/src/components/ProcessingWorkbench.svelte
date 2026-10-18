@@ -131,6 +131,7 @@
 
   // Raw snapshot for reset
   let rawSnapshot: ProcessingSnapshot | null = null;
+  let rawSnapshotToken = 0;
 
   // Current state derived from store
   $: currentState = $processingState;
@@ -395,6 +396,7 @@
     if (!spectrum) return;
     const provenance = JSON.parse(JSON.stringify(spectrum.provenance));
     const snapshot: ProcessingSnapshot = {
+      inputToken: ++rawSnapshotToken,
       stage: 'raw',
       trace: {
         provenance,
@@ -502,7 +504,7 @@
 
   // Processing chain update
   function onChainStateUpdate(e: CustomEvent<ProcessingSnapshot>) {
-    if (destroyed || !rawSnapshot) return;
+    if (destroyed || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
     const newState = { ...e.detail, trace: rawSnapshot?.trace };
     // Push current state to undo before updating
     if (currentState) {
@@ -670,6 +672,7 @@
           <div class="card-body chain-body">
             {#if spectrum}
               <ProcessingChain
+                inputToken={rawSnapshot?.inputToken ?? 0}
                 wavenumber={spectrum.wavenumber}
                 wavelength={spectrum.wavelength ?? null}
                 intensity={spectrum.intensity}

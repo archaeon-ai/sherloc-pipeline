@@ -620,6 +620,7 @@ export interface ExportTrace {
 }
 
 export interface ProcessingSnapshot {
+  inputToken?: number;
   trace?: ExportTrace;
   processingChain?: Record<string, unknown>[];
   stage: ProcessingStage;

@@ -19,7 +19,7 @@ import { tick } from 'svelte';
 import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
-import type { BadpixResponse, SpectrumParams, SpectrumResponse } from '../lib/types';
+import type { BadpixResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
 // Module-level react spy so the issue-#8 tests can inspect the traces the
@@ -124,6 +124,63 @@ function fakeSpectrum(intensity: number[], overrides: Partial<SpectrumResponse> 
     ...overrides,
   };
 }
+
+function fakeFit() {
+  return {
+    schema_version: '1', peaks: [], n_peaks: 0, r_squared: 0.8,
+    model_selection_method: 'aicc', residual: [1, 1, 1], baseline: [0, 0, 0],
+    corrected: [7, 8, 9], wavenumber: [800, 900, 1000],
+    provenance: { params_used: {}, config_hash: 'synthetic-fit-hash',
+      calibration_version: 'synthetic-calibration', wavenumber_unit: 'cm-1', intensity_unit: 'synthetic-unit' },
+  };
+}
+
+describe('ProcessingWorkbench processing snapshot identity', () => {
+  it.each(['baseline', 'fit'])('drops %s A when spectrum B commits before the chain reset flushes', async (step) => {
+    vi.spyOn(api, 'getScan').mockResolvedValue({
+      schema_version: '1.0.0', scan: { ...fakeScan(), ml_mask_count: 0 },
+    });
+    let resolveProcessing = () => {};
+    if (step === 'baseline') {
+      vi.spyOn(api, 'postBaseline').mockReturnValue(new Promise((resolve) => {
+        resolveProcessing = () => resolve({ schema_version: '1', raw: INTENSITY_A,
+          wavenumber: [800, 900, 1000], corrected: [7, 8, 9], baseline: [3, 4, 6],
+          params_used: { method: 'aspls', lam: 123, max_iter: 2 } });
+      }));
+    } else {
+      vi.spyOn(api, 'postFit').mockReturnValue(new Promise((resolve) => {
+        resolveProcessing = () => resolve(fakeFit());
+      }));
+    }
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    const title = step === 'baseline' ? '3. Baseline' : '4. Peak Fit';
+    const card = Array.from(container.querySelectorAll('.step-title'))
+      .find(el => el.textContent?.trim() === title)!.closest('.step-card')!;
+    if (step === 'baseline') {
+      await fireEvent.click(card.querySelector('input[type="checkbox"]')!);
+    } else {
+      await fireEvent.click(card.querySelector('.step-header')!);
+      await fireEvent.click(card.querySelector('.btn-primary')!);
+    }
+    expect(step === 'baseline' ? api.postBaseline : api.postFit).toHaveBeenCalledTimes(1);
+    let resolveSpectrum: (value: SpectrumResponse) => void = () => {};
+    getAvg.mockReturnValueOnce(new Promise(resolve => { resolveSpectrum = resolve; }));
+    await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'mean' } });
+    const committed: Array<ProcessingSnapshot | null> = [];
+    const unsubscribe = processingState.subscribe(state => committed.push(state));
+    // Both continuations queue before Svelte's flush: B commits, then A emits.
+    resolveSpectrum(fakeSpectrum(INTENSITY_NEW, { provenance: { source_digest: 'synthetic-B' } }));
+    resolveProcessing();
+    await flush();
+    unsubscribe();
+    expect(committed.some(state => state?.trace?.provenance.source_digest === 'synthetic-B'
+      && state.stage !== 'raw')).toBe(false);
+    expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+    expect(get(processingState)?.processingChain).toEqual([]);
+    expect(await exportCsv(container)).toContain('synthetic-B');
+  });
+});
 
 function flush(): Promise<void> {
   return new Promise<void>((r) => setTimeout(r, 0)).then(() => tick());

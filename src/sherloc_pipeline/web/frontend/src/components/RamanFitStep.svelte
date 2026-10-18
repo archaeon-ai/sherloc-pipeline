@@ -26,6 +26,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
   export let wavenumber: number[] = [];
   export let wavelength: number[] | null = null;
   export let intensity: number[] = [];
+  export let inputGeneration: number = 0;
   export let baselineParams: BaselineParams = { method: 'aspls', lam: 1e6, max_iter: 10 };
   export let collapsed: boolean = true;
   // Scan target_type forwarded to /api/process/fit so the backend quality
@@ -45,6 +46,8 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
       modelSelectionMethod: string;
       fitWavenumber: number[];
       params: FitParams;
+      generation: number;
+      inputIntensity: number[];
     };
   }>();
 
@@ -106,6 +109,8 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
   }
 
   async function runFit() {
+    const gen = inputGeneration;
+    const inputIntensity = intensity;
     // For fluorescence, use wavelength as x-axis; for Raman domains, use wavenumber
     const xData = isFluor && wavelength ? wavelength : wavenumber;
     if (xData.length === 0) return;
@@ -132,10 +137,13 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
           },
         },
       });
+      if (gen !== inputGeneration || inputIntensity !== intensity) return;
       lastNPeaks = result.n_peaks;
       lastRSquared = result.r_squared;
       const fitCurve = buildFitCurve(result.corrected, result.residual);
       dispatch('apply', {
+        generation: gen,
+        inputIntensity,
         peaks: result.peaks,
         fitCurve,
         residual: result.residual,
@@ -154,6 +162,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
         },
       });
     } catch (e) {
+      if (gen !== inputGeneration) return;
       if (e instanceof ApiError) {
         error = e.message;
       } else {
