@@ -115,7 +115,7 @@ def list_scans(
 
     q = session.query(ScanORM)
 
-    # Apply access-mode filtering (excludes Loupe data in public mode)
+    # Apply access-mode filtering (allows only PDS4 data in public mode)
     q = data_access.filter_scans_query(q)
 
     if sol is not None:
