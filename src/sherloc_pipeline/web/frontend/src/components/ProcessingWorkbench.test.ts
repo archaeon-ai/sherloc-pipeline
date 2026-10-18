@@ -49,14 +49,14 @@ const INTENSITY_STALE = [99, 98, 97];
 function fakeScan() {
   return {
     id: SCAN_ID,
-    sol_number: 921,
-    target: 'Amherst_Point',
-    scan_name: 'detail_1',
-    scan_id: '0921_Amherst_Point_detail_1',
+    sol_number: 9999,
+    target: 'Invented',
+    scan_name: 'synthetic',
+    scan_id: 'ss__9999_0000000000_000rrs__synthetic',
     n_points: 1,
     n_channels: 3,
     shots_per_point: 50,
-    laser_wavelength_nm: 248.5794,
+    laser_wavelength_nm: 247,
     scan_class: 'primary' as const,
     scan_type: 'detail' as const,
     target_type: 'mars_target' as const,
@@ -110,6 +110,7 @@ function fakeSpectrum(intensity: number[], overrides: Partial<SpectrumResponse> 
     wavenumber: [800, 900, 1000],
     intensity,
     n_channels: 3,
+    channel_indices: [52, 600, 54],
     provenance: {
       calibration_version: 'loupe_v5.1.5a',
       wavenumber_unit: 'cm-1',
@@ -921,14 +922,13 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
   it('drops an obsolete region\'s slower badpix response (render AND export)', async () => {
     const r1 = deferred<BadpixResponse>();
     const r2 = deferred<BadpixResponse>();
-    vi.spyOn(api, 'getBadpixChannels').mockImplementation((region: string) =>
-      region === 'R1' ? r1.promise : r2.promise,
-    );
+    const loadCatalog = vi.spyOn(api, 'getBadpixChannels').mockReturnValue(r1.promise);
 
     const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await screen.findByText('1. Despike');
     await flush();
     // Mount's R1 badpix fetch is still pending; switch to R2 before it lands.
+    loadCatalog.mockReturnValue(r2.promise);
     await clickRegion(container, 'r2');
 
     // The CURRENT region's (R2) response lands and commits.
@@ -965,9 +965,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
   it('clears the previous region\'s annotations during the transition until the matching response lands', async () => {
     const r1 = deferred<BadpixResponse>();
     const r2 = deferred<BadpixResponse>();
-    vi.spyOn(api, 'getBadpixChannels').mockImplementation((region: string) =>
-      region === 'R1' ? r1.promise : r2.promise,
-    );
+    const loadCatalog = vi.spyOn(api, 'getBadpixChannels').mockReturnValue(r1.promise);
 
     const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await screen.findByText('1. Despike');
@@ -983,6 +981,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     // Region switch with R2's response still in flight: the R1 list must be
     // cleared IMMEDIATELY — no markers, no toggle (it renders only with a
     // non-empty list), and nothing reaches the export gate.
+    loadCatalog.mockReturnValue(r2.promise);
     await clickRegion(container, 'r2');
     expect(badpixTraceInLastRender()).toBeUndefined();
     expect(screen.queryByLabelText(/Known-noisy channels/i)).toBeNull();
@@ -1000,4 +999,21 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (1)');
     expect(badpixTraceInLastRender()?.x).toEqual([900]);
   });
+});
+
+
+it('maps full-catalog channels through the embedded axis channel map', async () => {
+  getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_A, { channel_indices: [21, 24, 30] }));
+  vi.spyOn(api, 'getBadpixChannels').mockResolvedValue({
+    schema_version: '1.0.0', region: 'R123', n_channels: 2148,
+    badpix: [{ channel: 24, position: 24, tier: 1, source: 'both' }],
+  });
+  render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  expect(api.getBadpixChannels).toHaveBeenCalledWith('R123');
+  await fireEvent.click(screen.getByLabelText(/Known-noisy channels/i));
+  await flush();
+  const traces = reactSpy.mock.calls.at(-1)![1] as Array<{ name?: string; x?: number[] }>;
+  expect(traces.find(trace => trace.name?.startsWith('Known-noisy'))?.x).toEqual([900]);
 });

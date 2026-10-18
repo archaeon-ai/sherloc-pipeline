@@ -90,41 +90,33 @@
   $: mlNMaskedChannels = spectrum?.n_masked_channels ?? 0;
   $: mlMissingRegions = spectrum?.despike_missing_regions ?? [];
 
-  // --- Known-noisy channel annotation (issue #9) -----------------------------
-  // A STATIC per-region list of known-noisy detector channels, fetched once per
-  // region view (cached client-side in api.ts) and rendered as a separate,
-  // default-OFF overlay in RamanView. Entirely independent of despike state:
-  // the fetch carries no despike params and the overlay never alters the trace.
-  // The overlay toggle (`showBadpixOverlay`) is owned HERE (the export
-  // authority) so the CSV badpix column is gated on the same toggle that drives
-  // the overlay — mirroring how the spike column is gated by the Workbench, not
-  // by RamanView's internal state.
-  let badpix: BadpixChannel[] = [];
+  // Fetch the full detector catalog; map absolute channels through the
+  // committed trace so embedded axes can select different region channels.
+  let badpixCatalog: BadpixChannel[] = [];
+  $: badpix = mapBadpix(badpixCatalog, spectrum?.channel_indices ?? []);
+
+  function mapBadpix(catalog: BadpixChannel[], channels: number[]): BadpixChannel[] {
+    const positions = new Map(channels.map((channel, position) => [channel, position]));
+    return catalog.filter(item => positions.has(item.channel))
+      .map(item => ({ ...item, position: positions.get(item.channel)! }));
+  }
   let showBadpixOverlay = false;
 
-  // Generation counter for the badpix stale-response guard (PR #11 review
-  // F1), mirroring spectrumRequestGen below. Badpix positions are REGION-
-  // SPECIFIC served-array indices, so on a fast region switch an older
-  // region's slower response must never overwrite the current region's
-  // annotations — neither on the plot nor through the export gate
-  // (exportBadpix). Each loadBadpix call claims a generation; a response
-  // commits only if no newer request has started since. The call sites only
-  // ever pass the then-current selectedRegion, so "newest generation" ==
-  // "current region's request".
+  // Drop older annotation requests during region transitions.
   let badpixRequestGen = 0;
 
-  async function loadBadpix(reg: string): Promise<void> {
+  async function loadBadpix(): Promise<void> {
     const gen = ++badpixRequestGen;
     // Region transition: clear immediately so the previous region's
     // annotations neither render nor export while the new region's list is
     // in flight (their positions would be wrong for the new served array).
-    badpix = [];
+    badpixCatalog = [];
     try {
-      const res = await getBadpixChannels(reg);
+      const res = await getBadpixChannels('R123');
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely.
       if (gen !== badpixRequestGen) return;
-      badpix = res.badpix;
+      badpixCatalog = res.badpix;
     } catch {
       // Annotation layer is best-effort: a failed fetch must never break the
       // spectrum view. The list was already cleared at request start, so the
@@ -263,7 +255,7 @@
 
   onMount(async () => {
     await loadScan();
-    await loadBadpix(selectedRegion);
+    await loadBadpix();
   });
 
   async function loadScan() {
@@ -450,10 +442,9 @@
     if (reg !== 'R1' && despikeMethod === 'modz') {
       despikeMethod = 'none';
     }
-    // The badpix list is region-specific (served positions differ per region),
-    // so refresh it on a region switch. Independent of the spectrum reload and
-    // of despike state — a failure here never blocks the reload.
-    loadBadpix(selectedRegion);
+    // Refresh independently of the spectrum; a failed annotation fetch
+    // never blocks the reload.
+    loadBadpix();
     reloadAndReset();
   }
 

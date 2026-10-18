@@ -29,6 +29,7 @@ from sherloc_pipeline.core.preprocessing import (
 )
 from sherloc_pipeline.database.models import ScanORM, ScanPointORM, SpectrumORM
 from sherloc_pipeline.services.cr_masks import PARENT_SPECTRUM_TYPE, CRMaskService
+from sherloc_pipeline.services.spectrum_axes import resolve_spectrum_axes
 from sherloc_pipeline.web.adapters import numpy_to_list
 from sherloc_pipeline.web.data_access import DataAccessService
 from sherloc_pipeline.web.schemas import (
@@ -267,6 +268,34 @@ def _get_wavelength_wavenumber(region: str):
         mask = get_region_wavelength_mask(wavelength, region)
     return wavelength, wavenumber, mask
 
+
+
+def _resolve_axes(session, scan, region, spec_type, point_indices=None):
+    query = (
+        session.query(SpectrumORM, ScanPointORM.point_index)
+        .join(ScanPointORM)
+        .filter(
+            ScanPointORM.scan_id == scan.id,
+            SpectrumORM.region.in_(R123_CONTRIBUTORS if region == "R123" else [region]),
+            SpectrumORM.spectrum_type == spec_type,
+        )
+        .order_by(ScanPointORM.point_index, SpectrumORM.region, SpectrumORM.id)
+    )
+    if point_indices is not None:
+        query = query.filter(ScanPointORM.point_index.in_(point_indices))
+    rows = query.all()
+    if region == "R123":
+        regions_by_point = {}
+        for sp, idx in rows:
+            regions_by_point.setdefault(idx, set()).add(sp.region)
+        rows = [(sp, idx) for sp, idx in rows if len(regions_by_point[idx]) == 3]
+    if not rows:
+        raise HTTPException(status_code=404, detail="No valid spectra found")
+    try:
+        axes = resolve_spectrum_axes(scan, [sp for sp, _ in rows], region)
+    except (ValueError, zlib.error) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return axes, rows
 
 def _extract_intensities(spectrum: SpectrumORM) -> np.ndarray:
     """Decode intensities from DB binary (zlib-compressed float32) to numpy array."""
@@ -769,12 +798,11 @@ def get_average_spectrum(
     data_access = _get_data_access(request)
     data_access.validate_scan_access(scan)
 
-    # Compute calibration
-    wavelength, wavenumber, mask = _get_wavelength_wavenumber(region)
+    spec_type = _resolve_spectrum_type(scan)
+    axes, _axis_rows = _resolve_axes(session, scan, region, spec_type)
+    wavelength, wavenumber, mask = axes.wavelength, axes.wavenumber, axes.mask
     wn_masked = wavenumber[mask]
     selected_channels = np.where(mask)[0]
-
-    spec_type = _resolve_spectrum_type(scan)
     is_loupe = (getattr(scan, "data_source", None) or "loupe") == "loupe"
 
     # Stored ML masks live on DARK_SUBTRACTED rows only. modz runs live on the
@@ -879,10 +907,16 @@ def get_average_spectrum(
         baseline_corrected=actually_corrected,
         laser_normalized=normalization_applied,
         wavenumber=numpy_to_list(wn_masked),
-        wavelength=numpy_to_list(wl_masked) if region != "R1" else None,
+        wavelength=numpy_to_list(wl_masked),
+        channel_indices=selected_channels.tolist(),
         intensity=numpy_to_list(avg_intensity),
         n_channels=len(wn_masked),
         provenance=ProvenanceInfo(
+            axis_source=axes.source,
+            axis_sha256=axes.sha256,
+            calibration_version=axes.calibration_version,
+            excitation_nm=axes.excitation_nm,
+            excitation_basis=axes.excitation_basis,
             averaging_method=method_used,
             wavelength_filter=_wavelength_filter_info(region),
         ),
@@ -944,7 +978,8 @@ def get_point_spectrum(
     if point is None:
         raise HTTPException(status_code=404, detail=f"Point index {idx} not found")
 
-    wavelength, wavenumber, mask = _get_wavelength_wavenumber(region)
+    axes, _axis_rows = _resolve_axes(session, scan, region, spec_type, [idx])
+    wavelength, wavenumber, mask = axes.wavelength, axes.wavenumber, axes.mask
     selected_channels = np.where(mask)[0]
 
     # Stored ML masks attach to DARK_SUBTRACTED rows only; the ml despike is a
@@ -1066,11 +1101,17 @@ def get_point_spectrum(
         region=region,
         spectrum_type=spec_type,
         wavenumber=numpy_to_list(wavenumber[mask]),
-        wavelength=numpy_to_list(wavelength[mask]) if region != "R1" else None,
+        wavelength=numpy_to_list(wavelength[mask]),
+        channel_indices=selected_channels.tolist(),
         intensity=numpy_to_list(intensity),
         n_channels=len(intensity),
         photodiode_mean=point.photodiode_mean,
         provenance=ProvenanceInfo(
+            axis_source=axes.source,
+            axis_sha256=axes.sha256,
+            calibration_version=axes.calibration_version,
+            excitation_nm=axes.excitation_nm,
+            excitation_basis=axes.excitation_basis,
             wavelength_filter=_wavelength_filter_info(region),
         ),
         despike_applied=despike_applied,
@@ -1121,10 +1162,6 @@ def get_subset_average(
                 status_code=400, detail=f"Point index {idx} out of range [0, {scan.n_points})"
             )
 
-    wavelength, wavenumber, mask = _get_wavelength_wavenumber(region)
-    wn_masked = wavenumber[mask]
-    selected_channels = np.where(mask)[0]
-
     spec_type = _resolve_spectrum_type(scan)
     is_loupe = (getattr(scan, "data_source", None) or "loupe") == "loupe"
 
@@ -1142,6 +1179,11 @@ def get_subset_average(
         if point is None:
             raise HTTPException(status_code=400, detail=f"Point index {idx} not found")
         points.append(point)
+
+    axes, _axis_rows = _resolve_axes(session, scan, region, spec_type, body.point_indices)
+    wavelength, wavenumber, mask = axes.wavelength, axes.wavenumber, axes.mask
+    wn_masked = wavenumber[mask]
+    selected_channels = np.where(mask)[0]
 
     if region == "R123":
         indexed_intensities, despike_outcome = _collect_r123(
@@ -1214,10 +1256,16 @@ def get_subset_average(
         effective_trim_pct_per_tail=round(effective_pct, 6),
         m_trimmed_per_tail=m_trimmed,
         wavenumber=numpy_to_list(wn_masked),
-        wavelength=numpy_to_list(wl_masked) if region != "R1" else None,
+        wavelength=numpy_to_list(wl_masked),
+        channel_indices=selected_channels.tolist(),
         intensity=numpy_to_list(avg_intensity),
         n_channels=len(wn_masked),
         provenance=ProvenanceInfo(
+            axis_source=axes.source,
+            axis_sha256=axes.sha256,
+            calibration_version=axes.calibration_version,
+            excitation_nm=axes.excitation_nm,
+            excitation_basis=axes.excitation_basis,
             averaging_method=method_used,
             wavelength_filter=_wavelength_filter_info(region),
         ),
