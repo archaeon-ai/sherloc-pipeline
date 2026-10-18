@@ -1,13 +1,23 @@
 """DataAccessService and access-mode endpoint tests."""
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from unittest.mock import MagicMock
 
 from sherloc_pipeline.web.data_access import DataAccessService
 from tests.unit.web.conftest import SCAN_UUID, SOL_NUMBER
+
+
+SCAN_SOURCE_CASES = [
+    pytest.param({"data_source": "pds4"}, id="pds4"),
+    pytest.param({"data_source": "loupe"}, id="loupe"),
+    pytest.param({"data_source": None}, id="null"),
+    pytest.param({}, id="missing"),
+    pytest.param({"data_source": "PDS4"}, id="uppercase"),
+    pytest.param({"data_source": "invented-private"}, id="unknown"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +49,7 @@ class TestDataAccessService:
         assert result is mock_query
         mock_query.filter.assert_not_called()
 
-    def test_public_mode_filters_loupe(self):
+    def test_public_mode_applies_source_filter(self):
         """In public mode, a .filter() call is applied."""
         from unittest.mock import MagicMock
 
@@ -210,27 +220,97 @@ async def test_internal_mode_shows_all_scans(client):
 
 
 class TestValidateScanAccess:
-    def test_validate_scan_access_blocks_loupe_in_public(self):
+    @pytest.mark.parametrize("source_attributes", SCAN_SOURCE_CASES)
+    def test_validate_scan_access_public_allowlist(self, source_attributes):
         svc = DataAccessService(access_mode="public")
-        mock_scan = MagicMock()
-        mock_scan.data_source = "loupe"
+        scan = SimpleNamespace(**source_attributes)
+        if source_attributes.get("data_source") == "pds4":
+            svc.validate_scan_access(scan)
+            return
+
         with pytest.raises(HTTPException) as exc_info:
-            svc.validate_scan_access(mock_scan)
+            svc.validate_scan_access(scan)
         assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "This resource is not available in public mode"
 
-    def test_validate_scan_access_allows_pds_in_public(self):
-        svc = DataAccessService(access_mode="public")
-        mock_scan = MagicMock()
-        mock_scan.data_source = "pds4"
-        # Should NOT raise
-        svc.validate_scan_access(mock_scan)
-
-    def test_validate_scan_access_allows_all_in_internal(self):
+    @pytest.mark.parametrize("source_attributes", SCAN_SOURCE_CASES)
+    def test_validate_scan_access_allows_all_in_internal(self, source_attributes):
         svc = DataAccessService(access_mode="internal")
-        mock_scan = MagicMock()
-        mock_scan.data_source = "loupe"
-        # Should NOT raise in internal mode
-        svc.validate_scan_access(mock_scan)
+        svc.validate_scan_access(SimpleNamespace(**source_attributes))
+
+
+@pytest.fixture
+def allowlist_session():
+    """Metadata-only rows using the existing in-memory web-test DB helpers."""
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.pool import StaticPool
+
+    from sherloc_pipeline.database.connection import (
+        create_all_tables,
+        get_session_factory,
+    )
+    from sherloc_pipeline.database.models import ScanORM, SolORM
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _set_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    create_all_tables(engine)
+    session = get_session_factory(engine)()
+    try:
+        session.add(SolORM(sol_number=42424, data_source="pds4"))
+        session.flush()
+        for index, (name, source_attributes) in enumerate([
+            ("pds4", {"data_source": "pds4"}),
+            ("loupe", {"data_source": "loupe"}),
+            ("null", {"data_source": None}),
+            ("missing", {}),
+            ("uppercase", {"data_source": "PDS4"}),
+            ("unknown", {"data_source": "invented-private"}),
+        ]):
+            session.add(ScanORM(
+                id=str(uuid.UUID(int=index + 1000)),
+                sol_number=42424,
+                scan_name=name,
+                scan_id=f"invented-allowlist-{name}",
+                sclk_start=index,
+                n_points=0,
+                n_channels=1,
+                laser_wavelength_nm=1.0,
+                target_type="mars_target",
+                scan_class="primary",
+                **source_attributes,
+            ))
+        # An omitted ORM source becomes SQL NULL, just like explicit None.
+        session.commit()
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("access_mode", ["public", "internal"])
+def test_filter_scans_query_source_allowlist(allowlist_session, access_mode):
+    from sherloc_pipeline.database.models import ScanORM
+
+    rows = allowlist_session.query(ScanORM).all()
+    assert len(rows) == 6
+    assert {row.scan_name for row in rows if row.data_source is None} == {"null", "missing"}
+
+    query = allowlist_session.query(ScanORM)
+    visible = DataAccessService(access_mode).filter_scans_query(query).all()
+    expected = {"pds4"} if access_mode == "public" else {
+        "pds4", "loupe", "null", "missing", "uppercase", "unknown",
+    }
+    assert {row.scan_name for row in visible} == expected
 
 
 # ---------------------------------------------------------------------------
