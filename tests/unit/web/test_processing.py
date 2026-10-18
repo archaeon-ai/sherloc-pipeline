@@ -6,10 +6,110 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
-from fastapi import HTTPException
+import pytest_asyncio
+from fastapi import FastAPI, HTTPException
+from httpx import ASGITransport, AsyncClient
 
 from sherloc_pipeline.web.routes.processing import process_baseline
 from sherloc_pipeline.web.schemas import BaselineRequest
+
+
+@pytest_asyncio.fixture
+async def synthetic_fit_client():
+    from sherloc_pipeline.web.routes import processing
+
+    app = FastAPI()
+    app.state.config = SimpleNamespace(fitting={}, fluorescence_fitting={})
+    app.include_router(processing.router)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
+        yield client, app.state.config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params", [None, {}, {"baseline": {"lam": 73, "max_iter": 4}}])
+async def test_fit_provenance_resolves_default_fitting(synthetic_fit_client, monkeypatch, params):
+    from sherloc_pipeline.web.routes import processing
+    from sherloc_pipeline.web.schemas import BaselineParamsSchema, FitParamsSchema
+
+    client, _ = synthetic_fit_client
+    fitted = {}
+
+    def fit(x, y, config):
+        fitted["config"] = config
+        fitted["intensity"] = y.copy()
+        return SimpleNamespace(peaks=[], r2=0.6), np.zeros(len(x))
+
+    def baseline(x, y, params, roi):
+        fitted["baseline"] = params
+        return y - 1, np.ones_like(y)
+
+    monkeypatch.setattr(processing, "fit_spectrum", fit)
+    monkeypatch.setattr(processing, "_fit_baseline_in_range", baseline)
+    monkeypatch.setattr(processing, "load_mineral_rules", lambda **kwargs: [])
+    body = {"wavenumber": [11, 22, 33, 44], "intensity": [3, 5, 5, 3]}
+    if params is not None:
+        body["params"] = params
+    response = await client.post("/api/process/fit", json=body)
+    assert response.status_code == 200, response.text
+    used = response.json()["provenance"]["params_used"]
+    assert used["fitting"] == FitParamsSchema().model_dump()
+    assert fitted["config"]["max_peaks"] == used["fitting"]["max_peaks"]
+    if params and params.get("baseline"):
+        assert used["baseline"] == BaselineParamsSchema(**params["baseline"]).model_dump()
+        assert fitted["baseline"].lam == used["baseline"]["lam"]
+        assert fitted["baseline"].iters == used["baseline"]["max_iter"]
+        np.testing.assert_array_equal(fitted["intensity"], [2, 4, 4, 2])
+    else:
+        assert used["baseline"] is None
+        assert "baseline" not in fitted
+        np.testing.assert_array_equal(fitted["intensity"], body["intensity"])
+
+
+@pytest.mark.asyncio
+async def test_fluorescence_provenance_omits_skipped_baseline(synthetic_fit_client, monkeypatch):
+    from sherloc_pipeline.web.routes import processing
+
+    client, _ = synthetic_fit_client
+    monkeypatch.setattr(processing, "fit_fluorescence_spectrum", lambda *args, **kwargs:
+                        SimpleNamespace(peaks=[], r2=0.6))
+    response = await client.post("/api/process/fit", json={
+        "wavenumber": [11, 22, 33, 44], "intensity": [3, 5, 5, 3],
+        "params": {"baseline": {"lam": 73}, "fitting": {
+            "domain": "fluorescence", "wavenumber_range": [11, 44],
+            "fwhm_bounds": [2, 7], "model_selection": "f-test",
+        }},
+    })
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["provenance"]["params_used"]["baseline"] is None
+    assert data["provenance"]["params_used"]["fitting"]["model_selection"] == data["model_selection_method"] == "aicc"
+    assert data["corrected"] == [3, 5, 5, 3]
+    assert data["baseline"] == [0, 0, 0, 0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_branch", ["fitting", "fluorescence_fitting"])
+async def test_fluorescence_config_hash_tracks_used_branch(synthetic_fit_client, monkeypatch, changed_branch):
+    from sherloc_pipeline.web.routes import processing
+
+    client, config = synthetic_fit_client
+    calls = []
+
+    def fit(*args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(peaks=[], r2=0.6)
+
+    monkeypatch.setattr(processing, "fit_fluorescence_spectrum", fit)
+    body = {"wavenumber": [11, 22, 33, 44], "intensity": [3, 5, 5, 3],
+            "params": {"fitting": {"domain": "fluorescence", "wavenumber_range": [11, 44],
+                                   "fwhm_bounds": [2, 7]}}}
+    before = await client.post("/api/process/fit", json=body)
+    getattr(config, changed_branch)["min_peak_separation"] = 9
+    after = await client.post("/api/process/fit", json=body)
+    assert before.status_code == after.status_code == 200
+    changed = changed_branch == "fluorescence_fitting"
+    assert (before.json()["provenance"]["config_hash"] != after.json()["provenance"]["config_hash"]) is changed
+    assert (calls[0] != calls[1]) is changed
 
 
 @pytest.mark.asyncio
