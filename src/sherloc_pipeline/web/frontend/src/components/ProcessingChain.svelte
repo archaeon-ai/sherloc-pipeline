@@ -8,6 +8,7 @@
     DespikeParams,
     DespikeMethod,
     FitParams,
+    FitProvenance,
   } from '../lib/types';
   import DespikeStep from './DespikeStep.svelte';
   import BackgroundStep from './BackgroundStep.svelte';
@@ -325,6 +326,7 @@
     modelSelectionMethod: string;
     fitWavenumber: number[];
     params: FitParams;
+    provenance: FitProvenance;
     generation: number;
     inputIntensity: number[];
   }>) {
@@ -353,6 +355,7 @@
         r_squared: d.rSquared,
         model_selection_method: d.modelSelectionMethod,
         n_peaks: d.peaks.length,
+        provenance: d.provenance,
         ...(d.params as Record<string, unknown>),
       },
     );

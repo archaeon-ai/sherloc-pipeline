@@ -293,10 +293,10 @@ export interface Peak {
 
 export interface FitProvenance {
   params_used: ProcessingParams;
-  calibration_version: string;
+  calibration_version: string | null;
   config_hash: string;
   wavenumber_unit: string;
-  intensity_unit: string;
+  intensity_unit: string | null;
 }
 
 export interface FitResponse {

@@ -1,6 +1,7 @@
 """Baseline, fitting, despike, and background route tests."""
 
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -9,6 +10,31 @@ from fastapi import HTTPException
 
 from sherloc_pipeline.web.routes.processing import process_baseline
 from sherloc_pipeline.web.schemas import BaselineRequest
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("domain", ["minerals", "organics", "hydration", "fluorescence"])
+async def test_fit_provenance_does_not_invent_calibration_or_intensity_units(client, monkeypatch, domain):
+    from sherloc_pipeline.web.routes import processing
+
+    monkeypatch.setattr(processing, "fit_spectrum", lambda *args: (
+        SimpleNamespace(peaks=[], r2=0.7), np.zeros(5),
+    ))
+    monkeypatch.setattr(processing, "fit_fluorescence_spectrum", lambda *args, **kwargs:
+                        SimpleNamespace(peaks=[], r2=0.7))
+    monkeypatch.setattr(processing, "load_mineral_rules", lambda **kwargs: [])
+    response = await client.post("/api/process/fit", json={
+        "wavenumber": [10, 20, 30, 40, 50], "intensity": [2, 4, 7, 4, 2],
+        "params": {"fitting": {"domain": domain, "wavenumber_range": [10, 50],
+                               "fwhm_bounds": [1, 4], "max_peaks": 1}},
+    })
+    assert response.status_code == 200, response.text
+    provenance = response.json()["provenance"]
+    assert provenance["calibration_version"] is None
+    assert provenance["intensity_unit"] is None
+    assert provenance["wavenumber_unit"] == ("nm" if domain == "fluorescence" else "cm-1")
+    assert provenance["params_used"]["fitting"]["domain"] == domain
+    assert provenance["config_hash"].startswith("sha256:")
 
 
 def _make_test_spectrum():
@@ -198,7 +224,8 @@ async def test_fit(client):
     assert len(data["residual"]) == len(wn)
     assert len(data["baseline"]) == len(wn)
     assert len(data["corrected"]) == len(wn)
-    assert data["provenance"]["calibration_version"] == "loupe_v5.1.5a"
+    assert data["provenance"]["calibration_version"] is None
+    assert data["provenance"]["intensity_unit"] is None
     assert data["model_selection_method"] == "aicc"
 
 

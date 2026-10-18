@@ -387,6 +387,10 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
         provenance=FitProvenance(
             params_used=params,
             config_hash=config_hash,
+            # Posted arrays carry no calibration or intensity-unit evidence.
+            calibration_version=None,
+            intensity_unit=None,
+            wavenumber_unit="nm" if is_fluor else "cm-1",
         ),
     )
 

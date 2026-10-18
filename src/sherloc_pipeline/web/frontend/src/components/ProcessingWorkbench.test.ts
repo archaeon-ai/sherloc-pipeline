@@ -19,7 +19,7 @@ import { tick } from 'svelte';
 import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
-import type { BadpixResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
+import type { BadpixResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
 // Module-level react spy so the issue-#8 tests can inspect the traces the
@@ -125,7 +125,7 @@ function fakeSpectrum(intensity: number[], overrides: Partial<SpectrumResponse> 
   };
 }
 
-function fakeFit() {
+function fakeFit(): FitResponse {
   return {
     schema_version: '1', peaks: [], n_peaks: 0, r_squared: 0.8,
     model_selection_method: 'aicc', residual: [1, 1, 1], baseline: [0, 0, 0],
@@ -136,6 +136,29 @@ function fakeFit() {
 }
 
 describe('ProcessingWorkbench processing snapshot identity', () => {
+  it.each([false, true])('carries fit-response provenance through the store and both exports (unknown=%s)', async (unknown) => {
+    const fit = fakeFit();
+    if (unknown) {
+      fit.provenance.calibration_version = null;
+      fit.provenance.intensity_unit = null;
+    }
+    vi.spyOn(api, 'postFit').mockResolvedValue(fit);
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    const card = Array.from(container.querySelectorAll('.step-title'))
+      .find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
+    await fireEvent.click(card.querySelector('.step-header')!);
+    await fireEvent.click(card.querySelector('.btn-primary')!);
+    await flush();
+    const record = get(processingState)?.processingChain?.at(-1);
+    expect(record?.provenance).toEqual(fit.provenance);
+    const metadata = csvProvenance(await exportCsv(container));
+    expect(metadata.user_processing_chain.at(-1).provenance).toEqual(fit.provenance);
+    await fireEvent.click(container.querySelector('.export-trigger')!);
+    await fireEvent.click(screen.getByText('Full provenance JSON'));
+    expect(JSON.parse(container.querySelector('.provenance-json')!.textContent!)).toEqual(metadata);
+  });
+
   it.each(['baseline', 'fit'])('drops %s A when spectrum B commits before the chain reset flushes', async (step) => {
     vi.spyOn(api, 'getScan').mockResolvedValue({
       schema_version: '1.0.0', scan: { ...fakeScan(), ml_mask_count: 0 },

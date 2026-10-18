@@ -512,10 +512,10 @@ class PeakDTO(BaseModel):
 
 class FitProvenance(BaseModel):
     params_used: ProcessingParamsSchema
-    calibration_version: str = "loupe_v5.1.5a"
+    calibration_version: Optional[str] = None
     config_hash: Optional[str] = None
     wavenumber_unit: str = "cm-1"
-    intensity_unit: str = "counts"
+    intensity_unit: Optional[str] = None
 
 class FitResponse(BaseModel):
     schema_version: str = API_SCHEMA_VERSION

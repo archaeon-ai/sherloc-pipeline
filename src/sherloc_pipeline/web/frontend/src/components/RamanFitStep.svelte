@@ -2,7 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { postFit } from '../lib/api';
   import { ApiError } from '../lib/api';
-  import type { Peak, BaselineParams, FitParams } from '../lib/types';
+  import type { Peak, BaselineParams, FitParams, FitProvenance } from '../lib/types';
   import InfoTooltip from './InfoTooltip.svelte';
 
   const fitRef = `<div class="ref-title">Multi-Gaussian peak fitting</div>
@@ -46,6 +46,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
       modelSelectionMethod: string;
       fitWavenumber: number[];
       params: FitParams;
+      provenance: FitProvenance;
       generation: number;
       inputIntensity: number[];
     };
@@ -114,6 +115,11 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
     // For fluorescence, use wavelength as x-axis; for Raman domains, use wavenumber
     const xData = isFluor && wavelength ? wavelength : wavenumber;
     if (xData.length === 0) return;
+    const params: FitParams = {
+      domain, wavenumber_range: [waveMin, waveMax], max_peaks: maxPeaks,
+      min_snr: minSnr, fwhm_bounds: [fwhmMin, fwhmMax],
+      model_selection: isFluor ? 'aicc' : modelSelection,
+    };
     fitting = true;
     error = '';
     try {
@@ -127,14 +133,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
           // (or intentionally not, if BaselineStep is disabled). Passing baseline=undefined
           // tells the backend to skip baseline correction and use the input as-is.
           baseline: undefined,
-          fitting: {
-            domain,
-            wavenumber_range: [waveMin, waveMax],
-            max_peaks: maxPeaks,
-            min_snr: minSnr,
-            fwhm_bounds: [fwhmMin, fwhmMax],
-            model_selection: isFluor ? 'aicc' : modelSelection,
-          },
+          fitting: params,
         },
       });
       if (gen !== inputGeneration || inputIntensity !== intensity) return;
@@ -152,14 +151,8 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
         rSquared: result.r_squared,
         modelSelectionMethod: result.model_selection_method,
         fitWavenumber: result.wavenumber,
-        params: {
-          domain,
-          wavenumber_range: [waveMin, waveMax],
-          max_peaks: maxPeaks,
-          min_snr: minSnr,
-          fwhm_bounds: [fwhmMin, fwhmMax],
-          model_selection: modelSelection,
-        },
+        params,
+        provenance: result.provenance,
       });
     } catch (e) {
       if (gen !== inputGeneration) return;
