@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build inputs (checked in CI), build tools are pinned in `requirements-build.txt`, and both base images are
   pinned by digest (#102; audit item 10).
 
+### Fixed
+- **Spectrum routes use the stored PDS wavelength axis.** Web spectrum routes use each spectrum's stored PDS
+  wavelength axis instead of always recomputing the Loupe grid, and responses carry the axis source and hash, the
+  excitation basis and the detector channel map. PDS requests to the legacy plot endpoint are rejected, and Loupe
+  R2/R3 plot x values are wavelength in nm (#98, #104).
+
 ## [5.7.2] - 2026-10-17
 
 ### Fixed
