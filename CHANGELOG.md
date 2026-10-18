@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.3] - 2026-10-18
+
+### Security
+- **Map-fit requests are bounded.** `domains` takes 1 to 4 unique values from `minerals`, `organics`,
+  `hydration` and `fluorescence`, and the baseline `max_iter` must be 1 to 50; anything else is a 422 before any
+  work starts. The fitting service also fits each domain once for direct callers (#100; October 2026 security
+  audit items 01 and 16).
+- **Plots check scan access.** `GET /api/plots/{scan_id}` runs the same scan-access check as the map and image
+  routes, so in public mode a Loupe-sourced scan gets a 403 before any spectrum is read (#101; audit item 17).
+- **Access mode and storage tier must agree.** At startup, `SHERLOC_ACCESS_MODE=internal` requires
+  `PHASE_TIER=team` and `public` requires `public` whenever `PHASE_TIER` is set. `create_app()` also rejects any
+  access mode other than `internal` or `public` (an env typo or an explicit argument), which previously ran
+  unrestricted (#101; audit item 15).
+- **The image installs offline from the reviewed lock.** Runtime dependencies come from `requirements-lock.txt`
+  as prebuilt wheels and install with no network; the auth package is pinned to one full commit in all three
+  build inputs (checked in CI), build tools are pinned in `requirements-build.txt`, and both base images are
+  pinned by digest (#102; audit item 10).
+
 ## [5.7.2] - 2026-10-17
 
 ### Fixed
