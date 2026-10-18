@@ -612,6 +612,9 @@ class MapFitService:
         Returns:
             MapFitSummary with aggregate statistics.
         """
+        # Direct service callers may bypass request validation. Fit each
+        # domain once, retaining the caller's requested order.
+        domains = list(dict.fromkeys(domains))
         t_start = time.monotonic()
 
         # Query scan points (all or subset)
