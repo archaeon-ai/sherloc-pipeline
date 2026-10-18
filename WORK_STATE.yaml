@@ -1,6 +1,6 @@
-work_package: "sherloc-pipeline #98 stored PDS wavelength axis (spectra-id lane, Astra job 9 PR1)"
-branch: "web-pds-axis-provenance"
-head: "8668dfd"
+work_package: "sherloc-pipeline #99 per-trace export provenance (spectra-id lane, Astra jobs 9-11; PR #105)"
+branch: "web-export-provenance (https://github.com/archaeon-ai/sherloc-pipeline/pull/105)"
+head: "8250218"
 open_decisions: []
-next_action: "Codex review at exact head; merge only on the PM's word; then PR2 (#99) stacked on this branch"
-last_verified: "2026-10-18T00:29:13-07:00 — full checkout: ruff clean; fixture provenance OK; pytest -m 'not slow and not docker' 3714 passed, 225 skipped; vitest 236 passed (one known map-teardown flake in 1 of 4 runs); svelte-check 4 errors/18 warnings, same as main"
+next_action: "Codex round 3 GO at 25afef5; exact-head confirmation after merging main 4cca601 (#107, public gate pds4-only); merge only on the PM's word"
+last_verified: "2026-10-18T02:10:00-07:00 — 8250218 = 25afef5 + main 4cca601 (clean merge; PR change content vs main byte-identical to the round-3 reviewed diff); tests/unit/web 511 passed, 1 skipped. At 5a51838: full pytest 3765 passed/226 skipped, vitest 252, ruff, provenance, svelte-check 4/18"

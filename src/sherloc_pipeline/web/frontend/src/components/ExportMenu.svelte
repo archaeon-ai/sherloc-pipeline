@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { ProcessingArtifacts, Peak } from '../lib/types';
+  import type { ExportTrace, ProcessingArtifacts } from '../lib/types';
 
+  export let trace: ExportTrace | null = null;
   export let scanId: string = '';
   export let scanName: string = '';
   export let target: string = '';
@@ -71,24 +72,42 @@
     };
   }
 
-  function buildProvenanceJson(): Record<string, unknown> {
+  // One timestamp for both formats while this export snapshot is displayed.
+  $: exportTimestamp = snapshotTimestamp(trace, wavenumber, intensity, stage, processingChain);
+  function snapshotTimestamp(..._snapshot: unknown[]): string {
+    return new Date().toISOString();
+  }
+
+  function buildProvenanceJson() {
+    const provenance = trace?.provenance;
     return {
-      source: {
-        scan_id: scanId,
-        sol: solNumber,
-        target: target,
-        scan_name: scanName,
-        data_origin: 'loupe',
+      ...provenance,
+      source: trace?.source ?? {
+        scan_id: scanId, sol: solNumber, target, scan_name: scanName, data_origin: null,
       },
-      selection: buildSelection(),
-      processing_chain: processingChain,
+      selection: trace?.selection ?? buildSelection(),
+      processing_chain: provenance?.processing_chain ?? [],
+      user_processing_chain: processingChain,
       calibration: {
-        version: 'loupe_v5.1.5a',
-        laser_nm: 248.6,
+        version: provenance?.calibration_version ?? null,
+        axis_source: provenance?.axis_source ?? null,
+        axis_sha256: provenance?.axis_sha256 ?? null,
+        laser_nm: provenance?.excitation_nm ?? null,
+        excitation_basis: provenance?.excitation_basis ?? null,
       },
       application: {
-        version: '3.1.0',
-        timestamp: new Date().toISOString(),
+        ...provenance?.application,
+        version: provenance?.application?.version ?? null,
+        timestamp: exportTimestamp,
+      },
+      stage,
+      axes: { wavenumber_unit: provenance?.wavenumber_unit ?? 'cm-1',
+        wavelength_unit: provenance?.wavelength_unit ?? 'nm', intensity_unit: provenance?.intensity_unit ?? null },
+      data: { wavenumber, wavelength: trace?.wavelength ?? null, intensity,
+        channel_indices: trace?.channel_indices ?? [], source_intensity: trace?.intensity ?? null },
+      annotations: {
+        ...(spikeMask && spikeMethod ? { spike_method: spikeMethod, spike_mask: spikeMask } : {}),
+        ...(badpix?.length ? { badpix } : {}),
       },
     };
   }
@@ -99,16 +118,23 @@
     const provenance = buildProvenanceJson();
     const lines: string[] = [];
 
-    // Header comments with provenance
+    // CSV and JSON serialize the same committed trace and processing state.
     lines.push(`# SHERLOC Web Workbench Export`);
-    lines.push(`# scan_id: ${provenance.source ? (provenance.source as Record<string, unknown>).scan_id : ''}`);
-    lines.push(`# sol: ${solNumber}`);
-    lines.push(`# target: ${target}`);
-    lines.push(`# scan_name: ${scanName}`);
+    lines.push(`# provenance: ${JSON.stringify(provenance)}`);
+    lines.push(`# scan_id: ${provenance.source.scan_id}`);
+    lines.push(`# sol: ${provenance.source.sol}`);
+    lines.push(`# target: ${provenance.source.target}`);
+    lines.push(`# scan_name: ${provenance.source.scan_name}`);
     lines.push(`# stage: ${stage}`);
-    lines.push(`# calibration_version: loupe_v5.1.5a`);
-    lines.push(`# laser_nm: 248.6`);
-    lines.push(`# exported_at: ${new Date().toISOString()}`);
+    lines.push(`# data_origin: ${provenance.source.data_origin ?? 'unknown'}`);
+    lines.push(`# axis_source: ${provenance.calibration.axis_source ?? 'unknown'}`);
+    lines.push(`# calibration_version: ${provenance.calibration.version ?? 'unknown'}`);
+    lines.push(`# laser_nm: ${provenance.calibration.laser_nm ?? 'unknown'}`);
+    lines.push(`# application_version: ${provenance.application.version ?? 'unknown'}`);
+    lines.push(`# wavenumber_unit: ${provenance.axes.wavenumber_unit}`);
+    lines.push(`# wavelength_unit: ${provenance.axes.wavelength_unit}`);
+    lines.push(`# intensity_unit: ${provenance.axes.intensity_unit ?? 'unknown'}`);
+    lines.push(`# exported_at: ${provenance.application.timestamp}`);
     lines.push(`# n_channels: ${wavenumber.length}`);
 
     // Selection provenance
@@ -120,7 +146,7 @@
     lines.push(`# selection_indices: ${idxStr}`);
 
     // Processing chain provenance (one JSON line per step)
-    const chain = provenance.processing_chain as Record<string, unknown>[];
+    const chain = [...provenance.processing_chain, ...provenance.user_processing_chain];
     if (chain && chain.length > 0) {
       lines.push(`# processing_chain:`);
       for (const step of chain) {
@@ -156,6 +182,14 @@
     const columns: string[] = ['wavenumber'];
     const data: number[][] = [wavenumber];
 
+    if (trace?.wavelength) {
+      columns.push('wavelength');
+      data.push(trace.wavelength);
+    }
+    if (trace?.channel_indices.length) {
+      columns.push('channel');
+      data.push(trace.channel_indices);
+    }
     columns.push('intensity');
     data.push(intensity);
 
@@ -220,8 +254,10 @@
 
   function buildFilename(ext: string): string {
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const safeTarget = (target || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
-    return `${safeTarget}_sol${solNumber}_${scanName || scanId}_${stage}_${ts}.${ext}`;
+    const source = buildProvenanceJson().source;
+    const safeTarget = String(source.target || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeScan = String(source.scan_name || source.scan_id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    return `${safeTarget}_sol${source.sol}_${safeScan}_${stage}_${ts}.${ext}`;
   }
 
   function downloadCsv() {

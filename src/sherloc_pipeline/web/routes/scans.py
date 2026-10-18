@@ -197,6 +197,11 @@ def get_scan(request: Request, scan_id: str) -> ScanDetailResponse:
     data_access.validate_scan_access(scan)
 
     detail = scan_orm_to_detail(scan)
+    if data_access.is_public:
+        # Linked scans can be team-tier; raw error text can contain internal locations.
+        detail.parent_scan_id = None
+        detail.source_scan_ids = None
+        detail.processing_error = None
 
     # Probe R2 for a sol_NNNN_colorized/ sibling so the Workbench AciViewer
     # can gate its "Colorized" button instead of silently falling back to

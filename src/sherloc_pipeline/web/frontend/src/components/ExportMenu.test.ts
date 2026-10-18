@@ -44,7 +44,7 @@ const intensity = [5, 6, 7];
 
 async function exportCsv(props: Record<string, unknown>): Promise<string> {
   const { getByText } = render(ExportMenu, {
-    props: { scanId: 's1', scanName: 'detail_1', target: 'Amherst', solNumber: 921, wavenumber, intensity, ...props },
+    props: { scanId: 'synthetic-scan', scanName: 'synthetic', target: 'Invented', solNumber: 9999, wavenumber, intensity, ...props },
   });
   await tick();
   await fireEvent.click(getByText(/Export/i));
@@ -168,5 +168,60 @@ describe('ExportMenu CSV badpix column (issue #9)', () => {
     const csv = await exportCsv({ stage: 'raw', badpix: [] });
     expect(csv).not.toContain('badpix_source');
     expect(csv.split('\n').find((l) => l.startsWith('wavenumber'))).not.toContain('badpix');
+  });
+});
+
+// Invented backend response; the backend separately checks its package version.
+const syntheticTrace = {
+  source: { scan_id: 'synthetic-scan', sol: 9999, target: 'Invented', scan_name: 'synthetic', data_origin: 'pds4' },
+  selection: { mode: 'point', n_points: 1, indices: [2], contributor_indices: [2] },
+  provenance: {
+    data_origin: 'pds4', axis_source: 'pds_embedded', axis_sha256: 'synthetic-axis-digest',
+    calibration_version: null, excitation_nm: 247, excitation_basis: 'scan_record_or_nominal_default',
+    wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: null,
+    source_digest: 'synthetic-source-digest',
+    source_processing: { spectrum_type: 'laser_normalized' },
+    processing_chain: [{ step: 'synthetic_backend_step' }],
+    application: { version: '99.8.7', commit: null },
+  },
+  wavenumber: [11, 22, 33], wavelength: [251, 252, 253], channel_indices: [3, 4, 5], intensity: [2, 3, 4],
+};
+
+describe('ExportMenu committed provenance', () => {
+  it('exports PDS metadata and identical CSV/JSON provenance without Loupe claims', async () => {
+    const { getByText, container } = render(ExportMenu, { props: {
+      trace: syntheticTrace, wavenumber: syntheticTrace.wavenumber, intensity: [1, 2, 3],
+      processingChain: [{ step: 'synthetic_user_step' }],
+    } });
+    await tick();
+    await fireEvent.click(getByText(/Export/i));
+    await fireEvent.click(getByText(/CSV at current stage/i));
+    const csv = capturedCsv;
+    const metadata = JSON.parse(csv.split('\n').find(line => line.startsWith('# provenance: '))!.slice(14));
+    expect(csv.toLowerCase()).not.toContain('loupe');
+    expect(csv).toContain('# application_version: 99.8.7');
+    expect(csv).toContain('# axis_source: pds_embedded');
+    expect(csv).toContain('# calibration_version: unknown');
+    expect(csv).toContain('# laser_nm: 247');
+    expect(csv).toContain('# wavelength_unit: nm');
+    expect(csv).toContain('wavenumber,wavelength,channel,intensity\n11,251,3,1\n22,252,4,2\n33,253,5,3');
+    expect(metadata.source.data_origin).toBe('pds4');
+    expect(metadata.calibration.version).toBeNull();
+    expect(metadata.processing_chain).toEqual([{ step: 'synthetic_backend_step' }]);
+    expect(metadata.user_processing_chain).toEqual([{ step: 'synthetic_user_step' }]);
+    expect(metadata.data.source_intensity).toEqual([2, 3, 4]);
+    await fireEvent.click(getByText(/Export/i));
+    await fireEvent.click(getByText('Full provenance JSON'));
+    expect(JSON.parse(container.querySelector('.provenance-json')!.textContent!)).toEqual(metadata);
+  });
+
+  it('leaves unavailable origin, calibration, excitation and version unknown', async () => {
+    const csv = await exportCsv({ stage: 'raw' });
+    const metadata = JSON.parse(csv.split('\n').find(line => line.startsWith('# provenance: '))!.slice(14));
+    expect(metadata.source.data_origin).toBeNull();
+    expect(metadata.calibration.version).toBeNull();
+    expect(metadata.calibration.laser_nm).toBeNull();
+    expect(metadata.application.version).toBeNull();
+    expect(csv.toLowerCase()).not.toContain('loupe');
   });
 });

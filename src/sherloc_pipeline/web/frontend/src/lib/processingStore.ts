@@ -62,7 +62,9 @@ export function resetProcessing(rawSnapshot?: ProcessingSnapshot): void {
     if (current) {
       processingState.set({
         stage: 'raw',
-        raman: current.raman,
+        raman: current.trace ? { wavenumber: current.trace.wavenumber, intensity: current.trace.intensity } : current.raman,
+        trace: current.trace,
+        processingChain: [],
         params: {},
         artifacts: undefined,
       });

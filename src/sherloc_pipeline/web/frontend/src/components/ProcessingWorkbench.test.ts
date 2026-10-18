@@ -19,7 +19,8 @@ import { tick } from 'svelte';
 import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
-import type { BadpixResponse, SpectrumParams, SpectrumResponse } from '../lib/types';
+import { accessMode } from '../lib/stores';
+import type { BadpixResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
 // Module-level react spy so the issue-#8 tests can inspect the traces the
@@ -124,6 +125,88 @@ function fakeSpectrum(intensity: number[], overrides: Partial<SpectrumResponse> 
     ...overrides,
   };
 }
+
+function fakeFit(): FitResponse {
+  return {
+    schema_version: '1', peaks: [], n_peaks: 0, r_squared: 0.8,
+    model_selection_method: 'aicc', residual: [1, 1, 1], baseline: [0, 0, 0],
+    corrected: [7, 8, 9], wavenumber: [800, 900, 1000],
+    provenance: { params_used: {}, config_hash: 'synthetic-fit-hash',
+      calibration_version: 'synthetic-calibration', wavenumber_unit: 'cm-1', intensity_unit: 'synthetic-unit' },
+  };
+}
+
+describe('ProcessingWorkbench processing snapshot identity', () => {
+  it.each([false, true])('carries fit-response provenance through the store and both exports (unknown=%s)', async (unknown) => {
+    const fit = fakeFit();
+    if (unknown) {
+      fit.provenance.calibration_version = null;
+      fit.provenance.intensity_unit = null;
+    }
+    vi.spyOn(api, 'postFit').mockResolvedValue(fit);
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    const card = Array.from(container.querySelectorAll('.step-title'))
+      .find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
+    await fireEvent.click(card.querySelector('.step-header')!);
+    await fireEvent.click(card.querySelector('.btn-primary')!);
+    await flush();
+    const record = get(processingState)?.processingChain?.at(-1);
+    expect(record?.provenance).toEqual(fit.provenance);
+    const metadata = csvProvenance(await exportCsv(container));
+    expect(metadata.user_processing_chain.at(-1).provenance).toEqual(fit.provenance);
+    await fireEvent.click(container.querySelector('.export-trigger')!);
+    await fireEvent.click(screen.getByText('Full provenance JSON'));
+    expect(JSON.parse(container.querySelector('.provenance-json')!.textContent!)).toEqual(metadata);
+  });
+
+  it.each(['baseline', 'fit'])('drops %s A when spectrum B commits before the chain reset flushes', async (step) => {
+    vi.spyOn(api, 'getScan').mockResolvedValue({
+      schema_version: '1.0.0', scan: { ...fakeScan(), ml_mask_count: 0 },
+    });
+    let resolveProcessing = () => {};
+    if (step === 'baseline') {
+      vi.spyOn(api, 'postBaseline').mockReturnValue(new Promise((resolve) => {
+        resolveProcessing = () => resolve({ schema_version: '1', raw: INTENSITY_A,
+          wavenumber: [800, 900, 1000], corrected: [7, 8, 9], baseline: [3, 4, 6],
+          params_used: { method: 'aspls', lam: 123, max_iter: 2 } });
+      }));
+    } else {
+      vi.spyOn(api, 'postFit').mockReturnValue(new Promise((resolve) => {
+        resolveProcessing = () => resolve(fakeFit());
+      }));
+    }
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    const title = step === 'baseline' ? '3. Baseline' : '4. Peak Fit';
+    const card = Array.from(container.querySelectorAll('.step-title'))
+      .find(el => el.textContent?.trim() === title)!.closest('.step-card')!;
+    if (step === 'baseline') {
+      await fireEvent.click(card.querySelector('input[type="checkbox"]')!);
+    } else {
+      await fireEvent.click(card.querySelector('.step-header')!);
+      await fireEvent.click(card.querySelector('.btn-primary')!);
+    }
+    expect(step === 'baseline' ? api.postBaseline : api.postFit).toHaveBeenCalledTimes(1);
+    let resolveSpectrum: (value: SpectrumResponse) => void = () => {};
+    getAvg.mockReturnValueOnce(new Promise(resolve => { resolveSpectrum = resolve; }));
+    await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'mean' } });
+    const committed: Array<ProcessingSnapshot | null> = [];
+    const unsubscribe = processingState.subscribe(state => committed.push(state));
+    // Both continuations queue before Svelte's flush: B commits, then A emits.
+    resolveSpectrum(fakeSpectrum(INTENSITY_NEW, { provenance: {
+      source_digest: 'synthetic-B', calibration_version: null, wavenumber_unit: 'cm-1', intensity_unit: null,
+    } }));
+    resolveProcessing();
+    await flush();
+    unsubscribe();
+    expect(committed.some(state => state?.trace?.provenance.source_digest === 'synthetic-B'
+      && state.stage !== 'raw')).toBe(false);
+    expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+    expect(get(processingState)?.processingChain).toEqual([]);
+    expect(await exportCsv(container)).toContain('synthetic-B');
+  });
+});
 
 function flush(): Promise<void> {
   return new Promise<void>((r) => setTimeout(r, 0)).then(() => tick());
@@ -1016,4 +1099,121 @@ it('maps full-catalog channels through the embedded axis channel map', async () 
   await flush();
   const traces = reactSpy.mock.calls.at(-1)![1] as Array<{ name?: string; x?: number[] }>;
   expect(traces.find(trace => trace.name?.startsWith('Known-noisy'))?.x).toEqual([900]);
+});
+
+function syntheticPdsResponse(mode: string, values: number[]): SpectrumResponse {
+  return fakeSpectrum(values, {
+    wavelength: [251, 252, 253], channel_indices: [3, 4, 5],
+    provenance: {
+      calibration_version: null, axis_source: 'pds_embedded', excitation_nm: 247,
+      wavenumber_unit: 'cm-1', intensity_unit: null, data_origin: 'pds4',
+      source_digest: `synthetic-${mode}`, application: { version: '99.8.7' },
+      source: { scan_id: SCAN_ID, scan_name: 'synthetic', target: 'Invented', sol: 9999, data_origin: 'pds4' },
+      selection: { mode, n_points: 1, indices: mode === 'point' ? [0] : 'all' },
+      processing_chain: mode === 'point' ? [] : [{ step: 'aggregate', method: 'mean' }],
+    },
+  });
+}
+
+function csvProvenance(csv: string) {
+  return JSON.parse(csv.split('\n').find(line => line.startsWith('# provenance: '))!.slice(14));
+}
+
+it.each(['success', 'failure'])('keeps complete export identity during a pending selection and %s', async outcome => {
+  getAvg.mockResolvedValue(syntheticPdsResponse('average', [2, 3, 4]));
+  vi.spyOn(api, 'getScan').mockResolvedValue({ schema_version: '1.0.0', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  let resolvePoint!: (value: SpectrumResponse) => void;
+  let rejectPoint!: (reason: Error) => void;
+  vi.spyOn(api, 'getPointSpectrum').mockReturnValue(new Promise((resolve, reject) => {
+    resolvePoint = resolve;
+    rejectPoint = reject;
+  }));
+  await fireEvent.click(container.querySelector<HTMLButtonElement>('.point-chip')!);
+  await flush();
+  const pending = csvProvenance(await exportCsv(container));
+  expect(pending.selection.mode).toBe('average');
+  expect(pending.source_digest).toBe('synthetic-average');
+  expect(pending.data.intensity).toEqual([2, 3, 4]);
+  expect(pending.data.wavelength).toEqual([251, 252, 253]);
+  if (outcome === 'success') resolvePoint(syntheticPdsResponse('point', [7, 8, 9]));
+  else rejectPoint(new api.ApiError(500, 'synthetic', 'Invented failure'));
+  await flush();
+  const after = csvProvenance(await exportCsv(container));
+  expect(after.selection.mode).toBe(outcome === 'success' ? 'point' : 'average');
+  expect(after.source_digest).toBe(`synthetic-${outcome === 'success' ? 'point' : 'average'}`);
+  expect(after.data.intensity).toEqual(outcome === 'success' ? [7, 8, 9] : [2, 3, 4]);
+});
+
+it('clears export state when the committed selection has no spectrum', async () => {
+  getAvg.mockResolvedValue(syntheticPdsResponse('average', [2, 3, 4]));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  vi.spyOn(api, 'getPointSpectrum').mockRejectedValue(new api.ApiError(404, 'synthetic', 'No invented spectrum'));
+  await fireEvent.click(container.querySelector<HTMLButtonElement>('.point-chip')!);
+  await flush();
+  expect(get(processingState)).toBeNull();
+  expect(container.querySelector<HTMLButtonElement>('.export-trigger')!.disabled).toBe(true);
+});
+
+it('ignores an older Workbench response after remount', async () => {
+  getAvg.mockResolvedValue(syntheticPdsResponse('average', [2, 3, 4]));
+  const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  let resolvePoint!: (value: SpectrumResponse) => void;
+  vi.spyOn(api, 'getPointSpectrum').mockReturnValue(new Promise(resolve => { resolvePoint = resolve; }));
+  await fireEvent.click(first.container.querySelector<HTMLButtonElement>('.point-chip')!);
+  await flush();
+  first.unmount();
+  getAvg.mockResolvedValue(syntheticPdsResponse('average', [7, 8, 9]));
+  const second = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  resolvePoint(syntheticPdsResponse('point', [12, 13, 14]));
+  await flush();
+  const metadata = csvProvenance(await exportCsv(second.container));
+  expect(metadata.data.intensity).toEqual([7, 8, 9]);
+  expect(metadata.selection.mode).toBe('average');
+});
+
+it('public-tier JSON and CSV headers exclude private fields planted in source rows', async () => {
+  const privateFields = {
+    source_path: '/synthetic/private/source.dat', hostname: 'synthetic-host.invalid',
+    team_id: 'team-tier-synthetic-42', internal_url: 'https://synthetic-host.invalid/private',
+  };
+  const sourceRow = { ...fakeScan(), data_source: 'pds4', source_path: privateFields.source_path,
+    source_scan_ids: [privateFields.team_id], pds4_metadata: { ...privateFields }, ml_mask_count: 0 };
+  const response = syntheticPdsResponse('average', [2, 3, 4]);
+  response.provenance.source = { ...response.provenance.source,
+    product_id: sourceRow.scan_id, source_sha256: 'a'.repeat(64), config_hash: 'b'.repeat(64),
+    pipeline_version: 'synthetic-8' };
+  response.provenance.source_spectra = [{ spectrum_id: 'synthetic-pds-spectrum' }];
+  vi.spyOn(api, 'getScan').mockResolvedValue({ schema_version: '1.0.0', scan: sourceRow });
+  getAvg.mockResolvedValue(response);
+  accessMode.set('public');
+  try {
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    const csv = await exportCsv(container);
+    const headers = csv.split('\n').filter(line => line.startsWith('#')).join('\n');
+    await fireEvent.click(container.querySelector('.export-trigger')!);
+    await fireEvent.click(screen.getByText('Full provenance JSON'));
+    const json = container.querySelector('.provenance-json')!.textContent!;
+    for (const value of Object.values(privateFields)) {
+      expect(headers).not.toContain(value);
+      expect(json).not.toContain(value);
+    }
+    expect(JSON.parse(json)).toEqual(csvProvenance(csv));
+    for (const allowed of [sourceRow.scan_id, 'synthetic-pds-spectrum', 'a'.repeat(64),
+      'b'.repeat(64), 'synthetic-8', '99.8.7']) {
+      expect(headers).toContain(allowed);
+      expect(json).toContain(allowed);
+    }
+  } finally {
+    accessMode.set('internal');
+  }
 });

@@ -166,11 +166,12 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
     is_fluor = fit_params_schema.domain == "fluorescence"
 
     # Baseline correction (skip for fluorescence — data is already intensity)
+    bl_params_schema = None
     if is_fluor or params.baseline is None:
         corrected = y.copy()
         baseline = np.zeros_like(y)
     else:
-        bl_params_schema = params.baseline or BaselineParamsSchema()
+        bl_params_schema = params.baseline
         bl_params = _baseline_params_from_schema(bl_params_schema)
         try:
             corrected, baseline = _fit_baseline_in_range(
@@ -372,7 +373,7 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
     else:
         residual = np.zeros_like(corrected)
 
-    fitting_json = json.dumps(config.fitting, sort_keys=True, default=str)
+    fitting_json = json.dumps(fluor_cfg if is_fluor else fit_cfg, sort_keys=True, default=str)
     config_hash = f"sha256:{hashlib.sha256(fitting_json.encode()).hexdigest()[:12]}"
 
     return FitResponse(
@@ -385,8 +386,15 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
         corrected=numpy_to_list(corrected),
         wavenumber=body.wavenumber,
         provenance=FitProvenance(
-            params_used=params,
+            params_used=ProcessingParamsSchema(
+                baseline=bl_params_schema,
+                fitting=fit_params_schema.model_copy(update={"model_selection": model_selection_method}),
+            ),
             config_hash=config_hash,
+            # Posted arrays carry no calibration or intensity-unit evidence.
+            calibration_version=None,
+            intensity_unit=None,
+            wavenumber_unit="nm" if is_fluor else "cm-1",
         ),
     )
 

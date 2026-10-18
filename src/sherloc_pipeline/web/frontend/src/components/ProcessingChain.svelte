@@ -8,6 +8,7 @@
     DespikeParams,
     DespikeMethod,
     FitParams,
+    FitProvenance,
   } from '../lib/types';
   import DespikeStep from './DespikeStep.svelte';
   import BackgroundStep from './BackgroundStep.svelte';
@@ -17,6 +18,7 @@
   export let wavenumber: number[] = [];
   export let wavelength: number[] | null = null;
   export let intensity: number[] = [];
+  export let inputToken: number = 0;
   export let scanPpp: number = 1;
   export let isAverageMode: boolean = true;
   export let isSinglePoint: boolean = false;
@@ -75,6 +77,8 @@
   // generation also rides in the apply payload and onDespikeApply enforces
   // the match chain-side (PR #7 review F4).
   let inputGeneration = 0;
+  // Keep the token with the raw arrays until their reset runs; props can lead it.
+  let rawInputToken = 0;
 
   // Track output at each stage so downstream steps get correct input
   let rawWavenumber: number[] = [];
@@ -91,6 +95,10 @@
   let baseline: number[] | undefined;
   let appliedBaselineRange: [number, number] | undefined;
 
+  let despikeRecord: Record<string, unknown> | null = null;
+  let backgroundRecord: Record<string, unknown> | null = null;
+  let baselineRecord: Record<string, unknown> | null = null;
+
   let despikeStep: DespikeStep;
 
   // Whether the client-side modz compute is the active despike. ML and none
@@ -102,7 +110,11 @@
 
   // All resets are funnelled through this function so Svelte 4's reactive
   // dependency tracker does NOT see the writes as reads (FRONTEND_HAZARDS H1).
-  function applyRawInputReset(w: number[], i: number[]): void {
+  function applyRawInputReset(w: number[], i: number[], token: number): void {
+    rawInputToken = token;
+    despikeRecord = null;
+    backgroundRecord = null;
+    baselineRecord = null;
     rawWavenumber = w;
     rawIntensity = i;
     afterDespikeIntensity = null;
@@ -133,8 +145,8 @@
 
   // Update raw input when props change (point switch, modality change that
   // forces region reload, ML/none/modz refetch, etc.). Only wavenumber +
-  // intensity are tracked dependencies — the writes hide inside the helper.
-  $: applyRawInputReset(wavenumber, intensity);
+  // intensity and their snapshot token are tracked — writes hide in the helper.
+  $: applyRawInputReset(wavenumber, intensity, inputToken);
 
   // Compute what each step receives as input. The despike step only diverts
   // the stream when modz is the active method AND it has produced a result.
@@ -167,8 +179,21 @@
     extraArtifacts?: Record<string, unknown>,
     stepParams?: Record<string, unknown>,
   ) {
+    if (stepParams) {
+      if (stage === 'despiked') despikeRecord = stepParams;
+      if (stage === 'bg_subtracted') backgroundRecord = stepParams;
+      if (stage === 'baseline_corrected') baselineRecord = stepParams;
+    }
+    const processingChain = [
+      modzActive && afterDespikeIntensity ? despikeRecord : null,
+      bgEnabled && afterBgIntensity ? backgroundRecord : null,
+      baselineEnabled && afterBaselineIntensity ? baselineRecord : null,
+      stage === 'raman_fitted' ? stepParams : null,
+    ].filter((record): record is Record<string, unknown> => record != null);
     const snapshot: ProcessingSnapshot = {
+      inputToken: rawInputToken,
       stage,
+      processingChain,
       raman: { wavenumber: rawWavenumber, intensity: outputIntensity },
       params: stepParams ?? {},
       artifacts: {
@@ -235,7 +260,9 @@
     }
   }
 
-  function onBgApply(e: CustomEvent<{ subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; bgType: string }>) {
+  function onBgApply(e: CustomEvent<{ subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; bgType: string; inputIntensity: number[] }>) {
+    const input = modzActive && afterDespikeIntensity ? afterDespikeIntensity : rawIntensity;
+    if (!bgEnabled || e.detail.inputIntensity !== input) return;
     afterBgIntensity = e.detail.subtracted;
     backgroundScaled = e.detail.backgroundScaled;
     // Reset downstream
@@ -260,7 +287,10 @@
     }
   }
 
-  function onBaselineApply(e: CustomEvent<{ corrected: number[]; baseline: number[]; params: BaselineParams }>) {
+  function onBaselineApply(e: CustomEvent<{ corrected: number[]; baseline: number[]; params: BaselineParams; inputIntensity: number[] }>) {
+    const input = bgEnabled && afterBgIntensity ? afterBgIntensity
+      : modzActive && afterDespikeIntensity ? afterDespikeIntensity : rawIntensity;
+    if (!baselineEnabled || e.detail.inputIntensity !== input) return;
     afterBaselineIntensity = e.detail.corrected;
     baseline = e.detail.baseline;
     appliedBaselineRange = e.detail.params.wavenumber_range;
@@ -296,8 +326,16 @@
     modelSelectionMethod: string;
     fitWavenumber: number[];
     params: FitParams;
+    provenance: FitProvenance;
+    generation: number;
+    inputIntensity: number[];
   }>) {
     const d = e.detail;
+    if (d.generation !== inputGeneration) return;
+    const input = baselineEnabled && afterBaselineIntensity ? afterBaselineIntensity
+      : bgEnabled && afterBgIntensity ? afterBgIntensity
+      : modzActive && afterDespikeIntensity ? afterDespikeIntensity : rawIntensity;
+    if (d.inputIntensity !== input) return;
     // Don't include baseline from fit response — fit no longer applies a baseline
     // (workbench's BaselineStep is the canonical source). Letting d.baseline (all zeros)
     // through would clobber the BaselineStep baseline already in artifacts.
@@ -317,6 +355,7 @@
         r_squared: d.rSquared,
         model_selection_method: d.modelSelectionMethod,
         n_peaks: d.peaks.length,
+        provenance: d.provenance,
         ...(d.params as Record<string, unknown>),
       },
     );
@@ -368,6 +407,7 @@
     intensity={fitInput}
     {onRegionSwitch}
     {targetType}
+    {inputGeneration}
     on:apply={onFitApply}
   />
 </div>

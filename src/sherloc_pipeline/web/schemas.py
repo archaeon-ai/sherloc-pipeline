@@ -189,15 +189,25 @@ class PointsResponse(BaseModel):
 
 
 class ProvenanceInfo(BaseModel):
+    data_origin: Optional[str] = None
+    source: Dict[str, Any] = Field(default_factory=dict)
+    selection: Dict[str, Any] = Field(default_factory=dict)
+    source_spectra: List[Dict[str, Any]] = Field(default_factory=list)
+    source_processing: Dict[str, Any] = Field(default_factory=dict)
+    source_digest: Optional[str] = None
     calibration_version: Optional[str] = None
     axis_source: Optional[str] = None
     axis_sha256: Optional[str] = None
     excitation_nm: Optional[float] = None
     excitation_basis: Optional[str] = None
+    wavelength_unit: str = "nm"
     wavenumber_unit: str = "cm-1"
-    intensity_unit: str = "counts"
+    intensity_unit: Optional[str] = None
+    region: Optional[str] = None
     averaging_method: Optional[str] = None
     wavelength_filter: Optional[Dict[str, float]] = None
+    processing_chain: List[Dict[str, Any]] = Field(default_factory=list)
+    application: Dict[str, Any] = Field(default_factory=dict)
 
 
 # Despike request enum shared by the spectra endpoints (issue #6 method
@@ -321,6 +331,8 @@ class SubsetRequest(BaseModel):
     def non_empty(cls, v: List[int]) -> List[int]:
         if not v:
             raise ValueError("point_indices must be non-empty")
+        if len(set(v)) != len(v):
+            raise ValueError("point_indices must be unique")
         return v
 
 
@@ -500,10 +512,10 @@ class PeakDTO(BaseModel):
 
 class FitProvenance(BaseModel):
     params_used: ProcessingParamsSchema
-    calibration_version: str = "loupe_v5.1.5a"
+    calibration_version: Optional[str] = None
     config_hash: Optional[str] = None
     wavenumber_unit: str = "cm-1"
-    intensity_unit: str = "counts"
+    intensity_unit: Optional[str] = None
 
 class FitResponse(BaseModel):
     schema_version: str = API_SCHEMA_VERSION

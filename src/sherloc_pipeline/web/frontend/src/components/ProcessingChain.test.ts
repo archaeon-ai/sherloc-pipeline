@@ -13,7 +13,7 @@ import { render, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import ProcessingChain from './ProcessingChain.svelte';
 import * as api from '../lib/api';
-import type { BackgroundResponse, DespikeResponse } from '../lib/types';
+import type { BackgroundResponse, DespikeResponse, FitResponse } from '../lib/types';
 
 const WAVENUMBER_A = [800, 900, 1000, 1100, 1200];
 const INTENSITY_A = [10, 12, 15, 13, 11];
@@ -73,6 +73,90 @@ beforeEach(() => {
 });
 
 describe('ProcessingChain — UI state tracks applied spectrum state (issue #34)', () => {
+  it.each(['baseline', 'background'])('drops a pending %s response after that stage is disabled', async step => {
+    let resolveProcessing = () => {};
+    if (step === 'baseline') {
+      vi.spyOn(api, 'postBaseline').mockReturnValue(new Promise(resolve => {
+        resolveProcessing = () => resolve({ schema_version: '1', raw: INTENSITY_A, wavenumber: WAVENUMBER_A,
+          corrected: [1, 2, 3, 4, 5], baseline: [9, 10, 12, 9, 6],
+          params_used: { method: 'aspls', lam: 123, max_iter: 2 } });
+      }));
+    } else {
+      vi.spyOn(api, 'postBackground').mockReturnValue(new Promise(resolve => {
+        resolveProcessing = () => resolve({ schema_version: '1', subtracted: [1, 2, 3, 4, 5],
+          background_scaled: [9, 10, 12, 9, 6], scale_used: 1, bg_type: 'as' });
+      }));
+    }
+    const stateUpdate = vi.fn();
+    const { container, component } = render(ProcessingChain, {
+      props: { wavenumber: WAVENUMBER_A, intensity: INTENSITY_A },
+    });
+    component.$on('stateUpdate', e => stateUpdate(e.detail));
+    if (step === 'baseline') {
+      await fireEvent.click(getBaselineCheckbox(container));
+      await fireEvent.click(getBaselineCheckbox(container));
+    } else {
+      await expandBackgroundPanel(container);
+      await fireEvent.click(getBgRadio(container, 'as'));
+      await fireEvent.click(getBgRadio(container, 'none'));
+    }
+    resolveProcessing();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await tick();
+    expect(stateUpdate.mock.calls.at(-1)![0].stage).toBe('raw');
+    expect(stateUpdate.mock.calls.at(-1)![0].raman.intensity).toEqual(INTENSITY_A);
+    expect(stateUpdate.mock.calls.at(-1)![0].processingChain).toEqual([]);
+  });
+
+  it.each(['disabled', 'recomputed'])('drops a pending fit when its baseline is %s on the same raw snapshot', async change => {
+    vi.spyOn(api, 'postBaseline').mockResolvedValueOnce({
+      schema_version: '1', raw: INTENSITY_A, wavenumber: WAVENUMBER_A,
+      corrected: [1, 2, 3, 4, 5], baseline: [9, 10, 12, 9, 6],
+      params_used: { method: 'aspls', lam: 123, max_iter: 2 },
+    });
+    let resolveFit: (value: FitResponse) => void = () => {};
+    vi.spyOn(api, 'postFit').mockReturnValue(new Promise(resolve => { resolveFit = resolve; }));
+    const stateUpdate = vi.fn();
+    const { container, component } = render(ProcessingChain, {
+      props: { wavenumber: WAVENUMBER_A, intensity: INTENSITY_A },
+    });
+    component.$on('stateUpdate', e => stateUpdate(e.detail));
+    await fireEvent.click(getBaselineCheckbox(container));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const card = getStepCard(container, '4. Peak Fit');
+    await fireEvent.click(card.querySelector('.step-header')!);
+    await fireEvent.click(card.querySelector('.btn-primary')!);
+    expect(api.postFit).toHaveBeenCalledWith(expect.objectContaining({ intensity: [1, 2, 3, 4, 5] }));
+    let resolveBaseline = () => {};
+    if (change === 'disabled') {
+      await fireEvent.click(getBaselineCheckbox(container));
+    } else {
+      vi.mocked(api.postBaseline).mockReturnValueOnce(new Promise(resolve => {
+        resolveBaseline = () => resolve({ schema_version: '1', raw: INTENSITY_A, wavenumber: WAVENUMBER_A,
+          corrected: [6, 7, 8, 9, 10], baseline: [4, 5, 7, 4, 1],
+          params_used: { method: 'aspls', lam: 321, max_iter: 2 } });
+      }));
+      const baselineCard = getStepCard(container, '3. Baseline');
+      await fireEvent.click(baselineCard.querySelector('.step-header')!);
+      await fireEvent.input(baselineCard.querySelector('#bl-lam')!, { target: { value: '3' } });
+      await new Promise(resolve => setTimeout(resolve, 350));
+    }
+    // Baseline B commits before fit A resolves, with no Svelte flush between them.
+    resolveBaseline();
+    resolveFit({ schema_version: '1', peaks: [], n_peaks: 0, r_squared: 0.8,
+      model_selection_method: 'aicc', wavenumber: WAVENUMBER_A,
+      corrected: [1, 2, 3, 4, 5], residual: [0, 0, 0, 0, 0], baseline: [0, 0, 0, 0, 0],
+      provenance: { params_used: {}, config_hash: 'synthetic-fit',
+        calibration_version: null, intensity_unit: null, wavenumber_unit: 'cm-1' } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await tick();
+    expect(stateUpdate.mock.calls.some(call => call[0].stage === 'raman_fitted')).toBe(false);
+    expect(stateUpdate.mock.calls.at(-1)![0].raman.intensity)
+      .toEqual(change === 'disabled' ? INTENSITY_A : [6, 7, 8, 9, 10]);
+    expect(stateUpdate.mock.calls.at(-1)![0].processingChain)
+      .toEqual(change === 'disabled' ? [] : [expect.objectContaining({ step: 'baseline', lam: 321 })]);
+  });
+
   it('renders with Baseline unchecked and Background indicator inactive on initial mount', async () => {
     const { container } = render(ProcessingChain, {
       props: { wavenumber: WAVENUMBER_A, intensity: INTENSITY_A },
@@ -111,6 +195,12 @@ describe('ProcessingChain — UI state tracks applied spectrum state (issue #34)
     expect(postBaselineSpy.mock.calls[0][0].params?.wavenumber_range).toBeUndefined();
     expect(stateUpdate).toHaveBeenCalledTimes(1);
     expect(stateUpdate.mock.calls[0][0].stage).toBe('baseline_corrected');
+    expect(stateUpdate.mock.calls[0][0].processingChain).toEqual([
+      expect.objectContaining({ step: 'baseline', method: 'aspls' }),
+    ]);
+    await fireEvent.click(getBaselineCheckbox(container));
+    await tick();
+    expect(stateUpdate.mock.calls.at(-1)![0].processingChain).toEqual([]);
   });
 
   it('fits the current zoom only when selected and resets to full when it is cleared', async () => {
