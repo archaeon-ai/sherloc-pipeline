@@ -997,6 +997,8 @@ def get_point_spectrum(
 
     # Resolve spectrum type from scan data source if not explicitly provided
     spec_type = spectrum_type or _resolve_spectrum_type(scan)
+    if data_access.is_public and spec_type != _resolve_spectrum_type(scan):
+        raise HTTPException(status_code=403, detail="This resource is not available in public mode")
 
     point = (
         session.query(ScanPointORM)

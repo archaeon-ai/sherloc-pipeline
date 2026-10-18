@@ -405,6 +405,59 @@ async def test_public_provenance_excludes_private_source_fields(axis_client, axi
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["R1", "R123"])
+async def test_public_point_rejects_internal_representation(axis_client, axis_db, monkeypatch, region):
+    from sherloc_pipeline.web.data_access import DataAccessService
+
+    forbidden = ["synthetic-internal-mask-secret", "synthetic-internal-derived-secret"]
+    with Session(axis_db) as session:
+        session.add(SpectrumORM(
+            id=forbidden[1], scan_point_id="synthetic-point-0", region="R1",
+            spectrum_type="dark_subtracted", processing_level="dark_subtracted",
+            intensities=packed(np.ones(2148)), wavelengths=packed(WAVELENGTH),
+            wavelength_source="pds_embedded",
+        ))
+        session.flush()
+        session.add(CosmicRayMaskORM(
+            id=forbidden[0], spectrum_id=forbidden[1], method="synthetic-ml",
+            model_sha256="c" * 64, tau=0.4, channel_indices=[24], n_flagged=1,
+        ))
+        if region == "R123":
+            for part in ("R2", "R3"):
+                session.add(SpectrumORM(
+                    id=f"synthetic-internal-{part}", scan_point_id="synthetic-point-0", region=part,
+                    spectrum_type="dark_subtracted", processing_level="dark_subtracted",
+                    intensities=packed(np.ones(2148)), wavelengths=packed(WAVELENGTH),
+                    wavelength_source="pds_embedded",
+                ))
+        session.commit()
+    monkeypatch.setattr(spectra, "_fetch_stored_masks", lambda session, ids: {
+        sid: session.query(CosmicRayMaskORM).filter(CosmicRayMaskORM.spectrum_id == sid).all()
+        for sid in ids
+    })
+    monkeypatch.setattr(spectra, "_despike_region_windows", lambda: {
+        "R1": (0, 100), "R2": (700, 1100), "R3": (1700, 2100),
+    })
+    monkeypatch.setattr(spectra, "_get_data_access", lambda request: DataAccessService("public"))
+    response = await axis_client.get(f"/api/spectra/{SCAN_ID}/point/0", params={
+        "region": region, "spectrum_type": "dark_subtracted", "despike_method": "ml",
+    })
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "This resource is not available in public mode"
+    for value in forbidden:
+        assert value not in response.text
+    for spectrum_type in (None, "laser_normalized"):
+        params = {"region": region, "despike_method": "ml"}
+        if spectrum_type:
+            params["spectrum_type"] = spectrum_type
+        allowed = await axis_client.get(f"/api/spectra/{SCAN_ID}/point/0", params=params)
+        assert allowed.status_code == 200, allowed.text
+        for value in forbidden:
+            assert value not in allowed.text
+        assert allowed.json()["spectrum_type"] == "laser_normalized"
+
+
+@pytest.mark.asyncio
 async def test_digest_tracks_native_data_and_metadata(axis_client, axis_db):
     async def digest():
         response = await request_trace(axis_client, "average", "R1")
