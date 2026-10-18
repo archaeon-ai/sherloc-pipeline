@@ -37,7 +37,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger("sherloc_pipeline.web.config_check")
 
@@ -135,6 +135,26 @@ def _check_access_mode(errors: List[str]) -> None:
         )
 
 
+def access_tier_pairing_error(access_mode: str) -> Optional[str]:
+    """Return a safe diagnostic for access/storage mismatches, if configured.
+
+    An absent or blank PHASE_TIER retains legacy filesystem behavior (auth0
+    mode already rejects a blank tier in _check_r2). Normalize a configured
+    tier exactly as r2_reader does; access mode remains case-sensitive.
+    Unknown access modes are reported separately by _check_access_mode and
+    rejected by create_app before this check.
+    """
+    tier = os.environ.get("PHASE_TIER")
+    expected_tier = {"internal": "team", "public": "public"}.get(access_mode)
+    if tier is not None and tier.strip() and expected_tier is not None:
+        if tier.strip().lower() != expected_tier:
+            return (
+                f"SHERLOC_ACCESS_MODE={access_mode!r} requires "
+                f"PHASE_TIER={expected_tier!r}; got PHASE_TIER={tier!r}"
+            )
+    return None
+
+
 def _check_alembic_target(errors: List[str]) -> None:
     """Require an exact production migration epoch.
 
@@ -191,6 +211,11 @@ def validate() -> List[str]:
     _check_db_path(errors)
     _check_auth(errors)
     _check_access_mode(errors)
+    pairing_error = access_tier_pairing_error(
+        os.environ.get("SHERLOC_ACCESS_MODE", "internal")
+    )
+    if pairing_error:
+        errors.append(pairing_error)
     _check_alembic_target(errors)
     _check_r2(errors)
     return errors
