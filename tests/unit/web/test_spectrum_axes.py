@@ -322,6 +322,16 @@ async def test_subset_discloses_missing_contributors(axis_client, axis_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["R1", "R123"])
+async def test_subset_rejects_duplicate_indices(axis_client, region):
+    response = await axis_client.post(f"/api/spectra/{SCAN_ID}/subset", json={
+        "point_indices": [0, 0, 1], "region": region, "averaging_method": "mean",
+    })
+    assert response.status_code == 422
+    assert "unique" in response.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("origin", ["loupe", None])
 async def test_loupe_and_unknown_origin_are_not_invented(axis_client, axis_db, origin):
     with Session(axis_db) as session:

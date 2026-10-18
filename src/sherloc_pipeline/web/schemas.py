@@ -331,6 +331,8 @@ class SubsetRequest(BaseModel):
     def non_empty(cls, v: List[int]) -> List[int]:
         if not v:
             raise ValueError("point_indices must be non-empty")
+        if len(set(v)) != len(v):
+            raise ValueError("point_indices must be unique")
         return v
 
 
