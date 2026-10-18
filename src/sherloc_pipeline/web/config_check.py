@@ -141,7 +141,8 @@ def access_tier_pairing_error(access_mode: str) -> Optional[str]:
     An absent or blank PHASE_TIER retains legacy filesystem behavior (auth0
     mode already rejects a blank tier in _check_r2). Normalize a configured
     tier exactly as r2_reader does; access mode remains case-sensitive.
-    Unknown access modes are reported separately by _check_access_mode.
+    Unknown access modes are reported separately by _check_access_mode and
+    rejected by create_app before this check.
     """
     tier = os.environ.get("PHASE_TIER")
     expected_tier = {"internal": "team", "public": "public"}.get(access_mode)

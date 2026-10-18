@@ -129,3 +129,38 @@ def test_direct_app_startup_unset_tier_still_passes(clean_env, access_mode):
     assert app.state.access_mode == access_mode
     app.state.job_queue.shutdown()
     app.state.map_executor.shutdown(wait=False)
+
+
+def _invalid_mode_message(access_mode):
+    return (
+        f"access mode has unrecognized value: {access_mode!r} "
+        f"(expected one of ['internal', 'public'])"
+    )
+
+
+@pytest.mark.parametrize("tier", [None, "team", "public"])
+@pytest.mark.parametrize("access_mode", ["pubilc", "PUBLIC", ""])
+def test_direct_app_startup_rejects_invalid_env_mode(clean_env, access_mode, tier):
+    # A typo must not boot unrestricted; the entrypoint rejects it too.
+    clean_env.setenv("SHERLOC_AUTH_MODE", "dev")
+    clean_env.setenv("SHERLOC_ACCESS_MODE", access_mode)
+    if tier is not None:
+        clean_env.setenv("PHASE_TIER", tier)
+    with pytest.raises(ValueError) as exc:
+        create_app(engine=MagicMock(), config=MagicMock())
+    assert str(exc.value) == _invalid_mode_message(access_mode)
+    assert (
+        f"SHERLOC_ACCESS_MODE has unrecognized value: {access_mode!r} "
+        f"(expected one of ['internal', 'public'])"
+    ) in config_check.validate()
+
+
+@pytest.mark.parametrize("tier", [None, "team", "public"])
+@pytest.mark.parametrize("access_mode", ["pubilc", "Public"])
+def test_direct_app_startup_rejects_invalid_explicit_mode(clean_env, access_mode, tier):
+    clean_env.setenv("SHERLOC_AUTH_MODE", "dev")
+    if tier is not None:
+        clean_env.setenv("PHASE_TIER", tier)
+    with pytest.raises(ValueError) as exc:
+        create_app(engine=MagicMock(), config=MagicMock(), access_mode=access_mode)
+    assert str(exc.value) == _invalid_mode_message(access_mode)
