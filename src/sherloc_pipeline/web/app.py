@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.engine import Engine
 
+from sherloc_pipeline.web.config_check import VALID_ACCESS_MODES, access_tier_pairing_error
 from sherloc_pipeline.web.jobs import JobQueue
 from sherloc_pipeline.web.schemas import API_SCHEMA_VERSION
 from sherloc_pipeline.web.ws_map import MapJobRegistry
@@ -81,6 +82,18 @@ def create_app(
         database_path = os.environ.get("SHERLOC_DB")
     if access_mode == "internal":
         access_mode = os.environ.get("SHERLOC_ACCESS_MODE", "internal")
+
+    # Fail closed: an unknown mode (env typo or explicit argument) would
+    # otherwise skip the public-tier restrictions and serve as internal.
+    if access_mode not in VALID_ACCESS_MODES:
+        raise ValueError(
+            f"access mode has unrecognized value: {access_mode!r} "
+            f"(expected one of {sorted(VALID_ACCESS_MODES)})"
+        )
+
+    pairing_error = access_tier_pairing_error(access_mode)
+    if pairing_error:
+        raise ValueError(pairing_error)
 
     if access_mode == "public":
         # Validate against whichever source the app will actually use.

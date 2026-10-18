@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from sherloc_pipeline.database.models import ScanORM
+from sherloc_pipeline.web.routes.map import _get_data_access
 
 router = APIRouter(prefix="/api", tags=["plots"])
 
@@ -38,6 +39,7 @@ def get_plot(
     scan = session.query(ScanORM).filter(ScanORM.id == scan_id).first()
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found")
+    _get_data_access(request).validate_scan_access(scan)
 
     try:
         import matplotlib
