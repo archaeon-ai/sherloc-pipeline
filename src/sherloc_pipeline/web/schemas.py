@@ -189,7 +189,11 @@ class PointsResponse(BaseModel):
 
 
 class ProvenanceInfo(BaseModel):
-    calibration_version: str = "loupe_v5.1.5a"
+    calibration_version: Optional[str] = None
+    axis_source: Optional[str] = None
+    axis_sha256: Optional[str] = None
+    excitation_nm: Optional[float] = None
+    excitation_basis: Optional[str] = None
     wavenumber_unit: str = "cm-1"
     intensity_unit: str = "counts"
     averaging_method: Optional[str] = None
@@ -258,6 +262,7 @@ class AverageSpectrumResponse(BaseModel):
     laser_normalized: bool = False
     wavenumber: List[float]
     wavelength: Optional[List[float]] = None
+    channel_indices: List[int] = Field(default_factory=list)
     intensity: List[float]
     n_channels: int
     provenance: ProvenanceInfo
@@ -281,6 +286,7 @@ class PointSpectrumResponse(BaseModel):
     spectrum_type: str
     wavenumber: List[float]
     wavelength: Optional[List[float]] = None
+    channel_indices: List[int] = Field(default_factory=list)
     intensity: List[float]
     n_channels: int
     photodiode_mean: Optional[float] = None
@@ -328,6 +334,7 @@ class SubsetResponse(BaseModel):
     m_trimmed_per_tail: int
     wavenumber: List[float]
     wavelength: Optional[List[float]] = None
+    channel_indices: List[int] = Field(default_factory=list)
     intensity: List[float]
     n_channels: int
     provenance: ProvenanceInfo
@@ -497,7 +504,6 @@ class FitProvenance(BaseModel):
     config_hash: Optional[str] = None
     wavenumber_unit: str = "cm-1"
     intensity_unit: str = "counts"
-
 
 class FitResponse(BaseModel):
     schema_version: str = API_SCHEMA_VERSION

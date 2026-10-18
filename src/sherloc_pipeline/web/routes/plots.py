@@ -41,6 +41,9 @@ def get_plot(
         raise HTTPException(status_code=404, detail="Scan not found")
     _get_data_access(request).validate_scan_access(scan)
 
+    if scan.data_source == "pds4":
+        raise HTTPException(status_code=422, detail="PDS plots require the spectrum API native axes")
+
     try:
         import matplotlib
 
@@ -56,7 +59,7 @@ def get_plot(
 
         wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
         mask = get_region_wavelength_mask(wavelength, region)
-        wn = wavenumber[mask]
+        wn = wavelength[mask] if region in ("R2", "R3") else wavenumber[mask]
 
         fig, ax = plt.subplots(figsize=(10, 6))
 
