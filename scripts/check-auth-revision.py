@@ -11,6 +11,13 @@ AUTH = re.compile(
     r"phase-platform-auth\s+@\s+git\+https://github\.com/"
     r"archaeon-ai/phase-platform-auth@([^\s\"']+)"
 )
+# The Dockerfile's sed rewrites `^phase-platform-auth @ ` exactly, so the lock
+# line must sit in column 0 with single spaces around `@` and nothing after it.
+LOCK_LINE = re.compile(
+    r"^phase-platform-auth @ git\+https://github\.com/"
+    r"archaeon-ai/phase-platform-auth@[0-9a-f]{40}$",
+    re.MULTILINE,
+)
 
 
 def main() -> int:
@@ -24,6 +31,10 @@ def main() -> int:
         refs = AUTH.findall(active_lines)
         if len(refs) != 1 or not re.fullmatch(r"[0-9a-f]{40}", refs[0]):
             print(f"FAIL: {name}: expected exactly one full auth commit, got {refs}", file=sys.stderr)
+            return 1
+        if name == "requirements-lock.txt" and len(LOCK_LINE.findall(active_lines)) != 1:
+            print(f"FAIL: {name}: auth line must match the Dockerfile sed exactly "
+                  f"(column 0, `phase-platform-auth @ git+...@<sha>`)", file=sys.stderr)
             return 1
         revisions[name] = refs[0]
 
