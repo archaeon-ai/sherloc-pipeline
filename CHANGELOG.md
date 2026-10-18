@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   denied: 403 on direct access with the same detail text, and the row is excluded from lists. Before, the gate was
   a denylist that failed open. Internal mode is unchanged. All 1070 scans in the public DB are `pds4`, so nothing
   leaves the public site (#107, fixes #106).
+- **Public responses expose less.** In public mode, a point-spectrum request for a spectrum type other than the
+  scan's resolved representation gets 403, and scan detail leaves out linked scan IDs (which can be team-tier) and
+  raw processing-error text (#105, #99).
 
 ### Fixed
 - **Exports carry the real provenance of each trace.** CSV and provenance JSON exports describe the committed
@@ -26,7 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the server-side processing and the real package version;
   - a deterministic digest of the inputs and the served values.
   Unknown evidence stays null. Public responses and exports never include private source fields. Pending,
-  failed or stale selections cannot relabel a committed trace (#105, #99).
+  failed or stale selections cannot relabel a committed trace, and undo/reset restores the trace's provenance
+  together with its processing (#105, #99).
+- **Export and processing details (#105, #99).**
+  - CSV exports add wavelength, detector channel and unit columns, with the same provenance object as the JSON.
+  - Duplicate subset indices are rejected with 422.
+  - Normalization reports unavailable or partial evidence, and treats non-finite photodiode values as missing.
+  - Fit provenance records the resolved defaults, the baseline/configuration branch actually used, and the
+    fluorescence AICc behavior.
 
 ## [5.7.3] - 2026-10-18
 
