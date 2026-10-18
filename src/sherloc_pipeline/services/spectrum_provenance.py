@@ -14,7 +14,7 @@ def build_spectrum_provenance(
     contributor_indices, intensity, *, normalization_applied=False,
     max_photodiode=None, despike_applied=False, despike_method=None,
     despike_params=None, masked_positions=None, aggregation=None,
-    baseline_params=None, wavelength_filter=None, despike_interpolation=None,
+    baseline_params=None, wavelength_filter=None, despike_lineage=None,
 ):
     """Keep missing product evidence null; hash native arrays and lineage.
 
@@ -57,9 +57,9 @@ def build_spectrum_provenance(
             "intensity_sha256": hashlib.sha256(values.astype("<f4").tobytes()).hexdigest(),
         })
     processing = []
-    if despike_applied and despike_method != "modz":
-        processing.append({"step": "despike", "method": despike_method, "scope": "per_contributor",
-                           "interpolation": despike_interpolation})
+    if despike_lineage:
+        processing.append({"step": "despike", "method": "ml", "scope": "per_contributor",
+                           "contributors": despike_lineage})
     if region == "R123":
         processing.append({"step": "r123_stitch", "method": "overlap_sum", "regions": ["R1", "R2", "R3"]})
     if spectrum_type == "dark_subtracted" and (aggregation is not None or normalization_applied):

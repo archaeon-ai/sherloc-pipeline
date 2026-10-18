@@ -343,6 +343,21 @@ def _fetch_stored_masks(session: Session, spectrum_ids):
     return CRMaskService.get_masks_for_spectra(session, ids)
 
 
+def _mask_lineage(sp, point_index, stored, applied_channels, interp, enabled=True):
+    applied = enabled and stored is not None
+    return {
+        "spectrum_id": sp.id, "point_index": point_index, "region": sp.region,
+        "mask_available": stored is not None, "applied": applied,
+        "mask_id": str(stored.id) if getattr(stored, "id", None) is not None else None,
+        "method": getattr(stored, "method", None),
+        "model_sha256": getattr(stored, "model_sha256", None),
+        "threshold": getattr(stored, "tau", None),
+        "mask_channels": sorted(stored.channel_indices) if stored is not None else [],
+        "applied_channels": applied_channels,
+        "interpolation": interp if applied else None,
+    }
+
+
 def _stitch_point_r123_despiked(
     session: Session,
     point_id: str,
@@ -350,19 +365,21 @@ def _stitch_point_r123_despiked(
     masks_by_spectrum: dict,
     region_windows,
     interp: str,
+    apply_masks: bool = True,
 ):
     """Constituent-first despiked R123 stitch (spec §4.6).
 
     Each region's full-plane DARK_SUBTRACTED constituent is despiked with
     its own stored mask (certified-window restricted) **before** the overlap
     summation — no mask is ever applied to an already-summed value on the
-    serving path. Returns ``(stitched_2148_or_None, applied_abs_channels)``;
-    a missing constituent row yields ``(None, [])``.
+    serving path. Returns the stitch, applied channels, and mask lineage;
+    a missing constituent row yields ``(None, [], [])``.
     """
     from sherloc_pipeline.core.r123_stitching import stitch_r123_spectrum
 
     parts = {}
     applied: set = set()
+    lineage = []
     for reg in R123_CONTRIBUTORS:
         sp = (
             session.query(SpectrumORM)
@@ -374,10 +391,11 @@ def _stitch_point_r123_despiked(
             .first()
         )
         if sp is None:
-            return None, []
+            return None, [], []
         arr = _extract_intensities(sp).astype(float)
         mask = _select_stored_mask(masks_by_spectrum.get(sp.id, []))
-        if mask is not None:
+        in_window = []
+        if apply_masks and mask is not None:
             lo, hi = region_windows[reg]
             in_window = [
                 int(c) for c in mask.channel_indices if lo <= int(c) < hi and int(c) < len(arr)
@@ -387,21 +405,23 @@ def _stitch_point_r123_despiked(
                     arr, mask.channel_indices, region_windows[reg], interp
                 )
                 applied.update(in_window)
+        lineage.append(_mask_lineage(sp, sp.scan_point.point_index, mask, in_window, interp, apply_masks))
         parts[reg] = arr
     try:
         stitched = stitch_r123_spectrum(parts["R1"], parts["R2"], parts["R3"])
     except ValueError:
-        return None, []
-    return stitched, sorted(applied)
+        return None, [], []
+    return stitched, sorted(applied), lineage
 
 
 def _method_of_masks(masks_by_spectrum) -> Optional[str]:
-    """Provenance label of the first stored mask in a lookup result."""
+    """Summary label; precise identities live in per-contributor lineage."""
+    methods = set()
     for recs in masks_by_spectrum.values():
         chosen = _select_stored_mask(recs)
         if chosen is not None:
-            return chosen.method
-    return None
+            methods.add(chosen.method)
+    return next(iter(methods)) if len(methods) == 1 else "mixed" if methods else None
 
 
 def _r123_missing_regions(session: Session, point_ids, masks_by_spectrum) -> List[str]:
@@ -475,6 +495,7 @@ class _DespikeOutcome:
         self.masked_positions: List[int] = []
         self.missing_regions: List[str] = []
         self.n_uncovered = 0
+        self.lineage: List[dict] = []
 
 
 def _collect_single_region(
@@ -509,16 +530,17 @@ def _collect_single_region(
         sel = raw[mask]
         if do_despike:
             stored = _select_stored_mask(masks_by_spectrum.get(sp.id))
+            applied = []
             if stored is not None:
                 found = True
-                if outcome.method is None:
-                    outcome.method = stored.method
                 sel, applied = _despike_region_array(
                     sel, selected_channels, stored.channel_indices, window, interp
                 )
                 applied_union.update(applied)
+            outcome.lineage.append(_mask_lineage(sp, pt_idx, stored, applied, interp))
         indexed.append((pt_idx, sel))
     outcome.applied = do_despike and found
+    outcome.method = _method_of_masks(masks_by_spectrum)
     outcome.masked_channels = sorted(applied_union)
     outcome.masked_positions = _channels_to_served_positions(
         applied_union, selected_channels
@@ -564,24 +586,21 @@ def _collect_r123(
         ]
         masks_by_spectrum = _fetch_stored_masks(session, constituent_ids)
         outcome.missing_regions = _r123_missing_regions(session, point_ids, masks_by_spectrum)
-        if not outcome.missing_regions:
+        apply_masks = not outcome.missing_regions
+        if apply_masks:
             outcome.method = _method_of_masks(masks_by_spectrum)
-            for pt in points:
-                stitched, applied = _stitch_point_r123_despiked(
-                    session, pt.id, spec_type, masks_by_spectrum, region_windows, interp
-                )
-                if stitched is not None:
-                    indexed.append((pt.point_index, stitched[mask]))
-                    applied_union.update(applied)
-            outcome.applied = len(indexed) > 0
-            outcome.masked_channels = sorted(applied_union)
-            # R123 serves the full 2148-channel stitch (all-True mask), a
-            # position-preserving copy/sum, so served position == absolute
-            # channel: positions and channels coincide (issue #8).
-            outcome.masked_positions = _channels_to_served_positions(
-                applied_union, np.where(mask)[0]
+        for pt in points:
+            stitched, applied, lineage = _stitch_point_r123_despiked(
+                session, pt.id, spec_type, masks_by_spectrum, region_windows, interp, apply_masks
             )
-            return indexed, outcome
+            if stitched is not None:
+                indexed.append((pt.point_index, stitched[mask]))
+                applied_union.update(applied)
+                outcome.lineage.extend(lineage)
+        outcome.applied = apply_masks and len(indexed) > 0
+        outcome.masked_channels = sorted(applied_union)
+        outcome.masked_positions = _channels_to_served_positions(applied_union, np.where(mask)[0])
+        return indexed, outcome
 
     # Non-despiked composite (despike off, or an all-or-none miss).
     for pt in points:
@@ -922,7 +941,7 @@ def get_average_spectrum(
             [idx for idx, _ in indexed_intensities], avg_intensity,
             normalization_applied=normalization_applied, max_photodiode=max_photodiode,
             despike_applied=despike_outcome.applied, despike_method=despike_outcome.method,
-            despike_params=modz_params_used, despike_interpolation=interp, masked_positions=despike_outcome.masked_positions,
+            despike_params=modz_params_used, despike_lineage=despike_outcome.lineage, masked_positions=despike_outcome.masked_positions,
             aggregation={"method": method_used, "effective_trim_pct_per_tail": effective_pct,
                          "m_trimmed_per_tail": m_trimmed, "n_points": n_points},
             baseline_params=baseline_params_used, wavelength_filter=_wavelength_filter_info(region),
@@ -996,6 +1015,7 @@ def get_point_spectrum(
     interp = _despike_interpolation_method(request.app.state.config)
     despike_applied = False
     despike_method_out: Optional[str] = None
+    despike_lineage = []
     masked_channels: List[int] = []
     # Positions into the served array for the ml red-triangle markers (issue
     # #8). Filled from masked_channels via the region selection just before the
@@ -1022,16 +1042,14 @@ def get_point_spectrum(
             ]
             masks_by_spectrum = _fetch_stored_masks(session, constituent_ids)
             missing_regions = _r123_missing_regions(session, [point.id], masks_by_spectrum)
-            if missing_regions:
-                stitched = _stitch_point_r123(session, point.id, spec_type)
-            else:
-                stitched, applied = _stitch_point_r123_despiked(
-                    session, point.id, spec_type, masks_by_spectrum, region_windows, interp
-                )
-                if stitched is not None:
-                    despike_applied = True
-                    despike_method_out = _method_of_masks(masks_by_spectrum)
-                    masked_channels = applied
+            stitched, applied, despike_lineage = _stitch_point_r123_despiked(
+                session, point.id, spec_type, masks_by_spectrum, region_windows, interp,
+                apply_masks=not missing_regions,
+            )
+            if stitched is not None and not missing_regions:
+                despike_applied = True
+                despike_method_out = _method_of_masks(masks_by_spectrum)
+                masked_channels = applied
         else:
             stitched = _stitch_point_r123(session, point.id, spec_type)
         if stitched is None:
@@ -1061,6 +1079,7 @@ def get_point_spectrum(
                 )
                 despike_applied = True
                 despike_method_out = stored.method
+            despike_lineage.append(_mask_lineage(spectrum, idx, stored, masked_channels, interp))
 
     # Served positions of the ml-replaced channels, for the markers (issue
     # #8). Computed before normalization (positions are array-index based, so
@@ -1119,7 +1138,7 @@ def get_point_spectrum(
             scan, axis_rows, axes, region, spec_type, "point", [idx], [idx], intensity,
             normalization_applied=was_normed, max_photodiode=max_photodiode,
             despike_applied=despike_applied, despike_method=despike_method_out,
-            despike_params=modz_params_used, despike_interpolation=interp, masked_positions=masked_positions,
+            despike_params=modz_params_used, despike_lineage=despike_lineage, masked_positions=masked_positions,
             wavelength_filter=_wavelength_filter_info(region),
         )),
         despike_applied=despike_applied,
@@ -1275,7 +1294,7 @@ def get_subset_average(
             [idx for idx, _ in indexed_intensities], avg_intensity,
             normalization_applied=normalization_applied, max_photodiode=max_photodiode,
             despike_applied=despike_outcome.applied, despike_method=despike_outcome.method,
-            despike_params=modz_params_used, despike_interpolation=interp, masked_positions=despike_outcome.masked_positions,
+            despike_params=modz_params_used, despike_lineage=despike_outcome.lineage, masked_positions=despike_outcome.masked_positions,
             aggregation={"method": method_used, "effective_trim_pct_per_tail": effective_pct,
                          "m_trimmed_per_tail": m_trimmed, "n_points": n_points},
             wavelength_filter=_wavelength_filter_info(region),

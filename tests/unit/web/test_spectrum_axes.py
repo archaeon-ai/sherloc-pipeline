@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from sherloc_pipeline.database.connection import create_all_tables
-from sherloc_pipeline.database.models import ScanORM, ScanPointORM, SolORM, SpectrumORM
+from sherloc_pipeline.database.models import CosmicRayMaskORM, ScanORM, ScanPointORM, SolORM, SpectrumORM
 from sherloc_pipeline.services import spectrum_axes
 from sherloc_pipeline.web.routes import spectra
 
@@ -178,9 +178,81 @@ async def test_ml_positions_follow_embedded_region_mask(axis_client, axis_db, mo
     data = response.json()
     assert data["masked_channels"] == [24]
     assert data["masked_positions"] == [data["channel_indices"].index(24)]
-    assert data["provenance"]["processing_chain"] == [{
-        "step": "despike", "method": "synthetic", "scope": "per_contributor", "interpolation": "linear",
-    }]
+    step = data["provenance"]["processing_chain"][0]
+    assert step["scope"] == "per_contributor"
+    assert step["contributors"][0]["applied_channels"] == [24]
+    assert step["contributors"][0]["interpolation"] == "linear"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["point", "average", "subset"])
+@pytest.mark.parametrize("region", ["R1", "R123"])
+@pytest.mark.parametrize("missing", [False, True])
+async def test_ml_lineage_preserves_each_mask_and_nonapplication(axis_client, axis_db, monkeypatch, mode, region, missing):
+    records = {}
+    with Session(axis_db) as session:
+        session.get(ScanORM, SCAN_ID).data_source = "loupe"
+        for row in session.query(SpectrumORM).all():
+            row.spectrum_type = "dark_subtracted"
+            idx = row.scan_point.point_index
+            channel = {"R1": 24, "R2": 800, "R3": 1900}[row.region] + idx
+            values = np.full(2148, 1 + idx * 2)
+            values[channel] = 101
+            row.intensities = packed(values)
+            if missing and row.id == "synthetic-0-R1":
+                continue
+            record = {
+                "mask_id": f"mask-{row.id}", "method": f"synthetic-{idx}-{row.region}",
+                "model_sha256": str(idx + 1) * 64, "threshold": 0.2 + idx,
+                "mask_channels": [channel, 2147], "applied_channels": [channel],
+            }
+            records[row.id] = record
+            session.add(CosmicRayMaskORM(
+                id=record["mask_id"], spectrum_id=row.id, method=record["method"],
+                model_sha256=record["model_sha256"], tau=record["threshold"],
+                channel_indices=record["mask_channels"], n_flagged=2,
+            ))
+        session.commit()
+    monkeypatch.setattr(spectra, "_despike_region_windows", lambda: {
+        "R1": (0, 500), "R2": (700, 1100), "R3": (1700, 2100),
+    })
+    # These fixture keys are readable strings rather than the service's UUIDs.
+    monkeypatch.setattr(spectra, "_fetch_stored_masks", lambda session, ids: {
+        sid: session.query(CosmicRayMaskORM).filter(CosmicRayMaskORM.spectrum_id == sid).all()
+        for sid in ids
+    })
+    if mode == "subset":
+        response = await axis_client.post(f"/api/spectra/{SCAN_ID}/subset", json={
+            "point_indices": [0, 1], "region": region, "averaging_method": "mean", "despike_method": "ml",
+        })
+    else:
+        suffix = "point/0" if mode == "point" else "average"
+        response = await axis_client.get(f"/api/spectra/{SCAN_ID}/{suffix}", params={
+            "region": region, "averaging_method": "mean", "despike_method": "ml",
+        })
+    assert response.status_code == 200, response.text
+    data = response.json()
+    step = data["provenance"]["processing_chain"][0]
+    assert step["step"] == "despike"
+    assert step["method"] == "ml"
+    lineage = {row["spectrum_id"]: row for row in step["contributors"]}
+    assert set(lineage) == {row["spectrum_id"] for row in data["provenance"]["source_spectra"]}
+    for sid, row in lineage.items():
+        assert row["point_index"] == int(sid.split("-")[1])
+        assert row["region"] == sid.split("-")[2]
+        applied = sid in records and not (missing and region == "R123")
+        assert row["applied"] is applied
+        assert row["mask_available"] is (sid in records)
+        assert row["interpolation"] == ("linear" if applied else None)
+        if sid in records:
+            for key in ("mask_id", "method", "model_sha256", "threshold", "mask_channels"):
+                assert row[key] == records[sid][key]
+        else:
+            assert row["mask_id"] is None
+            assert row["method"] is None
+        assert row["applied_channels"] == (records[sid]["applied_channels"] if applied else [])
+    if not missing:
+        assert max(data["intensity"]) < 10
 
 
 def test_static_badpix_callers_keep_regional_loupe_mapping(monkeypatch):
