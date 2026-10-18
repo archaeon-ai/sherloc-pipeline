@@ -61,7 +61,8 @@ web = [
     # Git URL pin until the PyPI publish; operator's existing install
     # workflow handles git+https deps. After PyPI publish swap back to
     # ``"phase-platform-auth>=0.1.0,<1"``.
-    "phase-platform-auth @ git+https://github.com/archaeon-ai/phase-platform-auth@v0.1.0",
+    # Auth revisions here, in requirements-lock.txt, and in Dockerfile must move together.
+    "phase-platform-auth @ git+https://github.com/archaeon-ai/phase-platform-auth@890be041d7b4e6144a3a132df38bf02e5b599d53",
     # CF Access JWT signature validation (web/auth.py); legacy path,
     # sunset alongside CF Access in v4.x.
     "pyjwt[crypto]>=2.8.0",

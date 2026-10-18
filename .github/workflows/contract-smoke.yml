@@ -13,6 +13,10 @@ on:
     paths:
       - 'Dockerfile'
       - 'docker-entrypoint.sh'
+      - 'requirements-lock.txt'
+      - 'requirements-build.txt'
+      - 'pyproject.toml'
+      - 'scripts/check-auth-revision.py'
       - 'deploy/**'
       - 'src/sherloc_pipeline/web/config_check.py'
       - 'src/sherloc_pipeline/web/app.py'

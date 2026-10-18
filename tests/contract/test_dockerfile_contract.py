@@ -25,10 +25,10 @@ def test_dockerfile_exists():
 
 def test_runtime_stage_base_is_python_3_12():
     text = _dockerfile_text()
-    # `FROM python:3.12.<patch>-slim-bookworm AS runtime` shape; we accept
-    # patch + flavor variations but require the 3.12 minor.
+    # Require Python 3.12 and an immutable image digest; accept patch and
+    # flavor variations while keeping the readable tag.
     assert re.search(
-        r"^FROM\s+python:3\.12\.[0-9a-zA-Z._-]+\s+AS\s+runtime\s*$",
+        r"^FROM\s+python:3\.12\.[0-9a-zA-Z._-]+@sha256:[0-9a-f]{64}\s+AS\s+runtime\s*$",
         text,
         re.MULTILINE,
     ), "runtime stage must use python:3.12.* base"

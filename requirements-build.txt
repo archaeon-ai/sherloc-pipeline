@@ -1,0 +1,11 @@
+# Exact tools for the project (setuptools) and auth (hatchling) source builds.
+# packaging reuses the reviewed runtime lock version; other pins need lane review.
+build==1.2.2.post1
+setuptools==75.6.0
+wheel==0.45.1
+hatchling==1.27.0
+packaging==26.2
+pyproject-hooks==1.2.0
+pathspec==0.12.1
+pluggy==1.5.0
+trove-classifiers==2024.10.21.16

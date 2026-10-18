@@ -27,6 +27,8 @@ jobs:
         # (actions/checkout@v4 default is a shallow no-tags fetch).
         with:
           fetch-depth: 0
+      - name: Check immutable auth revision alignment
+        run: python3 scripts/check-auth-revision.py
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
