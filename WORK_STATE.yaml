@@ -1,6 +1,6 @@
-work_package: "Job 9: sherloc-pipeline #98 and #99 offline patches"
-branch: "pr1-axes (patch only; no PR URL)"
-head: "6db11af"
+work_package: "sherloc-pipeline #98 stored PDS wavelength axis (spectra-id lane, Astra job 9 PR1)"
+branch: "web-pds-axis-provenance"
+head: "8668dfd"
 open_decisions: []
-next_action: "Build PR 2 from pr1-axes, then independent review of both patches"
-last_verified: "2026-10-18T07:12:12Z — PR1 working tree: Python 434 passed, 14 baseline failures, 1 skipped; frontend 236 passed; ruff passed; svelte-check unchanged 4 errors/18 warnings"
+next_action: "Codex review at exact head; merge only on the PM's word; then PR2 (#99) stacked on this branch"
+last_verified: "2026-10-18T00:29:13-07:00 — full checkout: ruff clean; fixture provenance OK; pytest -m 'not slow and not docker' 3714 passed, 225 skipped; vitest 236 passed (one known map-teardown flake in 1 of 4 runs); svelte-check 4 errors/18 warnings, same as main"
