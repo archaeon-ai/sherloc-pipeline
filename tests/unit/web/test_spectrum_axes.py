@@ -178,6 +178,9 @@ async def test_ml_positions_follow_embedded_region_mask(axis_client, axis_db, mo
     data = response.json()
     assert data["masked_channels"] == [24]
     assert data["masked_positions"] == [data["channel_indices"].index(24)]
+    assert data["provenance"]["processing_chain"] == [{
+        "step": "despike", "method": "synthetic", "scope": "per_contributor", "interpolation": "linear",
+    }]
 
 
 def test_static_badpix_callers_keep_regional_loupe_mapping(monkeypatch):
@@ -245,3 +248,131 @@ async def test_defaulted_scan_excitation_discloses_nominal_basis(axis_client, ax
     assert data["provenance"]["excitation_nm"] == chosen_excitation
     assert data["provenance"]["excitation_basis"] == "scan_record_or_nominal_default"
     np.testing.assert_allclose(data["wavenumber"], 1e7 * (1 / chosen_excitation - 1 / np.array([251, 252])))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["point", "average", "subset"])
+async def test_pds_provenance_is_backend_owned(axis_client, axis_db, mode):
+    from sherloc_pipeline import __version__
+
+    with Session(axis_db) as session:
+        session.get(ScanORM, SCAN_ID).pds4_metadata = {"lidvid": PRODUCT_ID, "version": "9.0", "software_version": "synthetic-9"}
+        session.commit()
+    response = await request_trace(axis_client, mode, "R2")
+    assert response.status_code == 200
+    provenance = response.json()["provenance"]
+    assert "loupe" not in str(provenance).lower()
+    assert provenance["data_origin"] == "pds4"
+    assert provenance["source"]["product_id"] == PRODUCT_ID
+    assert provenance["source"]["product_version"] == "9.0"
+    assert provenance["source"]["source_sha256"] is None
+    assert provenance["source"]["scan_excitation_nm"] == EXCITATION
+    assert provenance["source"]["scan_excitation_basis"] == "scan_record_or_nominal_default"
+    assert provenance["source_processing"]["software_version"] == "synthetic-9"
+    assert provenance["application"]["version"] == __version__
+    assert provenance["application"]["commit"] is None
+    assert provenance["intensity_unit"] is None
+    assert provenance["wavelength_unit"] == "nm"
+    assert provenance["selection"]["mode"] == mode
+    expected_indices = [0] if mode == "point" else [0, 1]
+    assert provenance["selection"]["contributor_indices"] == expected_indices
+    assert [row["point_index"] for row in provenance["source_spectra"]] == expected_indices
+    assert provenance["source_processing"]["spectrum_type"] == "laser_normalized"
+    assert [step["step"] for step in provenance["processing_chain"]] == ([] if mode == "point" else ["aggregate"])
+    assert len(provenance["source_digest"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_digest_tracks_native_data_and_metadata(axis_client, axis_db):
+    async def digest():
+        response = await request_trace(axis_client, "average", "R1")
+        assert response.status_code == 200
+        return response.json()["provenance"]["source_digest"]
+
+    original = await digest()
+    assert await digest() == original
+    with Session(axis_db) as session:
+        # The changed channel is outside the served R1 window, but belongs to
+        # the native input and must still change its reproducible identity.
+        values = np.ones(2148)
+        values[-1] = 17
+        session.get(SpectrumORM, "synthetic-0-R1").intensities = packed(values)
+        session.commit()
+    changed_data = await digest()
+    assert changed_data != original
+    with Session(axis_db) as session:
+        session.get(ScanORM, SCAN_ID).pds4_metadata = {"version": "9.1"}
+        session.commit()
+    assert await digest() != changed_data
+
+
+@pytest.mark.asyncio
+async def test_subset_discloses_missing_contributors(axis_client, axis_db):
+    with Session(axis_db) as session:
+        session.delete(session.get(SpectrumORM, "synthetic-1-R1"))
+        session.commit()
+    response = await request_trace(axis_client, "subset", "R1")
+    assert response.status_code == 200
+    provenance = response.json()["provenance"]
+    assert provenance["selection"] == {
+        "mode": "subset", "indices": [0, 1], "n_points": 1,
+        "contributor_indices": [0], "omitted_indices": [1],
+    }
+    assert [row["spectrum_id"] for row in provenance["source_spectra"]] == ["synthetic-0-R1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["loupe", None])
+async def test_loupe_and_unknown_origin_are_not_invented(axis_client, axis_db, origin):
+    with Session(axis_db) as session:
+        scan = session.get(ScanORM, SCAN_ID)
+        scan.data_source = origin
+        # Deliberately differ from the fixed legacy fallback's excitation.
+        scan.laser_wavelength_nm = 245
+        for row in session.query(SpectrumORM).all():
+            row.spectrum_type = "dark_subtracted"
+            row.wavelengths = None
+            row.wavelength_source = None
+        for point in session.query(ScanPointORM).all():
+            point.photodiode_mean = point.point_index + 1
+        session.commit()
+    response = await request_trace(axis_client, "average", "R123")
+    assert response.status_code == 200
+    provenance = response.json()["provenance"]
+    assert provenance["data_origin"] == origin
+    assert provenance["source"]["scan_excitation_nm"] == 245
+    assert provenance["excitation_basis"] == "loupe_calibration_default"
+    assert provenance["excitation_nm"] != 245
+    assert provenance["source"]["product_id"] is None
+    assert [step["step"] for step in provenance["processing_chain"]] == [
+        "r123_stitch", "laser_normalization", "aggregate",
+    ]
+    assert provenance["processing_chain"][1]["factors"] == {"0": 2, "1": 1}
+
+
+@pytest.mark.asyncio
+async def test_processing_chain_reports_only_applied_steps(axis_client, monkeypatch):
+    from sherloc_pipeline.core import baseline
+
+    monkeypatch.setattr(spectra, "_apply_modz_to_served_r1", lambda intensity, wn, params: (intensity - 1, 2))
+    monkeypatch.setattr(baseline, "fit_baseline", lambda series, params: (series - 2, series * 0 + 2))
+    response = await axis_client.get(f"/api/spectra/{SCAN_ID}/average", params={
+        "despike_method": "modz", "baseline_corrected": True, "averaging_method": "mean",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    chain = data["provenance"]["processing_chain"]
+    assert [step["step"] for step in chain] == ["aggregate", "despike", "baseline"]
+    assert chain[1]["method"] == "modz"
+    assert chain[1]["params"] == data["despike_params_used"]
+    assert chain[2]["method"] == "aspls"
+    assert data["baseline_corrected"] is True
+
+    def fail_baseline(*args):
+        raise ValueError("Synthetic failure")
+
+    monkeypatch.setattr(baseline, "fit_baseline", fail_baseline)
+    response = await axis_client.get(f"/api/spectra/{SCAN_ID}/average", params={"baseline_corrected": True})
+    assert response.status_code == 200
+    assert response.json()["baseline_corrected"] is False
+    assert [step["step"] for step in response.json()["provenance"]["processing_chain"]] == ["aggregate"]

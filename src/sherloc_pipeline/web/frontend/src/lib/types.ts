@@ -127,7 +127,17 @@ export interface SpectrumProvenance {
   excitation_nm?: number | null;
   excitation_basis?: string | null;
   wavenumber_unit: string;
-  intensity_unit: string;
+  intensity_unit: string | null;
+  data_origin?: string | null;
+  source?: Record<string, unknown>;
+  selection?: Record<string, unknown>;
+  source_spectra?: Record<string, unknown>[];
+  source_processing?: Record<string, unknown>;
+  source_digest?: string | null;
+  processing_chain?: Record<string, unknown>[];
+  application?: { version?: string | null; commit?: string | null };
+  wavelength_unit?: string;
+  region?: string | null;
   averaging_method?: string;
   wavelength_filter?: { min_nm: number; max_nm: number };
 }
@@ -599,7 +609,19 @@ export interface ProcessingArtifacts {
   fitRange?: [number, number];
 }
 
+export interface ExportTrace {
+  provenance: SpectrumProvenance;
+  source: Record<string, unknown>;
+  selection: Record<string, unknown>;
+  wavelength: number[] | null;
+  channel_indices: number[];
+  wavenumber: number[];
+  intensity: number[];
+}
+
 export interface ProcessingSnapshot {
+  trace?: ExportTrace;
+  processingChain?: Record<string, unknown>[];
   stage: ProcessingStage;
   raman: { wavenumber: number[]; intensity: number[] };
   params: Record<string, unknown>;

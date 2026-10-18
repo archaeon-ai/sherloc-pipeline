@@ -2,6 +2,7 @@
 
 import logging
 import zlib
+from dataclasses import asdict
 from functools import lru_cache
 from typing import List, Optional
 
@@ -30,6 +31,7 @@ from sherloc_pipeline.core.preprocessing import (
 from sherloc_pipeline.database.models import ScanORM, ScanPointORM, SpectrumORM
 from sherloc_pipeline.services.cr_masks import PARENT_SPECTRUM_TYPE, CRMaskService
 from sherloc_pipeline.services.spectrum_axes import resolve_spectrum_axes
+from sherloc_pipeline.services.spectrum_provenance import build_spectrum_provenance
 from sherloc_pipeline.web.adapters import numpy_to_list
 from sherloc_pipeline.web.data_access import DataAccessService
 from sherloc_pipeline.web.schemas import (
@@ -799,7 +801,7 @@ def get_average_spectrum(
     data_access.validate_scan_access(scan)
 
     spec_type = _resolve_spectrum_type(scan)
-    axes, _axis_rows = _resolve_axes(session, scan, region, spec_type)
+    axes, axis_rows = _resolve_axes(session, scan, region, spec_type)
     wavelength, wavenumber, mask = axes.wavelength, axes.wavenumber, axes.mask
     wn_masked = wavenumber[mask]
     selected_channels = np.where(mask)[0]
@@ -841,8 +843,9 @@ def get_average_spectrum(
 
     # Apply laser normalization for Loupe dark-subtracted spectra
     normalization_applied = False
+    max_photodiode = None
     if is_loupe and spec_type == "dark_subtracted":
-        all_intensities, normalization_applied, _ = _apply_laser_normalization(
+        all_intensities, normalization_applied, max_photodiode = _apply_laser_normalization(
             session, scan_id, indexed_intensities,
         )
     else:
@@ -882,6 +885,7 @@ def get_average_spectrum(
 
     # Optional baseline correction
     actually_corrected = False
+    baseline_params_used = None
     if baseline_corrected:
         try:
             import pandas as pd
@@ -893,6 +897,7 @@ def get_average_spectrum(
             corrected, _bl = fit_baseline(series, params)
             avg_intensity = corrected.values
             actually_corrected = True
+            baseline_params_used = asdict(params)
         except Exception as exc:
             logger.warning("Baseline correction failed for scan %s: %s", scan_id, exc)
 
@@ -911,15 +916,16 @@ def get_average_spectrum(
         channel_indices=selected_channels.tolist(),
         intensity=numpy_to_list(avg_intensity),
         n_channels=len(wn_masked),
-        provenance=ProvenanceInfo(
-            axis_source=axes.source,
-            axis_sha256=axes.sha256,
-            calibration_version=axes.calibration_version,
-            excitation_nm=axes.excitation_nm,
-            excitation_basis=axes.excitation_basis,
-            averaging_method=method_used,
-            wavelength_filter=_wavelength_filter_info(region),
-        ),
+        provenance=ProvenanceInfo(**build_spectrum_provenance(
+            scan, axis_rows, axes, region, spec_type, "average", None,
+            [idx for idx, _ in indexed_intensities], avg_intensity,
+            normalization_applied=normalization_applied, max_photodiode=max_photodiode,
+            despike_applied=despike_outcome.applied, despike_method=despike_outcome.method,
+            despike_params=modz_params_used, despike_interpolation=interp, masked_positions=despike_outcome.masked_positions,
+            aggregation={"method": method_used, "effective_trim_pct_per_tail": effective_pct,
+                         "m_trimmed_per_tail": m_trimmed, "n_points": n_points},
+            baseline_params=baseline_params_used, wavelength_filter=_wavelength_filter_info(region),
+        )),
         despike_applied=despike_outcome.applied,
         despike_method=despike_outcome.method,
         n_masked_channels=n_masked_channels,
@@ -978,7 +984,7 @@ def get_point_spectrum(
     if point is None:
         raise HTTPException(status_code=404, detail=f"Point index {idx} not found")
 
-    axes, _axis_rows = _resolve_axes(session, scan, region, spec_type, [idx])
+    axes, axis_rows = _resolve_axes(session, scan, region, spec_type, [idx])
     wavelength, wavenumber, mask = axes.wavelength, axes.wavenumber, axes.mask
     selected_channels = np.where(mask)[0]
 
@@ -1063,8 +1069,10 @@ def get_point_spectrum(
 
     # Apply laser normalization for Loupe single-point spectra
     is_loupe = (getattr(scan, "data_source", None) or "loupe") == "loupe"
+    was_normed = False
+    max_photodiode = None
     if is_loupe and spec_type == "dark_subtracted":
-        normed, was_normed, _ = _apply_laser_normalization(
+        normed, was_normed, max_photodiode = _apply_laser_normalization(
             session, scan_id, [(idx, intensity)],
         )
         if was_normed:
@@ -1106,14 +1114,13 @@ def get_point_spectrum(
         intensity=numpy_to_list(intensity),
         n_channels=len(intensity),
         photodiode_mean=point.photodiode_mean,
-        provenance=ProvenanceInfo(
-            axis_source=axes.source,
-            axis_sha256=axes.sha256,
-            calibration_version=axes.calibration_version,
-            excitation_nm=axes.excitation_nm,
-            excitation_basis=axes.excitation_basis,
+        provenance=ProvenanceInfo(**build_spectrum_provenance(
+            scan, axis_rows, axes, region, spec_type, "point", [idx], [idx], intensity,
+            normalization_applied=was_normed, max_photodiode=max_photodiode,
+            despike_applied=despike_applied, despike_method=despike_method_out,
+            despike_params=modz_params_used, despike_interpolation=interp, masked_positions=masked_positions,
             wavelength_filter=_wavelength_filter_info(region),
-        ),
+        )),
         despike_applied=despike_applied,
         despike_method=despike_method_out,
         n_masked_channels=n_masked_channels,
@@ -1180,7 +1187,7 @@ def get_subset_average(
             raise HTTPException(status_code=400, detail=f"Point index {idx} not found")
         points.append(point)
 
-    axes, _axis_rows = _resolve_axes(session, scan, region, spec_type, body.point_indices)
+    axes, axis_rows = _resolve_axes(session, scan, region, spec_type, body.point_indices)
     wavelength, wavenumber, mask = axes.wavelength, axes.wavenumber, axes.mask
     wn_masked = wavenumber[mask]
     selected_channels = np.where(mask)[0]
@@ -1211,8 +1218,10 @@ def get_subset_average(
         raise HTTPException(status_code=404, detail="No valid spectra found for subset")
 
     # Apply laser normalization for Loupe spectra
+    normalization_applied = False
+    max_photodiode = None
     if is_loupe and spec_type == "dark_subtracted":
-        all_intensities, _, _ = _apply_laser_normalization(
+        all_intensities, normalization_applied, max_photodiode = _apply_laser_normalization(
             session, scan_id, indexed_intensities,
         )
     else:
@@ -1260,15 +1269,16 @@ def get_subset_average(
         channel_indices=selected_channels.tolist(),
         intensity=numpy_to_list(avg_intensity),
         n_channels=len(wn_masked),
-        provenance=ProvenanceInfo(
-            axis_source=axes.source,
-            axis_sha256=axes.sha256,
-            calibration_version=axes.calibration_version,
-            excitation_nm=axes.excitation_nm,
-            excitation_basis=axes.excitation_basis,
-            averaging_method=method_used,
+        provenance=ProvenanceInfo(**build_spectrum_provenance(
+            scan, axis_rows, axes, region, spec_type, "subset", body.point_indices,
+            [idx for idx, _ in indexed_intensities], avg_intensity,
+            normalization_applied=normalization_applied, max_photodiode=max_photodiode,
+            despike_applied=despike_outcome.applied, despike_method=despike_outcome.method,
+            despike_params=modz_params_used, despike_interpolation=interp, masked_positions=despike_outcome.masked_positions,
+            aggregation={"method": method_used, "effective_trim_pct_per_tail": effective_pct,
+                         "m_trimmed_per_tail": m_trimmed, "n_points": n_points},
             wavelength_filter=_wavelength_filter_info(region),
-        ),
+        )),
         despike_applied=despike_outcome.applied,
         despike_method=despike_outcome.method,
         n_masked_channels=n_masked_channels,

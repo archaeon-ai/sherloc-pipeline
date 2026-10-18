@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { navigate } from '../lib/stores';
   import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
   import {
@@ -46,6 +46,7 @@
   let spectrum: SpectrumResponse | null = null;
   let loading = true;
   let error = '';
+  let destroyed = false;
 
   // Point selection
   let selectionMode: 'average' | 'subset' | 'point' = 'average';
@@ -106,6 +107,7 @@
   let badpixRequestGen = 0;
 
   async function loadBadpix(): Promise<void> {
+    if (destroyed) return;
     const gen = ++badpixRequestGen;
     // Region transition: clear immediately so the previous region's
     // annotations neither render nor export while the new region's list is
@@ -146,11 +148,7 @@
   $: fitRange = (currentState?.artifacts?.fitRange as [number, number] | undefined) ?? null;
   $: undoAvailable = $undoStack.length > 0;
 
-  // Build processing_chain for export from undoStack history + current state.
-  // Skips the initial 'raw' snapshot (no processing applied).
-  $: processingChain = [...$undoStack, ...(currentState ? [currentState] : [])]
-    .filter((s) => s.stage !== 'raw' && s.params && Object.keys(s.params).length > 0)
-    .map((s) => ({ stage: s.stage, ...s.params }));
+  $: processingChain = currentState?.processingChain ?? [];
 
   // Show fit overlay when in fitted state
   $: showFit = currentStage === 'raman_fitted';
@@ -253,7 +251,15 @@
   $: exportBadpix =
     showBadpixOverlay && badpix.length > 0 ? badpix : null;
 
+  onDestroy(() => {
+    destroyed = true;
+    spectrumRequestGen += 1;
+    badpixRequestGen += 1;
+  });
+
   onMount(async () => {
+    processingState.set(null);
+    undoStack.set([]);
     await loadScan();
     await loadBadpix();
   });
@@ -263,6 +269,7 @@
     error = '';
     try {
       const res = await getScan(scanId);
+      if (destroyed) return;
       scan = res.scan;
       // Apply ML-or-none default once, before the first loadSpectrum call.
       // Funnel through the named helper — never set despikeMethod in a $: block
@@ -270,6 +277,7 @@
       // applyDespikeDefault is never called again after mount.
       applyDespikeDefault(scan.ml_mask_count ?? 0);
       const ptRes = await getScanPoints(scanId);
+      if (destroyed) return;
       points = ptRes.points;
 
       // Validate deep links before fetching any spectrum; never fall back to
@@ -305,6 +313,7 @@
   let spectrumRequestGen = 0;
 
   async function loadSpectrum() {
+    if (destroyed) return;
     const gen = ++spectrumRequestGen;
     // The selection context this request is FOR (PR #13 review F1): captured
     // at entry, synchronously with the branch below that reads selectionMode,
@@ -312,6 +321,11 @@
     // on while the fetch is in flight (a newer request would bump the
     // generation and drop this commit anyway).
     const requestMode = selectionMode;
+    const requestSelection = {
+      mode: requestMode,
+      n_points: requestMode === 'point' ? 1 : requestMode === 'subset' ? selectedIndices.length : scan?.n_points ?? 0,
+      indices: requestMode === 'point' ? [selectedPointIdx!] : requestMode === 'subset' ? [...selectedIndices] : 'all',
+    };
     try {
       const trimVal = trimPct !== '' ? parseFloat(trimPct) : undefined;
       // Despike at the fetch: only 'ml' asks the server to alter the returned
@@ -354,7 +368,7 @@
       // and in the 404 arm below, in lockstep with the `spectrum` assignment,
       // so the ML marker/export gate keys on what is actually committed.
       committedSelectionMode = requestMode;
-      initProcessingState();
+      initProcessingState(requestSelection);
     } catch (e) {
       // Stale-failure guard (PR #7 review F5): if a newer request superseded
       // this one, its failure is irrelevant — neither surface an error UI
@@ -362,6 +376,9 @@
       if (gen !== spectrumRequestGen) return;
       if (e instanceof ApiError && e.status === 404) {
         spectrum = null;
+        rawSnapshot = null;
+        processingState.set(null);
+        undoStack.set([]);
         // A committed "no spectrum" for this selection: record its mode so the
         // gate never inherits a stale context from the previous commit.
         committedSelectionMode = requestMode;
@@ -374,13 +391,26 @@
     }
   }
 
-  function initProcessingState() {
+  function initProcessingState(selection: Record<string, unknown>) {
     if (!spectrum) return;
+    const provenance = JSON.parse(JSON.stringify(spectrum.provenance));
     const snapshot: ProcessingSnapshot = {
       stage: 'raw',
+      trace: {
+        provenance,
+        source: { scan_id: spectrum.scan_id, sol: scan?.sol_number ?? null,
+          target: scan?.target ?? null, scan_name: scan?.scan_name ?? null,
+          data_origin: scan?.data_source ?? null, ...provenance.source },
+        selection: { ...selection, ...provenance.selection },
+        wavenumber: [...spectrum.wavenumber],
+        wavelength: spectrum.wavelength ? [...spectrum.wavelength] : null,
+        channel_indices: [...(spectrum.channel_indices ?? [])],
+        intensity: [...spectrum.intensity],
+      },
+      processingChain: [],
       raman: {
-        wavenumber: spectrum.wavenumber,
-        intensity: spectrum.intensity,
+        wavenumber: [...spectrum.wavenumber],
+        intensity: [...spectrum.intensity],
       },
       params: {},
     };
@@ -472,7 +502,8 @@
 
   // Processing chain update
   function onChainStateUpdate(e: CustomEvent<ProcessingSnapshot>) {
-    const newState = e.detail;
+    if (destroyed || !rawSnapshot) return;
+    const newState = { ...e.detail, trace: rawSnapshot?.trace };
     // Push current state to undo before updating
     if (currentState) {
       pushUndo(currentState);
@@ -529,10 +560,7 @@
     <span class="breadcrumb-sep">/</span>
     <span>{scan?.target ?? '...'} Sol {scan?.sol_number ?? '...'}</span>
     <ExportMenu
-      {scanId}
-      scanName={scan?.scan_name ?? ''}
-      target={scan?.target ?? ''}
-      solNumber={scan?.sol_number ?? 0}
+      trace={currentState?.trace ?? null}
       stage={currentStage}
       wavenumber={currentWavenumber}
       intensity={currentIntensity}
@@ -541,10 +569,6 @@
       spikeMethod={effectiveSpikeMethod}
       badpix={exportBadpix}
       {processingChain}
-      scanNPoints={scan?.n_points ?? 0}
-      {selectionMode}
-      {selectedIndices}
-      {selectedPointIdx}
     />
   </div>
 

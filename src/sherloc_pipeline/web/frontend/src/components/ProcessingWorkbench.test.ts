@@ -1017,3 +1017,82 @@ it('maps full-catalog channels through the embedded axis channel map', async () 
   const traces = reactSpy.mock.calls.at(-1)![1] as Array<{ name?: string; x?: number[] }>;
   expect(traces.find(trace => trace.name?.startsWith('Known-noisy'))?.x).toEqual([900]);
 });
+
+function syntheticPdsResponse(mode: string, values: number[]): SpectrumResponse {
+  return fakeSpectrum(values, {
+    wavelength: [251, 252, 253], channel_indices: [3, 4, 5],
+    provenance: {
+      calibration_version: null, axis_source: 'pds_embedded', excitation_nm: 247,
+      wavenumber_unit: 'cm-1', intensity_unit: null, data_origin: 'pds4',
+      source_digest: `synthetic-${mode}`, application: { version: '99.8.7' },
+      source: { scan_id: SCAN_ID, scan_name: 'synthetic', target: 'Invented', sol: 9999, data_origin: 'pds4' },
+      selection: { mode, n_points: 1, indices: mode === 'point' ? [0] : 'all' },
+      processing_chain: mode === 'point' ? [] : [{ step: 'aggregate', method: 'mean' }],
+    },
+  });
+}
+
+function csvProvenance(csv: string) {
+  return JSON.parse(csv.split('\n').find(line => line.startsWith('# provenance: '))!.slice(14));
+}
+
+it.each(['success', 'failure'])('keeps complete export identity during a pending selection and %s', async outcome => {
+  getAvg.mockResolvedValue(syntheticPdsResponse('average', [2, 3, 4]));
+  vi.spyOn(api, 'getScan').mockResolvedValue({ schema_version: '1.0.0', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  let resolvePoint!: (value: SpectrumResponse) => void;
+  let rejectPoint!: (reason: Error) => void;
+  vi.spyOn(api, 'getPointSpectrum').mockReturnValue(new Promise((resolve, reject) => {
+    resolvePoint = resolve;
+    rejectPoint = reject;
+  }));
+  await fireEvent.click(container.querySelector<HTMLButtonElement>('.point-chip')!);
+  await flush();
+  const pending = csvProvenance(await exportCsv(container));
+  expect(pending.selection.mode).toBe('average');
+  expect(pending.source_digest).toBe('synthetic-average');
+  expect(pending.data.intensity).toEqual([2, 3, 4]);
+  expect(pending.data.wavelength).toEqual([251, 252, 253]);
+  if (outcome === 'success') resolvePoint(syntheticPdsResponse('point', [7, 8, 9]));
+  else rejectPoint(new api.ApiError(500, 'synthetic', 'Invented failure'));
+  await flush();
+  const after = csvProvenance(await exportCsv(container));
+  expect(after.selection.mode).toBe(outcome === 'success' ? 'point' : 'average');
+  expect(after.source_digest).toBe(`synthetic-${outcome === 'success' ? 'point' : 'average'}`);
+  expect(after.data.intensity).toEqual(outcome === 'success' ? [7, 8, 9] : [2, 3, 4]);
+});
+
+it('clears export state when the committed selection has no spectrum', async () => {
+  getAvg.mockResolvedValue(syntheticPdsResponse('average', [2, 3, 4]));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  vi.spyOn(api, 'getPointSpectrum').mockRejectedValue(new api.ApiError(404, 'synthetic', 'No invented spectrum'));
+  await fireEvent.click(container.querySelector<HTMLButtonElement>('.point-chip')!);
+  await flush();
+  expect(get(processingState)).toBeNull();
+  expect(container.querySelector<HTMLButtonElement>('.export-trigger')!.disabled).toBe(true);
+});
+
+it('ignores an older Workbench response after remount', async () => {
+  getAvg.mockResolvedValue(syntheticPdsResponse('average', [2, 3, 4]));
+  const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  let resolvePoint!: (value: SpectrumResponse) => void;
+  vi.spyOn(api, 'getPointSpectrum').mockReturnValue(new Promise(resolve => { resolvePoint = resolve; }));
+  await fireEvent.click(first.container.querySelector<HTMLButtonElement>('.point-chip')!);
+  await flush();
+  first.unmount();
+  getAvg.mockResolvedValue(syntheticPdsResponse('average', [7, 8, 9]));
+  const second = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await screen.findByText('1. Despike');
+  await flush();
+  resolvePoint(syntheticPdsResponse('point', [12, 13, 14]));
+  await flush();
+  const metadata = csvProvenance(await exportCsv(second.container));
+  expect(metadata.data.intensity).toEqual([7, 8, 9]);
+  expect(metadata.selection.mode).toBe('average');
+});

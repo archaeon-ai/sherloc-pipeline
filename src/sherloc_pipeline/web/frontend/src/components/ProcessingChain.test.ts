@@ -111,6 +111,12 @@ describe('ProcessingChain — UI state tracks applied spectrum state (issue #34)
     expect(postBaselineSpy.mock.calls[0][0].params?.wavenumber_range).toBeUndefined();
     expect(stateUpdate).toHaveBeenCalledTimes(1);
     expect(stateUpdate.mock.calls[0][0].stage).toBe('baseline_corrected');
+    expect(stateUpdate.mock.calls[0][0].processingChain).toEqual([
+      expect.objectContaining({ step: 'baseline', method: 'aspls' }),
+    ]);
+    await fireEvent.click(getBaselineCheckbox(container));
+    await tick();
+    expect(stateUpdate.mock.calls.at(-1)![0].processingChain).toEqual([]);
   });
 
   it('fits the current zoom only when selected and resets to full when it is cleared', async () => {

@@ -91,6 +91,10 @@
   let baseline: number[] | undefined;
   let appliedBaselineRange: [number, number] | undefined;
 
+  let despikeRecord: Record<string, unknown> | null = null;
+  let backgroundRecord: Record<string, unknown> | null = null;
+  let baselineRecord: Record<string, unknown> | null = null;
+
   let despikeStep: DespikeStep;
 
   // Whether the client-side modz compute is the active despike. ML and none
@@ -103,6 +107,9 @@
   // All resets are funnelled through this function so Svelte 4's reactive
   // dependency tracker does NOT see the writes as reads (FRONTEND_HAZARDS H1).
   function applyRawInputReset(w: number[], i: number[]): void {
+    despikeRecord = null;
+    backgroundRecord = null;
+    baselineRecord = null;
     rawWavenumber = w;
     rawIntensity = i;
     afterDespikeIntensity = null;
@@ -167,8 +174,20 @@
     extraArtifacts?: Record<string, unknown>,
     stepParams?: Record<string, unknown>,
   ) {
+    if (stepParams) {
+      if (stage === 'despiked') despikeRecord = stepParams;
+      if (stage === 'bg_subtracted') backgroundRecord = stepParams;
+      if (stage === 'baseline_corrected') baselineRecord = stepParams;
+    }
+    const processingChain = [
+      modzActive && afterDespikeIntensity ? despikeRecord : null,
+      bgEnabled && afterBgIntensity ? backgroundRecord : null,
+      baselineEnabled && afterBaselineIntensity ? baselineRecord : null,
+      stage === 'raman_fitted' ? stepParams : null,
+    ].filter((record): record is Record<string, unknown> => record != null);
     const snapshot: ProcessingSnapshot = {
       stage,
+      processingChain,
       raman: { wavenumber: rawWavenumber, intensity: outputIntensity },
       params: stepParams ?? {},
       artifacts: {
