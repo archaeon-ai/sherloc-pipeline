@@ -121,7 +121,11 @@ export interface ScanPointsResponse {
 // --- Spectra ---
 
 export interface SpectrumProvenance {
-  calibration_version: string;
+  calibration_version: string | null;
+  axis_source?: string | null;
+  axis_sha256?: string | null;
+  excitation_nm?: number | null;
+  excitation_basis?: string | null;
   wavenumber_unit: string;
   intensity_unit: string;
   averaging_method?: string;
@@ -142,6 +146,7 @@ export interface SpectrumResponse {
   spectrum_type?: string;
   wavenumber: number[];
   wavelength?: number[];
+  channel_indices?: number[];
   intensity: number[];
   n_channels: number;
   photodiode_mean?: number;

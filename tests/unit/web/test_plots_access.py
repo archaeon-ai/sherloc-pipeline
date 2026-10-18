@@ -85,6 +85,10 @@ async def test_authorized_plot_still_renders(access_mode, data_source, plot_stub
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/plots/invented-scan")
 
+    if data_source == "pds4":
+        assert response.status_code == 422
+        plot_stubs.subplots.assert_not_called()
+        return
     assert response.status_code == 200
     assert response.content == b"invented-plot"
     assert response.headers["content-type"] == "image/png"
@@ -103,3 +107,28 @@ async def test_missing_plot_scan_stays_404(plot_stubs):
     session.query.assert_called_once_with(ScanORM)
     plot_stubs.use.assert_not_called()
     plot_stubs.subplots.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["R2", "R3"])
+async def test_loupe_emission_plot_uses_wavelength(region, plot_stubs, monkeypatch):
+    import zlib
+
+    import numpy as np
+
+    scan = SimpleNamespace(data_source="loupe", target="Invented", scan_name="synthetic")
+    app, session = _plot_app("internal", scan)
+    scan_query = session.query.side_effect
+    spectral_query = MagicMock()
+    spectral_query.join.return_value.filter.return_value.all.return_value = [
+        SimpleNamespace(intensities=zlib.compress(np.array([1, 2], dtype=np.float32).tobytes()))
+    ]
+    session.query.side_effect = lambda model: scan_query(model) if model is ScanORM else spectral_query
+    plot_stubs.calibrate.return_value = (np.array([301., 302.]), np.array([7., 8.]))
+    plot_stubs.mask.return_value = np.array([True, True])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/plots/synthetic", params={"plot_type": "averaged_spectrum", "region": region})
+    assert response.status_code == 200
+    axes = plot_stubs.subplots.return_value[1]
+    np.testing.assert_array_equal(axes.plot.call_args.args[0], [301, 302])
+    axes.set_xlabel.assert_called_once_with("Wavelength (nm)")
