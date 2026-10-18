@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.4] - 2026-10-18
+
+### Security
+- **The public access gate is an allowlist.** In public mode, direct scan access and scan lists now admit only
+  `data_source` `pds4` (`PUBLIC_DATA_SOURCES`). A null, missing, `loupe`, differently cased or unknown value is
+  denied: 403 on direct access with the same detail text, and the row is excluded from lists. Before, the gate was
+  a denylist that failed open. Internal mode is unchanged. All 1070 scans in the public DB are `pds4`, so nothing
+  leaves the public site (#107, fixes #106).
+
+### Fixed
+- **Exports carry the real provenance of each trace.** CSV and provenance JSON exports describe the committed
+  trace instead of fixed Loupe origin, calibration, excitation and version values. The record includes:
+  - the source product's identity, version and hash, when known;
+  - the native contributors and their hashes;
+  - the selection actually made, with omissions;
+  - the axis source and hash, and the scan excitation with its basis;
+  - the server-side processing and the real package version;
+  - a deterministic digest of the inputs and the served values.
+  Unknown evidence stays null. Public responses and exports never include private source fields. Pending,
+  failed or stale selections cannot relabel a committed trace (#105, #99).
+
 ## [5.7.3] - 2026-10-18
 
 ### Security
