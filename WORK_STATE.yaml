@@ -1,6 +1,6 @@
-work_package: "sherloc-pipeline #99 per-trace export provenance (spectra-id lane, Astra job 9 PR2; stacked on #98 branch web-pds-axis-provenance)"
-branch: "web-export-provenance"
-head: "bcbf525"
+work_package: "sherloc-pipeline #99 per-trace export provenance (spectra-id lane, Astra jobs 9-10; PR #105)"
+branch: "web-export-provenance (https://github.com/archaeon-ai/sherloc-pipeline/pull/105)"
+head: "b2f23a0"
 open_decisions: []
-next_action: "Codex review at exact head; merge only on the PM's word, after PR1 (#104) merges and this branch is retargeted to main"
-last_verified: "2026-10-18T00:41:39-07:00 — full checkout: ruff clean; fixture provenance OK; pytest -m 'not slow and not docker' 3722 passed, 225 skipped; vitest 243 passed; svelte-check 4 errors/18 warnings, same as main"
+next_action: "Codex re-review at exact head after the F1-F5 + public-tier fixes; merge only on the PM's word"
+last_verified: "2026-10-18T01:28:03-07:00 — full checkout at b2f23a0 (main merged in): ruff clean; fixture provenance OK; pytest -m 'not slow and not docker' 3750 passed, 225 skipped; vitest 252 passed; svelte-check 4 errors/18 warnings, same as main"
