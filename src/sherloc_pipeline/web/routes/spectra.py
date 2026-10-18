@@ -657,14 +657,16 @@ def _apply_laser_normalization(
         return [arr for _, arr in intensities_by_point], False, None
 
     normalized = []
+    was_applied = False
     for pt_idx, arr in intensities_by_point:
         pd_val = pd_map.get(pt_idx)
         if pd_val and pd_val > 0:
             normalized.append(arr * (max_pd / pd_val))
+            was_applied = True
         else:
             normalized.append(arr)  # No photodiode for this point, pass through
 
-    return normalized, True, max_pd
+    return normalized, was_applied, max_pd
 
 
 def _compute_average(

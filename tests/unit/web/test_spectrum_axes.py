@@ -481,6 +481,59 @@ async def test_nonfinite_photodiodes_leave_normalization_unavailable(axis_client
     assert step["unavailable_reason"] == "missing_finite_positive_photodiode"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,coverage", [
+    ("subset", "none"), ("subset", "partial"), ("subset", "all"),
+    ("average", "none"), ("average", "partial"), ("average", "all"),
+    ("point", "none"), ("point", "all"),
+])
+async def test_normalization_tracks_selected_contributors(axis_client, axis_db, monkeypatch, mode, coverage):
+    readings = [None, 4, 8]
+    selected = [0] if coverage == "none" else [1] if coverage == "all" else [0, 1]
+    with Session(axis_db) as session:
+        scan = session.get(ScanORM, SCAN_ID)
+        scan.data_source = "loupe"
+        scan.n_points = 3
+        session.add(ScanPointORM(id="synthetic-point-2", scan_id=SCAN_ID, point_index=2,
+                                 photodiode_mean=readings[2]))
+        for point in session.query(ScanPointORM).all():
+            point.photodiode_mean = readings[point.point_index]
+        for row in session.query(SpectrumORM).all():
+            row.spectrum_type = "dark_subtracted"
+            if mode == "average" and row.scan_point.point_index not in selected:
+                session.delete(row)
+        session.commit()
+    # SQLite stores NaN as NULL; exercise NaN at the normalization query boundary.
+    pd_session = MagicMock()
+    pd_session.query.return_value.filter.return_value.all.return_value = [
+        SimpleNamespace(point_index=idx, photodiode_mean=value)
+        for idx, value in enumerate([float("nan"), 4, 8])
+    ]
+    normalize = spectra._apply_laser_normalization
+    monkeypatch.setattr(spectra, "_apply_laser_normalization", lambda session, scan_id, arrays:
+                        normalize(pd_session, scan_id, arrays))
+    if mode == "subset":
+        response = await axis_client.post(f"/api/spectra/{SCAN_ID}/subset", json={
+            "point_indices": selected, "region": "R1", "averaging_method": "mean",
+        })
+    else:
+        suffix = f"point/{selected[0]}" if mode == "point" else "average"
+        response = await axis_client.get(f"/api/spectra/{SCAN_ID}/{suffix}", params={"averaging_method": "mean"})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    expected = {"none": 1, "partial": 3.5, "all": 6}[coverage]
+    np.testing.assert_array_equal(data["intensity"], np.full(data["n_channels"], expected))
+    if mode == "average":
+        assert data["laser_normalized"] is (coverage != "none")
+    chain = data["provenance"]["processing_chain"]
+    step = next(s for s in chain if s["step"] == "laser_normalization")
+    assert step["applied"] is (coverage != "none")
+    assert step["max_photodiode"] == 8
+    assert step["factors"] == ({} if coverage == "none" else {"1": 2})
+    assert step["missing_indices"] == ([] if coverage == "all" else [0])
+    assert step["unavailable_reason"] == ("missing_finite_positive_photodiode" if coverage == "none" else None)
+
+
 def test_mixed_photodiodes_treat_nonfinite_as_missing():
     session = MagicMock()
     session.query.return_value.filter.return_value.all.return_value = [
