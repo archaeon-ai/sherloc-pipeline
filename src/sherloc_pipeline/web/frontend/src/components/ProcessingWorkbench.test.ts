@@ -19,6 +19,7 @@ import { tick } from 'svelte';
 import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
+import { accessMode } from '../lib/stores';
 import type { BadpixResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
@@ -193,7 +194,9 @@ describe('ProcessingWorkbench processing snapshot identity', () => {
     const committed: Array<ProcessingSnapshot | null> = [];
     const unsubscribe = processingState.subscribe(state => committed.push(state));
     // Both continuations queue before Svelte's flush: B commits, then A emits.
-    resolveSpectrum(fakeSpectrum(INTENSITY_NEW, { provenance: { source_digest: 'synthetic-B' } }));
+    resolveSpectrum(fakeSpectrum(INTENSITY_NEW, { provenance: {
+      source_digest: 'synthetic-B', calibration_version: null, wavenumber_unit: 'cm-1', intensity_unit: null,
+    } }));
     resolveProcessing();
     await flush();
     unsubscribe();
@@ -1175,4 +1178,42 @@ it('ignores an older Workbench response after remount', async () => {
   const metadata = csvProvenance(await exportCsv(second.container));
   expect(metadata.data.intensity).toEqual([7, 8, 9]);
   expect(metadata.selection.mode).toBe('average');
+});
+
+it('public-tier JSON and CSV headers exclude private fields planted in source rows', async () => {
+  const privateFields = {
+    source_path: '/synthetic/private/source.dat', hostname: 'synthetic-host.invalid',
+    team_id: 'team-tier-synthetic-42', internal_url: 'https://synthetic-host.invalid/private',
+  };
+  const sourceRow = { ...fakeScan(), data_source: 'pds4', source_path: privateFields.source_path,
+    source_scan_ids: [privateFields.team_id], pds4_metadata: { ...privateFields }, ml_mask_count: 0 };
+  const response = syntheticPdsResponse('average', [2, 3, 4]);
+  response.provenance.source = { ...response.provenance.source,
+    product_id: sourceRow.scan_id, source_sha256: 'a'.repeat(64), config_hash: 'b'.repeat(64),
+    pipeline_version: 'synthetic-8' };
+  response.provenance.source_spectra = [{ spectrum_id: 'synthetic-pds-spectrum' }];
+  vi.spyOn(api, 'getScan').mockResolvedValue({ schema_version: '1.0.0', scan: sourceRow });
+  getAvg.mockResolvedValue(response);
+  accessMode.set('public');
+  try {
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    const csv = await exportCsv(container);
+    const headers = csv.split('\n').filter(line => line.startsWith('#')).join('\n');
+    await fireEvent.click(container.querySelector('.export-trigger')!);
+    await fireEvent.click(screen.getByText('Full provenance JSON'));
+    const json = container.querySelector('.provenance-json')!.textContent!;
+    for (const value of Object.values(privateFields)) {
+      expect(headers).not.toContain(value);
+      expect(json).not.toContain(value);
+    }
+    expect(JSON.parse(json)).toEqual(csvProvenance(csv));
+    for (const allowed of [sourceRow.scan_id, 'synthetic-pds-spectrum', 'a'.repeat(64),
+      'b'.repeat(64), 'synthetic-8', '99.8.7']) {
+      expect(headers).toContain(allowed);
+      expect(json).toContain(allowed);
+    }
+  } finally {
+    accessMode.set('internal');
+  }
 });

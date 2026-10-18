@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 from sherloc_pipeline.database.connection import create_all_tables
 from sherloc_pipeline.database.models import CosmicRayMaskORM, ScanORM, ScanPointORM, SolORM, SpectrumORM
 from sherloc_pipeline.services import spectrum_axes
-from sherloc_pipeline.web.routes import spectra
+from sherloc_pipeline.web.routes import scans, spectra
 
 SCAN_ID = "synthetic-scan"
 PRODUCT_ID = "ss__9999_0000000000_000rrs__synthetic"
@@ -69,6 +69,7 @@ async def axis_client(axis_db):
             return await call_next(request)
 
     app.include_router(spectra.router)
+    app.include_router(scans.router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
         yield client
 
@@ -352,6 +353,55 @@ async def test_pds_provenance_is_backend_owned(axis_client, axis_db, mode):
     assert provenance["source_processing"]["spectrum_type"] == "laser_normalized"
     assert [step["step"] for step in provenance["processing_chain"]] == ([] if mode == "point" else ["aggregate"])
     assert len(provenance["source_digest"]) == 64
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["point", "average", "subset"])
+async def test_public_provenance_excludes_private_source_fields(axis_client, axis_db, monkeypatch, mode):
+    from sherloc_pipeline.web.data_access import DataAccessService
+
+    private = {
+        "source_path": "/synthetic/private/source.dat", "hostname": "synthetic-host.invalid",
+        "team_id": "team-tier-synthetic-42", "internal_url": "https://synthetic-host.invalid/private",
+    }
+    with Session(axis_db) as session:
+        scan = session.get(ScanORM, SCAN_ID)
+        scan.source_path = private["source_path"]
+        scan.source_scan_ids = [private["team_id"]]
+        session.add(ScanORM(
+            id=private["team_id"], sol_number=9999, scan_name="synthetic-team",
+            scan_id="synthetic-team-product", sclk_start=0, n_points=1, n_channels=3,
+            laser_wavelength_nm=247, data_source="loupe", target_type="engineering",
+        ))
+        session.flush()
+        scan.parent_scan_id = private["team_id"]
+        scan.processing_error = " ".join(private.values())
+        scan.pds4_metadata = {**private, "lidvid": PRODUCT_ID, "version": "9.0",
+                              "source_sha256": "a" * 64, "software_version": "synthetic-9"}
+        scan.processing_config_hash = "b" * 64
+        scan.processing_pipeline_version = "synthetic-8"
+        session.commit()
+    monkeypatch.setattr(spectra, "_get_data_access", lambda request: DataAccessService("public"))
+    monkeypatch.setattr(scans, "_get_data_access", lambda request: DataAccessService("public"))
+    monkeypatch.setattr(scans, "select_served_aci", lambda *args: None)
+    scan_response = await axis_client.get(f"/api/scans/{SCAN_ID}")
+    assert scan_response.status_code == 200, scan_response.text
+    for value in private.values():
+        assert value not in scan_response.text
+    assert scan_response.json()["scan"]["source_scan_ids"] is None
+    assert scan_response.json()["scan"]["parent_scan_id"] is None
+    assert scan_response.json()["scan"]["processing_error"] is None
+    response = await request_trace(axis_client, mode, "R1")
+    assert response.status_code == 200, response.text
+    for value in private.values():
+        assert value not in response.text
+    provenance = response.json()["provenance"]
+    assert provenance["source"]["product_id"] == PRODUCT_ID
+    assert provenance["source"]["source_sha256"] == "a" * 64
+    assert provenance["source"]["config_hash"] == "b" * 64
+    assert provenance["source"]["pipeline_version"] == "synthetic-8"
+    assert provenance["source_processing"]["software_version"] == "synthetic-9"
+    assert provenance["source_spectra"][0]["spectrum_id"] == "synthetic-0-R1"
 
 
 @pytest.mark.asyncio
