@@ -53,6 +53,7 @@ export function evidenceTrace(snapshot: ProcessingSnapshot | null, annotations: 
   const id = JSON.stringify([trace.source, trace.selection, snapshot.stage,
     trace.region, trace.provenance, snapshot.processingChain, snapshot.raman, trace.wavelength, annotations]);
   return freeze({ id, label: `${trace.source.scan_name ?? trace.source.scan_id ?? 'Pipeline'} · ${JSON.stringify(trace.selection)} · ${snapshot.stage}`,
+    nativeDomain: trace.region === 'R1' ? 'raman_shift' : trace.region === 'R2' || trace.region === 'R3' ? 'emission_wavelength' : null,
     snapshot: captured, annotations: copy(annotations), visible: true, color: '#1e293b',
     breaks: y.map((v, i) => !Number.isFinite(v) ||
       (i > 0 && trace.channel_indices.length === y.length && trace.channel_indices[i] !== trace.channel_indices[i - 1] + 1)),
@@ -77,6 +78,7 @@ export function toggleTrace(id: string): void {
 
 export function displayTrace(trace: EvidenceTrace, domain: EvidenceDomain, offset = 0): EvidenceDisplay | null {
   const { snapshot } = trace;
+  if (trace.nativeDomain ? trace.nativeDomain !== domain : snapshot.trace.region && snapshot.trace.region !== 'unknown') return null;
   const x = domain === 'raman_shift' ? snapshot.raman.wavenumber : snapshot.trace.wavelength;
   const original = snapshot.raman.intensity;
   if (!x?.length || x.length !== original.length) return null;

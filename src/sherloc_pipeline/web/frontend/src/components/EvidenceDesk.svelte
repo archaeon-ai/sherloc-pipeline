@@ -16,8 +16,7 @@
     spike_mask: $$restProps.spikeMask ?? null, spike_method: $$restProps.spikeMethod ?? null,
     badpix: showBadpix ? $$restProps.badpix : null,
   });
-  $: nativeDomain = snapshot?.trace?.wavelength?.length && (snapshot.trace.region ?? snapshot.trace.provenance.region) && (snapshot.trace.region ?? snapshot.trace.provenance.region) !== 'R1'
-    ? 'emission_wavelength' : snapshot?.raman.wavenumber.length ? 'raman_shift' : 'emission_wavelength';
+  $: nativeDomain = primary?.nativeDomain ?? (snapshot?.raman.wavenumber.length ? 'raman_shift' : 'emission_wavelength');
   $: domain = (view === 'emission' ? 'emission_wavelength' : view === 'processing' ? nativeDomain : 'raman_shift') as EvidenceDomain;
   $: displays = comparisonDisplays(primary, $pinnedTraces, domain, view === 'stacked').map(item => ({ ...item, trace: evidenceColor(item.trace, theme) }));
   $: committedSelection = snapshot?.trace?.selection;

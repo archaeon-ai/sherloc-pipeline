@@ -145,3 +145,20 @@ it.each([
   expect(trace).toBeTruthy(); const gap = trace.x.indexOf(null); expect(gap).toBeGreaterThan(0);
   expect(trace.x.slice(gap - 1, gap + 2)).toEqual([900, null, 1000]); expect(trace.y[gap]).toBeNull();
 });
+
+
+it.each(['R1', 'R2', 'R3'])('omits both-axis %s from the opposite view and figure export', async region => {
+  const snapshot = input(); snapshot.trace!.region = region;
+  const other = input(1); other.trace!.region = region === 'R1' ? 'R2' : 'R1';
+  pinTrace(evidenceTrace(other)!, 'synthetic-context');
+  const { container } = render(EvidenceDesk, { snapshot, contextKey: 'synthetic-context' });
+  await fireEvent.change(screen.getByLabelText('View'), { target: { value: region === 'R1' ? 'emission' : 'overlay' } }); await flush();
+  expect(last()[1]).toHaveLength(1);
+  expect(last()[2].meta.traces.map((trace: { snapshot: ProcessingSnapshot }) => trace.snapshot.trace!.region)).toEqual([other.trace!.region]);
+  expect(last()[2].meta.traces[0].domain).toBe(region === 'R1' ? 'emission_wavelength' : 'raman_shift');
+  await fireEvent.click(container.querySelector('.export-trigger')!);
+  await fireEvent.click(screen.getByText('SVG + provenance')); await flush();
+  const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+  const text = await new Promise<string>(resolve => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blob); });
+  expect(JSON.parse(text)).toEqual(last()[2].meta);
+});

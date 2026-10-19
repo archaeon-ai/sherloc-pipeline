@@ -109,3 +109,35 @@ it('keeps pin colors distinct after removing a non-last trace and pinning anothe
   pinTrace(evidenceTrace(snapshot(3))!, 'session:team:invented');
   expect(new Set(get(pinnedTraces).map(trace => trace.color)).size).toBe(3);
 });
+
+
+it.each(['R1', 'R2', 'R3'])('keeps both-axis %s traces in their committed domain for display and export', region => {
+  const input = snapshot(); input.trace!.region = region;
+  const trace = evidenceTrace(input)!;
+  input.trace!.region = region === 'R1' ? 'R2' : 'R1';
+  const domain = region === 'R1' ? 'raman_shift' : 'emission_wavelength';
+  const opposite = region === 'R1' ? 'emission_wavelength' : 'raman_shift';
+  expect(trace.nativeDomain).toBe(domain);
+  expect(displayTrace(trace, opposite)).toBeNull();
+  const excluded = comparisonDisplays(trace, [trace], opposite, false);
+  expect(excluded).toEqual([]);
+  expect(evidenceExport(excluded).traces).toEqual([]);
+  expect(evidenceCsv(excluded)).not.toContain(`0,${opposite},`);
+  const included = comparisonDisplays(trace, [], domain, false);
+  expect(evidenceExport(included).traces[0].domain).toBe(domain);
+  expect(evidenceCsv(included)).toContain(`0,${domain},`);
+});
+
+it('uses axes only for unknown regions and rejects unsupported declared regions', () => {
+  const input = snapshot();
+  for (const region of [undefined, '', 'unknown']) {
+    input.trace!.region = region;
+    const trace = evidenceTrace(input)!;
+    expect(displayTrace(trace, 'raman_shift')).not.toBeNull();
+    expect(displayTrace(trace, 'emission_wavelength')).not.toBeNull();
+  }
+  input.trace!.region = 'synthetic-unsupported';
+  const trace = evidenceTrace(input)!;
+  expect(displayTrace(trace, 'raman_shift')).toBeNull();
+  expect(displayTrace(trace, 'emission_wavelength')).toBeNull();
+});

@@ -6,6 +6,7 @@ export type EvidenceTheme = 'system' | 'light' | 'dark';
 export interface EvidenceTrace {
   id: string;
   label: string;
+  nativeDomain: EvidenceDomain | null;
   snapshot: ProcessingSnapshot & { trace: ExportTrace };
   visible: boolean;
   color: string;
