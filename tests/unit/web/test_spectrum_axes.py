@@ -17,6 +17,7 @@ from sherloc_pipeline.database.connection import create_all_tables
 from sherloc_pipeline.database.models import CosmicRayMaskORM, ScanORM, ScanPointORM, SolORM, SpectrumORM
 from sherloc_pipeline.services import spectrum_axes
 from sherloc_pipeline.web.routes import scans, spectra
+from tests.unit.public_release_helpers import synthetic_index
 
 SCAN_ID = "synthetic-scan"
 PRODUCT_ID = "ss__9999_0000000000_000rrs__synthetic"
@@ -72,6 +73,20 @@ async def axis_client(axis_db):
     app.include_router(scans.router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
         yield client
+
+
+@pytest.fixture
+def public_axis_gate(axis_db, tmp_path, monkeypatch):
+    from sherloc_pipeline.web.data_access import DataAccessService
+
+    index = synthetic_index(tmp_path, monkeypatch, [PRODUCT_ID])
+    with Session(axis_db) as session:
+        scan = session.get(ScanORM, SCAN_ID)
+        scan.pds4_metadata = index.apply(PRODUCT_ID, {"version": "synthetic-v1"})
+        session.commit()
+    gate = DataAccessService("public", index)
+    monkeypatch.setattr(spectra, "_get_data_access", lambda request: gate)
+    monkeypatch.setattr(scans, "_get_data_access", lambda request: gate)
 
 
 async def request_trace(client, mode, region):
@@ -357,9 +372,7 @@ async def test_pds_provenance_is_backend_owned(axis_client, axis_db, mode):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["point", "average", "subset"])
-async def test_public_provenance_excludes_private_source_fields(axis_client, axis_db, monkeypatch, mode):
-    from sherloc_pipeline.web.data_access import DataAccessService
-
+async def test_public_provenance_excludes_private_source_fields(axis_client, axis_db, public_axis_gate, monkeypatch, mode):
     private = {
         "source_path": "/synthetic/private/source.dat", "hostname": "synthetic-host.invalid",
         "team_id": "team-tier-synthetic-42", "internal_url": "https://synthetic-host.invalid/private",
@@ -376,13 +389,11 @@ async def test_public_provenance_excludes_private_source_fields(axis_client, axi
         session.flush()
         scan.parent_scan_id = private["team_id"]
         scan.processing_error = " ".join(private.values())
-        scan.pds4_metadata = {**private, "lidvid": PRODUCT_ID, "version": "9.0",
+        scan.pds4_metadata = {**scan.pds4_metadata, **private, "lidvid": PRODUCT_ID,
                               "source_sha256": "a" * 64, "software_version": "synthetic-9"}
         scan.processing_config_hash = "b" * 64
         scan.processing_pipeline_version = "synthetic-8"
         session.commit()
-    monkeypatch.setattr(spectra, "_get_data_access", lambda request: DataAccessService("public"))
-    monkeypatch.setattr(scans, "_get_data_access", lambda request: DataAccessService("public"))
     monkeypatch.setattr(scans, "select_served_aci", lambda *args: None)
     scan_response = await axis_client.get(f"/api/scans/{SCAN_ID}")
     assert scan_response.status_code == 200, scan_response.text
@@ -406,9 +417,7 @@ async def test_public_provenance_excludes_private_source_fields(axis_client, axi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("region", ["R1", "R123"])
-async def test_public_point_rejects_internal_representation(axis_client, axis_db, monkeypatch, region):
-    from sherloc_pipeline.web.data_access import DataAccessService
-
+async def test_public_point_rejects_internal_representation(axis_client, axis_db, public_axis_gate, monkeypatch, region):
     forbidden = ["synthetic-internal-mask-secret", "synthetic-internal-derived-secret"]
     with Session(axis_db) as session:
         session.add(SpectrumORM(
@@ -438,7 +447,6 @@ async def test_public_point_rejects_internal_representation(axis_client, axis_db
     monkeypatch.setattr(spectra, "_despike_region_windows", lambda: {
         "R1": (0, 100), "R2": (700, 1100), "R3": (1700, 2100),
     })
-    monkeypatch.setattr(spectra, "_get_data_access", lambda request: DataAccessService("public"))
     response = await axis_client.get(f"/api/spectra/{SCAN_ID}/point/0", params={
         "region": region, "spectrum_type": "dark_subtracted", "despike_method": "ml",
     })
