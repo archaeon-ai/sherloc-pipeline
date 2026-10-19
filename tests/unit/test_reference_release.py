@@ -413,9 +413,14 @@ def test_revisions_immutable_and_retired_release_denied(snapshot, database, tmp_
         session.rollback()
         release = session.get(ReferenceReleaseORM, report.release_id)
         config = runtime_policy(release, [trace])
+        session.commit()  # Expire the status before assigning the transition.
         release.status = "retired"
         session.commit()
         assert not can_serve_trace(trace, release, config, "team")
+        release.status = "ready"
+        with pytest.raises(ValueError, match="invalid reference release transition"):
+            session.commit()
+        session.rollback()
     engine.dispose()
     with pytest.raises(ValueError, match="not ready"):
         import_release(root, database, tmp_path / "objects", policy)

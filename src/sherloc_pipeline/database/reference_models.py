@@ -24,7 +24,7 @@ class ReferenceReleaseORM(Base):
     importer_version: Mapped[str] = mapped_column(String)
     parser_version: Mapped[str] = mapped_column(String)
     qa_version: Mapped[str] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String(20), default="staged", index=True)
+    status: Mapped[str] = mapped_column(String(20), default="staged", index=True, active_history=True)
 
 
 class ReferenceFileORM(Base):
