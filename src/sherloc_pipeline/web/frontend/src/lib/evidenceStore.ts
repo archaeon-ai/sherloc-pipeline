@@ -7,6 +7,12 @@ export const MAX_PINNED_TRACES = 3;
 const pins = writable<EvidenceTrace[]>([]);
 export const pinnedTraces = { subscribe: pins.subscribe };
 let context: string | null = null;
+export let evidenceGeneration = 0;
+
+export function invalidateEvidence(): void {
+  evidenceGeneration += 1;
+  clearEvidence();
+}
 const colors = ['#2563eb', '#c026d3', '#ea580c'];
 
 export function evidenceColor(trace: EvidenceTrace, theme: EvidenceTheme): EvidenceTrace {

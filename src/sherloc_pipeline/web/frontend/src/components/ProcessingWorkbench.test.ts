@@ -20,7 +20,7 @@ import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
 import { clearEvidence, pinnedTraces } from '../lib/evidenceStore';
-import { accessMode, appConfig, scienceAuthorized, clearSessionState } from '../lib/stores';
+import { accessMode, appConfig, scienceAuthorized, currentHash, sessionGeneration, clearSessionState } from '../lib/stores';
 import type { BadpixResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
@@ -1295,16 +1295,21 @@ describe('ProcessingWorkbench evidence session boundaries', () => {
 
 it.each(['tier', 'access'])('invalidates an in-flight spectrum on an authorized %s transition', async boundary => {
   accessMode.set('internal');
-  appConfig.set({ tier: 'team' } as import('../lib/types').ConfigResponse);
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
   scienceAuthorized.set(true);
+  currentHash.set('#/scan/synthetic/workbench');
+  const generation = sessionGeneration;
   let resolve = (_value: SpectrumResponse) => {};
   getAvg.mockReturnValue(new Promise(done => { resolve = done; }));
   render(ProcessingWorkbench, { scanId: SCAN_ID });
   await flush();
-  if (boundary === 'tier') appConfig.set({ tier: 'public' } as import('../lib/types').ConfigResponse);
+  if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
   else accessMode.set('public');
   resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
-  expect(get(scienceAuthorized)).toBe(false);
+  expect(get(scienceAuthorized)).toBe(true);
+  expect(get(currentHash)).toBe('#/scan/synthetic/workbench');
+  expect(sessionGeneration).toBe(generation);
+  expect(get(appConfig)?.capabilities?.evidence_desk).toBe(true);
   expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
 });
 
@@ -1340,9 +1345,11 @@ it.each(['sign-out', 'tier'])('rejects a late processing result after %s', async
   await fireEvent.click(card.querySelector('.btn-primary')!);
   expect(api.postFit).toHaveBeenCalledOnce();
   if (boundary === 'sign-out') clearSessionState();
-  else { scienceAuthorized.set(true); appConfig.set({ tier: 'public' } as import('../lib/types').ConfigResponse); }
+  else { scienceAuthorized.set(true); appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse); }
   finish(); await flush();
-  expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+  if (boundary === 'sign-out') expect(get(processingState)).toBeNull();
+  else expect(get(processingState)?.stage).not.toBe('raman_fitted');
+  expect(get(pinnedTraces)).toEqual([]);
 });
 
 

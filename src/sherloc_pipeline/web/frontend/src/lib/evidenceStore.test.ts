@@ -12,7 +12,7 @@ function snapshot(index = 0): ProcessingSnapshot {
       provenance: { calibration_version: null, wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: 'invented', source_digest: null } } };
 }
 
-beforeEach(() => { clearEvidence(); setEvidenceContext('session:team:invented'); });
+beforeEach(() => { appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as ConfigResponse); clearEvidence(); setEvidenceContext('session:team:invented'); });
 
 describe('pipeline comparison snapshots', () => {
   it('owns immutable arrays, provenance, annotations and processing across remounts', () => {
@@ -45,7 +45,7 @@ describe('pipeline comparison snapshots', () => {
     setEvidenceContext('session:team:invented'); pinTrace(pin, 'session:team:invented');
     accessMode.set('public'); expect(get(pinnedTraces)).toEqual([]);
     setEvidenceContext('session:team:invented'); pinTrace(pin, 'session:team:invented');
-    appConfig.set({ tier: 'team' } as ConfigResponse); expect(get(pinnedTraces)).toEqual([]);
+    appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as ConfigResponse); expect(get(pinnedTraces)).toEqual([]);
     setEvidenceContext('session:team:invented'); pinTrace(pin, 'session:team:invented');
     clearSessionState(); expect(get(pinnedTraces)).toEqual([]);
     expect(pinTrace(pin, 'session:team:invented')).toBe(false);

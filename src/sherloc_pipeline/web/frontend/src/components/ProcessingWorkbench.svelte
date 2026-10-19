@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { appConfig, navigate, sessionGeneration } from '../lib/stores';
-  import { setEvidenceContext } from '../lib/evidenceStore';
+  import { evidenceGeneration, setEvidenceContext } from '../lib/evidenceStore';
   import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
   import {
     getScan,
@@ -44,6 +45,10 @@
   export let queryParams: Record<string, string> = {};
 
   const mountedSession = sessionGeneration;
+  const mountedEvidence = get(appConfig)?.capabilities?.evidence_desk === true ? evidenceGeneration : null;
+  function staleEvidence(): boolean {
+    return mountedEvidence !== null && (mountedSession !== sessionGeneration || mountedEvidence !== evidenceGeneration);
+  }
   $: evidenceEnabled = $appConfig?.capabilities?.evidence_desk === true;
   let evidenceContextKey = '';
   let scan: ScanDetail | null = null;
@@ -113,7 +118,7 @@
   let badpixRequestGen = 0;
 
   async function loadBadpix(): Promise<void> {
-    if (destroyed || mountedSession !== sessionGeneration) return;
+    if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
     const gen = ++badpixRequestGen;
     // Region transition: clear immediately so the previous region's
     // annotations neither render nor export while the new region's list is
@@ -123,7 +128,7 @@
       const res = await getBadpixChannels('R123');
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely.
-      if (destroyed || mountedSession !== sessionGeneration || gen !== badpixRequestGen) return;
+      if (gen !== badpixRequestGen || (mountedEvidence !== null && (destroyed || staleEvidence()))) return;
       badpixCatalog = res.badpix;
     } catch {
       // Annotation layer is best-effort: a failed fetch must never break the
@@ -268,17 +273,19 @@
     error = '';
     try {
       const res = await getScan(scanId);
-      if (destroyed || mountedSession !== sessionGeneration) return;
+      if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
       scan = res.scan;
-      evidenceContextKey = JSON.stringify([mountedSession, scan.sol_number, scan.target ?? scan.id]);
-      setEvidenceContext(evidenceContextKey);
+      if (evidenceEnabled) {
+        evidenceContextKey = JSON.stringify([mountedSession, scan.sol_number, scan.target ?? scan.id]);
+        setEvidenceContext(evidenceContextKey);
+      }
       // Apply ML-or-none default once, before the first loadSpectrum call.
       // Funnel through the named helper — never set despikeMethod in a $: block
       // (FRONTEND_HAZARDS H1). The user can override via the despike selector;
       // applyDespikeDefault is never called again after mount.
       applyDespikeDefault(scan.ml_mask_count ?? 0);
       const ptRes = await getScanPoints(scanId);
-      if (destroyed || mountedSession !== sessionGeneration) return;
+      if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
       points = ptRes.points;
 
       // Validate deep links before fetching any spectrum; never fall back to
@@ -314,7 +321,7 @@
   let spectrumRequestGen = 0;
 
   async function loadSpectrum() {
-    if (destroyed || mountedSession !== sessionGeneration) return;
+    if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
     const gen = ++spectrumRequestGen;
     // The selection context this request is FOR (PR #13 review F1): captured
     // at entry, synchronously with the branch below that reads selectionMode,
@@ -363,7 +370,7 @@
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely (do not touch spectrum or the
       // processing state).
-      if (destroyed || mountedSession !== sessionGeneration || gen !== spectrumRequestGen) return;
+      if (gen !== spectrumRequestGen || (mountedEvidence !== null && (destroyed || staleEvidence()))) return;
       spectrum = result;
       // Commit-bound selection context (PR #13 review F1): recorded only here
       // and in the 404 arm below, in lockstep with the `spectrum` assignment,
@@ -374,7 +381,7 @@
       // Stale-failure guard (PR #7 review F5): if a newer request superseded
       // this one, its failure is irrelevant — neither surface an error UI
       // for an obsolete request nor clear a newer spectrum.
-      if (destroyed || mountedSession !== sessionGeneration || gen !== spectrumRequestGen) return;
+      if (gen !== spectrumRequestGen || (mountedEvidence !== null && (destroyed || staleEvidence()))) return;
       if (e instanceof ApiError && e.status === 404) {
         spectrum = null;
         rawSnapshot = null;
@@ -505,7 +512,7 @@
 
   // Processing chain update
   function onChainStateUpdate(e: CustomEvent<ProcessingSnapshot>) {
-    if (destroyed || mountedSession !== sessionGeneration || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
+    if (destroyed || (mountedEvidence !== null && staleEvidence()) || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
     const newState = { ...e.detail, trace: rawSnapshot?.trace };
     // Push current state to undo before updating
     if (currentState) {
