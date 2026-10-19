@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
   import type { EvidenceDomain, EvidenceTheme, EvidenceTrace } from '../lib/evidenceTypes';
-  import { comparisonDisplays, evidenceColor, displayTrace, evidenceExport } from '../lib/evidenceStore';
+  import { comparisonDisplays, evidenceColor, displayTrace, evidenceExport, nativeFigureEvidence } from '../lib/evidenceStore';
   import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
@@ -167,10 +167,9 @@
       previousViewKey = viewKey;
     }
     if (evidenceMode || primaryTrace || comparisonTraces.length) { renderComparisons(viewKey); return; }
-    const nativeDisplay = processingTrace ? displayTrace(evidenceColor(processingTrace, theme), domain) : null;
-    figureEvidence = nativeDisplay ? evidenceExport([{ ...nativeDisplay,
-      normalization: 'native', divisor: null, scalable: false, offset: 0, displayed: nativeDisplay.original,
-    }]) : null;
+    const coloredTrace = processingTrace ? evidenceColor(processingTrace, theme) : null;
+    const nativeDisplay = coloredTrace ? displayTrace(coloredTrace, domain) : null;
+    figureEvidence = coloredTrace ? nativeFigureEvidence(coloredTrace, domain) : null;
     if (xData.length === 0) { Plotly.react(plotDiv, [], {}, { responsive: true }); return; }
 
     // Preserve current axis ranges from interactive zoom/pan,
@@ -204,7 +203,7 @@
       type: 'scatter',
       mode: 'lines',
       name: stage === 'raw' ? 'raw' : 'processed',
-      line: { color: nativeDisplay?.trace.color ?? '#1e293b', width: 1.4 },
+      line: { color: coloredTrace?.color ?? '#1e293b', width: 1.4 },
       hovertemplate: useWavelength
         ? 'Wavelength: %{x:.1f} nm<br>Intensity: %{y:.1f}<extra></extra>'
         : 'Raman Shift: %{x:.1f} cm\u207B\u00B9<br>Intensity: %{y:.1f}<extra></extra>',

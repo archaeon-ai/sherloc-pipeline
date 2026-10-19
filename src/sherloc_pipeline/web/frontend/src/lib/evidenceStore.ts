@@ -76,6 +76,20 @@ export function toggleTrace(id: string): void {
   pins.update(items => items.map(item => item.id === id ? freeze({ ...item, visible: !item.visible }) : item));
 }
 
+function axisBreaks(trace: EvidenceTrace, x: number[]): boolean[] {
+  const spacings = x.slice(1).map((v, i) => Math.abs(v - x[i])).filter(v => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  const spacing = spacings[Math.floor((spacings.length - 1) / 2)];
+  return x.map((v, i) => trace.breaks[i] || !Number.isFinite(v) ||
+    (i > 0 && Number.isFinite(spacing) && Math.abs(v - x[i - 1]) > 3 * spacing));
+}
+
+export function nativeFigureEvidence(trace: EvidenceTrace, domain: EvidenceDomain) {
+  const x = (domain === 'raman_shift' ? trace.snapshot.raman.wavenumber : trace.snapshot.trace.wavelength) ?? [];
+  const original = trace.snapshot.raman.intensity;
+  return evidenceExport([{ trace, domain, x, original, displayed: original, breaks: axisBreaks(trace, x),
+    normalization: 'native', divisor: null, scalable: false, offset: 0 }]);
+}
+
 export function displayTrace(trace: EvidenceTrace, domain: EvidenceDomain, offset = 0): EvidenceDisplay | null {
   const { snapshot } = trace;
   if (trace.nativeDomain ? trace.nativeDomain !== domain : snapshot.trace.region && snapshot.trace.region !== 'unknown') return null;
@@ -84,10 +98,7 @@ export function displayTrace(trace: EvidenceTrace, domain: EvidenceDomain, offse
   if (!x?.length || x.length !== original.length) return null;
   const unit = domain === 'raman_shift' ? snapshot.trace.provenance.wavenumber_unit : snapshot.trace.provenance.wavelength_unit;
   if (unit !== (domain === 'raman_shift' ? 'cm-1' : 'nm')) return null;
-  const spacings = x.slice(1).map((v, i) => Math.abs(v - x[i])).filter(v => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
-  const spacing = spacings[Math.floor((spacings.length - 1) / 2)];
-  const breaks = x.map((v, i) => trace.breaks[i] || !Number.isFinite(v) ||
-    (i > 0 && Number.isFinite(spacing) && Math.abs(v - x[i - 1]) > 3 * spacing));
+  const breaks = axisBreaks(trace, x);
   const window = domain === 'raman_shift' ? [800, 1800] : [280, 350];
   let maximum = -Infinity;
   x.forEach((v, i) => {
@@ -107,6 +118,8 @@ export function comparisonDisplays(primary: EvidenceTrace | null, pinned: Eviden
 export function evidenceExport(displays: EvidenceDisplay[]) {
   return { schema_version: 'pipeline-evidence-1', traces: displays.map(item => ({
     label: item.trace.label, domain: item.domain, color: item.trace.color,
+    x_unit: (item.domain === 'raman_shift' ? item.trace.snapshot.trace.provenance.wavenumber_unit : item.trace.snapshot.trace.provenance.wavelength_unit) ?? null,
+    intensity_unit: item.trace.snapshot.trace.provenance.intensity_unit ?? null,
     snapshot: item.trace.snapshot, annotations: item.trace.annotations, breaks: item.breaks,
     display: { divisor: item.divisor, scalable: item.scalable, offset: item.offset, normalization: item.normalization },
     x: item.x, original: item.original, displayed: item.displayed,

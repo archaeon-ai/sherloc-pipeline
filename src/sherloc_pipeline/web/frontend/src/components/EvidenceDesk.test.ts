@@ -162,3 +162,35 @@ it.each(['R1', 'R2', 'R3'])('omits both-axis %s from the opposite view and figur
   const text = await new Promise<string>(resolve => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blob); });
   expect(JSON.parse(text)).toEqual(last()[2].meta);
 });
+
+
+it.each(['R1', 'R2', 'R3'].flatMap(region => [undefined, 'unknown'].flatMap(unit =>
+  ['svg', 'png'].map(format => ({ region, unit, format }))),
+))('exports native $region $format provenance with unit=$unit', async ({ region, unit, format }) => {
+  const snapshot = input(); snapshot.trace!.region = region;
+  const provenance: Partial<NonNullable<ProcessingSnapshot['trace']>['provenance']> = snapshot.trace!.provenance;
+  if (region === 'R1') {
+    if (unit === undefined) delete provenance.wavenumber_unit;
+    else provenance.wavenumber_unit = unit;
+  } else {
+    if (unit === undefined) delete provenance.wavelength_unit;
+    else provenance.wavelength_unit = unit;
+  }
+  provenance.intensity_unit = null;
+  const { container } = render(EvidenceDesk, { snapshot, contextKey: 'synthetic-context',
+    wavenumber: snapshot.raman.wavenumber, wavelength: snapshot.trace!.wavelength, intensity: snapshot.raman.intensity });
+  await flush();
+  expect(last()[1][0].y).toEqual(snapshot.raman.intensity);
+  await fireEvent.click(container.querySelector('.export-trigger')!);
+  await fireEvent.click(screen.getByText(`${format.toUpperCase()} + provenance`)); await flush();
+  expect(downloadImage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ format }));
+  const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+  const text = await new Promise<string>(resolve => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blob); });
+  const output = JSON.parse(text);
+  expect(output).toEqual(last()[2].meta);
+  expect(output.traces[0].x_unit).toBe(unit ?? null);
+  expect(output.traces[0].intensity_unit).toBeNull();
+  expect(output.traces[0].display.normalization).toBe('native');
+  expect(output.traces[0].displayed).toEqual(snapshot.raman.intensity);
+  expect(output.traces[0].x).toEqual(region === 'R1' ? snapshot.raman.wavenumber : snapshot.trace!.wavelength);
+});
