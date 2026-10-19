@@ -424,3 +424,71 @@ def test_revisions_immutable_and_retired_release_denied(snapshot, database, tmp_
     engine.dispose()
     with pytest.raises(ValueError, match="not ready"):
         import_release(root, database, tmp_path / "objects", policy)
+
+
+@pytest.mark.parametrize("record_id,file_id", [("synthetic-a:b", "c"), ("synthetic-a", "b:c")])
+@pytest.mark.parametrize("location", ["file", "template"])
+def test_delimited_source_identity_rejected_before_writes(snapshot, database, tmp_path, record_id, file_id, location):
+    root, manifest, policy = snapshot
+    identity = manifest["files"][0] if location == "file" else manifest["templates"][0]["members"][0]
+    identity.update(record_id=record_id, file_id=file_id)
+    policy.write_text(json.dumps({"approved_trace_keys": ["synthetic-a:b:c:0"]}))
+    save_manifest(root, manifest)
+    before = database.read_bytes()
+    objects = tmp_path / "objects"
+    with pytest.raises(ValueError, match="pattern"):
+        import_release(root, database, objects, policy)
+    assert database.read_bytes() == before and not objects.exists()
+
+
+def test_compressed_archives_share_uncompressed_release_budget(snapshot, database, tmp_path, monkeypatch):
+    from sherloc_pipeline.services import reference_import
+
+    root, manifest, policy = snapshot
+    files = manifest["files"]
+    files.extend(copy.deepcopy(files[0]) for _ in range(2))
+    for index, file in enumerate(files):
+        arrays = io.BytesIO()
+        np.savez_compressed(arrays, x=np.zeros(1024), y=np.zeros(1024))
+        data = arrays.getvalue()
+        file.update(record_id=f"synthetic-record-{index}", arrays_path=f"arrays-{index}.npz",
+                    arrays_sha256=hashlib.sha256(data).hexdigest(), arrays_size=len(data))
+        (root / file["arrays_path"]).write_bytes(data)
+    manifest["templates"] = []
+    policy.write_text(json.dumps({"approved_trace_keys": []}))
+    save_manifest(root, manifest)
+    expanded_size = reference_import.array_archive_size(data)
+    assert len(data) * len(files) < expanded_size
+    monkeypatch.setattr(reference_import, "MAX_RELEASE_BYTES", expanded_size * 2 + 2 * len(data) + 1024)
+    original = reference_import.read_arrays
+    reader = Mock(side_effect=original)
+    monkeypatch.setattr(reference_import, "read_arrays", reader)
+    before = database.read_bytes()
+    objects = tmp_path / "objects"
+    with pytest.raises(ValueError, match="release too large"):
+        import_release(root, database, objects, policy)
+    assert reader.call_count == 2
+    assert database.read_bytes() == before and not objects.exists()
+
+
+@pytest.mark.parametrize("model", [ReferenceReleaseORM, ReferenceFileORM, ReferenceTraceORM, ReferenceTemplateORM])
+def test_catalog_delete_rejected_and_reimport_preserves_rows(snapshot, database, tmp_path, model):
+    root, _, policy = snapshot
+    objects = tmp_path / "objects"
+    report = import_release(root, database, objects, policy)
+    engine = engine_for(database)
+    try:
+        with Session(engine) as session:
+            session.delete(session.query(model).one())
+            with pytest.raises(ValueError, match="cannot be deleted"):
+                session.commit()
+            session.rollback()
+        repeated = import_release(root, database, objects, policy)
+        assert repeated.existing and repeated.release_id == report.release_id
+        with Session(engine) as session:
+            for row_model in (ReferenceReleaseORM, ReferenceFileORM, ReferenceTraceORM, ReferenceTemplateORM):
+                assert session.query(row_model).count() == 1
+            release = session.get(ReferenceReleaseORM, report.release_id)
+            assert release.status == "ready"
+    finally:
+        engine.dispose()

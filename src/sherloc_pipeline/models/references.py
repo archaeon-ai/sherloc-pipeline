@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Name = Annotated[str, Field(min_length=1, max_length=1000)]
+SourceIdentifier = Annotated[str, Field(min_length=1, max_length=1000, pattern=r"^[^:]+$")]
 
 
 class ReferenceModel(BaseModel):
@@ -55,8 +56,8 @@ class ReferenceTrace(ReferenceModel):
 
 class ReferenceFile(ReferenceModel):
     datatype_id: Name
-    record_id: Name
-    file_id: Name
+    record_id: SourceIdentifier
+    file_id: SourceIdentifier
     original_filename: Name
     source_url: str | None = None
     media_type: Name
@@ -72,8 +73,8 @@ class ReferenceFile(ReferenceModel):
 
 
 class TemplateMember(ReferenceModel):
-    record_id: Name
-    file_id: Name
+    record_id: SourceIdentifier
+    file_id: SourceIdentifier
     trace_index: Annotated[int, Field(ge=0)]
     weight: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 1.0
 
@@ -111,6 +112,8 @@ class ServingPolicy(ReferenceModel):
 
 
 def trace_key(record_id: str, file_id: str, trace_index: int) -> str:
+    if ":" in record_id or ":" in file_id:
+        raise ValueError("reference source identifiers cannot contain a colon")
     return f"{record_id}:{file_id}:{trace_index}"
 
 

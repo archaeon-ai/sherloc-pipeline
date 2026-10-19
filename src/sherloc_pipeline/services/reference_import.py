@@ -45,13 +45,19 @@ def read_local(root: Path, relative: str, expected: str, size: int) -> bytes:
     return verify_bytes(data, expected)
 
 
-def read_arrays(data: bytes, traces) -> dict:
+def array_archive_size(data: bytes) -> int:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         entries = archive.infolist()
-        if len(entries) > 20000 or sum(entry.file_size for entry in entries) > MAX_OBJECT_BYTES:
+        size = sum(entry.file_size for entry in entries)
+        if len(entries) > 20000 or size > MAX_OBJECT_BYTES:
             raise ValueError("reference array archive too large")
         if len({entry.filename for entry in entries}) != len(entries):
             raise ValueError("duplicate array archive member")
+        return size
+
+
+def read_arrays(data: bytes, traces) -> dict:
+    array_archive_size(data)
     arrays = {}
     with np.load(io.BytesIO(data), allow_pickle=False) as archive:
         for trace in traces:
@@ -125,7 +131,7 @@ def import_release(
     for file in manifest.files:
         raw = read_local(root, file.raw_path, file.raw_sha256, file.raw_size)
         array_bytes = read_local(root, file.arrays_path, file.arrays_sha256, file.arrays_size)
-        total_bytes += len(raw) + len(array_bytes)
+        total_bytes += len(raw) + len(array_bytes) + array_archive_size(array_bytes)
         if total_bytes > MAX_RELEASE_BYTES:
             raise ValueError("reference release too large")
         arrays = read_arrays(array_bytes, file.traces)

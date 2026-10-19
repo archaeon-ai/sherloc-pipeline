@@ -105,3 +105,11 @@ def _release_transition(mapper, connection, target):
         ("staged", "ready"), ("ready", "retired"),
     }:
         raise ValueError("invalid reference release transition")
+
+
+@event.listens_for(ReferenceReleaseORM, "before_delete")
+@event.listens_for(ReferenceFileORM, "before_delete")
+@event.listens_for(ReferenceTraceORM, "before_delete")
+@event.listens_for(ReferenceTemplateORM, "before_delete")
+def _prevent_revision_delete(mapper, connection, target):
+    raise ValueError("reference catalog rows cannot be deleted")
