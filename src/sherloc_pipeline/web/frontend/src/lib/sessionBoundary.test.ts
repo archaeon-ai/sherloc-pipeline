@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { AuthRequiredError, fetchAciImage, getConfig, postFit } from './api';
-import { clearSessionState, lastFitResult, scienceAuthorized } from './stores';
+import { clearSessionState, lastFitResult, scienceAuthorized, sessionRequests } from './stores';
+
+const getToken = vi.hoisted(() => vi.fn());
 
 vi.mock('./auth', () => ({
   bootstrapAuthReady: Promise.resolve(null),
-  getSession: () => ({ mode: 'cf-access', isAuthenticated: async () => true }),
+  getSession: () => ({ mode: 'auth0', isAuthenticated: async () => true, getToken }),
 }));
 
 function deferred<T>() {
@@ -14,7 +16,11 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-beforeEach(() => { clearSessionState(); scienceAuthorized.set(true); });
+beforeEach(() => {
+  getToken.mockReset().mockResolvedValue('synthetic-token');
+  clearSessionState();
+  scienceAuthorized.set(true);
+});
 afterEach(() => { vi.unstubAllGlobals(); });
 
 it('discards a pending fit reply so it cannot refill stores after logout', async () => {
@@ -83,4 +89,43 @@ it('discards a decoded image if logout happens during decoding', async () => {
   decoded.onload();
   await rejected;
   expect(revoke).toHaveBeenCalledWith('blob:synthetic');
+});
+
+
+it.each(['json', 'image'])('never sends a %s request when the token resolves after sign-out', async (kind) => {
+  const token = deferred<string>();
+  getToken.mockReturnValue(token.promise);
+  vi.stubGlobal('fetch', vi.fn());
+  const pending = kind === 'json' ? getConfig() : fetchAciImage('synthetic-scan');
+  const rejected = expect(pending).rejects.toBeInstanceOf(AuthRequiredError);
+  await vi.waitFor(() => expect(getToken).toHaveBeenCalled());
+  clearSessionState();
+  token.resolve('synthetic-old-token');
+  await rejected;
+  expect(fetch).not.toHaveBeenCalled();
+  expect(sessionRequests.size).toBe(0);
+});
+
+it.each(['json', 'image'])('aborts an outstanding %s fetch on sign-out', async (kind) => {
+  let signal!: AbortSignal;
+  vi.stubGlobal('fetch', vi.fn((_url, init) => {
+    signal = init.signal;
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('synthetic abort', 'AbortError')));
+    });
+  }));
+  const pending = kind === 'json' ? getConfig() : fetchAciImage('synthetic-scan');
+  const rejected = expect(pending).rejects.toBeInstanceOf(AuthRequiredError);
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+  expect(signal.aborted).toBe(false);
+  clearSessionState();
+  expect(signal.aborted).toBe(true);
+  await rejected;
+  expect(sessionRequests.size).toBe(0);
+});
+
+it('removes completed requests from the session abort set', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"synthetic":true}')));
+  await getConfig();
+  expect(sessionRequests.size).toBe(0);
 });

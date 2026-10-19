@@ -28,7 +28,7 @@ import type {
 } from './types';
 
 import { bootstrapAuthReady, getSession } from './auth';
-import { clearSessionState, sessionGeneration } from './stores';
+import { clearSessionState, sessionGeneration, sessionRequests } from './stores';
 import type { DisplayPoint, MapJobResults, VoronoiGeometry } from './types/map';
 import type { MapJobStatus } from './mapProgress';
 
@@ -93,33 +93,54 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+async function withSessionRequest<T>(
+  generation: number,
+  request: (headers: Record<string, string>, signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const headers = await authHeaders();
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  const controller = new AbortController();
+  sessionRequests.add(controller);
+  try {
+    return await request(headers, controller.signal);
+  } catch (error) {
+    if (generation !== sessionGeneration && !(error instanceof ApiError)) throw new AuthRequiredError();
+    throw error;
+  } finally {
+    sessionRequests.delete(controller);
+  }
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const generation = sessionGeneration;
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(await authHeaders()),
-      ...init?.headers,
-    },
-  });
-  if (generation !== sessionGeneration) throw new AuthRequiredError();
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) clearSessionState();
-    let errorClass = `HTTP ${res.status}`;
-    let detail: string | undefined;
-    try {
-      const body = await res.json();
-      errorClass = body.error || errorClass;
-      detail = body.detail;
-    } catch {
-      // response body was not JSON
+  return withSessionRequest(generation, async (headers, signal) => {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers,
+        ...init?.headers,
+      },
+    });
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) clearSessionState();
+      let errorClass = `HTTP ${res.status}`;
+      let detail: string | undefined;
+      try {
+        const body = await res.json();
+        errorClass = body.error || errorClass;
+        detail = body.detail;
+      } catch {
+        // response body was not JSON
+      }
+      throw new ApiError(res.status, errorClass, detail);
     }
-    throw new ApiError(res.status, errorClass, detail);
-  }
-  const data = await res.json();
-  if (generation !== sessionGeneration) throw new AuthRequiredError();
-  return data;
+    const data = await res.json();
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    return data;
+  });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -339,27 +360,29 @@ export async function fetchAciImage(
   params.set('_v', '4');
   const url = `${API_BASE}/images/${encodeURIComponent(scanId)}/aci?${params.toString()}`;
 
-  const res = await fetch(url, { headers: await authHeaders() });
-  if (generation !== sessionGeneration) throw new AuthRequiredError();
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) clearSessionState();
-    throw new ApiError(res.status, `HTTP ${res.status}`);
-  }
-  const blob = await res.blob();
-  if (generation !== sessionGeneration) throw new AuthRequiredError();
-  const blobUrl = URL.createObjectURL(blob);
-  try {
-    const img = new Image();
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('Image decode failed'));
-      img.src = blobUrl;
-    });
+  return withSessionRequest(generation, async (headers, signal) => {
+    const res = await fetch(url, { headers, signal });
     if (generation !== sessionGeneration) throw new AuthRequiredError();
-    return img;
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) clearSessionState();
+      throw new ApiError(res.status, `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    const blobUrl = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Image decode failed'));
+        img.src = blobUrl;
+      });
+      if (generation !== sessionGeneration) throw new AuthRequiredError();
+      return img;
+    } finally {
+      URL.revokeObjectURL(blobUrl);
+    }
+  });
 }
 
 // --- Map: layers ---

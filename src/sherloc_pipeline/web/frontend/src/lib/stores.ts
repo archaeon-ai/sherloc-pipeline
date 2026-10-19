@@ -20,6 +20,7 @@ export const accessMode = writable<'internal' | 'public'>('internal');
 export const accessModeResolved = writable(false);
 export const scienceAuthorized = writable(false);
 export let sessionGeneration = 0;
+export const sessionRequests = new Set<AbortController>();
 
 // --- Route ---
 export const currentHash = writable(window.location.hash || '#/');
@@ -48,6 +49,8 @@ export const features = writable<FeaturesConfig>({ pds_browser: true });
 
 export function clearSessionState(): void {
   sessionGeneration += 1;
+  for (const controller of sessionRequests) controller.abort();
+  sessionRequests.clear();
   scienceAuthorized.set(false);
   appConfig.set(null);
   features.set({ pds_browser: false });
