@@ -276,7 +276,9 @@
       if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
       scan = res.scan;
       if (evidenceEnabled) {
-        evidenceContextKey = JSON.stringify([mountedSession, scan.sol_number, scan.target ?? scan.id]);
+        const target = scan.target?.trim();
+        const identity = target ? ['target', target] : ['scan', scan.id];
+        evidenceContextKey = JSON.stringify([mountedSession, mountedEvidence, scan.sol_number, identity]);
         setEvidenceContext(evidenceContextKey);
       }
       // Apply ML-or-none default once, before the first loadSpectrum call.

@@ -1400,3 +1400,15 @@ describe('capability-off legacy Workbench regression', () => {
     } finally { vi.unstubAllGlobals(); }
   });
 });
+
+
+it.each(['', '   '])('isolates pins by scan identity for a blank target (%j)', async target => {
+  getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A));
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), target } });
+  const first = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+  expect(get(pinnedTraces)).toHaveLength(1); first.unmount();
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), id: 'synthetic-other', target } });
+  render(ProcessingWorkbench, { scanId: 'synthetic-other' }); await flush();
+  expect(get(pinnedTraces)).toEqual([]);
+});
