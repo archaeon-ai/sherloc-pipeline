@@ -50,7 +50,7 @@
   export let primaryTrace: EvidenceTrace | null = null;
   export let comparisonTraces: EvidenceTrace[] = [];
   export let stacked = false;
-  export let theme: EvidenceTheme = 'system';
+  export let theme: EvidenceTheme = 'light';
   $: domain = xDomain ?? (region !== 'R1' && wavelength?.length ? 'emission_wavelength' : 'raman_shift');
   $: useWavelength = domain === 'emission_wavelength';
   $: xData = useWavelength ? (wavelength ?? []) : wavenumber;

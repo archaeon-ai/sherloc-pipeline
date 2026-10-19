@@ -1344,3 +1344,20 @@ it.each(['sign-out', 'tier'])('rejects a late processing result after %s', async
   finish(); await flush();
   expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
 });
+
+
+it('keeps the legacy plot light with evidence desk off and a dark system preference', async () => {
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+  try {
+    appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+    getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A));
+    render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+    expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+    const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
+    expect(layout.plot_bgcolor).toBe('#ffffff');
+    expect(layout.paper_bgcolor).toBe('#ffffff');
+    expect(traces[0].line.color).toBe('#1e293b');
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
