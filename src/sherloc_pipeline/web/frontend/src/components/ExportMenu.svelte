@@ -1,6 +1,11 @@
 <script lang="ts">
+  import type { EvidenceDisplay } from '../lib/evidenceTypes';
+  import { evidenceCsv, evidenceExport } from '../lib/evidenceStore';
   import type { ExportTrace, ProcessingArtifacts } from '../lib/types';
 
+  export let evidenceMode = false;
+  export let evidenceDisplays: EvidenceDisplay[] = [];
+  export let exportFigure: ((format: 'png' | 'svg') => void) | null = null;
   export let trace: ExportTrace | null = null;
   export let scanId: string = '';
   export let scanName: string = '';
@@ -115,6 +120,7 @@
   // --- CSV generation ---
 
   function buildCsvContent(): string {
+    if (evidenceMode) return evidenceCsv(evidenceDisplays);
     const provenance = buildProvenanceJson();
     const lines: string[] = [];
 
@@ -135,7 +141,7 @@
     lines.push(`# wavelength_unit: ${provenance.axes.wavelength_unit}`);
     lines.push(`# intensity_unit: ${provenance.axes.intensity_unit ?? 'unknown'}`);
     lines.push(`# exported_at: ${provenance.application.timestamp}`);
-    lines.push(`# n_channels: ${wavenumber.length}`);
+    lines.push(`# n_channels: ${intensity.length}`);
 
     // Selection provenance
     const sel = provenance.selection as Record<string, unknown>;
@@ -240,7 +246,7 @@
     lines.push(columns.join(','));
 
     // Data rows
-    const n = wavenumber.length;
+    const n = intensity.length;
     for (let i = 0; i < n; i++) {
       const row: string[] = [];
       for (const col of data) {
@@ -284,7 +290,7 @@
   }
 
   function copyProvenance() {
-    const json = JSON.stringify(buildProvenanceJson(), null, 2);
+    const json = JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays) : buildProvenanceJson(), null, 2);
     navigator.clipboard.writeText(json).catch(() => {
       // Fallback: select text in the pre element
       const el = document.querySelector('.provenance-json');
@@ -315,7 +321,7 @@
   <button
     class="btn-secondary btn-sm export-trigger"
     on:click|stopPropagation={toggleMenu}
-    disabled={wavenumber.length === 0}
+    disabled={evidenceMode ? evidenceDisplays.length === 0 : intensity.length === 0}
   >
     Export &#9660;
   </button>
@@ -326,9 +332,13 @@
     <div class="export-dropdown" on:click|stopPropagation>
       <button class="dropdown-item" on:click={downloadCsv}>
         <span class="dropdown-icon">&#128196;</span>
-        CSV at current stage
+        {evidenceMode ? 'Comparison CSV' : 'CSV at current stage'}
         <span class="dropdown-hint">{stage}</span>
       </button>
+      {#if exportFigure}
+        <button class="dropdown-item" on:click={() => { exportFigure?.('svg'); closeMenu(); }}>SVG + provenance</button>
+        <button class="dropdown-item" on:click={() => { exportFigure?.('png'); closeMenu(); }}>PNG + provenance</button>
+      {/if}
       <button class="dropdown-item" on:click={showProvenance}>
         <span class="dropdown-icon">&#128203;</span>
         Full provenance JSON
@@ -347,7 +357,7 @@
         <button class="btn-secondary btn-sm" on:click={closeProvenance}>Close</button>
       </div>
       <div class="modal-body">
-        <pre class="provenance-json">{JSON.stringify(buildProvenanceJson(), null, 2)}</pre>
+        <pre class="provenance-json">{JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays) : buildProvenanceJson(), null, 2)}</pre>
       </div>
       <div class="modal-footer">
         <button class="btn-primary btn-sm" on:click={copyProvenance}>

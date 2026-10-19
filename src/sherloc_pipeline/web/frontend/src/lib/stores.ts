@@ -4,6 +4,7 @@
 
 import { writable, derived } from 'svelte/store';
 import { processingState, undoStack, pointSelection } from './processingStore';
+import { clearEvidence } from './evidenceStore';
 import { resetMapState } from './stores/mapStore';
 import type {
   BaselineParams,
@@ -51,6 +52,7 @@ export function clearSessionState(): void {
   sessionGeneration += 1;
   for (const controller of sessionRequests) controller.abort();
   sessionRequests.clear();
+  clearEvidence();
   scienceAuthorized.set(false);
   appConfig.set(null);
   features.set({ pds_browser: false });
@@ -66,6 +68,18 @@ export function clearSessionState(): void {
   resetMapState();
   sessionStorage.removeItem('sherloc.scanBrowserHash');
 }
+
+let evidenceTier: string | null = null;
+appConfig.subscribe(config => {
+  const tier = config?.tier ?? null;
+  if (tier !== evidenceTier) clearEvidence();
+  evidenceTier = tier;
+});
+let evidenceAccess = 'internal';
+accessMode.subscribe(mode => {
+  if (mode !== evidenceAccess) clearEvidence();
+  evidenceAccess = mode;
+});
 
 // --- Derived ---
 export const healthIndicator = derived(healthStatus, ($h) => {

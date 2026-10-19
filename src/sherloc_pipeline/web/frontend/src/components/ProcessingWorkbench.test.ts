@@ -19,7 +19,8 @@ import { tick } from 'svelte';
 import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
-import { accessMode } from '../lib/stores';
+import { clearEvidence, pinnedTraces } from '../lib/evidenceStore';
+import { accessMode, clearSessionState } from '../lib/stores';
 import type { BadpixResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
@@ -238,6 +239,7 @@ let getAvg: MockInstance<[scanId: string, params?: SpectrumParams], Promise<Spec
 let originalGetContext: typeof HTMLCanvasElement.prototype.getContext;
 
 beforeEach(() => {
+  clearEvidence();
   vi.restoreAllMocks();
   reactSpy.mockClear();  // vi.mock factory spy survives restoreAllMocks
   // AciViewer calls canvas.getContext on mount; jsdom logs a noisy
@@ -1216,4 +1218,67 @@ it('public-tier JSON and CSV headers exclude private fields planted in source ro
   } finally {
     accessMode.set('internal');
   }
+});
+
+
+describe('ProcessingWorkbench evidence session boundaries', () => {
+  it('retains a pin across scans of the same target and clears it for a new target', async () => {
+    const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    expect(get(pinnedTraces)).toHaveLength(1);
+    first.unmount();
+    vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), id: 'synthetic-second', scan_name: 'Synthetic second' } });
+    const second = render(ProcessingWorkbench, { scanId: 'synthetic-second' });
+    await flush(); expect(get(pinnedTraces)).toHaveLength(1); second.unmount();
+    vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), target: 'Other invented' } });
+    render(ProcessingWorkbench, { scanId: 'synthetic-third' });
+    await flush(); expect(get(pinnedTraces)).toEqual([]);
+  });
+
+  it('denies a spectrum completing after sign-out before it can populate or pin state', async () => {
+    let resolve = (_value: SpectrumResponse) => {};
+    getAvg.mockReturnValue(new Promise(done => { resolve = done; }));
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush(); clearSessionState();
+    resolve(fakeSpectrum(INTENSITY_STALE)); await flush();
+    expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+  });
+
+  it('stops sequential requests when scan metadata completes after sign-out', async () => {
+    let resolve = (_value: Awaited<ReturnType<typeof api.getScan>>) => {};
+    vi.mocked(api.getScan).mockReturnValue(new Promise(done => { resolve = done; }));
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush(); clearSessionState();
+    resolve({ schema_version: '1', scan: fakeScan() }); await flush();
+    expect(api.getScanPoints).not.toHaveBeenCalled(); expect(getAvg).not.toHaveBeenCalled();
+    expect(get(pinnedTraces)).toEqual([]);
+  });
+
+  it('pins the committed new request when an older reply finishes later', async () => {
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    let resolve = (_value: SpectrumResponse) => {};
+    getAvg.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'mean' } });
+    getAvg.mockResolvedValueOnce(fakeSpectrum(INTENSITY_NEW));
+    await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'median' } });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    resolve(fakeSpectrum(INTENSITY_STALE)); await flush();
+    expect(get(pinnedTraces)[0].snapshot.raman.intensity).toEqual(INTENSITY_NEW);
+    expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  });
+
+  it('mounts and exports a wavelength-only committed spectrum', async () => {
+    getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_A, { wavenumber: [], wavelength: [280, 300, 320],
+      provenance: { calibration_version: null, wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: 'synthetic', region: 'R2' } }));
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(container.querySelector('.raman-view')).toBeTruthy();
+    expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+    const call = reactSpy.mock.calls.at(-1)!;
+    expect(call[1][0].x).toEqual([280, 300, 320]);
+    expect(call[2].xaxis.title.text).toBe('Wavelength (nm)');
+  });
 });

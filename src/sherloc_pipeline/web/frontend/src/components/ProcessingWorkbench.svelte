@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { navigate } from '../lib/stores';
+  import { navigate, sessionGeneration } from '../lib/stores';
+  import { setEvidenceContext } from '../lib/evidenceStore';
   import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
   import {
     getScan,
@@ -34,13 +35,14 @@
   import ProcessingHistory from './ProcessingHistory.svelte';
   import PeakTable from './PeakTable.svelte';
 
-  import RamanView from './RamanView.svelte';
+  import EvidenceDesk from './EvidenceDesk.svelte';
   import AciViewer from './AciViewer.svelte';
-  import ExportMenu from './ExportMenu.svelte';
 
   export let scanId: string;
   export let queryParams: Record<string, string> = {};
 
+  const mountedSession = sessionGeneration;
+  let evidenceContextKey = '';
   let scan: ScanDetail | null = null;
   let points: ScanPoint[] = [];
   let spectrum: SpectrumResponse | null = null;
@@ -107,7 +109,7 @@
   let badpixRequestGen = 0;
 
   async function loadBadpix(): Promise<void> {
-    if (destroyed) return;
+    if (destroyed || mountedSession !== sessionGeneration) return;
     const gen = ++badpixRequestGen;
     // Region transition: clear immediately so the previous region's
     // annotations neither render nor export while the new region's list is
@@ -117,7 +119,7 @@
       const res = await getBadpixChannels('R123');
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely.
-      if (gen !== badpixRequestGen) return;
+      if (destroyed || mountedSession !== sessionGeneration || gen !== badpixRequestGen) return;
       badpixCatalog = res.badpix;
     } catch {
       // Annotation layer is best-effort: a failed fetch must never break the
@@ -244,14 +246,6 @@
         : null
   ) as 'ml' | 'modz' | null;
 
-  // --- Badpix export gating (issue #9) --------------------------------------
-  // The CSV badpix column is emitted iff the overlay toggle is ON (and the
-  // list is non-empty). This derived value is the single export authority,
-  // mirroring effectiveSpikeMask: null means no column, no provenance header.
-  // Pure read of toggle + fetched list — no write to user-mutated state (H1).
-  $: exportBadpix =
-    showBadpixOverlay && badpix.length > 0 ? badpix : null;
-
   onDestroy(() => {
     destroyed = true;
     spectrumRequestGen += 1;
@@ -270,15 +264,17 @@
     error = '';
     try {
       const res = await getScan(scanId);
-      if (destroyed) return;
+      if (destroyed || mountedSession !== sessionGeneration) return;
       scan = res.scan;
+      evidenceContextKey = JSON.stringify([mountedSession, scan.sol_number, scan.target ?? scan.id]);
+      setEvidenceContext(evidenceContextKey);
       // Apply ML-or-none default once, before the first loadSpectrum call.
       // Funnel through the named helper — never set despikeMethod in a $: block
       // (FRONTEND_HAZARDS H1). The user can override via the despike selector;
       // applyDespikeDefault is never called again after mount.
       applyDespikeDefault(scan.ml_mask_count ?? 0);
       const ptRes = await getScanPoints(scanId);
-      if (destroyed) return;
+      if (destroyed || mountedSession !== sessionGeneration) return;
       points = ptRes.points;
 
       // Validate deep links before fetching any spectrum; never fall back to
@@ -314,7 +310,7 @@
   let spectrumRequestGen = 0;
 
   async function loadSpectrum() {
-    if (destroyed) return;
+    if (destroyed || mountedSession !== sessionGeneration) return;
     const gen = ++spectrumRequestGen;
     // The selection context this request is FOR (PR #13 review F1): captured
     // at entry, synchronously with the branch below that reads selectionMode,
@@ -363,7 +359,7 @@
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely (do not touch spectrum or the
       // processing state).
-      if (gen !== spectrumRequestGen) return;
+      if (destroyed || mountedSession !== sessionGeneration || gen !== spectrumRequestGen) return;
       spectrum = result;
       // Commit-bound selection context (PR #13 review F1): recorded only here
       // and in the 404 arm below, in lockstep with the `spectrum` assignment,
@@ -374,7 +370,7 @@
       // Stale-failure guard (PR #7 review F5): if a newer request superseded
       // this one, its failure is irrelevant — neither surface an error UI
       // for an obsolete request nor clear a newer spectrum.
-      if (gen !== spectrumRequestGen) return;
+      if (destroyed || mountedSession !== sessionGeneration || gen !== spectrumRequestGen) return;
       if (e instanceof ApiError && e.status === 404) {
         spectrum = null;
         rawSnapshot = null;
@@ -561,17 +557,6 @@
     <button class="btn-link" on:click={() => navigate('#/')}>Scans</button>
     <span class="breadcrumb-sep">/</span>
     <span>{scan?.target ?? '...'} Sol {scan?.sol_number ?? '...'}</span>
-    <ExportMenu
-      trace={currentState?.trace ?? null}
-      stage={currentStage}
-      wavenumber={currentWavenumber}
-      intensity={currentIntensity}
-      artifacts={currentState?.artifacts ?? null}
-      spikeMask={effectiveSpikeMask}
-      spikeMethod={effectiveSpikeMethod}
-      badpix={exportBadpix}
-      {processingChain}
-    />
   </div>
 
   {#if error}
@@ -753,44 +738,40 @@
             </div>
           </div>
           <div class="card-body">
-            {#if currentWavenumber.length > 0}
-              <RamanView
-                wavenumber={currentWavenumber}
-                intensity={currentIntensity}
-                rawIntensity={rawSnapshot?.raman.intensity ?? []}
-                stage={currentStage}
-                spikeMask={effectiveSpikeMask}
-                spikeMethod={effectiveSpikeMethod}
-                {badpix}
-                bind:showBadpix={showBadpixOverlay}
-                background={currentState?.artifacts?.background ?? null}
-                backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
-                baseline={baselineOverlay}
-                baselineRange={appliedBaselineRange}
-                {fitCurve}
-                peaks={showFit ? fitPeaks : []}
-                {residual}
-                showRaw={currentStage !== 'raw'}
-                showResidual={showFit && residual !== null}
-                title={getPlotTitle()}
-                height={480}
-                {selectionMode}
-                {selectedIndices}
-                {selectedPointIdx}
-                nPoints={scan?.n_points ?? 0}
-                {fitRange}
-                wavelength={spectrum?.wavelength ?? null}
-                region={selectedRegion}
-                {averagingMethod}
-                on:viewRangeChange={(e) => {
-                  if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
-                }}
-              />
-            {:else}
-              <div class="empty-state" style="padding: 60px">
-                No spectrum data available
-              </div>
-            {/if}
+            <EvidenceDesk
+              snapshot={currentState}
+              contextKey={evidenceContextKey}
+              wavenumber={currentWavenumber}
+              intensity={currentIntensity}
+              rawIntensity={rawSnapshot?.raman.intensity ?? []}
+              stage={currentStage}
+              spikeMask={effectiveSpikeMask}
+              spikeMethod={effectiveSpikeMethod}
+              {badpix}
+              bind:showBadpix={showBadpixOverlay}
+              background={currentState?.artifacts?.background ?? null}
+              backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
+              baseline={baselineOverlay}
+              baselineRange={appliedBaselineRange}
+              {fitCurve}
+              peaks={showFit ? fitPeaks : []}
+              {residual}
+              showRaw={currentStage !== 'raw'}
+              showResidual={showFit && residual !== null}
+              title={getPlotTitle()}
+              height={480}
+              {selectionMode}
+              {selectedIndices}
+              {selectedPointIdx}
+              nPoints={scan?.n_points ?? 0}
+              {fitRange}
+              wavelength={currentState?.trace?.wavelength ?? null}
+              region={selectedRegion}
+              {averagingMethod}
+              on:viewRangeChange={(e) => {
+                if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
+              }}
+            />
           </div>
         </div>
 
