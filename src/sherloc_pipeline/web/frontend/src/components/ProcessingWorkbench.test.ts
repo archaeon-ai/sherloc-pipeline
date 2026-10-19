@@ -1279,14 +1279,14 @@ describe('ProcessingWorkbench evidence session boundaries', () => {
   });
 
   it('mounts and exports a wavelength-only committed spectrum', async () => {
-    getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A, { wavenumber: [], wavelength: [280, 300, 320],
+    getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A, { wavenumber: [], wavelength: [280, 300, 320], channel_indices: [0, 1, 3],
       provenance: { calibration_version: null, wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: 'synthetic', region: 'R2' } }));
     const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await flush();
     expect(container.querySelector('.raman-view')).toBeTruthy();
     expect(container.querySelector('.export-trigger')).not.toBeDisabled();
     const call = reactSpy.mock.calls.at(-1)!;
-    expect(call[1][0].x).toEqual([280, 300, 320]);
+    expect(call[1][0].x).toEqual([280, 300, null, 320]);
     expect(call[2].xaxis.title.text).toBe('Wavelength (nm)');
   });
 });

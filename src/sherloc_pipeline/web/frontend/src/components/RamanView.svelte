@@ -184,12 +184,23 @@
       ? (curLayout.yaxis as Record<string, unknown>).range as [number, number] | undefined
       : undefined;
 
+    function nativeCoordinates(x: number[], y: number[]) {
+      if (!nativeDisplay || x.length !== nativeDisplay.x.length || y.length !== x.length) return { x, y };
+      const plotX: (number | null)[] = [];
+      const plotY: (number | null)[] = [];
+      x.forEach((value, i) => {
+        if (nativeDisplay.breaks[i]) { plotX.push(null); plotY.push(null); }
+        plotX.push(Number.isFinite(value) ? value : null);
+        plotY.push(Number.isFinite(y[i]) ? y[i] : null);
+      });
+      return { x: plotX, y: plotY };
+    }
+
     const traces: Plotly.Data[] = [];
 
     // Main trace: current processed spectrum
     traces.push({
-      x: xData,
-      y: intensity,
+      ...nativeCoordinates(xData, intensity),
       type: 'scatter',
       mode: 'lines',
       name: stage === 'raw' ? 'raw' : 'processed',
@@ -202,8 +213,7 @@
     // Raw overlay (faded)
     if (showRaw && showOverlayRaw && rawIntensity.length > 0 && stage !== 'raw') {
       traces.push({
-        x: xData,
-        y: rawIntensity,
+        ...nativeCoordinates(xData, rawIntensity),
         type: 'scatter',
         mode: 'lines',
         name: 'raw',
@@ -215,8 +225,7 @@
     // Background overlay (dashed gray)
     if (showOverlayBg && background && (stage === 'bg_subtracted' || stage === 'despiked')) {
       traces.push({
-        x: xData,
-        y: background,
+        ...nativeCoordinates(xData, background),
         type: 'scatter',
         mode: 'lines',
         name: 'background',
@@ -227,8 +236,7 @@
     // Background scaled overlay
     if (showOverlayBg && backgroundScaled && stage === 'bg_subtracted') {
       traces.push({
-        x: xData,
-        y: backgroundScaled,
+        ...nativeCoordinates(xData, backgroundScaled),
         type: 'scatter',
         mode: 'lines',
         name: 'bg (scaled)',

@@ -99,6 +99,8 @@ it('exports native processing values and committed labels with a provenance side
   await flush();
   expect(container.textContent).toContain('Point 0');
   expect(container.textContent).not.toContain('Points 99');
+  expect(last()[1][0].x).toEqual([800, 900, null, 1000]);
+  expect(last()[1][0].y).toEqual([-1, 2, null, 4]);
   expect(last()[2].meta.traces[0].display.normalization).toBe('native');
   expect(last()[2].meta.traces[0].displayed).toEqual([-1, 2, 4]);
   await fireEvent.click(container.querySelector('.export-trigger')!);
