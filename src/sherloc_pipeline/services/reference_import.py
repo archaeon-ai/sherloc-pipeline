@@ -78,6 +78,8 @@ def read_arrays(data: bytes, traces) -> dict:
     with np.load(io.BytesIO(data), allow_pickle=False) as archive:
         for trace in traces:
             for key in (trace.x_key, trace.y_key):
+                if key in arrays:
+                    continue
                 array = archive[key]
                 if array.ndim != 1 or array.size == 0 or array.dtype.kind not in "iuf" or not np.isfinite(array).all():
                     raise ValueError("reference arrays must be finite nonempty numeric vectors")
@@ -151,6 +153,7 @@ def import_release(
         if total_bytes > MAX_RELEASE_BYTES:
             raise ValueError("reference release too large")
         arrays = read_arrays(array_bytes, file.traces)
+        array_hashes = {key: array_digest(array) for key, array in arrays.items()}
         file_metadata = file.model_dump(mode="json", exclude={"traces"})
         file_revision = digest({"release_id": release_id, "file": file_metadata})
         objects_to_stage[file.raw_sha256] = raw
@@ -164,7 +167,7 @@ def import_release(
         ))
         for trace in file.traces:
             key = trace_key(file.record_id, file.file_id, trace.trace_index)
-            x_hash, y_hash = array_digest(arrays[trace.x_key]), array_digest(arrays[trace.y_key])
+            x_hash, y_hash = array_hashes[trace.x_key], array_hashes[trace.y_key]
             trace_metadata = trace.model_dump(mode="json")
             trace_id = digest({"file_revision": file_revision, "trace": trace_metadata,
                                "axis": x_hash, "intensity": y_hash})

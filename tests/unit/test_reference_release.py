@@ -531,3 +531,27 @@ def test_array_header_size_checked_before_numpy_load(monkeypatch, version, count
     with pytest.raises(ValueError, match="header exceeds byte limits"):
         reference_import.read_arrays(data.getvalue(), [])
     loader.assert_not_called()
+
+
+def test_shared_array_keys_loaded_and_hashed_once(snapshot, database, tmp_path, monkeypatch):
+    from sherloc_pipeline.services import reference_import
+
+    root, manifest, policy = snapshot
+    traces = manifest["files"][0]["traces"]
+    for index in range(1, 20):
+        traces.append({**copy.deepcopy(traces[0]), "trace_index": index})
+    save_manifest(root, manifest)
+    loaded = []
+    original = np.lib.npyio.NpzFile.__getitem__
+
+    def load(archive, key):
+        loaded.append(key)
+        return original(archive, key)
+
+    monkeypatch.setattr(np.lib.npyio.NpzFile, "__getitem__", load)
+    hashed = Mock(wraps=reference_import.array_digest)
+    monkeypatch.setattr(reference_import, "array_digest", hashed)
+    report = import_release(root, database, tmp_path / "objects", policy)
+    assert report.traces == 20
+    assert loaded == ["x", "y"]
+    assert hashed.call_count == 2
