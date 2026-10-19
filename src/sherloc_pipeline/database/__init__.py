@@ -58,7 +58,18 @@ from sherloc_pipeline.database.pixl_models import (
     PixliseBeamLocationORM,
 )
 
+from sherloc_pipeline.database.reference_models import (
+    ReferenceReleaseORM,
+    ReferenceFileORM,
+    ReferenceTraceORM,
+    ReferenceTemplateORM,
+)
+
 __all__ = [
+    "ReferenceReleaseORM",
+    "ReferenceFileORM",
+    "ReferenceTraceORM",
+    "ReferenceTemplateORM",
     # Connection utilities
     "get_engine",
     "get_session",

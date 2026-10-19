@@ -46,6 +46,10 @@ app = typer.Typer(
     add_completion=False,
 )
 
+from sherloc_pipeline.cli.references import app as references_app
+
+app.add_typer(references_app, name="references")
+
 console = Console()
 
 
