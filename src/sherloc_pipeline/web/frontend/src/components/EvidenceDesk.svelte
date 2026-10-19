@@ -16,26 +16,30 @@
     spike_mask: $$restProps.spikeMask ?? null, spike_method: $$restProps.spikeMethod ?? null,
     badpix: showBadpix ? $$restProps.badpix : null,
   });
-  $: nativeDomain = primary?.nativeDomain ?? (snapshot?.raman.wavenumber.length ? 'raman_shift' : 'emission_wavelength');
+  $: unsupportedRegion = snapshot?.trace?.region === 'R123';
+  $: nativeDomain = primary?.nativeDomain ?? (
+    ($$restProps.region ?? snapshot?.trace?.region ?? 'R1') !== 'R1' && snapshot?.trace?.wavelength?.length
+      ? 'emission_wavelength' : snapshot?.raman.wavenumber.length ? 'raman_shift' : 'emission_wavelength');
   $: domain = (view === 'emission' ? 'emission_wavelength' : view === 'processing' ? nativeDomain : 'raman_shift') as EvidenceDomain;
   $: displays = comparisonDisplays(primary, $pinnedTraces, domain, view === 'stacked').map(item => ({ ...item, trace: evidenceColor(item.trace, theme) }));
   $: committedSelection = snapshot?.trace?.selection;
   $: committedMode = (committedSelection?.mode ?? 'average') as 'average' | 'subset' | 'point';
   $: committedIndices = Array.isArray(committedSelection?.indices) ? committedSelection.indices as number[] : [];
   $: committedAverage = snapshot?.trace?.provenance.averaging_method ?? 'unknown';
-  $: comparing = view !== 'processing';
+  $: comparing = !unsupportedRegion && view !== 'processing';
+  $: if (unsupportedRegion) view = 'processing';
 </script>
 
 <section aria-label="Evidence desk">
   <div class="evidence-controls">
     <label>View <select bind:value={view}>
       <option value="processing">Processing / fit and residual</option>
-      <option value="overlay">Raman overlay</option>
-      <option value="stacked">Raman stacked</option>
-      <option value="emission">Luminescence (nm)</option>
+      <option value="overlay" disabled={unsupportedRegion}>Raman overlay</option>
+      <option value="stacked" disabled={unsupportedRegion}>Raman stacked</option>
+      <option value="emission" disabled={unsupportedRegion}>Luminescence (nm)</option>
     </select></label>
     <details><summary>Traces</summary>
-      <EvidenceRail {primary} {contextKey} onPin={() => view = nativeDomain === 'emission_wavelength' ? 'emission' : 'overlay'} />
+      <EvidenceRail {primary} {contextKey} pinDisabled={unsupportedRegion} onPin={() => view = nativeDomain === 'emission_wavelength' ? 'emission' : 'overlay'} />
     </details>
     <label>Theme <select bind:value={theme}>
       <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
@@ -48,6 +52,7 @@
       evidenceMode={comparing} evidenceDisplays={comparing ? displays : []}
       exportFigure={(format) => plot?.downloadAs(format)} />
   </div>
+  {#if unsupportedRegion}<p class="display-note">R123 comparison and pinning require an authoritative native domain.</p>{/if}
   {#if comparing}
     <p class="display-note">Display only: native maximum in {domain === 'raman_shift' ? '800–1800 cm⁻¹' : '280–350 nm'}; fixed while zooming.
       {view === 'stacked' ? 'Stacked offsets: 1.25 per trace.' : ''}

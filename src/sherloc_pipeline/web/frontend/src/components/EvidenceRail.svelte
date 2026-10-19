@@ -4,11 +4,12 @@
 
   export let primary: EvidenceTrace | null = null;
   export let contextKey: string;
+  export let pinDisabled = false;
   export let onPin: () => void = () => {};
 </script>
 
 <div class="evidence-rail">
-  <button class="btn-secondary btn-sm" disabled={!primary || $pinnedTraces.length >= MAX_PINNED_TRACES || $pinnedTraces.some(item => item.id === primary?.id)}
+  <button class="btn-secondary btn-sm" disabled={pinDisabled || !primary || $pinnedTraces.length >= MAX_PINNED_TRACES || $pinnedTraces.some(item => item.id === primary?.id)}
     on:click={() => { if (primary && pinTrace(primary, contextKey)) onPin(); }}>Pin current trace</button>
   <p>Read-only comparisons: current selection plus up to three pins. Pins stay in this session for this target.</p>
   {#each $pinnedTraces as trace (trace.id)}

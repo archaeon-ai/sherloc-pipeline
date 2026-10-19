@@ -208,3 +208,18 @@ it.each(['dark', 'light'] as const)('keeps the processing legend readable in %s 
   expect(layout.legend.bordercolor).toBe(theme === 'dark' ? '#475569' : '#e2e8f0');
   expect(layout.legend.font.color).toBe(layout.font.color);
 });
+
+
+it('keeps R123 processing on its legacy wavelength axis and disables unsupported comparison and pinning', async () => {
+  const snapshot = input(); snapshot.trace!.region = 'R123';
+  const { container } = render(EvidenceDesk, { snapshot, contextKey: 'synthetic-context', region: 'R123',
+    wavenumber: snapshot.raman.wavenumber, wavelength: snapshot.trace!.wavelength, intensity: snapshot.raman.intensity });
+  await flush();
+  expect(last()[1][0].x).toEqual([285, 305, null, 325]);
+  expect(last()[2].xaxis.title.text).toBe('Wavelength (nm)');
+  expect(screen.getByRole('button', { name: 'Pin current trace' })).toBeDisabled();
+  expect(container.textContent).toContain('R123 comparison and pinning require an authoritative native domain');
+  for (const value of ['overlay', 'stacked', 'emission']) expect(container.querySelector(`option[value="${value}"]`)).toBeDisabled();
+  expect(pinTrace(evidenceTrace(snapshot)!, 'synthetic-context')).toBe(false);
+  expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+});

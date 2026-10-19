@@ -67,7 +67,7 @@ export function evidenceTrace(snapshot: ProcessingSnapshot | null, annotations: 
 }
 
 export function pinTrace(trace: EvidenceTrace, expectedContext: string): boolean {
-  if (expectedContext !== context) return false;
+  if (expectedContext !== context || trace.snapshot.trace.region === 'R123') return false;
   const current = get(pins);
   if (current.some(item => item.id === trace.id) || current.length >= MAX_PINNED_TRACES) return false;
   pins.set([...current, freeze({ ...copy(trace), color: colors.find(color => !current.some(item => item.color === color))! })]);
