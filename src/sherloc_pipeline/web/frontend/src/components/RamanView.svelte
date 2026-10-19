@@ -43,6 +43,7 @@
   export let wavelength: number[] | null = null;
   export let region: string = 'R1';
 
+  export let evidenceDesk = false;
   export let xDomain: EvidenceDomain | null = null;
   export let traceIdentity = '';
   export let processingTrace: EvidenceTrace | null = null;
@@ -51,9 +52,11 @@
   export let comparisonTraces: EvidenceTrace[] = [];
   export let stacked = false;
   export let theme: EvidenceTheme = 'light';
-  $: domain = xDomain ?? (region !== 'R1' && wavelength?.length ? 'emission_wavelength' : 'raman_shift');
+  $: evidenceEnabled = evidenceDesk || !!processingTrace || evidenceMode || !!primaryTrace || comparisonTraces.length > 0 || xDomain !== null;
+  $: domain = (evidenceEnabled ? xDomain : null) ?? (region !== 'R1' && wavelength?.length ? 'emission_wavelength' : 'raman_shift');
   $: useWavelength = domain === 'emission_wavelength';
   $: xData = useWavelength ? (wavelength ?? []) : wavenumber;
+  $: ramanArtifacts = !evidenceEnabled || !useWavelength;
   $: xLabel = useWavelength ? 'Wavelength (nm)' : 'Raman Shift (cm\u207B\u00B9)';
 
   let plotDiv: HTMLDivElement;
@@ -133,7 +136,7 @@
 
   onMount(async () => {
     const loaded = await import('plotly.js-basic-dist-min');
-    if (destroyed) return;
+    if (evidenceEnabled && destroyed) return;
     Plotly = loaded;
     plotInitialized = true;
     renderPlot();
@@ -160,9 +163,9 @@
   });
 
   function renderPlot() {
-    if (!Plotly || !plotDiv || destroyed) return;
-    const viewKey = JSON.stringify([domain, traceIdentity || xData, primaryTrace?.id, comparisonTraces.map(t => [t.id, t.visible]), stacked]);
-    if (previousViewKey !== viewKey) {
+    if (!Plotly || !plotDiv || (evidenceEnabled ? destroyed : wavenumber.length === 0)) return;
+    const viewKey = evidenceEnabled ? JSON.stringify([domain, traceIdentity || xData, primaryTrace?.id, comparisonTraces.map(t => [t.id, t.visible]), stacked]) : '';
+    if (evidenceEnabled && previousViewKey !== viewKey) {
       xMin = ''; xMax = ''; yMin = ''; yMax = '';
       previousViewKey = viewKey;
     }
@@ -170,12 +173,12 @@
     const coloredTrace = processingTrace ? evidenceColor(processingTrace, theme) : null;
     const nativeDisplay = coloredTrace ? displayTrace(coloredTrace, domain) : null;
     figureEvidence = coloredTrace ? nativeFigureEvidence(coloredTrace, domain) : null;
-    if (xData.length === 0) { Plotly.react(plotDiv, [], {}, { responsive: true }); return; }
+    if (evidenceEnabled && xData.length === 0) { Plotly.react(plotDiv, [], {}, { responsive: true }); return; }
 
     // Preserve current axis ranges from interactive zoom/pan,
     // but only if the data length hasn't changed (same region).
     const curLayout = (plotDiv as unknown as { layout?: Record<string, unknown> }).layout;
-    const sameRegion = curLayout?._viewKey === viewKey;
+    const sameRegion = evidenceEnabled ? curLayout?._viewKey === viewKey : curLayout?._nChannels === xData.length;
     const prevXRange = sameRegion && curLayout?.xaxis
       ? (curLayout.xaxis as Record<string, unknown>).range as [number, number] | undefined
       : undefined;
@@ -244,7 +247,7 @@
     }
 
     // Baseline overlay (dashed red)
-    if (!useWavelength && showOverlayBaseline && baseline && (stage === 'baseline_corrected' || stage === 'raman_fitted')) {
+    if (ramanArtifacts && showOverlayBaseline && baseline && (stage === 'baseline_corrected' || stage === 'raman_fitted')) {
       const baselineIndices = baselineRange
         ? wavenumber
             .map((x, i) => ({ x, i }))
@@ -261,10 +264,17 @@
     }
 
     // Fit curve (green) — only within the fitting range
-    if (!useWavelength && showOverlayFit && fitCurve && stage === 'raman_fitted') {
-      const indices = xData.map((_, i) => i).filter(i => !fitRange || (wavenumber[i] >= fitRange[0] && wavenumber[i] <= fitRange[1]));
+    if (ramanArtifacts && showOverlayFit && fitCurve && stage === 'raman_fitted') {
+      let fitX = xData;
+      let fitY = fitCurve;
+      let indices = xData.map((_, i) => i);
+      if (fitRange) {
+        indices = wavenumber.map((_, i) => i).filter(i => wavenumber[i] >= fitRange[0] && wavenumber[i] <= fitRange[1]);
+        fitX = indices.map(i => xData[i]);
+        fitY = indices.map(i => fitCurve[i]);
+      }
       traces.push({
-        ...nativeCoordinates(indices.map(i => xData[i]), indices.map(i => fitCurve[i]), indices),
+        ...nativeCoordinates(fitX, fitY, indices),
         type: 'scatter',
         mode: 'lines',
         name: 'fit',
@@ -273,7 +283,7 @@
     }
 
     // Spike markers: red triangles at positions where spikeMask is true
-    if (!useWavelength && showOverlaySpikes && spikeMask && spikeMask.length === wavenumber.length) {
+    if (showOverlaySpikes && spikeMask && spikeMask.length === (evidenceEnabled ? xData.length : wavenumber.length)) {
       const spikeX: number[] = [];
       const spikeY: number[] = [];
       for (let i = 0; i < spikeMask.length; i++) {
@@ -302,7 +312,7 @@
             color: '#dc2626',
             line: { color: '#991b1b', width: 1 },
           },
-          hovertemplate: `${hoverVerb} at %{x:.1f} cm\u207B\u00B9<br>Intensity: %{y:.1f}<extra></extra>`,
+          hovertemplate: `${hoverVerb} at %{x:.1f} ${useWavelength ? 'nm' : 'cm\u207B\u00B9'}<br>Intensity: %{y:.1f}<extra></extra>`,
         });
       }
     }
@@ -313,7 +323,7 @@
     // AND hue differ, so the two never read as the same marker). This overlay
     // is annotation-only \u2014 it sits on the displayed trace and never alters it,
     // and has no relationship to despike state.
-    if (!useWavelength && showBadpix && badpix.length > 0) {
+    if (showBadpix && badpix.length > 0) {
       const bpX: number[] = [];
       const bpY: number[] = [];
       const bpCustom: [number, string][] = [];
@@ -339,7 +349,7 @@
             line: { color: '#0369a1', width: 1.5 },
           },
           hovertemplate:
-            'Known-noisy channel at %{x:.1f} cm\u207B\u00B9' +
+            `Known-noisy channel at %{x:.1f} ${useWavelength ? 'nm' : 'cm\u207B\u00B9'}` +
             '<br>tier %{customdata[0]} \u00B7 source %{customdata[1]}<extra></extra>',
         });
       }
@@ -349,7 +359,7 @@
     // peak text annotations (gated by showOverlayPeakLabels, new in issue #18).
     // The two toggles are independent — operators can show labels without
     // the vertical-line clutter, or vice versa.
-    const peakElements = buildPeakElements(useWavelength ? [] : peaks, {
+    const peakElements = buildPeakElements(ramanArtifacts ? peaks : [], {
       showFit: showOverlayPeaks,
       showPeakLabels: showOverlayPeakLabels,
       shapeY1: 0.95,
@@ -361,7 +371,7 @@
     // Individual peak colors (cycle through for multiple peaks)
     const peakColors = ['#7c3aed', '#0891b2', '#c026d3', '#ea580c', '#4f46e5'];
 
-    for (let pi = 0; pi < (showOverlayPeaks && !useWavelength ? peaks : []).length; pi++) {
+    for (let pi = 0; pi < (showOverlayPeaks && ramanArtifacts ? peaks : []).length; pi++) {
       const peak = peaks[pi];
       if (peak.center_cm1 === null) continue;
 
@@ -439,11 +449,10 @@
       });
     }
 
-    const dark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    const dark = evidenceEnabled && (theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches));
     const mainLayout: Partial<Plotly.Layout> & { _nChannels?: number; _viewKey?: string; meta?: typeof figureEvidence } = {
       _nChannels: xData.length,
-      _viewKey: viewKey,
-      meta: figureEvidence,
+      ...(evidenceEnabled ? { _viewKey: viewKey, meta: figureEvidence } : {}),
       title: title ? { text: title, font: { size: 14 } } : undefined,
       xaxis: {
         title: { text: xLabel, font: { size: 12 } },
@@ -474,13 +483,13 @@
           : { autorange: true }),
       },
       margin: { l: 65, r: 20, t: title ? 40 : 20, b: 50 },
-      height: !useWavelength && showResidual && residual ? height * 0.7 : height,
+      height: ramanArtifacts && showResidual && residual ? height * 0.7 : height,
       shapes,
       annotations,
       hovermode: 'x unified',
       plot_bgcolor: dark ? '#0f172a' : '#ffffff',
       paper_bgcolor: dark ? '#0f172a' : '#ffffff',
-      font: { family: 'Inter, system-ui, sans-serif', color: dark ? '#e2e8f0' : '#1e293b' },
+      font: { family: 'Inter, system-ui, sans-serif', ...(evidenceEnabled ? { color: dark ? '#e2e8f0' : '#1e293b' } : {}) },
       showlegend: traces.length > 1,
       legend: {
         x: 1,
@@ -489,7 +498,7 @@
         bgcolor: dark ? 'rgba(15,23,42,0.85)' : 'rgba(255,255,255,0.85)',
         bordercolor: dark ? '#475569' : '#e2e8f0',
         borderwidth: 1,
-        font: { size: 11, color: dark ? '#e2e8f0' : '#1e293b' },
+        font: { size: 11, ...(evidenceEnabled ? { color: dark ? '#e2e8f0' : '#1e293b' } : {}) },
       },
     };
 
@@ -507,7 +516,7 @@
       displaylogo: false,
     };
 
-    if (!useWavelength && showResidual && showOverlayResidual && residual) {
+    if (ramanArtifacts && showResidual && showOverlayResidual && residual) {
       // Subplot: main spectrum + residual below
       const residualTrace: Plotly.Data = {
         ...nativeCoordinates(xData, residual),
@@ -557,7 +566,7 @@
           tickcolor: '#cbd5e1',
           domain: [0, 1],
           anchor: 'y2' as Plotly.YAxisName,
-          ...(_validRange(xMin, xMax) ? { range: [Number(xMin), Number(xMax)], autorange: false } : { autorange: true }),
+          ...(evidenceEnabled ? (_validRange(xMin, xMax) ? { range: [Number(xMin), Number(xMax)], autorange: false } : { autorange: true }) : { range: [640, 4200], autorange: false }),
         },
         yaxis2: {
           title: { text: 'Residual', font: { size: 12 } },
@@ -641,14 +650,14 @@
 
 <div class="raman-view">
   <div bind:this={plotDiv} class="plot-div"></div>
-  {#if xData.length === 0 && !primaryTrace}
+  {#if evidenceEnabled ? xData.length === 0 && !primaryTrace : wavenumber.length === 0}
     <div class="plot-empty">No spectrum data loaded</div>
   {:else}
     <div class="axis-controls">
       <span class="axis-label">x:</span>
-      <input class="axis-input" type="number" bind:value={xMin} on:change={onXRangeInputChange} placeholder={useWavelength ? '280' : '640'} />
+      <input class="axis-input" type="number" bind:value={xMin} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '280' : '640'} />
       <span class="axis-sep">-</span>
-      <input class="axis-input" type="number" bind:value={xMax} on:change={onXRangeInputChange} placeholder={useWavelength ? '350' : '4200'} />
+      <input class="axis-input" type="number" bind:value={xMax} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '350' : '4200'} />
       <span class="axis-label" style="margin-left: 8px">y:</span>
       <input class="axis-input" type="number" bind:value={yMin} on:change={renderPlot} placeholder="auto" />
       <span class="axis-sep">-</span>

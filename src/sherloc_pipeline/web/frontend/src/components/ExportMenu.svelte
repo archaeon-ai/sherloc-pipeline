@@ -3,6 +3,7 @@
   import { evidenceCsv, evidenceExport } from '../lib/evidenceStore';
   import type { ExportTrace, ProcessingArtifacts } from '../lib/types';
 
+  export let evidenceDesk = false;
   export let evidenceMode = false;
   export let evidenceDisplays: EvidenceDisplay[] = [];
   export let exportFigure: ((format: 'png' | 'svg') => void) | null = null;
@@ -14,6 +15,7 @@
   export let stage: string = 'raw';
   export let wavenumber: number[] = [];
   export let intensity: number[] = [];
+  $: channelCount = evidenceDesk ? intensity.length : wavenumber.length;
   export let artifacts: ProcessingArtifacts | null = null;
   export let processingChain: Record<string, unknown>[] = [];
   export let scanNPoints: number = 0;
@@ -141,7 +143,7 @@
     lines.push(`# wavelength_unit: ${provenance.axes.wavelength_unit}`);
     lines.push(`# intensity_unit: ${provenance.axes.intensity_unit ?? 'unknown'}`);
     lines.push(`# exported_at: ${provenance.application.timestamp}`);
-    lines.push(`# n_channels: ${intensity.length}`);
+    lines.push(`# n_channels: ${channelCount}`);
 
     // Selection provenance
     const sel = provenance.selection as Record<string, unknown>;
@@ -206,7 +208,7 @@
 
     if (hasBadpix) {
       // 0/1 per served row: 1 where a served position is annotated known-noisy.
-      const badpixCol = new Array<number>(intensity.length).fill(0);
+      const badpixCol = new Array<number>(channelCount).fill(0);
       for (const b of badpix!) {
         if (b.position >= 0 && b.position < badpixCol.length) badpixCol[b.position] = 1;
       }
@@ -246,7 +248,7 @@
     lines.push(columns.join(','));
 
     // Data rows
-    const n = intensity.length;
+    const n = channelCount;
     for (let i = 0; i < n; i++) {
       const row: string[] = [];
       for (const col of data) {
@@ -321,7 +323,7 @@
   <button
     class="btn-secondary btn-sm export-trigger"
     on:click|stopPropagation={toggleMenu}
-    disabled={evidenceMode ? evidenceDisplays.length === 0 : intensity.length === 0}
+    disabled={evidenceMode ? evidenceDisplays.length === 0 : channelCount === 0}
   >
     Export &#9660;
   </button>

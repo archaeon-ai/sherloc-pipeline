@@ -228,7 +228,7 @@ describe('ExportMenu committed provenance', () => {
 
 
 it('exports badpix positions against wavelength-only intensity rows', async () => {
-  const csv = await exportCsv({ wavenumber: [], intensity: [3, 5, 7],
+  const csv = await exportCsv({ evidenceDesk: true, wavenumber: [], intensity: [3, 5, 7],
     trace: { wavelength: [281, 301, 321], wavenumber: [], intensity: [3, 5, 7], channel_indices: [0, 1, 2],
       source: { scan_id: 'synthetic' }, selection: { mode: 'average' },
       provenance: { calibration_version: null, wavenumber_unit: null, wavelength_unit: 'nm', intensity_unit: 'synthetic' } },

@@ -418,3 +418,18 @@ describe('RamanView — known-noisy channel annotation overlay (issue #9)', () =
     expect(queryByLabelText(/Known-noisy channels/i)).toBeNull();
   });
 });
+
+
+it.each([false, true])('renders R2 channel annotations on the active wavelength axis (desk=%s)', async evidenceDesk => {
+  render(RamanView, { evidenceDesk, region: 'R2', wavenumber: [800, 900, 1000], wavelength: [285, 305, 325],
+    intensity: [1, 2, 3], spikeMask: [false, true, false], spikeMethod: 'ml',
+    badpix: [{ position: 2, tier: 1, source: 'synthetic-noisy' }], showBadpix: true,
+    stage: 'raman_fitted', baseline: [1, 1, 1], fitCurve: [2, 2, 2], residual: [0, 0, 0], showResidual: true });
+  await flush();
+  const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
+  expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)')).toMatchObject({ x: [305], y: [2] });
+  expect(traces.find((trace: { name: string }) => trace.name === 'Known-noisy channels (1)')).toMatchObject({ x: [325], y: [3] });
+  expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').hovertemplate).toContain('nm');
+  expect(Boolean(traces.find((trace: { name: string }) => trace.name === 'fit'))).toBe(!evidenceDesk);
+  if (!evidenceDesk) { expect(layout.xaxis2.range).toEqual([640, 4200]); expect(layout.xaxis2.autorange).toBe(false); }
+});

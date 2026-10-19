@@ -40,7 +40,7 @@
     <label>Theme <select bind:value={theme}>
       <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
     </select></label>
-    <ExportMenu trace={snapshot?.trace ?? null} stage={snapshot?.stage ?? 'raw'}
+    <ExportMenu evidenceDesk={true} trace={snapshot?.trace ?? null} stage={snapshot?.stage ?? 'raw'}
       wavenumber={snapshot?.raman.wavenumber ?? []} intensity={snapshot?.raman.intensity ?? []}
       artifacts={snapshot?.artifacts ?? null} processingChain={snapshot?.processingChain ?? []}
       spikeMask={$$restProps.spikeMask ?? null} spikeMethod={$$restProps.spikeMethod ?? null}
@@ -55,7 +55,7 @@
       {#if !displays.length}<span>No compatible native axis for this view.</span>{/if}
     </p>
   {/if}
-  <RamanView bind:this={plot} {...$$restProps} xDomain={domain} traceIdentity={primary?.id ?? ''}
+  <RamanView evidenceDesk={true} bind:this={plot} {...$$restProps} xDomain={domain} traceIdentity={primary?.id ?? ''}
     selectionMode={committedMode} selectedIndices={committedIndices}
     selectedPointIdx={committedMode === 'point' ? committedIndices[0] ?? null : null}
     nPoints={Number(committedSelection?.n_points ?? committedIndices.length)} averagingMethod={committedAverage}

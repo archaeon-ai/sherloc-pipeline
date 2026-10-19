@@ -113,7 +113,7 @@ it('exports native processing values and committed labels with a provenance side
 
 
 it('resets fallback zoom when the native axis changes length', async () => {
-  const { component, container } = render(RamanView, { wavenumber: [11, 12, 13], intensity: [2, 3, 4] }); await flush();
+  const { component, container } = render(RamanView, { evidenceDesk: true, wavenumber: [11, 12, 13], intensity: [2, 3, 4] }); await flush();
   const fields = container.querySelectorAll('.axis-input');
   await fireEvent.input(fields[0], { target: { value: '11' } });
   await fireEvent.change(fields[1], { target: { value: '12' } }); await flush();

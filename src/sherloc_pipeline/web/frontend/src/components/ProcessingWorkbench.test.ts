@@ -1353,18 +1353,50 @@ it.each(['sign-out', 'tier'])('rejects a late processing result after %s', async
 });
 
 
-it('keeps the legacy plot light with evidence desk off and a dark system preference', async () => {
-  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
-  try {
-    appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
-    getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A));
-    render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
-    expect(screen.queryByLabelText('Evidence desk')).toBeNull();
-    const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
-    expect(layout.plot_bgcolor).toBe('#ffffff');
-    expect(layout.paper_bgcolor).toBe('#ffffff');
-    expect(traces[0].line.color).toBe('#1e293b');
-  } finally {
-    vi.unstubAllGlobals();
-  }
+describe('capability-off legacy Workbench regression', () => {
+  it.each([undefined, false])('preserves tier transitions, R2 annotations and a light plot under dark system theme (capability=%s)', async enabled => {
+    const matchMedia = vi.fn(() => ({ matches: true }));
+    vi.stubGlobal('matchMedia', matchMedia);
+    try {
+      const config = { tier: 'team', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse;
+      appConfig.set(config);
+      scienceAuthorized.set(true);
+      accessMode.set('internal');
+      currentHash.set('#/scan/synthetic/workbench');
+      const generation = sessionGeneration;
+      const context = vi.spyOn(await import('../lib/evidenceStore'), 'setEvidenceContext');
+      const invalidate = vi.spyOn(await import('../lib/evidenceStore'), 'invalidateEvidence');
+      let finish = (_value: SpectrumResponse) => {};
+      const point = vi.spyOn(api, 'getPointSpectrum').mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+      const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
+      appConfig.set({ ...config, tier: 'public' }); accessMode.set('public'); await flush();
+      finish(syntheticSpectrum(INTENSITY_A)); await flush();
+      expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
+      expect(get(currentHash)).toBe('#/scan/synthetic/workbench'); expect(get(appConfig)?.tier).toBe('public');
+      expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_A);
+      vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '1', region: 'R123', n_channels: 3,
+        badpix: [{ position: 1, channel: 600, tier: 1, source: 'synthetic-noisy' }] });
+      point.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW, { region: 'R2', wavelength: [285, 305, 325],
+        despike_applied: true, despike_method: 'ml', n_masked_channels: 1, masked_positions: [1] }));
+      const region = Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r2')!;
+      await fireEvent.click(region); await flush();
+      await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
+      expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+      const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
+      expect(traces[0].x).toEqual([285, 305, 325]); expect(traces[0].y).toEqual(INTENSITY_NEW);
+      expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').x).toEqual([305]);
+      expect(traces.find((trace: { name: string }) => trace.name === 'Known-noisy channels (1)').x).toEqual([305]);
+      expect(layout.xaxis.title.text).toBe('Wavelength (nm)');
+      expect(layout.plot_bgcolor).toBe('#ffffff'); expect(layout.paper_bgcolor).toBe('#ffffff');
+      expect(traces[0].line.color).toBe('#1e293b'); expect(layout.font.color).toBeUndefined();
+      expect(layout.legend.font.color).toBeUndefined(); expect(layout._viewKey).toBeUndefined();
+      expect(container.querySelector('.axis-input')).toHaveAttribute('placeholder', '640');
+      expect(matchMedia).not.toHaveBeenCalled(); expect(context).not.toHaveBeenCalled(); expect(invalidate).not.toHaveBeenCalled();
+      point.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW, { region: 'R2', wavenumber: [], wavelength: [285, 305, 325] }));
+      await fireEvent.click(Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r3')!);
+      await flush();
+      expect(screen.getByText('No spectrum data available')).toBeTruthy();
+      expect(container.querySelector('.export-trigger')).toBeDisabled();
+    } finally { vi.unstubAllGlobals(); }
+  });
 });
