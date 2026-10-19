@@ -79,18 +79,20 @@ def load_feature_policy(access_mode: str) -> FeaturePolicy:
         if key.startswith(("SHERLOC_FEATURE_", "SHERLOC_REFERENCES", "SHERLOC_IDENTIFICATION")):
             if key not in {"SHERLOC_FEATURE_POLICY", "SHERLOC_FEATURE_PDS_BROWSER"}:
                 raise ValueError(f"unknown feature setting: {key}")
-    policy = FeaturePolicy.model_validate(json.loads(os.environ.get("SHERLOC_FEATURE_POLICY", "{}")))
+    values = json.loads(os.environ.get("SHERLOC_FEATURE_POLICY", "{}"))
+    if (access_mode == "public" and isinstance(values, dict)
+            and "public_release" in values and values["public_release"] is None):
+        raise ValueError("public_release requires index_path and index_sha256")
+    policy = FeaturePolicy.model_validate(values)
     if access_mode == "public" and policy.references.mode != "off":
         raise ValueError("public references.mode must be off")
     return policy
 
 
 def load_public_release_index(access_mode: str, policy: FeaturePolicy):
-    """Public startup requires a local index pinned by deployment policy."""
-    if access_mode != "public":
+    """Load a pinned local index only when public startup opts in."""
+    if access_mode != "public" or policy.public_release is None:
         return None
-    if policy.public_release is None:
-        raise ValueError("public mode requires a pinned public release index")
     from sherloc_pipeline.services.public_release import PublicReleaseIndex
 
     try:

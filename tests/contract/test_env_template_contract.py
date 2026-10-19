@@ -79,6 +79,14 @@ def test_required_vars_are_non_commented_assignments():
     )
 
 
+def test_feature_policy_is_documented_and_opt_in():
+    assert "SHERLOC_FEATURE_POLICY" not in _non_commented_assignments()
+    assert "#SHERLOC_FEATURE_POLICY={}" in _lines()
+    text = ENV_TEMPLATE.read_text()
+    for field in ("public_release", "index_path", "index_sha256"):
+        assert field in text
+
+
 def test_retired_role_claim_uri_var_absent_everywhere():
     """The legacy split-claim env var was retired in v4.1.0 and MUST NOT
     appear ANYWHERE in the template — not commented, not in a "do not

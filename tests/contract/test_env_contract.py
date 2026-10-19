@@ -9,7 +9,9 @@ move the contract surface, edit config_check.py AND this test together.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 import os
 import re
 
@@ -133,6 +135,64 @@ def test_dev_mode_has_no_further_requirements(clean_env):
     clean_env.setenv("SHERLOC_AUTH_MODE", "dev")
     clean_env.setenv("SHERLOC_DB", ":memory:")
     assert config_check.validate() == []
+
+
+@pytest.mark.parametrize("policy", [None, "{}", '{"references":{"mode":"off"}}'])
+def test_public_feature_policy_defaults_off(clean_env, policy):
+    clean_env.setenv("SHERLOC_AUTH_MODE", "dev")
+    clean_env.setenv("SHERLOC_ACCESS_MODE", "public")
+    clean_env.setenv("SHERLOC_DB", ":memory:")
+    if policy is not None:
+        clean_env.setenv("SHERLOC_FEATURE_POLICY", policy)
+    assert config_check.validate() == []
+
+
+@pytest.mark.parametrize("policy", [
+    "{", "[]", "null", '{"unknown":true}',
+    '{"identification":{"enabled":"false"}}',
+    '{"public_release":null}', '{"public_release":{}}',
+    '{"public_release":{"index_path":"synthetic.json"}}',
+    '{"public_release":{"index_sha256":"' + "a" * 64 + '"}}',
+])
+def test_malformed_feature_policy_fails_startup(clean_env, policy):
+    clean_env.setenv("SHERLOC_AUTH_MODE", "dev")
+    clean_env.setenv("SHERLOC_ACCESS_MODE", "public")
+    clean_env.setenv("SHERLOC_DB", ":memory:")
+    clean_env.setenv("SHERLOC_FEATURE_POLICY", policy)
+    assert any("invalid feature policy" in error for error in config_check.validate())
+
+
+@pytest.mark.parametrize("case", ["valid", "missing", "unreadable", "digest", "malformed", "duplicate"])
+def test_public_release_index_opt_in_validation(clean_env, tmp_path, case):
+    clean_env.setenv("SHERLOC_AUTH_MODE", "dev")
+    clean_env.setenv("SHERLOC_ACCESS_MODE", "public")
+    clean_env.setenv("SHERLOC_DB", ":memory:")
+    product = {"product_id": "ss__9999_0000000000_000rrs__synthetic",
+               "version_id": "synthetic-v1", "sha256": "a" * 64, "released": True}
+    index = {"schema_version": "public-release-1", "release_id": "synthetic-release",
+             "products": [product]}
+    if case == "malformed":
+        product["released"] = "true"
+    elif case == "duplicate":
+        index["products"].append(product.copy())
+    path = tmp_path / "synthetic-index.json"
+    path.write_text(json.dumps(index))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if case == "missing":
+        path.unlink()
+    elif case == "unreadable":
+        path.unlink()
+        path.mkdir()
+    elif case == "digest":
+        digest = "b" * 64
+    clean_env.setenv("SHERLOC_FEATURE_POLICY", json.dumps({"public_release": {
+        "index_path": str(path), "index_sha256": digest,
+    }}))
+    errors = config_check.validate()
+    if case == "valid":
+        assert errors == []
+    else:
+        assert any("invalid feature policy" in error for error in errors)
 
 
 def test_retired_role_claim_uri_var_not_in_source():

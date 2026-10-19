@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import socket
 from types import SimpleNamespace
@@ -19,7 +20,7 @@ from sherloc_pipeline.services.public_release import PublicReleaseIndex, backfil
 from sherloc_pipeline.web import auth, config_check
 from sherloc_pipeline.web.app import create_app
 from sherloc_pipeline.web.data_access import DataAccessService
-from sherloc_pipeline.web.feature_policy import load_feature_policy
+from sherloc_pipeline.web.feature_policy import FeaturePolicy, load_feature_policy
 from tests.unit.public_release_helpers import synthetic_index
 
 PRODUCT = "ss__9999_0000000000_000rrs__synthetic"
@@ -98,12 +99,16 @@ def approved_policy():
     {"identification": {"experimental_candidates": True}},
     {"identification": {"max_concurrency": 0}},
     {"references": {"mode": "on"}}, {"references": {"mode": "all_approved"}},
+    {"public_release": None}, {"public_release": {}},
+    {"public_release": {"index_path": "synthetic.json"}},
+    {"public_release": {"index_sha256": DIGEST}},
 ])
 def test_invalid_policy_fails_both_startup_paths(monkeypatch, policy):
     monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
+    monkeypatch.setenv("SHERLOC_ACCESS_MODE", "public")
     assert any("feature policy" in error for error in config_check.validate())
     with pytest.raises(ValueError):
-        create_app(engine=Mock(), config=Mock())
+        create_app(engine=Mock(), config=Mock(), access_mode="public")
 
 
 def test_public_cannot_enable_references(monkeypatch):
@@ -135,9 +140,64 @@ def test_unknown_feature_env_fails_startup(monkeypatch):
 
 def test_defaults_off():
     policy = load_feature_policy("public")
+    assert policy.public_release is None
     assert policy.references.mode == "off"
     assert not policy.identification.enabled
     assert not policy.identification.experimental_candidates
+
+
+def test_default_policy_roundtrip_preserves_internal_consumers(monkeypatch):
+    policy = load_feature_policy("internal")
+    assert FeaturePolicy.model_validate(policy.model_dump()) == policy
+    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", policy.model_dump_json())
+    assert load_feature_policy("internal") == policy
+
+
+@pytest.mark.parametrize("policy", [None, {}, {"references": {"mode": "off"}}])
+@pytest.mark.asyncio
+async def test_public_without_index_keeps_pds4_only_list_and_detail(engine, monkeypatch, policy):
+    if policy is not None:
+        monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
+    monkeypatch.setenv("SHERLOC_ACCESS_MODE", "public")
+    assert config_check.validate() == []
+    app = create_app(engine=engine, config=fake_config(), access_mode="public")
+    assert app.state.public_release_index is None
+    sources = ["pds4", "pds4", "loupe", None, "unknown", "PDS4", ""]
+    with Session(engine) as session:
+        for i, source in enumerate(sources):
+            session.add(make_scan(
+                scan_id=f"synthetic-{i}", data_source=source,
+                metadata={"public_release": {"eligible": False}} if i == 1 else None,
+            ))
+        session.commit()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
+            listed = await client.get("/api/scans")
+            assert listed.status_code == 200
+            assert listed.json()["total"] == 2
+            assert {scan["id"] for scan in listed.json()["scans"]} == {"synthetic-0", "synthetic-1"}
+            for i, source in enumerate(sources):
+                response = await client.get(f"/api/scans/synthetic-{i}")
+                assert response.status_code == (200 if source == "pds4" else 403)
+    finally:
+        app.state.job_queue.shutdown()
+        app.state.map_executor.shutdown(wait=False)
+
+
+@pytest.mark.parametrize("mode,configured", [("public", False), ("public", True), ("internal", False)])
+@pytest.mark.asyncio
+async def test_public_index_opt_out_warning_once(engine, tmp_path, monkeypatch, caplog, mode, configured):
+    if configured:
+        synthetic_index(tmp_path, monkeypatch, [PRODUCT])
+    caplog.set_level(logging.WARNING, logger="sherloc_pipeline.web.app")
+    app = create_app(engine=engine, config=fake_config(), access_mode=mode)
+    async with app.router.lifespan_context(app):
+        pass
+    records = [record for record in caplog.records
+               if "strict release-index check OFF (no index configured)" in record.getMessage()]
+    assert len(records) == (1 if mode == "public" and not configured else 0)
+    assert all(record.levelno == logging.WARNING
+               and record.name == "sherloc_pipeline.web.app" for record in records)
 
 
 @pytest.mark.parametrize("mutation", [
@@ -210,6 +270,12 @@ async def test_released_list_detail_and_config(app, engine, tmp_path):
         session.add(make_scan(metadata=meta))
         session.commit()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
+        for path in ["/api/scans", "/api/scans/synthetic-scan", "/api/config",
+                     "/api/config/bootstrap", "/api/config/access-mode"]:
+            response = await client.get(path)
+            assert response.status_code == 200
+            assert str(tmp_path) not in response.text
+            assert "index_path" not in response.text
         assert (await client.get("/api/scans")).json()["total"] == 1
         assert (await client.get("/api/scans/synthetic-scan")).status_code == 200
         assert (await client.get("/api/plots/synthetic-scan")).status_code == 422
@@ -286,15 +352,20 @@ async def test_gated_image_cannot_be_shared_or_browser_cached(app, engine, tmp_p
         assert response.headers["cache-control"] == "private, no-store"
 
 
-@pytest.mark.parametrize("case", ["missing-policy", "missing-file", "wrong-digest", "malformed", "duplicate"])
+@pytest.mark.parametrize("case", [
+    "missing-fields", "missing-file", "unreadable", "wrong-digest", "malformed", "duplicate",
+])
 def test_public_startup_requires_verified_index(tmp_path, monkeypatch, case):
     synthetic_index(tmp_path, monkeypatch, [PRODUCT])
     policy = json.loads(os.environ["SHERLOC_FEATURE_POLICY"])
     path = tmp_path / "synthetic-release.json"
-    if case == "missing-policy":
-        policy = {}
+    if case == "missing-fields":
+        policy["public_release"] = {}
     elif case == "missing-file":
         path.unlink()
+    elif case == "unreadable":
+        path.unlink()
+        path.mkdir()
     elif case == "wrong-digest":
         policy["public_release"]["index_sha256"] = "b" * 64
     else:
@@ -311,8 +382,9 @@ def test_public_startup_requires_verified_index(tmp_path, monkeypatch, case):
     assert any("feature policy" in error for error in config_check.validate())
     with pytest.raises(ValueError):
         create_app(engine=Mock(), config=Mock(), access_mode="public")
-    monkeypatch.setenv("SHERLOC_ACCESS_MODE", "internal")
-    assert config_check.validate() == []
+    if case != "missing-fields":
+        monkeypatch.setenv("SHERLOC_ACCESS_MODE", "internal")
+        assert config_check.validate() == []
 
 
 @pytest.mark.parametrize("change", ["revoked", "removed", "digest"])
@@ -341,16 +413,19 @@ def test_changed_index_denies_old_evidence_without_backfill(engine, tmp_path, ch
         DataAccessService("internal").validate_scan_access(scan)
 
 
-def test_public_gate_without_index_denies_all(engine, tmp_path):
-    index = PublicReleaseIndex(write_index(tmp_path))
-    scan = make_scan(metadata=index.apply(PRODUCT, {"version": "synthetic-v1"}))
+@pytest.mark.parametrize("source", [None, "unknown", "loupe", "PDS4", "", "pds4"])
+def test_public_gate_without_index_matches_source_allowlist(engine, source):
+    scan = make_scan(data_source=source)
+    gate = DataAccessService("public")
+    if source == "pds4":
+        gate.validate_scan_access(scan)
+    else:
+        with pytest.raises(HTTPException):
+            gate.validate_scan_access(scan)
     with Session(engine) as session:
         session.add(scan)
         session.commit()
-        gate = DataAccessService("public")
-        assert gate.filter_scans_query(session.query(ScanORM)).all() == []
-        with pytest.raises(HTTPException):
-            gate.validate_scan_access(scan)
+        assert gate.filter_scans_query(session.query(ScanORM)).all() == ([scan] if source == "pds4" else [])
 
 
 @pytest.mark.parametrize("mode", ["internal", "public"])

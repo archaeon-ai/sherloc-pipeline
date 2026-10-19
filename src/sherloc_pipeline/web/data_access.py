@@ -3,6 +3,7 @@
 In ``internal`` mode (default), all data is accessible. In ``public`` mode,
 only explicitly allowlisted PDS4-sourced records are accessible. Missing,
 null, and unrecognized sources are denied by the public-facing API.
+An optional pinned release index also requires trusted release evidence.
 """
 
 import logging
@@ -50,7 +51,10 @@ class DataAccessService:
         """
         if self.is_public and (
             getattr(scan, "data_source", None) not in PUBLIC_DATA_SOURCES
-            or not has_public_release(scan, self.public_release_index)
+            or (
+                self.public_release_index is not None
+                and not has_public_release(scan, self.public_release_index)
+            )
         ):
             from fastapi import HTTPException
 
@@ -72,5 +76,7 @@ class DataAccessService:
             The (possibly filtered) query.
         """
         if self.is_public:
-            query = query.filter(public_release_expression(self.public_release_index))
+            query = query.filter(ScanORM.data_source.in_(PUBLIC_DATA_SOURCES))
+            if self.public_release_index is not None:
+                query = query.filter(public_release_expression(self.public_release_index))
         return query

@@ -139,6 +139,8 @@ def create_app(
         app.state.access_mode = access_mode
         app.state.event_loop = asyncio.get_running_loop()
         logger.info("SHERLOC Web API started (access_mode=%s)", access_mode)
+        if access_mode == "public" and public_release_index is None:
+            logger.warning("strict release-index check OFF (no index configured)")
         if os.environ.get("SHERLOC_AUTH_MODE") == "dev":
             logger.warning(
                 "SHERLOC_AUTH_MODE=dev: CF Access JWT validation is BYPASSED. "
