@@ -89,11 +89,17 @@ function axisBreaks(trace: EvidenceTrace, x: number[]): boolean[] {
     (i > 0 && Number.isFinite(spacing) && Math.abs(v - x[i - 1]) > 3 * spacing));
 }
 
-export function nativeFigureEvidence(trace: EvidenceTrace, domain: EvidenceDomain) {
-  const x = (domain === 'raman_shift' ? trace.snapshot.raman.wavenumber : trace.snapshot.trace.wavelength) ?? [];
+export function nativeRenderTrace(trace: EvidenceTrace, domain: EvidenceDomain): EvidenceDisplay | null {
+  const x = domain === 'raman_shift' ? trace.snapshot.raman.wavenumber : trace.snapshot.trace.wavelength;
   const original = trace.snapshot.raman.intensity;
-  return evidenceExport([{ trace, domain, x, original, displayed: original, breaks: axisBreaks(trace, x),
-    normalization: 'native', divisor: null, scalable: false, offset: 0 }]);
+  if (!x?.length || x.length !== original.length) return null;
+  return { trace, domain, x, original, displayed: original, breaks: axisBreaks(trace, x),
+    normalization: 'native', divisor: null, scalable: false, offset: 0 };
+}
+
+export function nativeFigureEvidence(trace: EvidenceTrace, domain: EvidenceDomain) {
+  const native = nativeRenderTrace(trace, domain);
+  return evidenceExport(native ? [native] : []);
 }
 
 export function displayTrace(trace: EvidenceTrace, domain: EvidenceDomain, offset = 0): EvidenceDisplay | null {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
   import type { EvidenceDomain, EvidenceTheme, EvidenceTrace } from '../lib/evidenceTypes';
-  import { comparisonDisplays, evidenceColor, displayTrace, evidenceExport, nativeFigureEvidence } from '../lib/evidenceStore';
+  import { comparisonDisplays, evidenceColor, nativeRenderTrace, evidenceExport, nativeFigureEvidence } from '../lib/evidenceStore';
   import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
@@ -57,7 +57,11 @@
   $: useWavelength = domain === 'emission_wavelength';
   $: xData = useWavelength ? (wavelength ?? []) : wavenumber;
   $: ramanArtifacts = !evidenceEnabled || !useWavelength;
-  $: xLabel = useWavelength ? 'Wavelength (nm)' : 'Raman Shift (cm\u207B\u00B9)';
+  $: recordedUnit = processingTrace
+    ? (useWavelength ? processingTrace.snapshot.trace.provenance.wavelength_unit : processingTrace.snapshot.trace.provenance.wavenumber_unit) ?? 'unknown unit'
+    : useWavelength ? 'nm' : 'cm-1';
+  $: xUnit = recordedUnit === 'cm-1' ? 'cm\u207B\u00B9' : recordedUnit;
+  $: xLabel = `${useWavelength ? 'Wavelength' : 'Raman Shift'} (${xUnit})`;
 
   let plotDiv: HTMLDivElement;
   let plotInitialized = false;
@@ -171,7 +175,7 @@
     }
     if (evidenceMode || primaryTrace || comparisonTraces.length) { renderComparisons(viewKey); return; }
     const coloredTrace = processingTrace ? evidenceColor(processingTrace, theme) : null;
-    const nativeDisplay = coloredTrace ? displayTrace(coloredTrace, domain) : null;
+    const nativeDisplay = coloredTrace ? nativeRenderTrace(coloredTrace, domain) : null;
     figureEvidence = coloredTrace ? nativeFigureEvidence(coloredTrace, domain) : null;
     if (evidenceEnabled && xData.length === 0) { Plotly.react(plotDiv, [], {}, { responsive: true }); return; }
 
@@ -207,9 +211,7 @@
       mode: 'lines',
       name: stage === 'raw' ? 'raw' : 'processed',
       line: { color: coloredTrace?.color ?? '#1e293b', width: 1.4 },
-      hovertemplate: useWavelength
-        ? 'Wavelength: %{x:.1f} nm<br>Intensity: %{y:.1f}<extra></extra>'
-        : 'Raman Shift: %{x:.1f} cm\u207B\u00B9<br>Intensity: %{y:.1f}<extra></extra>',
+      hovertemplate: `${useWavelength ? 'Wavelength' : 'Raman Shift'}: %{x:.1f} ${xUnit}<br>Intensity: %{y:.1f}<extra></extra>`,
     });
 
     // Raw overlay (faded)
@@ -312,7 +314,7 @@
             color: '#dc2626',
             line: { color: '#991b1b', width: 1 },
           },
-          hovertemplate: `${hoverVerb} at %{x:.1f} ${useWavelength ? 'nm' : 'cm\u207B\u00B9'}<br>Intensity: %{y:.1f}<extra></extra>`,
+          hovertemplate: `${hoverVerb} at %{x:.1f} ${xUnit}<br>Intensity: %{y:.1f}<extra></extra>`,
         });
       }
     }
@@ -349,7 +351,7 @@
             line: { color: '#0369a1', width: 1.5 },
           },
           hovertemplate:
-            `Known-noisy channel at %{x:.1f} ${useWavelength ? 'nm' : 'cm\u207B\u00B9'}` +
+            `Known-noisy channel at %{x:.1f} ${xUnit}` +
             '<br>tier %{customdata[0]} \u00B7 source %{customdata[1]}<extra></extra>',
         });
       }

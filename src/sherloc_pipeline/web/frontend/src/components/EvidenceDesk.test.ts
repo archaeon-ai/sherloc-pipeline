@@ -180,7 +180,10 @@ it.each(['R1', 'R2', 'R3'].flatMap(region => [undefined, 'unknown'].flatMap(unit
   const { container } = render(EvidenceDesk, { snapshot, contextKey: 'synthetic-context',
     wavenumber: snapshot.raman.wavenumber, wavelength: snapshot.trace!.wavelength, intensity: snapshot.raman.intensity });
   await flush();
-  expect(last()[1][0].y).toEqual(snapshot.raman.intensity);
+  expect(last()[1][0].y).toEqual([-1, 2, null, 4]);
+  expect(last()[2].meta.traces[0].breaks).toEqual([false, false, true]);
+  expect(last()[2].xaxis.title.text).toBe(`${region === 'R1' ? 'Raman Shift' : 'Wavelength'} (${unit ?? 'unknown unit'})`);
+  expect(last()[1][0].hovertemplate).toContain(unit ?? 'unknown unit');
   await fireEvent.click(container.querySelector('.export-trigger')!);
   await fireEvent.click(screen.getByText(`${format.toUpperCase()} + provenance`)); await flush();
   expect(downloadImage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ format }));
