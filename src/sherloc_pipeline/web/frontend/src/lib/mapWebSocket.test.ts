@@ -254,4 +254,23 @@ describe('MapWebSocket reconnect', () => {
 
     client.close();
   });
+
+  it('ignores queued frames and callbacks after client close', () => {
+    const handlers = makeHandlers();
+    const client = new MapWebSocket('/ws/map/synthetic-job', handlers);
+    const socket = FakeWebSocket.instances[0];
+    const lateMessage = socket.onmessage!;
+    const lateOpen = socket.onopen!;
+    const lateClose = socket.onclose!;
+    client.close();
+    lateMessage({ data: JSON.stringify({ type: 'log', seq: 1, message: 'synthetic late log' }) });
+    lateMessage({ data: JSON.stringify({ type: 'job_complete', seq: 2, summary: { total_points: 0 } }) });
+    lateOpen();
+    lateClose({ code: 1006 });
+    expect(handlers.onLog).not.toHaveBeenCalled();
+    expect(handlers.onComplete).not.toHaveBeenCalled();
+    expect(handlers.onDisconnect).not.toHaveBeenCalled();
+    expect(socket.onmessage).toBeNull();
+    expect(socket.onopen).toBeNull();
+  });
 });
