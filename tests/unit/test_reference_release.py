@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, delete, event, inspect, text
+from sqlalchemy import create_engine, delete, event, inspect, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
@@ -555,3 +555,31 @@ def test_shared_array_keys_loaded_and_hashed_once(snapshot, database, tmp_path, 
     assert report.traces == 20
     assert loaded == ["x", "y"]
     assert hashed.call_count == 2
+
+
+@pytest.mark.parametrize("model", [ReferenceReleaseORM, ReferenceFileORM, ReferenceTraceORM, ReferenceTemplateORM])
+@pytest.mark.parametrize("method", ["query", "execute", "execute_by_primary_key"])
+def test_catalog_bulk_update_rejected(snapshot, database, tmp_path, model, method):
+    root, _, policy = snapshot
+    report = import_release(root, database, tmp_path / "objects", policy)
+    engine = engine_for(database)
+    try:
+        with Session(engine) as session:
+            row = session.query(model).one()
+            field = "source_name" if model is ReferenceReleaseORM else "metadata_json"
+            changes = {field: "synthetic changed" if field == "source_name" else {"synthetic": "changed"}}
+            original = getattr(row, field)
+            with pytest.raises(ValueError, match="cannot be bulk updated"):
+                if method == "query":
+                    session.query(model).update(changes)
+                elif method == "execute":
+                    session.execute(update(model).values(**changes))
+                else:
+                    primary_key = inspect(model).primary_key[0].key
+                    session.execute(update(model), [{primary_key: getattr(row, primary_key), **changes}])
+                session.commit()
+            session.rollback()
+            assert getattr(session.query(model).one(), field) == original
+            assert session.get(ReferenceReleaseORM, report.release_id).status == "ready"
+    finally:
+        engine.dispose()

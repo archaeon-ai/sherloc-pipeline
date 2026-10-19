@@ -116,8 +116,10 @@ def _prevent_revision_delete(mapper, connection, target):
 
 
 @event.listens_for(Session, "do_orm_execute")
-def _prevent_bulk_revision_delete(state):
-    if state.is_delete and state.bind_mapper is not None and state.bind_mapper.class_ in {
+def _prevent_bulk_revision_change(state):
+    if (state.is_delete or state.is_update) and state.bind_mapper is not None and state.bind_mapper.class_ in {
         ReferenceReleaseORM, ReferenceFileORM, ReferenceTraceORM, ReferenceTemplateORM,
     }:
+        if state.is_update:
+            raise ValueError("reference catalog rows cannot be bulk updated")
         raise ValueError("reference catalog rows cannot be deleted")
