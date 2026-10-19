@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 
 from sherloc_pipeline.cli.app import app as references_cli
 from sherloc_pipeline.database.models import Base
+from sherloc_pipeline.database.reference_catalog_ddl import CATALOG_TABLES, catalog_triggers
 from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
 from sherloc_pipeline.services.reference_import import REFERENCE_REVISION, import_release
 from sherloc_pipeline.services.reference_store import LocalReferenceStore, object_locator
@@ -141,6 +142,9 @@ def test_file_backed_migration_revision_indexes_constraints(database, monkeypatc
     try:
         with engine.begin() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == REFERENCE_REVISION
+            assert set(connection.scalars(text("SELECT name FROM sqlite_master WHERE type='trigger'"))) >= {
+                name for name, _ in catalog_triggers()
+            }
             inspector = inspect(connection)
             for table in ("reference_releases", "reference_files", "reference_traces", "reference_templates"):
                 assert table in inspector.get_table_names()
@@ -169,6 +173,9 @@ def test_file_backed_migration_revision_indexes_constraints(database, monkeypatc
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == PREVIOUS_REVISION
         assert "reference_releases" not in inspect(connection).get_table_names()
         assert "scans" in inspect(connection).get_table_names()
+        assert not set(connection.scalars(text("SELECT name FROM sqlite_master WHERE type='trigger'"))) & {
+            name for name, _ in catalog_triggers()
+        }
     engine.dispose()
     command.upgrade(config, REFERENCE_REVISION)
 
@@ -623,3 +630,70 @@ def test_r2_reference_stream_is_bounded_hashed_and_closed(monkeypatch, oversized
         assert stream.consumed == len(data)
     assert stream.closed and all(0 < amount <= limit + 1 for amount in stream.requests)
     client.get_object.assert_called_once_with(Bucket="synthetic", Key=object_locator(sha256))
+
+
+@pytest.mark.parametrize("schema", ["migration", "metadata"])
+@pytest.mark.parametrize("model", [ReferenceReleaseORM, ReferenceFileORM, ReferenceTraceORM, ReferenceTemplateORM])
+@pytest.mark.parametrize("method", ["bulk_mappings", "core_update", "raw_update", "core_delete", "raw_delete"])
+def test_database_catalog_guards(snapshot, database, tmp_path, schema, model, method):
+    root, manifest, policy = snapshot
+    manifest["files"][0]["traces"][0]["rights_status"] = "unknown"
+    save_manifest(root, manifest)
+    if schema == "metadata":
+        database = tmp_path / "metadata.db"
+        engine = engine_for(database)
+        Base.metadata.create_all(engine, tables=[Base.metadata.tables[name] for name in CATALOG_TABLES])
+        engine.dispose()
+    report = import_release(root, database, tmp_path / "objects", policy)
+    engine = engine_for(database)
+    try:
+        with Session(engine) as session:
+            row = session.query(model).one()
+            key = inspect(model).primary_key[0].key
+            changes = {"source_name": "synthetic changed"} if model is ReferenceReleaseORM else {"metadata_json": {"changed": True}}
+            if model is ReferenceTraceORM:
+                assert not row.rights_known and row.serving_status == "off"
+                changes = {"rights_known": True, "serving_status": "approved", "permitted_tiers": ["team"]}
+            with pytest.raises(IntegrityError, match="immutable"):
+                if method == "bulk_mappings":
+                    session.bulk_update_mappings(model, [{key: getattr(row, key), **changes}])
+                elif method == "core_update":
+                    session.execute(model.__table__.update().values(**changes))
+                elif method == "raw_update":
+                    field = next(iter(changes))
+                    session.execute(text(f"UPDATE {model.__tablename__} SET {field} = :value"),
+                                    {"value": 1 if field == "rights_known" else "synthetic changed"})
+                elif method == "core_delete":
+                    session.execute(model.__table__.delete())
+                else:
+                    session.execute(text(f"DELETE FROM {model.__tablename__}"))
+                session.commit()
+            session.rollback()
+            for table in CATALOG_TABLES:
+                assert session.scalar(text(f"SELECT count(*) FROM {table}")) == 1
+            trace = session.query(ReferenceTraceORM).one()
+            assert not trace.rights_known and trace.serving_status == "off" and trace.permitted_tiers == []
+            assert session.get(ReferenceReleaseORM, report.release_id).status == "ready"
+    finally:
+        engine.dispose()
+
+
+def test_database_release_transition_preserves_all_metadata(snapshot, database, tmp_path):
+    root, _, policy = snapshot
+    import_release(root, database, tmp_path / "objects", policy)
+    engine = engine_for(database)
+    try:
+        with engine.begin() as connection:
+            for statement in (
+                "UPDATE reference_releases SET status = 'staged'",
+                "UPDATE reference_releases SET status = 'ready'",
+                "UPDATE reference_releases SET status = 'retired', source_base_url = NULL",
+                "UPDATE reference_releases SET status = 'retired', source_name = 'synthetic changed'",
+            ):
+                with pytest.raises(IntegrityError, match="immutable"):
+                    connection.exec_driver_sql(statement)
+            connection.exec_driver_sql("UPDATE reference_releases SET status = 'retired'")
+            with pytest.raises(IntegrityError, match="immutable"):
+                connection.exec_driver_sql("UPDATE reference_releases SET status = 'ready'")
+    finally:
+        engine.dispose()

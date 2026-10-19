@@ -7,6 +7,8 @@ Revises: 17db1a1940d6
 from alembic import op
 import sqlalchemy as sa
 
+from sherloc_pipeline.database.reference_catalog_ddl import catalog_triggers
+
 revision = "a13c4e5f6071"
 down_revision = "17db1a1940d6"
 branch_labels = None
@@ -86,7 +88,14 @@ def upgrade():
     )
     op.create_index("ix_reference_templates_release_id", "reference_templates", ["release_id"])
 
+    if op.get_bind().dialect.name == "sqlite":
+        for _, statement in catalog_triggers():
+            op.execute(statement)
+
 
 def downgrade():
+    if op.get_bind().dialect.name == "sqlite":
+        for name, _ in catalog_triggers():
+            op.execute(f"DROP TRIGGER {name}")
     for table in ("reference_templates", "reference_traces", "reference_files", "reference_releases"):
         op.drop_table(table)

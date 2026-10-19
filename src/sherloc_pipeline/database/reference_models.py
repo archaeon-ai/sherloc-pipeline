@@ -2,10 +2,11 @@
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, JSON, String, UniqueConstraint, event, inspect
+from sqlalchemy import DDL, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, JSON, String, UniqueConstraint, event, inspect
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from sherloc_pipeline.database.models import Base
+from sherloc_pipeline.database.reference_catalog_ddl import CATALOG_TABLES, catalog_triggers
 
 
 class ReferenceReleaseORM(Base):
@@ -123,3 +124,9 @@ def _prevent_bulk_revision_change(state):
         if state.is_update:
             raise ValueError("reference catalog rows cannot be bulk updated")
         raise ValueError("reference catalog rows cannot be deleted")
+
+
+for _table in CATALOG_TABLES:
+    for _name, _statement in catalog_triggers():
+        if _name.startswith(f"{_table}_immutable_"):
+            event.listen(Base.metadata.tables[_table], "after_create", DDL(_statement).execute_if(dialect="sqlite"))
