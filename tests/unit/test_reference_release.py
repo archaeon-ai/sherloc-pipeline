@@ -697,3 +697,37 @@ def test_database_release_transition_preserves_all_metadata(snapshot, database, 
                 connection.exec_driver_sql("UPDATE reference_releases SET status = 'ready'")
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("kind", ["zip", "npy", "truncated_npy", "missing_member", "crc",
+                                  "unclosed_header", "empty_descr", "mixed_keys"])
+def test_malformed_array_cli_fails_before_writes(snapshot, database, tmp_path, kind):
+    root, manifest, policy = snapshot
+    data = b"synthetic malformed ZIP"
+    if kind != "zip":
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            member = b"synthetic malformed NPY" if kind == "npy" else b"\x93NUMPY"
+            headers = {
+                "unclosed_header": b"(\n",
+                "empty_descr": b"{'shape': (1,), 'fortran_order': False, 'descr': ()}\n",
+                "mixed_keys": b"{'shape': (1,), 0: 1}\n",
+            }
+            if kind in headers:
+                header = headers[kind]
+                member = b"\x93NUMPY\x01\x00" + len(header).to_bytes(2, "little") + header
+            archive.writestr("missing.npy" if kind == "missing_member" else "x.npy", member)
+        data = buffer.getvalue()
+        if kind == "crc":
+            data = data.replace(b"\x93NUMPY", b"broken")
+    (root / "arrays.npz").write_bytes(data)
+    manifest["files"][0].update(arrays_sha256=hashlib.sha256(data).hexdigest(), arrays_size=len(data))
+    save_manifest(root, manifest)
+    before = database.read_bytes()
+    objects = tmp_path / "objects"
+    result = CliRunner().invoke(references_cli, ["references", "import", "--snapshot", str(root),
+                              "--database", str(database), "--objects", str(objects), "--serving-policy", str(policy)])
+    assert result.exit_code == 1
+    assert "Reference import failed:" in result.output and "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert database.read_bytes() == before and not objects.exists()

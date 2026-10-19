@@ -4,7 +4,10 @@ import hashlib
 import io
 import json
 import math
+import tokenize
 import zipfile
+import zlib
+from functools import wraps
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,6 +49,19 @@ def read_local(root: Path, relative: str, expected: str, size: int) -> bytes:
     return verify_bytes(data, expected)
 
 
+
+def _array_errors(function):
+    @wraps(function)
+    def checked(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except (zipfile.BadZipFile, EOFError, OSError, KeyError, IndexError, TypeError,
+                tokenize.TokenError, zlib.error, NotImplementedError, RuntimeError) as exc:
+            raise ValueError("malformed reference array archive") from exc
+    return checked
+
+
+@_array_errors
 def array_archive_size(data: bytes) -> int:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         entries = archive.infolist()
@@ -57,6 +73,7 @@ def array_archive_size(data: bytes) -> int:
         return size
 
 
+@_array_errors
 def read_arrays(data: bytes, traces) -> dict:
     array_archive_size(data)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
