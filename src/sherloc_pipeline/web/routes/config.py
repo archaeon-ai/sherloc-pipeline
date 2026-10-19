@@ -75,8 +75,8 @@ def _build_auth_config() -> AuthConfig:
 def get_bootstrap_config() -> BootstrapConfigResponse:
     """Authentication negotiation only, for the SPA before login (§13.4).
 
-    Nothing else here is public: the full configuration is /api/config,
-    which requires an authenticated request.
+    The access-mode endpoint is also public (v5.7.1); the full pipeline
+    configuration at /api/config requires an authenticated request.
     """
     return BootstrapConfigResponse(
         auth=_build_auth_config(),

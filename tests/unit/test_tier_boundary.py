@@ -351,3 +351,28 @@ def test_public_gate_without_index_denies_all(engine, tmp_path):
         assert gate.filter_scans_query(session.query(ScanORM)).all() == []
         with pytest.raises(HTTPException):
             gate.validate_scan_access(scan)
+
+
+@pytest.mark.parametrize("mode", ["internal", "public"])
+@pytest.mark.asyncio
+async def test_anonymous_access_mode_exposes_only_mode(engine, tmp_path, monkeypatch, mode):
+    synthetic_index(tmp_path, monkeypatch)
+    if mode == "internal":
+        policy = approved_policy()
+        policy["identification"] = {"enabled": True, "experimental_candidates": True,
+            "allowed_method_releases": [{"method_release_id": DIGEST,
+                "reference_release_id": DIGEST, "reference_subset_id": DIGEST}]}
+        monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
+    monkeypatch.setenv("SHERLOC_AUTH_MODE", "auth0")
+    validator = Mock(side_effect=AssertionError("anonymous route must not authenticate"))
+    monkeypatch.setattr(auth, "get_validator", validator)
+    app = create_app(engine=engine, config=fake_config(), access_mode=mode)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
+            response = await client.get("/api/config/access-mode")
+        assert response.status_code == 200
+        assert response.json() == {"schema_version": "1.0.0", "access_mode": mode}
+        validator.assert_not_called()
+    finally:
+        app.state.job_queue.shutdown()
+        app.state.map_executor.shutdown(wait=False)
