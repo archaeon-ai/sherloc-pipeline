@@ -203,16 +203,21 @@
       if (gen === mapLoadGeneration) aciLoading = false;
     }
 
+    if (gen !== mapLoadGeneration) return;
+
     // Fetch scan info for label. Auth-attaching via getScan() helper —
     // raw `fetch('/api/scans/...')` would skip Bearer and 401 under Auth0.
     try {
       const data = await getScan(scanId);
+      if (gen !== mapLoadGeneration) return;
       const scan = data.scan;
       scanLabel = `${scan.target ?? 'Unknown'} Sol ${scan.sol_number} ${scan.scan_name}`;
     } catch {
       // non-critical (incl. AuthRequiredError — the auth-required state is
       // already surfaced via the ACI fetch failure above)
     }
+
+    if (gen !== mapLoadGeneration) return;
 
     // Skip layer fetch on return — stores already have everything
     if (isReturning) return;
@@ -281,6 +286,7 @@
   });
 
   onDestroy(() => {
+    mapLoadGeneration += 1;
     ws?.close();
     stopFitPolling();
     // Persist local state to stores (don't reset — enables return)
