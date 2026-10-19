@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, JSON, String, UniqueConstraint, event, inspect
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from sherloc_pipeline.database.models import Base
 
@@ -113,3 +113,11 @@ def _release_transition(mapper, connection, target):
 @event.listens_for(ReferenceTemplateORM, "before_delete")
 def _prevent_revision_delete(mapper, connection, target):
     raise ValueError("reference catalog rows cannot be deleted")
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _prevent_bulk_revision_delete(state):
+    if state.is_delete and state.bind_mapper is not None and state.bind_mapper.class_ in {
+        ReferenceReleaseORM, ReferenceFileORM, ReferenceTraceORM, ReferenceTemplateORM,
+    }:
+        raise ValueError("reference catalog rows cannot be deleted")

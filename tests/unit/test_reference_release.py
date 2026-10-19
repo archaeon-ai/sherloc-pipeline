@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, delete, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
@@ -472,15 +472,21 @@ def test_compressed_archives_share_uncompressed_release_budget(snapshot, databas
 
 
 @pytest.mark.parametrize("model", [ReferenceReleaseORM, ReferenceFileORM, ReferenceTraceORM, ReferenceTemplateORM])
-def test_catalog_delete_rejected_and_reimport_preserves_rows(snapshot, database, tmp_path, model):
+@pytest.mark.parametrize("method", ["instance", "query", "execute"])
+def test_catalog_delete_rejected_and_reimport_preserves_rows(snapshot, database, tmp_path, model, method):
     root, _, policy = snapshot
     objects = tmp_path / "objects"
     report = import_release(root, database, objects, policy)
     engine = engine_for(database)
     try:
         with Session(engine) as session:
-            session.delete(session.query(model).one())
             with pytest.raises(ValueError, match="cannot be deleted"):
+                if method == "instance":
+                    session.delete(session.query(model).one())
+                elif method == "query":
+                    session.query(model).delete()
+                else:
+                    session.execute(delete(model))
                 session.commit()
             session.rollback()
         repeated = import_release(root, database, objects, policy)
