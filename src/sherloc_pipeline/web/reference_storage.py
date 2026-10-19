@@ -1,15 +1,18 @@
 """Tier-aware reference read adapter; no HTTP reference routes."""
 
 from collections.abc import Callable
+import hashlib
+import io
+from typing import BinaryIO
 
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
 from sherloc_pipeline.models.references import ReferenceTrace, known_rights
-from sherloc_pipeline.services.reference_store import object_locator, verify_bytes
+from sherloc_pipeline.services.reference_store import MAX_OBJECT_BYTES, object_locator
 from sherloc_pipeline.web.feature_policy import FeaturePolicy
 
 
 class R2ReferenceStore:
-    def __init__(self, tier: str, reader: Callable[[str], bytes] | None = None):
+    def __init__(self, tier: str, reader: Callable[[str], bytes | BinaryIO] | None = None):
         if tier != "team":
             raise ValueError("public instances cannot read reference objects")
         self.tier = tier
@@ -19,15 +22,33 @@ class R2ReferenceStore:
         if locator != object_locator(sha256):
             raise ValueError("invalid reference locator")
         if self.reader is not None:
-            data = self.reader(locator)
+            body = self.reader(locator)
+            stream = io.BytesIO(body) if isinstance(body, bytes) else body
         else:
-            from sherloc_pipeline.web.r2_reader import get_r2_client_and_config, r2_get_bytes
+            from sherloc_pipeline.web.r2_reader import get_r2_client_and_config
 
-            _, config = get_r2_client_and_config()
+            client, config = get_r2_client_and_config()
             if config["tier"] != self.tier:
                 raise ValueError("reference storage tier mismatch")
-            data = r2_get_bytes(locator)
-        return verify_bytes(data, sha256)
+            stream = client.get_object(Bucket=config["bucket"], Key=locator)["Body"]
+        chunks = []
+        size = 0
+        checksum = hashlib.sha256()
+        try:
+            while size <= MAX_OBJECT_BYTES:
+                chunk = stream.read(min(64 * 1024, MAX_OBJECT_BYTES + 1 - size))
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_OBJECT_BYTES:
+                    raise ValueError("reference object size or SHA-256 mismatch")
+                checksum.update(chunk)
+                chunks.append(chunk)
+            if checksum.hexdigest() != sha256:
+                raise ValueError("reference object size or SHA-256 mismatch")
+            return b"".join(chunks)
+        finally:
+            stream.close()
 
 
 def can_serve_trace(

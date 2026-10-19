@@ -583,3 +583,43 @@ def test_catalog_bulk_update_rejected(snapshot, database, tmp_path, model, metho
             assert session.get(ReferenceReleaseORM, report.release_id).status == "ready"
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+def test_r2_reference_stream_is_bounded_hashed_and_closed(monkeypatch, oversized):
+    from sherloc_pipeline.web import r2_reader, reference_storage
+
+    data = b"synthetic stream"
+    limit = 16
+    monkeypatch.setattr(reference_storage, "MAX_OBJECT_BYTES", limit)
+
+    class SyntheticStream:
+        consumed = 0
+        closed = False
+        requests = []
+
+        def read(self, amount):
+            self.requests.append(amount)
+            count = min(amount, 3, (10**9 if oversized else len(data)) - self.consumed)
+            chunk = b"x" * count if oversized else data[self.consumed:self.consumed + count]
+            self.consumed += count
+            return chunk
+
+        def close(self):
+            self.closed = True
+
+    stream = SyntheticStream()
+    client = Mock()
+    client.get_object.return_value = {"Body": stream}
+    monkeypatch.setattr(r2_reader, "get_r2_client_and_config", lambda: (client, {"tier": "team", "bucket": "synthetic"}))
+    sha256 = hashlib.sha256(data).hexdigest()
+    store = R2ReferenceStore("team")
+    if oversized:
+        with pytest.raises(ValueError, match="size or SHA-256"):
+            store.read_verified(object_locator(sha256), sha256)
+        assert stream.consumed == limit + 1
+    else:
+        assert store.read_verified(object_locator(sha256), sha256) == data
+        assert stream.consumed == len(data)
+    assert stream.closed and all(0 < amount <= limit + 1 for amount in stream.requests)
+    client.get_object.assert_called_once_with(Bucket="synthetic", Key=object_locator(sha256))
