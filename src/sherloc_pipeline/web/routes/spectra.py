@@ -255,7 +255,10 @@ def _get_session(request: Request) -> Session:
 def _get_data_access(request: Request) -> DataAccessService:
     """Resolve the DataAccessService from app state."""
     access_mode = getattr(request.app.state, "access_mode", "internal")
-    return DataAccessService(access_mode=access_mode)
+    return DataAccessService(
+        access_mode=access_mode,
+        public_release_index=getattr(request.app.state, "public_release_index", None),
+    )
 
 
 def _get_wavelength_wavenumber(region: str):

@@ -50,7 +50,10 @@ pytestmark = pytest.mark.httpx_mock(
 
 
 @pytest.fixture(autouse=True)
-def _reset():
+def _reset(monkeypatch, tmp_path):
+    from tests.unit.public_release_helpers import synthetic_index
+
+    synthetic_index(tmp_path, monkeypatch)
     _reset_jwks_cache_for_tests()
     _reset_validator_for_tests()
     yield

@@ -8,13 +8,14 @@ from fastapi import HTTPException
 
 from sherloc_pipeline.web.data_access import DataAccessService
 from tests.unit.web.conftest import SCAN_UUID, SOL_NUMBER
+from tests.unit.public_release_helpers import synthetic_index
 
 
-def synthetic_release_metadata(product_id):
+def synthetic_release_metadata(product_id, index):
     return {"version": "synthetic-v1", "public_release": {
         "schema_version": "public-release-1", "eligible": True,
         "product_id": product_id, "version_id": "synthetic-v1",
-        "source_sha256": "a" * 64, "index_sha256": "b" * 64,
+        "source_sha256": "a" * 64, "index_sha256": index.sha256,
         "release_id": "synthetic-release",
     }}
 
@@ -90,7 +91,8 @@ async def test_access_mode_default(client):
 # ---------------------------------------------------------------------------
 
 
-def _make_public_client(monkeypatch=None):
+def _make_public_client(monkeypatch, tmp_path):
+    index = synthetic_index(tmp_path, monkeypatch, ["synthetic-public-product"])
     """Create an async client with access_mode='public'.
 
     Runs in dev auth mode so route-logic tests do not need to mint
@@ -166,7 +168,7 @@ def _make_public_client(monkeypatch=None):
                 scan_name="detail_2",
                 target="Target_B",
                 scan_id="synthetic-public-product",
-                pds4_metadata=synthetic_release_metadata("synthetic-public-product"),
+                pds4_metadata=synthetic_release_metadata("synthetic-public-product", index),
                 sclk_start=200000,
                 n_points=3,
                 n_channels=7,
@@ -180,18 +182,18 @@ def _make_public_client(monkeypatch=None):
     finally:
         session.close()
 
-    from tests.unit.web.conftest import _FakeConfig
+    from tests.unit.test_tier_boundary import fake_config
 
-    app = create_app(engine=engine, config=_FakeConfig(), access_mode="public")
+    app = create_app(engine=engine, config=fake_config(), access_mode="public")
     return app, engine
 
 
 @pytest.mark.asyncio
-async def test_public_mode_hides_loupe_scans(monkeypatch):
+async def test_public_mode_hides_loupe_scans(monkeypatch, tmp_path):
     """In public mode, only PDS scans are visible."""
     from httpx import ASGITransport, AsyncClient
 
-    app, engine = _make_public_client(monkeypatch)
+    app, engine = _make_public_client(monkeypatch, tmp_path)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.get("/api/scans")
@@ -202,11 +204,11 @@ async def test_public_mode_hides_loupe_scans(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_public_mode_access_mode_endpoint(monkeypatch):
+async def test_public_mode_access_mode_endpoint(monkeypatch, tmp_path):
     """access-mode endpoint reflects 'public'."""
     from httpx import ASGITransport, AsyncClient
 
-    app, engine = _make_public_client(monkeypatch)
+    app, engine = _make_public_client(monkeypatch, tmp_path)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.get("/api/config/access-mode")
@@ -231,11 +233,12 @@ async def test_internal_mode_shows_all_scans(client):
 
 class TestValidateScanAccess:
     @pytest.mark.parametrize("source_attributes", SCAN_SOURCE_CASES)
-    def test_validate_scan_access_public_allowlist(self, source_attributes):
-        svc = DataAccessService(access_mode="public")
+    def test_validate_scan_access_public_allowlist(self, source_attributes, tmp_path, monkeypatch):
+        index = synthetic_index(tmp_path, monkeypatch, ["synthetic-product"])
+        svc = DataAccessService(access_mode="public", public_release_index=index)
         scan = SimpleNamespace(
             scan_id="synthetic-product",
-            pds4_metadata=synthetic_release_metadata("synthetic-product"),
+            pds4_metadata=synthetic_release_metadata("synthetic-product", index),
             **source_attributes,
         )
         if source_attributes.get("data_source") == "pds4":
@@ -254,7 +257,10 @@ class TestValidateScanAccess:
 
 
 @pytest.fixture
-def allowlist_session():
+def allowlist_session(tmp_path, monkeypatch):
+    release_index = synthetic_index(tmp_path, monkeypatch, [f"invented-allowlist-{name}" for name in (
+        "pds4", "loupe", "null", "missing", "uppercase", "unknown",
+    )])
     """Metadata-only rows using the existing in-memory web-test DB helpers."""
     from sqlalchemy import create_engine, event
     from sqlalchemy.pool import StaticPool
@@ -295,7 +301,7 @@ def allowlist_session():
                 sol_number=42424,
                 scan_name=name,
                 scan_id=f"invented-allowlist-{name}",
-                pds4_metadata=synthetic_release_metadata(f"invented-allowlist-{name}"),
+                pds4_metadata=synthetic_release_metadata(f"invented-allowlist-{name}", release_index),
                 sclk_start=index,
                 n_points=0,
                 n_channels=1,
@@ -306,7 +312,7 @@ def allowlist_session():
             ))
         # An omitted ORM source becomes SQL NULL, just like explicit None.
         session.commit()
-        yield session
+        yield session, release_index
     finally:
         session.close()
         engine.dispose()
@@ -316,12 +322,13 @@ def allowlist_session():
 def test_filter_scans_query_source_allowlist(allowlist_session, access_mode):
     from sherloc_pipeline.database.models import ScanORM
 
+    allowlist_session, index = allowlist_session
     rows = allowlist_session.query(ScanORM).all()
     assert len(rows) == 6
     assert {row.scan_name for row in rows if row.data_source is None} == {"null", "missing"}
 
     query = allowlist_session.query(ScanORM)
-    visible = DataAccessService(access_mode).filter_scans_query(query).all()
+    visible = DataAccessService(access_mode, index).filter_scans_query(query).all()
     expected = {"pds4"} if access_mode == "public" else {
         "pds4", "loupe", "null", "missing", "uppercase", "unknown",
     }
@@ -334,11 +341,11 @@ def test_filter_scans_query_source_allowlist(allowlist_session, access_mode):
 
 
 @pytest.mark.asyncio
-async def test_public_mode_scan_detail_blocked(monkeypatch):
+async def test_public_mode_scan_detail_blocked(monkeypatch, tmp_path):
     """Public mode returns 403 for Loupe scan detail endpoint."""
     from httpx import ASGITransport, AsyncClient
 
-    app, engine = _make_public_client(monkeypatch)
+    app, engine = _make_public_client(monkeypatch, tmp_path)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         # Get the scan list to find the Loupe scan ID
@@ -359,13 +366,13 @@ async def test_public_mode_scan_detail_blocked(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_public_mode_scan_detail_pds_allowed(monkeypatch):
+async def test_public_mode_scan_detail_pds_allowed(monkeypatch, tmp_path):
     """Public mode returns 200 for PDS scan detail endpoint."""
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy.orm import Session
     from sherloc_pipeline.database.models import ScanORM
 
-    app, engine = _make_public_client(monkeypatch)
+    app, engine = _make_public_client(monkeypatch, tmp_path)
     transport = ASGITransport(app=app)
 
     with Session(engine) as session:
@@ -380,11 +387,11 @@ async def test_public_mode_scan_detail_pds_allowed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_public_mode_download_blocked(monkeypatch):
+async def test_public_mode_download_blocked(monkeypatch, tmp_path):
     """Public mode blocks PDS download endpoint."""
     from httpx import ASGITransport, AsyncClient
 
-    app, engine = _make_public_client(monkeypatch)
+    app, engine = _make_public_client(monkeypatch, tmp_path)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.post("/api/pds/download", json={"sol": 100})
@@ -404,13 +411,14 @@ def test_create_app_rejects_phase_db_in_public():
         create_app(database_path="./phase.db", access_mode="public")
 
 
-def test_create_app_allows_phase_pds_db_in_public():
+def test_create_app_allows_phase_pds_db_in_public(tmp_path, monkeypatch):
+    synthetic_index(tmp_path, monkeypatch)
     """create_app succeeds when public mode + phase_pds.db path."""
     from sqlalchemy import create_engine
     from sqlalchemy.pool import StaticPool
     from sherloc_pipeline.database.connection import create_all_tables
     from sherloc_pipeline.web.app import create_app
-    from tests.unit.web.conftest import _FakeConfig
+    from tests.unit.test_tier_boundary import fake_config
 
     engine = create_engine(
         "sqlite:///:memory:",
@@ -424,6 +432,6 @@ def test_create_app_allows_phase_pds_db_in_public():
         database_path="./phase_pds.db",
         access_mode="public",
         engine=engine,
-        config=_FakeConfig(),
+        config=fake_config(),
     )
     assert app is not None

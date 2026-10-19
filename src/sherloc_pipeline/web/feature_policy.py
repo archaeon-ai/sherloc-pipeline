@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -11,6 +12,11 @@ Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 class PolicyModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class PublicReleasePolicy(PolicyModel):
+    index_path: str = Field(min_length=1)
+    index_sha256: Digest
 
 
 class ReferencePolicy(PolicyModel):
@@ -39,6 +45,7 @@ class IdentificationPolicy(PolicyModel):
 
 
 class FeaturePolicy(PolicyModel):
+    public_release: PublicReleasePolicy | None = None
     references: ReferencePolicy = Field(default_factory=ReferencePolicy)
     identification: IdentificationPolicy = Field(default_factory=IdentificationPolicy)
 
@@ -76,3 +83,19 @@ def load_feature_policy(access_mode: str) -> FeaturePolicy:
     if access_mode == "public" and policy.references.mode != "off":
         raise ValueError("public references.mode must be off")
     return policy
+
+
+def load_public_release_index(access_mode: str, policy: FeaturePolicy):
+    """Public startup requires a local index pinned by deployment policy."""
+    if access_mode != "public":
+        return None
+    if policy.public_release is None:
+        raise ValueError("public mode requires a pinned public release index")
+    from sherloc_pipeline.services.public_release import PublicReleaseIndex
+
+    try:
+        return PublicReleaseIndex(
+            Path(policy.public_release.index_path), policy.public_release.index_sha256,
+        )
+    except OSError as exc:
+        raise ValueError("public release index unavailable") from exc

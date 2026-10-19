@@ -20,6 +20,7 @@ from sherloc_pipeline.web import auth, config_check
 from sherloc_pipeline.web.app import create_app
 from sherloc_pipeline.web.data_access import DataAccessService
 from sherloc_pipeline.web.feature_policy import load_feature_policy
+from tests.unit.public_release_helpers import synthetic_index
 
 PRODUCT = "ss__9999_0000000000_000rrs__synthetic"
 DIGEST = "a" * 64
@@ -74,7 +75,11 @@ def fake_config():
 
 
 @pytest.fixture
-def app(engine):
+def app(engine, tmp_path, monkeypatch):
+    path = write_index(tmp_path)
+    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps({"public_release": {
+        "index_path": str(path), "index_sha256": PublicReleaseIndex(path).sha256,
+    }}))
     app = create_app(engine=engine, config=fake_config(), access_mode="public")
     yield app
     app.state.job_queue.shutdown()
@@ -139,13 +144,15 @@ def test_defaults_off():
     {}, {"eligible": False}, {"eligible": "true"}, {"eligible": 1},
     {"schema_version": "unknown"}, {"product_id": "synthetic-other"},
     {"version_id": "synthetic-v2"}, {"source_sha256": "x" * 64},
+    {"source_sha256": "b" * 64}, {"index_sha256": "b" * 64},
+    {"release_id": "synthetic-other-release"},
     {"index_sha256": None}, {"release_id": 123}, {"version_id": 123},
 ])
 def test_list_and_direct_agree(engine, tmp_path, mutation):
     meta = PublicReleaseIndex(write_index(tmp_path)).apply(PRODUCT, {"version": "synthetic-v1"})
     meta["public_release"].update(mutation)
     scan = make_scan(metadata=meta)
-    gate = DataAccessService("public")
+    gate = DataAccessService("public", PublicReleaseIndex(write_index(tmp_path)))
     with Session(engine) as session:
         session.add(scan)
         session.commit()
@@ -165,11 +172,11 @@ def test_ingestion_index_and_backfill_fail_closed(engine, tmp_path):
         session.add(scan)
         session.flush()
         assert backfill_public_release(session, index) == 1
-        DataAccessService("public").validate_scan_access(scan)
+        DataAccessService("public", index).validate_scan_access(scan)
         assert scan.pds4_metadata["untouched"] == "synthetic"
         backfill_public_release(session, PublicReleaseIndex(write_index(tmp_path, released=False)))
         with pytest.raises(HTTPException):
-            DataAccessService("public").validate_scan_access(scan)
+            DataAccessService("public", index).validate_scan_access(scan)
         assert index.apply(PRODUCT, {"version": "unknown"}) == {"version": "unknown"}
 
 
@@ -242,7 +249,8 @@ def test_pds_build_scan_persists_local_evidence(tmp_path):
     from sherloc_pipeline.services.pds_ingestion import PDSIngestionService
 
     service = object.__new__(PDSIngestionService)
-    service._public_release_index = PublicReleaseIndex(write_index(tmp_path))
+    index = PublicReleaseIndex(write_index(tmp_path))
+    service._public_release_index = index
     group = SimpleNamespace(sol=9999, sclk=0, obs_id="synthetic", scan_type=None, sequence_code=None)
     metadata = SimpleNamespace(
         logical_identifier=PRODUCT, sclk_start_int=0, spacecraft_clock_stop=None,
@@ -250,11 +258,11 @@ def test_pds_build_scan_persists_local_evidence(tmp_path):
         to_pds4_metadata_dict=lambda: {"version": "synthetic-v1"},
     )
     scan = service._build_scan(group, metadata, target="Synthetic")
-    DataAccessService("public").validate_scan_access(scan)
+    DataAccessService("public", index).validate_scan_access(scan)
     changed = copy.deepcopy(scan)
     changed.pds4_metadata["version"] = "synthetic-v2"
     with pytest.raises(HTTPException):
-        DataAccessService("public").validate_scan_access(changed)
+        DataAccessService("public", index).validate_scan_access(changed)
 
 
 @pytest.mark.asyncio
@@ -276,3 +284,70 @@ async def test_gated_image_cannot_be_shared_or_browser_cached(app, engine, tmp_p
         response = await client.get("/api/images/synthetic-scan/aci")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize("case", ["missing-policy", "missing-file", "wrong-digest", "malformed", "duplicate"])
+def test_public_startup_requires_verified_index(tmp_path, monkeypatch, case):
+    synthetic_index(tmp_path, monkeypatch, [PRODUCT])
+    policy = json.loads(os.environ["SHERLOC_FEATURE_POLICY"])
+    path = tmp_path / "synthetic-release.json"
+    if case == "missing-policy":
+        policy = {}
+    elif case == "missing-file":
+        path.unlink()
+    elif case == "wrong-digest":
+        policy["public_release"]["index_sha256"] = "b" * 64
+    else:
+        raw = json.loads(path.read_text())
+        if case == "malformed":
+            raw["products"][0]["released"] = "true"
+        else:
+            raw["products"].append(raw["products"][0])
+        path.write_text(json.dumps(raw))
+        import hashlib
+        policy["public_release"]["index_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
+    monkeypatch.setenv("SHERLOC_ACCESS_MODE", "public")
+    assert any("feature policy" in error for error in config_check.validate())
+    with pytest.raises(ValueError):
+        create_app(engine=Mock(), config=Mock(), access_mode="public")
+    monkeypatch.setenv("SHERLOC_ACCESS_MODE", "internal")
+    assert config_check.validate() == []
+
+
+@pytest.mark.parametrize("change", ["revoked", "removed", "digest"])
+def test_changed_index_denies_old_evidence_without_backfill(engine, tmp_path, change):
+    path = write_index(tmp_path)
+    old = PublicReleaseIndex(path)
+    scan = make_scan(metadata=old.apply(PRODUCT, {"version": "synthetic-v1"}))
+    raw = json.loads(path.read_text())
+    if change == "revoked":
+        raw["products"][0]["released"] = False
+    elif change == "removed":
+        raw["products"] = []
+    else:
+        # Even a semantically identical but differently pinned snapshot is stale.
+        raw["products"][0]["sha256"] = DIGEST
+    path.write_text(json.dumps(raw, indent=2))
+    current = PublicReleaseIndex(path)
+    assert old.sha256 != current.sha256
+    gate = DataAccessService("public", current)
+    with Session(engine) as session:
+        session.add(scan)
+        session.commit()
+        assert gate.filter_scans_query(session.query(ScanORM)).all() == []
+        with pytest.raises(HTTPException, match="403"):
+            gate.validate_scan_access(scan)
+        DataAccessService("internal").validate_scan_access(scan)
+
+
+def test_public_gate_without_index_denies_all(engine, tmp_path):
+    index = PublicReleaseIndex(write_index(tmp_path))
+    scan = make_scan(metadata=index.apply(PRODUCT, {"version": "synthetic-v1"}))
+    with Session(engine) as session:
+        session.add(scan)
+        session.commit()
+        gate = DataAccessService("public")
+        assert gate.filter_scans_query(session.query(ScanORM)).all() == []
+        with pytest.raises(HTTPException):
+            gate.validate_scan_access(scan)

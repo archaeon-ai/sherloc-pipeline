@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func
+from sqlalchemy import false, func, tuple_
 from sqlalchemy.orm import Session
 
 from sherloc_pipeline.database.models import ScanORM
@@ -27,10 +27,13 @@ class ReleaseIndex(BaseModel):
 
 
 class PublicReleaseIndex:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, expected_sha256: str | None = None):
         raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        if expected_sha256 is not None and digest != expected_sha256:
+            raise ValueError("public release index digest mismatch")
         index = ReleaseIndex.model_validate_json(raw)
-        self.sha256 = hashlib.sha256(raw).hexdigest()
+        self.sha256 = digest
         self.release_id = index.release_id
         self.products = {(p.product_id, p.version_id): p for p in index.products}
         if len(self.products) != len(index.products):
@@ -52,8 +55,16 @@ class PublicReleaseIndex:
         return metadata
 
 
-def public_release_expression():
-    """Use the same SQL predicate for list filtering and direct access."""
+def public_release_expression(index: PublicReleaseIndex | None):
+    """Match stored evidence against the pinned startup snapshot."""
+    if index is None:
+        return false()
+    trusted = [
+        (p.product_id, p.version_id, p.sha256, index.release_id, index.sha256)
+        for p in index.products.values() if p.released
+    ]
+    if not trusted:
+        return false()
     meta = ScanORM.pds4_metadata
     evidence = meta["public_release"]
     return (
@@ -64,42 +75,35 @@ def public_release_expression():
         & (evidence["version_id"].as_string() == meta["version"].as_string())
         & (func.json_type(meta, "$.version") == "text")
         & (func.json_type(meta, "$.public_release.version_id") == "text")
-        & (func.json_type(meta, "$.public_release.release_id") == "text")
-        & (func.length(evidence["version_id"].as_string()) > 0)
-        & (func.length(evidence["release_id"].as_string()) > 0)
-        & (func.length(evidence["index_sha256"].as_string()) == 64)
-        & (~evidence["index_sha256"].as_string().op("GLOB")("*[^0-9a-f]*"))
-        & (func.length(evidence["source_sha256"].as_string()) == 64)
-        & (~evidence["source_sha256"].as_string().op("GLOB")("*[^0-9a-f]*"))
+        & tuple_(
+            evidence["product_id"].as_string(),
+            evidence["version_id"].as_string(),
+            evidence["source_sha256"].as_string(),
+            evidence["release_id"].as_string(),
+            evidence["index_sha256"].as_string(),
+        ).in_(trusted)
     )
 
 
-def has_public_release(scan) -> bool:
+def has_public_release(scan, index: PublicReleaseIndex | None) -> bool:
+    if index is None or getattr(scan, "data_source", None) != "pds4":
+        return False
     meta = getattr(scan, "pds4_metadata", None)
-    if not isinstance(meta, dict):
+    if not isinstance(meta, dict) or not isinstance(meta.get("version"), str):
         return False
     evidence = meta.get("public_release")
     if not isinstance(evidence, dict) or evidence.get("eligible") is not True:
         return False
-    try:
-        product = ReleaseProduct.model_validate({
-            "product_id": evidence.get("product_id"),
-            "version_id": evidence.get("version_id"),
-            "sha256": evidence.get("source_sha256"),
-            "released": True,
-        })
-        return (
-            evidence.get("schema_version") == "public-release-1"
-            and product.product_id == scan.scan_id
-            and product.version_id == meta.get("version")
-            and isinstance(evidence.get("release_id"), str)
-            and bool(evidence["release_id"])
-            and isinstance(evidence.get("index_sha256"), str)
-            and len(evidence["index_sha256"]) == 64
-            and all(c in "0123456789abcdef" for c in evidence["index_sha256"])
-        )
-    except ValueError:
-        return False
+    product = index.products.get((scan.scan_id, meta.get("version")))
+    return (
+        product is not None and product.released
+        and evidence.get("schema_version") == "public-release-1"
+        and evidence.get("product_id") == product.product_id
+        and evidence.get("version_id") == product.version_id
+        and evidence.get("source_sha256") == product.sha256
+        and evidence.get("release_id") == index.release_id
+        and evidence.get("index_sha256") == index.sha256
+    )
 
 
 def backfill_public_release(session: Session, index: PublicReleaseIndex) -> int:

@@ -95,7 +95,7 @@ def create_app(
     if pairing_error:
         raise ValueError(pairing_error)
 
-    from sherloc_pipeline.web.feature_policy import load_feature_policy
+    from sherloc_pipeline.web.feature_policy import load_feature_policy, load_public_release_index
 
     feature_policy = load_feature_policy(access_mode)
 
@@ -107,6 +107,8 @@ def create_app(
                 "Public mode must NOT use phase.db (contains Loupe data). "
                 "Use phase_pds.db instead."
             )
+
+    public_release_index = load_public_release_index(access_mode, feature_policy)
 
     job_queue = JobQueue()
     map_registry = MapJobRegistry()
@@ -166,6 +168,7 @@ def create_app(
     app.state.map_executor = map_executor
     app.state.access_mode = access_mode
     app.state.feature_policy = feature_policy
+    app.state.public_release_index = public_release_index
 
     # CORS — origins are env-driven. Default empty (no cross-origin).
     # Set SHERLOC_CORS_ALLOWED_ORIGINS=https://example.com,https://other.example.com
