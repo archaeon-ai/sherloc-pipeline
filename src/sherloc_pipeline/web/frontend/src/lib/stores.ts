@@ -19,6 +19,7 @@ export const accessMode = writable<'internal' | 'public'>('internal');
 // a bare startup route before App applies the public-mode default redirect.
 export const accessModeResolved = writable(false);
 export const scienceAuthorized = writable(false);
+export let sessionGeneration = 0;
 
 // --- Route ---
 export const currentHash = writable(window.location.hash || '#/');
@@ -46,6 +47,7 @@ export const appConfig = writable<ConfigResponse | null>(null);
 export const features = writable<FeaturesConfig>({ pds_browser: true });
 
 export function clearSessionState(): void {
+  sessionGeneration += 1;
   scienceAuthorized.set(false);
   appConfig.set(null);
   features.set({ pds_browser: false });

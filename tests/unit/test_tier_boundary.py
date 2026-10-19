@@ -255,3 +255,24 @@ def test_pds_build_scan_persists_local_evidence(tmp_path):
     changed.pds4_metadata["version"] = "synthetic-v2"
     with pytest.raises(HTTPException):
         DataAccessService("public").validate_scan_access(changed)
+
+
+@pytest.mark.asyncio
+async def test_gated_image_cannot_be_shared_or_browser_cached(app, engine, tmp_path, monkeypatch):
+    import io
+    from PIL import Image
+    from sherloc_pipeline.web.routes import images
+
+    meta = PublicReleaseIndex(write_index(tmp_path)).apply(PRODUCT, {"version": "synthetic-v1"})
+    with Session(engine) as session:
+        session.add(make_scan(metadata=meta))
+        session.commit()
+    image = io.BytesIO()
+    Image.new("RGB", (2, 2), (3, 4, 5)).save(image, format="PNG")
+    monkeypatch.setattr(images, "select_served_aci", lambda *args: SimpleNamespace(r2_rel_key="synthetic.png"))
+    monkeypatch.setattr(images, "derive_r2_key", lambda *args: "synthetic.png")
+    monkeypatch.setattr(images, "r2_get_bytes", lambda *args: image.getvalue())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
+        response = await client.get("/api/images/synthetic-scan/aci")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "private, no-store"
