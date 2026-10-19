@@ -90,3 +90,21 @@ describe('Evidence desk', () => {
     expect(last()[2].uirevision).not.toBe(emissionKey);
   });
 });
+
+
+it('exports native processing values and committed labels with a provenance sidecar', async () => {
+  const snapshot = input();
+  const { container } = render(EvidenceDesk, { snapshot, contextKey: 'synthetic-context',
+    wavenumber: [800, 900, 1000], intensity: [-1, 2, 4], selectionMode: 'subset', selectedIndices: [99] });
+  await flush();
+  expect(container.textContent).toContain('Point 0');
+  expect(container.textContent).not.toContain('Points 99');
+  expect(last()[2].meta.traces[0].display.normalization).toBe('native');
+  expect(last()[2].meta.traces[0].displayed).toEqual([-1, 2, 4]);
+  await fireEvent.click(container.querySelector('.export-trigger')!);
+  await fireEvent.click(screen.getByText('PNG + provenance')); await flush();
+  expect(downloadImage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ format: 'png' }));
+  const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+  const text = await new Promise<string>(resolve => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blob); });
+  expect(JSON.parse(text)).toEqual(last()[2].meta);
+});

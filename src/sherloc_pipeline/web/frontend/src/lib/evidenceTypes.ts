@@ -23,4 +23,5 @@ export interface EvidenceDisplay {
   divisor: number | null;
   offset: number;
   scalable: boolean;
+  normalization: 'native' | 'fixed_window_maximum';
 }

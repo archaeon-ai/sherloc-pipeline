@@ -102,3 +102,10 @@ describe('pipeline comparison snapshots', () => {
     expect(displayTrace(evidenceTrace(other)!, 'raman_shift')).toBeNull();
   });
 });
+
+it('keeps pin colors distinct after removing a non-last trace and pinning another', () => {
+  for (let i = 0; i < 3; i++) pinTrace(evidenceTrace(snapshot(i))!, 'session:team:invented');
+  removeTrace(get(pinnedTraces)[0].id);
+  pinTrace(evidenceTrace(snapshot(3))!, 'session:team:invented');
+  expect(new Set(get(pinnedTraces).map(trace => trace.color)).size).toBe(3);
+});

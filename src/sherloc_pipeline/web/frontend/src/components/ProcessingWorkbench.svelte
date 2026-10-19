@@ -539,14 +539,13 @@
     }
   }
 
-  function getPlotTitle(): string {
-    const base = `${scan?.target ?? 'Unknown'} Sol ${scan?.sol_number ?? ''} ${scan?.scan_name ?? ''}`;
-    if (selectionMode === 'point' && selectedPointIdx !== null) {
-      return `${base} — Point ${selectedPointIdx}`;
-    }
-    if (selectionMode === 'subset') {
-      return `${base} — ${selectedIndices.length} pts`;
-    }
+  function getPlotTitle(snapshot: ProcessingSnapshot | null): string {
+    const source = snapshot?.trace?.source;
+    const selection = snapshot?.trace?.selection;
+    const base = `${source?.target ?? 'Unknown'} Sol ${source?.sol ?? ''} ${source?.scan_name ?? ''}`;
+    const indices = Array.isArray(selection?.indices) ? selection.indices : [];
+    if (selection?.mode === 'point') return `${base} — Point ${indices[0] ?? '?'}`;
+    if (selection?.mode === 'subset') return `${base} — ${indices.length} pts`;
     return base;
   }
 </script>
@@ -758,7 +757,7 @@
               {residual}
               showRaw={currentStage !== 'raw'}
               showResidual={showFit && residual !== null}
-              title={getPlotTitle()}
+              title={getPlotTitle(currentState)}
               height={480}
               {selectionMode}
               {selectedIndices}

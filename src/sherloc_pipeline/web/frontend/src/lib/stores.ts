@@ -2,7 +2,7 @@
 // Svelte stores for shared application state
 // ============================================================
 
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { processingState, undoStack, pointSelection } from './processingStore';
 import { clearEvidence } from './evidenceStore';
 import { resetMapState } from './stores/mapStore';
@@ -72,13 +72,17 @@ export function clearSessionState(): void {
 let evidenceTier: string | null = null;
 appConfig.subscribe(config => {
   const tier = config?.tier ?? null;
-  if (tier !== evidenceTier) clearEvidence();
+  if (tier === evidenceTier) return;
   evidenceTier = tier;
+  if (get(scienceAuthorized)) clearSessionState();
+  else clearEvidence();
 });
 let evidenceAccess = 'internal';
 accessMode.subscribe(mode => {
-  if (mode !== evidenceAccess) clearEvidence();
+  if (mode === evidenceAccess) return;
   evidenceAccess = mode;
+  if (get(scienceAuthorized)) clearSessionState();
+  else clearEvidence();
 });
 
 // --- Derived ---

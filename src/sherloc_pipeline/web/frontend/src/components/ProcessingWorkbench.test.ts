@@ -20,7 +20,7 @@ import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
 import { clearEvidence, pinnedTraces } from '../lib/evidenceStore';
-import { accessMode, clearSessionState } from '../lib/stores';
+import { accessMode, appConfig, scienceAuthorized, clearSessionState } from '../lib/stores';
 import type { BadpixResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
@@ -1221,7 +1221,15 @@ it('public-tier JSON and CSV headers exclude private fields planted in source ro
 });
 
 
+function syntheticSpectrum(intensity: number[], overrides: Partial<SpectrumResponse> = {}): SpectrumResponse {
+  return fakeSpectrum(intensity, { ...overrides, provenance: {
+    calibration_version: 'synthetic-calibration', wavenumber_unit: 'cm-1',
+    intensity_unit: 'synthetic-unit', ...overrides.provenance,
+  } });
+}
+
 describe('ProcessingWorkbench evidence session boundaries', () => {
+  beforeEach(() => { getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A)); });
   it('retains a pin across scans of the same target and clears it for a new target', async () => {
     const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await flush();
@@ -1241,7 +1249,7 @@ describe('ProcessingWorkbench evidence session boundaries', () => {
     getAvg.mockReturnValue(new Promise(done => { resolve = done; }));
     render(ProcessingWorkbench, { scanId: SCAN_ID });
     await flush(); clearSessionState();
-    resolve(fakeSpectrum(INTENSITY_STALE)); await flush();
+    resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
     expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
   });
 
@@ -1261,17 +1269,17 @@ describe('ProcessingWorkbench evidence session boundaries', () => {
     let resolve = (_value: SpectrumResponse) => {};
     getAvg.mockReturnValueOnce(new Promise(done => { resolve = done; }));
     await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'mean' } });
-    getAvg.mockResolvedValueOnce(fakeSpectrum(INTENSITY_NEW));
+    getAvg.mockResolvedValueOnce(syntheticSpectrum(INTENSITY_NEW));
     await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'median' } });
     await flush();
     await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
-    resolve(fakeSpectrum(INTENSITY_STALE)); await flush();
+    resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
     expect(get(pinnedTraces)[0].snapshot.raman.intensity).toEqual(INTENSITY_NEW);
     expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
   });
 
   it('mounts and exports a wavelength-only committed spectrum', async () => {
-    getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_A, { wavenumber: [], wavelength: [280, 300, 320],
+    getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A, { wavenumber: [], wavelength: [280, 300, 320],
       provenance: { calibration_version: null, wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: 'synthetic', region: 'R2' } }));
     const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await flush();
@@ -1281,4 +1289,20 @@ describe('ProcessingWorkbench evidence session boundaries', () => {
     expect(call[1][0].x).toEqual([280, 300, 320]);
     expect(call[2].xaxis.title.text).toBe('Wavelength (nm)');
   });
+});
+
+
+it.each(['tier', 'access'])('invalidates an in-flight spectrum on an authorized %s transition', async boundary => {
+  accessMode.set('internal');
+  appConfig.set({ tier: 'team' } as import('../lib/types').ConfigResponse);
+  scienceAuthorized.set(true);
+  let resolve = (_value: SpectrumResponse) => {};
+  getAvg.mockReturnValue(new Promise(done => { resolve = done; }));
+  render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await flush();
+  if (boundary === 'tier') appConfig.set({ tier: 'public' } as import('../lib/types').ConfigResponse);
+  else accessMode.set('public');
+  resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
+  expect(get(scienceAuthorized)).toBe(false);
+  expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
 });

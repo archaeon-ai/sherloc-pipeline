@@ -20,6 +20,10 @@
     ? 'emission_wavelength' : snapshot?.raman.wavenumber.length ? 'raman_shift' : 'emission_wavelength';
   $: domain = (view === 'emission' ? 'emission_wavelength' : view === 'processing' ? nativeDomain : 'raman_shift') as EvidenceDomain;
   $: displays = comparisonDisplays(primary, $pinnedTraces, domain, view === 'stacked');
+  $: committedSelection = snapshot?.trace?.selection;
+  $: committedMode = (committedSelection?.mode ?? 'average') as 'average' | 'subset' | 'point';
+  $: committedIndices = Array.isArray(committedSelection?.indices) ? committedSelection.indices as number[] : [];
+  $: committedAverage = snapshot?.trace?.provenance.averaging_method ?? 'unknown';
   $: comparing = view !== 'processing';
 </script>
 
@@ -53,7 +57,10 @@
     </p>
   {/if}
   <RamanView bind:this={plot} {...$$restProps} xDomain={domain} traceIdentity={primary?.id ?? ''}
-    bind:showBadpix evidenceMode={comparing}
+    selectionMode={committedMode} selectedIndices={committedIndices}
+    selectedPointIdx={committedMode === 'point' ? committedIndices[0] ?? null : null}
+    nPoints={Number(committedSelection?.n_points ?? committedIndices.length)} averagingMethod={committedAverage}
+    processingTrace={primary} bind:showBadpix evidenceMode={comparing}
     comparisonTraces={comparing ? $pinnedTraces : []} primaryTrace={comparing ? primary : null}
     stacked={view === 'stacked'} {theme} on:viewRangeChange />
 </section>

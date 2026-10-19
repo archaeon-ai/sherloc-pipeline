@@ -58,7 +58,7 @@ export function pinTrace(trace: EvidenceTrace, expectedContext: string): boolean
   if (expectedContext !== context) return false;
   const current = get(pins);
   if (current.some(item => item.id === trace.id) || current.length >= MAX_PINNED_TRACES) return false;
-  pins.set([...current, freeze({ ...copy(trace), color: colors[current.length] })]);
+  pins.set([...current, freeze({ ...copy(trace), color: colors.find(color => !current.some(item => item.color === color))! })]);
   return true;
 }
 
@@ -87,7 +87,7 @@ export function displayTrace(trace: EvidenceTrace, domain: EvidenceDomain, offse
     if (Number.isFinite(v) && v >= window[0] && v <= window[1] && Number.isFinite(original[i])) maximum = Math.max(maximum, original[i]);
   });
   const divisor = Number.isFinite(maximum) && maximum > 0 ? maximum : null;
-  return { trace, domain, x, original, breaks, divisor, scalable: divisor !== null, offset,
+  return { trace, domain, x, original, breaks, divisor, scalable: divisor !== null, normalization: 'fixed_window_maximum', offset,
     displayed: original.map(y => y / (divisor ?? 1) + offset) };
 }
 
@@ -101,7 +101,7 @@ export function evidenceExport(displays: EvidenceDisplay[]) {
   return { schema_version: 'pipeline-evidence-1', traces: displays.map(item => ({
     label: item.trace.label, domain: item.domain, color: item.trace.color,
     snapshot: item.trace.snapshot, annotations: item.trace.annotations, breaks: item.breaks,
-    display: { divisor: item.divisor, scalable: item.scalable, offset: item.offset },
+    display: { divisor: item.divisor, scalable: item.scalable, offset: item.offset, normalization: item.normalization },
     x: item.x, original: item.original, displayed: item.displayed,
   })) };
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
   import type { EvidenceDomain, EvidenceTheme, EvidenceTrace } from '../lib/evidenceTypes';
-  import { comparisonDisplays, evidenceExport } from '../lib/evidenceStore';
+  import { comparisonDisplays, displayTrace, evidenceExport } from '../lib/evidenceStore';
   import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
@@ -45,6 +45,7 @@
 
   export let xDomain: EvidenceDomain | null = null;
   export let traceIdentity = '';
+  export let processingTrace: EvidenceTrace | null = null;
   export let evidenceMode = false;
   export let primaryTrace: EvidenceTrace | null = null;
   export let comparisonTraces: EvidenceTrace[] = [];
@@ -166,7 +167,10 @@
       previousViewKey = viewKey;
     }
     if (evidenceMode || primaryTrace || comparisonTraces.length) { renderComparisons(viewKey); return; }
-    figureEvidence = null;
+    const nativeDisplay = processingTrace ? displayTrace(processingTrace, domain) : null;
+    figureEvidence = nativeDisplay ? evidenceExport([{ ...nativeDisplay,
+      normalization: 'native', divisor: null, scalable: false, offset: 0, displayed: nativeDisplay.original,
+    }]) : null;
     if (xData.length === 0) { Plotly.react(plotDiv, [], {}, { responsive: true }); return; }
 
     // Preserve current axis ranges from interactive zoom/pan,
@@ -442,9 +446,10 @@
     }
 
     const dark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-    const mainLayout: Partial<Plotly.Layout> & { _nChannels?: number; _viewKey?: string } = {
+    const mainLayout: Partial<Plotly.Layout> & { _nChannels?: number; _viewKey?: string; meta?: typeof figureEvidence } = {
       _nChannels: xData.length,
       _viewKey: viewKey,
+      meta: figureEvidence,
       title: title ? { text: title, font: { size: 14 } } : undefined,
       xaxis: {
         title: { text: xLabel, font: { size: 12 } },
@@ -462,7 +467,7 @@
             : { autorange: true }),
       },
       yaxis: {
-        title: { text: 'Intensity (counts)', font: { size: 12 } },
+        title: { text: `Intensity (${processingTrace ? processingTrace.snapshot.trace.provenance.intensity_unit ?? 'unknown unit' : 'counts'})`, font: { size: 12 } },
         tickfont: { family: 'JetBrains Mono, monospace', size: 10 },
         gridcolor: '#f1f5f9',
         showgrid: showGridlines,
@@ -475,7 +480,7 @@
           : { autorange: true }),
       },
       margin: { l: 65, r: 20, t: title ? 40 : 20, b: 50 },
-      height: showResidual && residual ? height * 0.7 : height,
+      height: !useWavelength && showResidual && residual ? height * 0.7 : height,
       shapes,
       annotations,
       hovermode: 'x unified',
@@ -508,7 +513,7 @@
       displaylogo: false,
     };
 
-    if (showResidual && showOverlayResidual && residual) {
+    if (!useWavelength && showResidual && showOverlayResidual && residual) {
       // Subplot: main spectrum + residual below
       const residualTrace: Plotly.Data = {
         x: xData,
@@ -559,8 +564,7 @@
           tickcolor: '#cbd5e1',
           domain: [0, 1],
           anchor: 'y2' as Plotly.YAxisName,
-          range: [640, 4200],
-          autorange: false,
+          ...(_validRange(xMin, xMax) ? { range: [Number(xMin), Number(xMax)], autorange: false } : { autorange: true }),
         },
         yaxis2: {
           title: { text: 'Residual', font: { size: 12 } },
@@ -648,14 +652,15 @@
   {:else}
     <div class="axis-controls">
       <span class="axis-label">x:</span>
-      <input class="axis-input" type="number" bind:value={xMin} on:change={onXRangeInputChange} placeholder="640" />
+      <input class="axis-input" type="number" bind:value={xMin} on:change={onXRangeInputChange} placeholder={useWavelength ? '280' : '640'} />
       <span class="axis-sep">-</span>
-      <input class="axis-input" type="number" bind:value={xMax} on:change={onXRangeInputChange} placeholder="4200" />
+      <input class="axis-input" type="number" bind:value={xMax} on:change={onXRangeInputChange} placeholder={useWavelength ? '350' : '4200'} />
       <span class="axis-label" style="margin-left: 8px">y:</span>
       <input class="axis-input" type="number" bind:value={yMin} on:change={renderPlot} placeholder="auto" />
       <span class="axis-sep">-</span>
       <input class="axis-input" type="number" bind:value={yMax} on:change={renderPlot} placeholder="auto" />
     </div>
+    {#if !evidenceMode}
     <div class="overlay-toggles">
       <label class="toggle-label"><input type="checkbox" bind:checked={showGridlines} on:change={renderPlot} /> Grid</label>
       <label class="toggle-label"><input type="checkbox" bind:checked={showPointLabel} on:change={renderPlot} /> Point label</label>
@@ -701,6 +706,7 @@
       <button class="btn-export" on:click={() => downloadAs('png')} title="Download as PNG">PNG</button>
       <button class="btn-export" on:click={() => downloadAs('svg')} title="Download as SVG">SVG</button>
     </div>
+    {/if}
   {/if}
 </div>
 
