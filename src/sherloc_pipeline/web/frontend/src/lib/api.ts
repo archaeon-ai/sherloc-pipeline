@@ -28,6 +28,7 @@ import type {
 } from './types';
 
 import { bootstrapAuthReady, getSession } from './auth';
+import { clearSessionState } from './stores';
 import type { DisplayPoint, MapJobResults, VoronoiGeometry } from './types/map';
 import type { MapJobStatus } from './mapProgress';
 
@@ -98,6 +99,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
+    if (res.status === 401) clearSessionState();
     let errorClass = `HTTP ${res.status}`;
     let detail: string | undefined;
     try {

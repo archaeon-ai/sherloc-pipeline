@@ -3,6 +3,8 @@
 // ============================================================
 
 import { writable, derived } from 'svelte/store';
+import { processingState, undoStack, pointSelection } from './processingStore';
+import { resetMapState } from './stores/mapStore';
 import type {
   BaselineParams,
   FitResponse,
@@ -16,6 +18,7 @@ export const accessMode = writable<'internal' | 'public'>('internal');
 // Scan Browser session restoration waits for this signal so it cannot replace
 // a bare startup route before App applies the public-mode default redirect.
 export const accessModeResolved = writable(false);
+export const scienceAuthorized = writable(false);
 
 // --- Route ---
 export const currentHash = writable(window.location.hash || '#/');
@@ -41,6 +44,23 @@ export const appConfig = writable<ConfigResponse | null>(null);
 // legacy backend that omits the block keeps the tab visible — production
 // templates opt out explicitly via SHERLOC_FEATURE_PDS_BROWSER=disabled.
 export const features = writable<FeaturesConfig>({ pds_browser: true });
+
+export function clearSessionState(): void {
+  scienceAuthorized.set(false);
+  appConfig.set(null);
+  features.set({ pds_browser: false });
+  accessMode.set('public');
+  accessModeResolved.set(false);
+  currentHash.set('#/');
+  lastFitResult.set(null);
+  healthStatus.set(null);
+  baselineParams.set({ method: 'aspls', lam: 1000000.0, max_iter: 10 });
+  processingState.set(null);
+  undoStack.set([]);
+  pointSelection.set({ mode: 'average' });
+  resetMapState();
+  sessionStorage.removeItem('sherloc.scanBrowserHash');
+}
 
 // --- Derived ---
 export const healthIndicator = derived(healthStatus, ($h) => {

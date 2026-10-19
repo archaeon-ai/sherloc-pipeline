@@ -4,13 +4,14 @@ import hashlib
 import json
 import os
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 
 from sherloc_pipeline.web.schemas import (
     API_SCHEMA_VERSION,
     AccessModeResponse,
     AuthConfig,
     BootstrapConfigResponse,
+    CapabilitiesConfig,
     ConfigResponse,
     FeaturesConfig,
 )
@@ -72,25 +73,27 @@ def _build_auth_config() -> AuthConfig:
 
 @router.get("/config/bootstrap", response_model=BootstrapConfigResponse)
 def get_bootstrap_config() -> BootstrapConfigResponse:
-    """The auth and feature blocks only, for the SPA before login (§13.4).
+    """Authentication negotiation only, for the SPA before login (§13.4).
 
     Nothing else here is public: the full configuration is /api/config,
     which requires an authenticated request.
     """
     return BootstrapConfigResponse(
         auth=_build_auth_config(),
-        features=FeaturesConfig(pds_browser=feature_pds_browser_enabled()),
     )
 
 
 @protected_router.get("/config", response_model=ConfigResponse)
-def get_config(request: Request) -> ConfigResponse:
+def get_config(request: Request, response: Response) -> ConfigResponse:
     """Return the currently active fitting and preprocessing configuration.
 
     Also returns an ``auth`` block (§13.4) so the SPA can bootstrap the
     correct auth backend at runtime without a rebuild.
     """
     config = request.app.state.config
+    policy = request.app.state.feature_policy
+    access_mode = request.app.state.access_mode
+    response.headers["Cache-Control"] = "private, no-store"
 
     fitting_json = json.dumps(config.fitting, sort_keys=True, default=str)
     config_hash = f"sha256:{hashlib.sha256(fitting_json.encode()).hexdigest()[:12]}"
@@ -113,6 +116,13 @@ def get_config(request: Request) -> ConfigResponse:
         calibration=calibration,
         auth=_build_auth_config(),
         features=FeaturesConfig(pds_browser=feature_pds_browser_enabled()),
+        access_mode=access_mode,
+        tier="public" if access_mode == "public" else "team",
+        capabilities=CapabilitiesConfig(
+            references=policy.references.mode != "off",
+            identification=policy.identification.enabled,
+            experimental_candidates=policy.identification.experimental_candidates,
+        ),
     )
 
 

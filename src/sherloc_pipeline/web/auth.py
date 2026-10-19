@@ -411,10 +411,14 @@ def require_authenticated_request(request: Request) -> TokenClaims:
     - Token valid + missing required role         → 403 (G18.11.role-required, .no-role)
     """
     mode = os.environ.get("SHERLOC_AUTH_MODE", "cf-access")
-    return _authenticate_token(_extract_request_token(request, mode), mode)
+    return _authenticate_token(
+        _extract_request_token(request, mode), mode, getattr(request.app.state, "access_mode", None),
+    )
 
 
-def _authenticate_token(token: Optional[str], mode: str) -> TokenClaims:
+def _authenticate_token(
+    token: Optional[str], mode: str, access_mode: Optional[str] = None,
+) -> TokenClaims:
     """Validate ``token`` and the role-per-API for ``mode``.
 
     Shared by the HTTP dependency and the WebSocket handshake; raises
@@ -469,7 +473,7 @@ def _authenticate_token(token: Optional[str], mode: str) -> TokenClaims:
 
     # §13.3.7 role-per-API enforcement; cf-access exempt per §13.6.
     if mode != "cf-access":
-        access_mode = os.environ.get("SHERLOC_ACCESS_MODE", "internal")
+        access_mode = access_mode or os.environ.get("SHERLOC_ACCESS_MODE", "internal")
         required_role = required_role_for_access_mode(access_mode)
         if required_role and required_role not in claims.roles:
             logger.warning(
@@ -536,7 +540,7 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
         WS_BEARER_PROTOCOL if mode not in ("cf-access", "dev") and token else None
     )
     try:
-        _authenticate_token(token, mode)
+        _authenticate_token(token, mode, getattr(websocket.app.state, "access_mode", None))
     except HTTPException as exc:
         code = {
             401: WS_CLOSE_UNAUTHENTICATED,

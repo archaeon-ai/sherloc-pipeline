@@ -10,6 +10,15 @@ from sherloc_pipeline.web.data_access import DataAccessService
 from tests.unit.web.conftest import SCAN_UUID, SOL_NUMBER
 
 
+def synthetic_release_metadata(product_id):
+    return {"version": "synthetic-v1", "public_release": {
+        "schema_version": "public-release-1", "eligible": True,
+        "product_id": product_id, "version_id": "synthetic-v1",
+        "source_sha256": "a" * 64, "index_sha256": "b" * 64,
+        "release_id": "synthetic-release",
+    }}
+
+
 SCAN_SOURCE_CASES = [
     pytest.param({"data_source": "pds4"}, id="pds4"),
     pytest.param({"data_source": "loupe"}, id="loupe"),
@@ -141,8 +150,8 @@ def _make_public_client(monkeypatch=None):
                 scan_id="100_Target_A_detail_1",
                 sclk_start=100000,
                 n_points=5,
-                n_channels=2148,
-                laser_wavelength_nm=248.5794,
+                n_channels=7,
+                laser_wavelength_nm=211.0,
                 data_source="loupe",
                 target_type="mars_target",
                 scan_class="primary",
@@ -156,11 +165,12 @@ def _make_public_client(monkeypatch=None):
                 sol_number=200,
                 scan_name="detail_2",
                 target="Target_B",
-                scan_id="200_Target_B_detail_2",
+                scan_id="synthetic-public-product",
+                pds4_metadata=synthetic_release_metadata("synthetic-public-product"),
                 sclk_start=200000,
                 n_points=3,
-                n_channels=2148,
-                laser_wavelength_nm=248.5794,
+                n_channels=7,
+                laser_wavelength_nm=211.0,
                 data_source="pds4",
                 target_type="mars_target",
                 scan_class="primary",
@@ -223,7 +233,11 @@ class TestValidateScanAccess:
     @pytest.mark.parametrize("source_attributes", SCAN_SOURCE_CASES)
     def test_validate_scan_access_public_allowlist(self, source_attributes):
         svc = DataAccessService(access_mode="public")
-        scan = SimpleNamespace(**source_attributes)
+        scan = SimpleNamespace(
+            scan_id="synthetic-product",
+            pds4_metadata=synthetic_release_metadata("synthetic-product"),
+            **source_attributes,
+        )
         if source_attributes.get("data_source") == "pds4":
             svc.validate_scan_access(scan)
             return
@@ -281,6 +295,7 @@ def allowlist_session():
                 sol_number=42424,
                 scan_name=name,
                 scan_id=f"invented-allowlist-{name}",
+                pds4_metadata=synthetic_release_metadata(f"invented-allowlist-{name}"),
                 sclk_start=index,
                 n_points=0,
                 n_channels=1,

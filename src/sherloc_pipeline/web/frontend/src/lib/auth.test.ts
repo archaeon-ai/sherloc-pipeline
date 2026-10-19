@@ -213,3 +213,37 @@ describe('openWithWsAuth', () => {
     expect(open).toHaveBeenCalledWith();
   });
 });
+
+describe('Session cleanup', () => {
+  it('rejects an unknown bootstrap auth mode', async () => {
+    await expect(bootstrapAuth({ auth_mode: 'typo' } as never)).rejects.toThrow('Unknown authentication mode');
+  });
+
+  it('clears science, processing, undo, map and navigation stores on logout', async () => {
+    const stores = await import('./stores');
+    const processing = await import('./processingStore');
+    const map = await import('./stores/mapStore');
+    const client = fakeClient();
+    client.isAuthenticated.mockResolvedValue(true);
+    vi.mocked(createAuth0Client).mockResolvedValue(client as never);
+    const session = await bootstrapAuth(cfg);
+    stores.scienceAuthorized.set(true);
+    stores.lastFitResult.set({ synthetic: true } as never);
+    processing.processingState.set({ synthetic: true } as never);
+    processing.undoStack.set([{ synthetic: true }] as never);
+    processing.pointSelection.set({ mode: 'point', pointIdx: 2 } as never);
+    map.mapScanId.set('synthetic-scan');
+    map.mapFittedResultsCache.set([{ synthetic: true }] as never);
+    sessionStorage.setItem('sherloc.scanBrowserHash', '#/?target=Synthetic');
+    await session.logout();
+    const { get } = await import('svelte/store');
+    expect(get(stores.scienceAuthorized)).toBe(false);
+    expect(get(stores.lastFitResult)).toBeNull();
+    expect(get(processing.processingState)).toBeNull();
+    expect(get(processing.undoStack)).toEqual([]);
+    expect(get(processing.pointSelection)).toEqual({ mode: 'average' });
+    expect(get(map.mapScanId)).toBeNull();
+    expect(get(map.mapFittedResultsCache)).toEqual([]);
+    expect(sessionStorage.getItem('sherloc.scanBrowserHash')).toBeNull();
+  });
+});

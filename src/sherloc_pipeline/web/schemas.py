@@ -561,6 +561,12 @@ class FeaturesConfig(BaseModel):
     pds_browser: bool = True
 
 
+class CapabilitiesConfig(BaseModel):
+    references: bool = False
+    identification: bool = False
+    experimental_candidates: bool = False
+
+
 class ConfigResponse(BaseModel):
     schema_version: str = API_SCHEMA_VERSION
     config_hash: Optional[str] = None
@@ -570,6 +576,9 @@ class ConfigResponse(BaseModel):
     calibration: Dict[str, Any]
     auth: AuthConfig
     features: FeaturesConfig = FeaturesConfig()
+    access_mode: Literal["internal", "public"]
+    tier: Literal["team", "public"]
+    capabilities: CapabilitiesConfig = CapabilitiesConfig()
 
 
 class BootstrapConfigResponse(BaseModel):
@@ -577,7 +586,6 @@ class BootstrapConfigResponse(BaseModel):
 
     schema_version: str = API_SCHEMA_VERSION
     auth: AuthConfig
-    features: FeaturesConfig = FeaturesConfig()
 
 
 # ---------------------------------------------------------------------------

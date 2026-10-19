@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from sherloc_pipeline.core import calibration
 from sherloc_pipeline.database.models import ScanORM
 from sherloc_pipeline.web.routes import plots
+from tests.unit.web.test_data_access import synthetic_release_metadata
 
 
 @pytest.fixture
@@ -80,7 +81,10 @@ async def test_public_loupe_plot_is_forbidden_before_rendering(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("access_mode,data_source", [("public", "pds4"), ("internal", "loupe")])
 async def test_authorized_plot_still_renders(access_mode, data_source, plot_stubs):
-    scan = SimpleNamespace(data_source=data_source, target="Invented", scan_name="sample")
+    scan = SimpleNamespace(
+        data_source=data_source, target="Invented", scan_name="sample",
+        scan_id="synthetic-product", pds4_metadata=synthetic_release_metadata("synthetic-product"),
+    )
     app, session = _plot_app(access_mode, scan)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/plots/invented-scan")

@@ -95,6 +95,10 @@ def create_app(
     if pairing_error:
         raise ValueError(pairing_error)
 
+    from sherloc_pipeline.web.feature_policy import load_feature_policy
+
+    feature_policy = load_feature_policy(access_mode)
+
     if access_mode == "public":
         # Validate against whichever source the app will actually use.
         db_str = str(engine.url) if engine is not None else str(database_path or "")
@@ -161,6 +165,7 @@ def create_app(
     app.state.map_registry = map_registry
     app.state.map_executor = map_executor
     app.state.access_mode = access_mode
+    app.state.feature_policy = feature_policy
 
     # CORS — origins are env-driven. Default empty (no cross-origin).
     # Set SHERLOC_CORS_ALLOWED_ORIGINS=https://example.com,https://other.example.com

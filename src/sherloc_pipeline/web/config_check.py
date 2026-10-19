@@ -218,6 +218,12 @@ def validate() -> List[str]:
         errors.append(pairing_error)
     _check_alembic_target(errors)
     _check_r2(errors)
+    from sherloc_pipeline.web.feature_policy import load_feature_policy
+
+    try:
+        load_feature_policy(os.environ.get("SHERLOC_ACCESS_MODE", "internal"))
+    except ValueError as exc:
+        errors.append(f"invalid feature policy: {exc}")
     return errors
 
 

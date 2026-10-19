@@ -1,46 +1,123 @@
-// main.ts bootstrap: an Auth0 error return mounts the access page, not the app (#308).
+// Authentication and tier authorization must finish before science UI mounts.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { get } from 'svelte/store';
 
-const authState = vi.hoisted(() => ({ error: null as null | { kind: string; returnTo: string } }));
+const state = vi.hoisted(() => ({
+  error: null as null | { kind: string; returnTo: string },
+  authenticated: true, redirecting: false, bootstrapFails: false,
+}));
 
 vi.mock('./lib/auth', () => ({
-  bootstrapAuth: vi.fn().mockResolvedValue({}),
-  redirectingToLogin: () => false,
-  authCallbackError: () => authState.error,
+  bootstrapAuth: vi.fn(async () => {
+    if (state.bootstrapFails) throw new Error('synthetic auth failure');
+    return { isAuthenticated: async () => state.authenticated };
+  }),
+  redirectingToLogin: () => state.redirecting,
+  authCallbackError: () => state.error,
   getSession: () => null,
 }));
+vi.mock('./lib/api', () => ({ getConfig: vi.fn() }));
 vi.mock('./App.svelte', () => ({
   default: class {
+    node = document.createElement('div');
     constructor({ target }: { target: HTMLElement }) {
-      const stub = document.createElement('div');
-      stub.dataset.testid = 'app-stub';
-      target.appendChild(stub);
+      this.node.dataset.testid = 'app-stub';
+      target.appendChild(this.node);
     }
+    $destroy() { this.node.remove(); }
   },
 }));
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
+  vi.clearAllMocks();
   document.body.innerHTML = '<div id="app"></div>';
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ auth: {}, features: null }) }));
+  state.error = null;
+  state.authenticated = true;
+  state.redirecting = false;
+  state.bootstrapFails = false;
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ auth: { auth_mode: 'cf-access' } }) }));
+  const { getConfig } = await import('./lib/api');
+  vi.mocked(getConfig).mockResolvedValue({
+    access_mode: 'internal', tier: 'team',
+    capabilities: { references: false, identification: false, experimental_candidates: false },
+  } as never);
 });
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-  authState.error = null;
-});
+afterEach(() => { vi.unstubAllGlobals(); });
+
+async function mount() { return (await import('./main')).default; }
+function expectClosed() { expect(document.querySelector('[data-testid="app-stub"]')).toBeNull(); }
 
 describe('main.ts bootstrap', () => {
   it('mounts the access page when Auth0 refused the sign-in', async () => {
-    authState.error = { kind: 'team_required', returnTo: '/' };
-    await (await import('./main')).default;
+    state.error = { kind: 'team_required', returnTo: '/' };
+    await mount();
     expect(document.querySelector('h1')?.textContent).toBe('Team membership required');
-    expect(document.querySelector('[data-testid="app-stub"]')).toBeNull();
+    expectClosed();
   });
 
-  it('mounts the app otherwise', async () => {
-    await (await import('./main')).default;
+  it('mounts only after the authenticated config check succeeds', async () => {
+    const { getConfig } = await import('./lib/api');
+    let resolve!: (value: never) => void;
+    vi.mocked(getConfig).mockReturnValue(new Promise((r) => { resolve = r; }));
+    const pending = mount();
+    await vi.waitFor(() => expect(getConfig).toHaveBeenCalled());
+    expectClosed();
+    resolve({ access_mode: 'public', tier: 'public', capabilities: {
+      references: false, identification: false, experimental_candidates: false,
+    } } as never);
+    await pending;
     expect(document.querySelector('[data-testid="app-stub"]')).not.toBeNull();
-    expect(document.querySelector('h1')).toBeNull();
+  });
+
+  it.each([401, 403, 503])('fails closed on authenticated check failure %s', async (status) => {
+    const { getConfig } = await import('./lib/api');
+    vi.mocked(getConfig).mockRejectedValue(new Error(`synthetic ${status}`));
+    await mount();
+    expectClosed();
+  });
+
+  it.each(['http', 'network', 'invalid-json'])('fails closed on bootstrap %s failure', async (kind) => {
+    vi.stubGlobal('fetch', kind === 'network'
+      ? vi.fn().mockRejectedValue(new Error('synthetic network failure'))
+      : vi.fn().mockResolvedValue({ ok: kind !== 'http', json: async () => { throw new Error('synthetic JSON failure'); } }));
+    await mount();
+    expectClosed();
+  });
+
+  it('fails closed when auth initialization throws', async () => {
+    state.bootstrapFails = true;
+    await mount();
+    expectClosed();
+  });
+
+  it.each([false, true])('does not mount a signed-out visitor (redirect=%s)', async (redirect) => {
+    state.authenticated = false;
+    state.redirecting = redirect;
+    await mount();
+    expectClosed();
+    expect((await import('./lib/api')).getConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { access_mode: 'internal', tier: 'public', capabilities: {} },
+    { access_mode: 'public', tier: 'public', capabilities: { references: true, identification: false, experimental_candidates: false } },
+    { access_mode: 'internal', tier: 'team', capabilities: { references: false, identification: true, experimental_candidates: false } },
+    { access_mode: 'internal', tier: 'team', capabilities: { references: 'false', identification: false, experimental_candidates: false } },
+    { access_mode: 'internal', tier: 'team' },
+  ])('rejects malformed or incompatible effective capabilities', async (config) => {
+    vi.mocked((await import('./lib/api')).getConfig).mockResolvedValue(config as never);
+    await mount();
+    expectClosed();
+  });
+
+  it('destroys mounted science UI and clears stores on sign-out', async () => {
+    await mount();
+    const stores = await import('./lib/stores');
+    stores.clearSessionState();
+    expectClosed();
+    expect(get(stores.appConfig)).toBeNull();
+    expect(get(stores.scienceAuthorized)).toBe(false);
   });
 });

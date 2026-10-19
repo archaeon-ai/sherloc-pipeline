@@ -11,6 +11,7 @@ from typing import Literal
 from sqlalchemy.orm import Query
 
 from sherloc_pipeline.database.models import ScanORM
+from sherloc_pipeline.services.public_release import has_public_release, public_release_expression
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,8 @@ class DataAccessService:
     """
 
     def __init__(self, access_mode: Literal["internal", "public"] = "internal"):
+        if access_mode not in {"internal", "public"}:
+            raise ValueError("unknown access mode")
         self.access_mode = access_mode
 
     @property
@@ -39,7 +42,10 @@ class DataAccessService:
         Missing, null, and unrecognized sources are denied. Internal mode
         permits every source.
         """
-        if self.is_public and getattr(scan, "data_source", None) not in PUBLIC_DATA_SOURCES:
+        if self.is_public and (
+            getattr(scan, "data_source", None) not in PUBLIC_DATA_SOURCES
+            or not has_public_release(scan)
+        ):
             from fastapi import HTTPException
 
             raise HTTPException(
@@ -60,5 +66,5 @@ class DataAccessService:
             The (possibly filtered) query.
         """
         if self.is_public:
-            query = query.filter(ScanORM.data_source.in_(PUBLIC_DATA_SOURCES))
+            query = query.filter(public_release_expression())
         return query

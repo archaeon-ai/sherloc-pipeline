@@ -374,13 +374,19 @@ export interface ConfigResponse {
   };
   auth: AuthConfig;
   features?: FeaturesConfig;
+  access_mode: 'internal' | 'public';
+  tier: 'team' | 'public';
+  capabilities: {
+    references: boolean;
+    identification: boolean;
+    experimental_candidates: boolean;
+  };
 }
 
 /** GET /api/config/bootstrap: the anonymous subset the SPA needs before login. */
 export interface BootstrapConfigResponse {
   schema_version: string;
   auth: AuthConfig;
-  features?: FeaturesConfig;
 }
 
 // --- Auth (§13.4) ---

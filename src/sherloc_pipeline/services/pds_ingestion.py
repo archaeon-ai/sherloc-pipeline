@@ -337,6 +337,7 @@ class PDSIngestionService:
         self,
         pds_db_path: Optional[Path] = None,
         loupe_db_path: Optional[Path] = None,
+        public_release_index: Optional[Path] = None,
     ):
         """Initialize the PDS ingestion service.
 
@@ -345,6 +346,11 @@ class PDSIngestionService:
             loupe_db_path: Optional path to phase.db for target name cross-reference.
                 If None, target names will not be resolved via SCLK lookup.
         """
+        from sherloc_pipeline.services.public_release import PublicReleaseIndex
+
+        self._public_release_index = (
+            PublicReleaseIndex(public_release_index) if public_release_index is not None else None
+        )
         if pds_db_path is None:
             pds_db_path = Path("./phase_pds.db")
 
@@ -704,6 +710,8 @@ class PDSIngestionService:
 
         # Build pds4_metadata JSON blob
         pds4_meta = metadata.to_pds4_metadata_dict()
+        if self._public_release_index is not None:
+            pds4_meta = self._public_release_index.apply(metadata.logical_identifier, pds4_meta)
 
         scan_name = f"pds_{group.sol:04d}_{group.sclk}_{group.obs_id}"
 
