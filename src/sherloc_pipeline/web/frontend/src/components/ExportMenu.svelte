@@ -206,7 +206,7 @@
 
     if (hasBadpix) {
       // 0/1 per served row: 1 where a served position is annotated known-noisy.
-      const badpixCol = new Array<number>(wavenumber.length).fill(0);
+      const badpixCol = new Array<number>(intensity.length).fill(0);
       for (const b of badpix!) {
         if (b.position >= 0 && b.position < badpixCol.length) badpixCol[b.position] = 1;
       }

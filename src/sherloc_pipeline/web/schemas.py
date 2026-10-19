@@ -562,6 +562,7 @@ class FeaturesConfig(BaseModel):
 
 
 class CapabilitiesConfig(BaseModel):
+    evidence_desk: bool = False
     references: bool = False
     identification: bool = False
     experimental_candidates: bool = False

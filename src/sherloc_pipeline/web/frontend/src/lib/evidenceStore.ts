@@ -1,6 +1,6 @@
 import { get, writable } from 'svelte/store';
 import type { ProcessingSnapshot } from './types';
-import type { EvidenceDisplay, EvidenceDomain, EvidenceTrace } from './evidenceTypes';
+import type { EvidenceDisplay, EvidenceDomain, EvidenceTrace, EvidenceTheme } from './evidenceTypes';
 
 // The current selection occupies one of the four comparison slots.
 export const MAX_PINNED_TRACES = 3;
@@ -8,6 +8,11 @@ const pins = writable<EvidenceTrace[]>([]);
 export const pinnedTraces = { subscribe: pins.subscribe };
 let context: string | null = null;
 const colors = ['#2563eb', '#c026d3', '#ea580c'];
+
+export function evidenceColor(trace: EvidenceTrace, theme: EvidenceTheme): EvidenceTrace {
+  const dark = theme === 'dark' || (theme === 'system' && typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  return { ...trace, color: trace.color === '#1e293b' || trace.color === '#e2e8f0' ? (dark ? '#e2e8f0' : '#1e293b') : trace.color };
+}
 
 export function clearEvidence(): void {
   context = null;
@@ -46,7 +51,7 @@ export function evidenceTrace(snapshot: ProcessingSnapshot | null, annotations: 
   if (!validAxis(snapshot.raman.wavenumber) && !validAxis(trace.wavelength)) return null;
   const captured = copy(snapshot) as EvidenceTrace['snapshot'];
   const id = JSON.stringify([trace.source, trace.selection, snapshot.stage,
-    trace.provenance, snapshot.processingChain, snapshot.raman, trace.wavelength, annotations]);
+    trace.region, trace.provenance, snapshot.processingChain, snapshot.raman, trace.wavelength, annotations]);
   return freeze({ id, label: `${trace.source.scan_name ?? trace.source.scan_id ?? 'Pipeline'} · ${JSON.stringify(trace.selection)} · ${snapshot.stage}`,
     snapshot: captured, annotations: copy(annotations), visible: true, color: '#1e293b',
     breaks: y.map((v, i) => !Number.isFinite(v) ||

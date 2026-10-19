@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { navigate, sessionGeneration } from '../lib/stores';
+  import { appConfig, navigate, sessionGeneration } from '../lib/stores';
   import { setEvidenceContext } from '../lib/evidenceStore';
   import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
   import {
@@ -36,12 +36,15 @@
   import PeakTable from './PeakTable.svelte';
 
   import EvidenceDesk from './EvidenceDesk.svelte';
+  import RamanView from './RamanView.svelte';
+  import ExportMenu from './ExportMenu.svelte';
   import AciViewer from './AciViewer.svelte';
 
   export let scanId: string;
   export let queryParams: Record<string, string> = {};
 
   const mountedSession = sessionGeneration;
+  $: evidenceEnabled = $appConfig?.capabilities?.evidence_desk === true;
   let evidenceContextKey = '';
   let scan: ScanDetail | null = null;
   let points: ScanPoint[] = [];
@@ -104,6 +107,7 @@
       .map(item => ({ ...item, position: positions.get(item.channel)! }));
   }
   let showBadpixOverlay = false;
+  $: exportBadpix = showBadpixOverlay && badpix.length > 0 ? badpix : null;
 
   // Drop older annotation requests during region transitions.
   let badpixRequestGen = 0;
@@ -395,6 +399,7 @@
       inputToken: ++rawSnapshotToken,
       stage: 'raw',
       trace: {
+        region: spectrum.region,
         provenance,
         source: { scan_id: spectrum.scan_id, sol: scan?.sol_number ?? null,
           target: scan?.target ?? null, scan_name: scan?.scan_name ?? null,
@@ -500,7 +505,7 @@
 
   // Processing chain update
   function onChainStateUpdate(e: CustomEvent<ProcessingSnapshot>) {
-    if (destroyed || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
+    if (destroyed || mountedSession !== sessionGeneration || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
     const newState = { ...e.detail, trace: rawSnapshot?.trace };
     // Push current state to undo before updating
     if (currentState) {
@@ -548,6 +553,16 @@
     if (selection?.mode === 'subset') return `${base} — ${indices.length} pts`;
     return base;
   }
+  function getLegacyPlotTitle(): string {
+    const base = `${scan?.target ?? 'Unknown'} Sol ${scan?.sol_number ?? ''} ${scan?.scan_name ?? ''}`;
+    if (selectionMode === 'point' && selectedPointIdx !== null) {
+      return `${base} — Point ${selectedPointIdx}`;
+    }
+    if (selectionMode === 'subset') {
+      return `${base} — ${selectedIndices.length} pts`;
+    }
+    return base;
+  }
 </script>
 
 <div class="page-container">
@@ -556,6 +571,19 @@
     <button class="btn-link" on:click={() => navigate('#/')}>Scans</button>
     <span class="breadcrumb-sep">/</span>
     <span>{scan?.target ?? '...'} Sol {scan?.sol_number ?? '...'}</span>
+    {#if !evidenceEnabled}
+      <ExportMenu
+        trace={currentState?.trace ?? null}
+        stage={currentStage}
+        wavenumber={currentWavenumber}
+        intensity={currentIntensity}
+        artifacts={currentState?.artifacts ?? null}
+        spikeMask={effectiveSpikeMask}
+        spikeMethod={effectiveSpikeMethod}
+        badpix={exportBadpix}
+        {processingChain}
+      />
+    {/if}
   </div>
 
   {#if error}
@@ -737,40 +765,81 @@
             </div>
           </div>
           <div class="card-body">
-            <EvidenceDesk
-              snapshot={currentState}
-              contextKey={evidenceContextKey}
-              wavenumber={currentWavenumber}
-              intensity={currentIntensity}
-              rawIntensity={rawSnapshot?.raman.intensity ?? []}
-              stage={currentStage}
-              spikeMask={effectiveSpikeMask}
-              spikeMethod={effectiveSpikeMethod}
-              {badpix}
-              bind:showBadpix={showBadpixOverlay}
-              background={currentState?.artifacts?.background ?? null}
-              backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
-              baseline={baselineOverlay}
-              baselineRange={appliedBaselineRange}
-              {fitCurve}
-              peaks={showFit ? fitPeaks : []}
-              {residual}
-              showRaw={currentStage !== 'raw'}
-              showResidual={showFit && residual !== null}
-              title={getPlotTitle(currentState)}
-              height={480}
-              {selectionMode}
-              {selectedIndices}
-              {selectedPointIdx}
-              nPoints={scan?.n_points ?? 0}
-              {fitRange}
-              wavelength={currentState?.trace?.wavelength ?? null}
-              region={selectedRegion}
-              {averagingMethod}
-              on:viewRangeChange={(e) => {
-                if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
-              }}
-            />
+            {#if evidenceEnabled}
+              <EvidenceDesk
+                snapshot={currentState}
+                contextKey={evidenceContextKey}
+                wavenumber={currentWavenumber}
+                intensity={currentIntensity}
+                rawIntensity={rawSnapshot?.raman.intensity ?? []}
+                stage={currentStage}
+                spikeMask={effectiveSpikeMask}
+                spikeMethod={effectiveSpikeMethod}
+                {badpix}
+                bind:showBadpix={showBadpixOverlay}
+                background={currentState?.artifacts?.background ?? null}
+                backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
+                baseline={baselineOverlay}
+                baselineRange={appliedBaselineRange}
+                {fitCurve}
+                peaks={showFit ? fitPeaks : []}
+                {residual}
+                showRaw={currentStage !== 'raw'}
+                showResidual={showFit && residual !== null}
+                title={getPlotTitle(currentState)}
+                height={480}
+                {selectionMode}
+                {selectedIndices}
+                {selectedPointIdx}
+                nPoints={scan?.n_points ?? 0}
+                {fitRange}
+                wavelength={currentState?.trace?.wavelength ?? null}
+                region={selectedRegion}
+                {averagingMethod}
+                on:viewRangeChange={(e) => {
+                  if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
+                }}
+              />
+            {:else}
+              {#if currentWavenumber.length > 0}
+                <RamanView
+                  wavenumber={currentWavenumber}
+                  intensity={currentIntensity}
+                  rawIntensity={rawSnapshot?.raman.intensity ?? []}
+                  stage={currentStage}
+                  spikeMask={effectiveSpikeMask}
+                  spikeMethod={effectiveSpikeMethod}
+                  {badpix}
+                  bind:showBadpix={showBadpixOverlay}
+                  background={currentState?.artifacts?.background ?? null}
+                  backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
+                  baseline={baselineOverlay}
+                  baselineRange={appliedBaselineRange}
+                  {fitCurve}
+                  peaks={showFit ? fitPeaks : []}
+                  {residual}
+                  showRaw={currentStage !== 'raw'}
+                  showResidual={showFit && residual !== null}
+                  title={getLegacyPlotTitle()}
+                  height={480}
+                  {selectionMode}
+                  {selectedIndices}
+                  {selectedPointIdx}
+                  nPoints={scan?.n_points ?? 0}
+                  {fitRange}
+                  wavelength={spectrum?.wavelength ?? null}
+                  region={selectedRegion}
+                  {averagingMethod}
+                  on:viewRangeChange={(e) => {
+                    if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
+                  }}
+                />
+              {:else}
+                <div class="empty-state" style="padding: 60px">
+                  No spectrum data available
+                </div>
+              {/if}
+            {/if}
           </div>
         </div>
 

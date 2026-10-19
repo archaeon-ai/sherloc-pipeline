@@ -239,6 +239,7 @@ let getAvg: MockInstance<[scanId: string, params?: SpectrumParams], Promise<Spec
 let originalGetContext: typeof HTMLCanvasElement.prototype.getContext;
 
 beforeEach(() => {
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
   clearEvidence();
   vi.restoreAllMocks();
   reactSpy.mockClear();  // vi.mock factory spy survives restoreAllMocks
@@ -1304,5 +1305,42 @@ it.each(['tier', 'access'])('invalidates an in-flight spectrum on an authorized 
   else accessMode.set('public');
   resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
   expect(get(scienceAuthorized)).toBe(false);
+  expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+});
+
+
+it.each([undefined, false, true])('gates the evidence desk with capability %s', async enabled => {
+  appConfig.set({ tier: 'team', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse);
+  getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  expect(Boolean(screen.queryByLabelText('Evidence desk'))).toBe(enabled === true);
+  expect(container.querySelector('.raman-view')).toBeTruthy();
+  expect(container.querySelectorAll('.export-trigger')).toHaveLength(1);
+  expect(csvProvenance(await exportCsv(container)).data.intensity).toEqual(INTENSITY_A);
+});
+
+it.each(['R2', 'R3'])('commits authoritative %s without provenance.region', async region => {
+  getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A, { region, wavelength: [285, 305, 325],
+    provenance: { calibration_version: null, wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: 'synthetic' } }));
+  render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  expect(get(processingState)?.trace?.region).toBe(region);
+  expect(reactSpy.mock.calls.at(-1)![2].xaxis.title.text).toBe('Wavelength (nm)');
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' })); await flush();
+  expect(get(pinnedTraces)[0].snapshot.trace.region).toBe(region);
+  expect(reactSpy.mock.calls.at(-1)![2].xaxis.title.text).toBe('Wavelength (nm)');
+});
+
+it.each(['sign-out', 'tier'])('rejects a late processing result after %s', async boundary => {
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  let finish = () => {};
+  vi.spyOn(api, 'postFit').mockReturnValue(new Promise(resolve => { finish = () => resolve(fakeFit()); }));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  const card = Array.from(container.querySelectorAll('.step-title')).find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
+  await fireEvent.click(card.querySelector('.step-header')!);
+  await fireEvent.click(card.querySelector('.btn-primary')!);
+  expect(api.postFit).toHaveBeenCalledOnce();
+  if (boundary === 'sign-out') clearSessionState();
+  else { scienceAuthorized.set(true); appConfig.set({ tier: 'public' } as import('../lib/types').ConfigResponse); }
+  finish(); await flush();
   expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
 });

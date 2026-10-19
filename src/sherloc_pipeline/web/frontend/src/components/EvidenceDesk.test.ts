@@ -110,3 +110,38 @@ it('exports native processing values and committed labels with a provenance side
   const text = await new Promise<string>(resolve => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blob); });
   expect(JSON.parse(text)).toEqual(last()[2].meta);
 });
+
+
+it('resets fallback zoom when the native axis changes length', async () => {
+  const { component, container } = render(RamanView, { wavenumber: [11, 12, 13], intensity: [2, 3, 4] }); await flush();
+  const fields = container.querySelectorAll('.axis-input');
+  await fireEvent.input(fields[0], { target: { value: '11' } });
+  await fireEvent.change(fields[1], { target: { value: '12' } }); await flush();
+  const key = last()[2]._viewKey;
+  await component.$set({ wavenumber: [11, 12, 13, 14], intensity: [2, 3, 4, 5] }); await flush();
+  expect(last()[2]._viewKey).not.toBe(key); expect(last()[2].xaxis.autorange).toBe(true);
+});
+
+it.each(['processing', 'overlay'])('records the plotted primary color for %s in each theme', async view => {
+  const snapshot = input();
+  render(EvidenceDesk, { snapshot, contextKey: 'synthetic-context', wavenumber: snapshot.raman.wavenumber, intensity: snapshot.raman.intensity });
+  await fireEvent.change(screen.getByLabelText('View'), { target: { value: view } });
+  for (const [theme, color] of [['dark', '#e2e8f0'], ['light', '#1e293b']]) {
+    await fireEvent.change(screen.getByLabelText('Theme'), { target: { value: theme } }); await flush();
+    expect(last()[1][0].line.color).toBe(color); expect(last()[2].meta.traces[0].color).toBe(color);
+  }
+});
+
+it.each([
+  ['bg_subtracted', 'raw'], ['bg_subtracted', 'background'], ['bg_subtracted', 'bg (scaled)'],
+  ['raman_fitted', 'baseline'], ['raman_fitted', 'fit'], ['raman_fitted', 'residual'],
+])('breaks native gaps in %s %s overlays including restricted ranges', async (stage, name) => {
+  const snapshot = input();
+  render(RamanView, { processingTrace: evidenceTrace(snapshot), wavenumber: snapshot.raman.wavenumber,
+    intensity: [2, 3, 4], rawIntensity: [5, 6, 7], background: [1, 2, 3], backgroundScaled: [1, 2, 3],
+    baseline: [1, 2, 3], fitCurve: [1, 2, 3], residual: [1, 2, 3], stage,
+    baselineRange: [850, 1050], fitRange: [850, 1050], showRaw: true, showResidual: true }); await flush();
+  const trace = last()[1].find((item: { name: string }) => item.name === name);
+  expect(trace).toBeTruthy(); const gap = trace.x.indexOf(null); expect(gap).toBeGreaterThan(0);
+  expect(trace.x.slice(gap - 1, gap + 2)).toEqual([900, null, 1000]); expect(trace.y[gap]).toBeNull();
+});

@@ -225,3 +225,15 @@ describe('ExportMenu committed provenance', () => {
     expect(csv.toLowerCase()).not.toContain('loupe');
   });
 });
+
+
+it('exports badpix positions against wavelength-only intensity rows', async () => {
+  const csv = await exportCsv({ wavenumber: [], intensity: [3, 5, 7],
+    trace: { wavelength: [281, 301, 321], wavenumber: [], intensity: [3, 5, 7], channel_indices: [0, 1, 2],
+      source: { scan_id: 'synthetic' }, selection: { mode: 'average' },
+      provenance: { calibration_version: null, wavenumber_unit: null, wavelength_unit: 'nm', intensity_unit: 'synthetic' } },
+    badpix: [{ position: 1, tier: 1, source: 'synthetic' }] });
+  const rows = csv.split('\n').filter(line => line && !line.startsWith('#'));
+  const index = rows[0].split(',').indexOf('badpix');
+  expect(rows.slice(1).map(row => row.split(',')[index])).toEqual(['0', '1', '0']);
+});

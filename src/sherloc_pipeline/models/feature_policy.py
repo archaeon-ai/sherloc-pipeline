@@ -49,6 +49,7 @@ class IdentificationPolicy(PolicyModel):
 
 
 class FeaturePolicy(PolicyModel):
+    evidence_desk: bool = False
     public_release: PublicReleasePolicy | None = None
     references: ReferencePolicy = Field(default_factory=ReferencePolicy)
     identification: IdentificationPolicy = Field(default_factory=IdentificationPolicy)

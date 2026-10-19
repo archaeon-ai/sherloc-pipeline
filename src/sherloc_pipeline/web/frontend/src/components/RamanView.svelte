@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
   import type { EvidenceDomain, EvidenceTheme, EvidenceTrace } from '../lib/evidenceTypes';
-  import { comparisonDisplays, displayTrace, evidenceExport } from '../lib/evidenceStore';
+  import { comparisonDisplays, evidenceColor, displayTrace, evidenceExport } from '../lib/evidenceStore';
   import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
@@ -161,13 +161,13 @@
 
   function renderPlot() {
     if (!Plotly || !plotDiv || destroyed) return;
-    const viewKey = JSON.stringify([domain, traceIdentity, primaryTrace?.id, comparisonTraces.map(t => [t.id, t.visible]), stacked]);
+    const viewKey = JSON.stringify([domain, traceIdentity || xData, primaryTrace?.id, comparisonTraces.map(t => [t.id, t.visible]), stacked]);
     if (previousViewKey !== viewKey) {
       xMin = ''; xMax = ''; yMin = ''; yMax = '';
       previousViewKey = viewKey;
     }
     if (evidenceMode || primaryTrace || comparisonTraces.length) { renderComparisons(viewKey); return; }
-    const nativeDisplay = processingTrace ? displayTrace(processingTrace, domain) : null;
+    const nativeDisplay = processingTrace ? displayTrace(evidenceColor(processingTrace, theme), domain) : null;
     figureEvidence = nativeDisplay ? evidenceExport([{ ...nativeDisplay,
       normalization: 'native', divisor: null, scalable: false, offset: 0, displayed: nativeDisplay.original,
     }]) : null;
@@ -184,12 +184,12 @@
       ? (curLayout.yaxis as Record<string, unknown>).range as [number, number] | undefined
       : undefined;
 
-    function nativeCoordinates(x: number[], y: number[]) {
-      if (!nativeDisplay || x.length !== nativeDisplay.x.length || y.length !== x.length) return { x, y };
+    function nativeCoordinates(x: number[], y: number[], indices = x.map((_, i) => i)) {
+      if (!nativeDisplay || y.length !== x.length) return { x, y };
       const plotX: (number | null)[] = [];
       const plotY: (number | null)[] = [];
       x.forEach((value, i) => {
-        if (nativeDisplay.breaks[i]) { plotX.push(null); plotY.push(null); }
+        if (nativeDisplay.breaks[indices[i]] || (i > 0 && indices[i] !== indices[i - 1] + 1)) { plotX.push(null); plotY.push(null); }
         plotX.push(Number.isFinite(value) ? value : null);
         plotY.push(Number.isFinite(y[i]) ? y[i] : null);
       });
@@ -204,7 +204,7 @@
       type: 'scatter',
       mode: 'lines',
       name: stage === 'raw' ? 'raw' : 'processed',
-      line: { color: '#1e293b', width: 1.4 },
+      line: { color: nativeDisplay?.trace.color ?? '#1e293b', width: 1.4 },
       hovertemplate: useWavelength
         ? 'Wavelength: %{x:.1f} nm<br>Intensity: %{y:.1f}<extra></extra>'
         : 'Raman Shift: %{x:.1f} cm\u207B\u00B9<br>Intensity: %{y:.1f}<extra></extra>',
@@ -253,8 +253,7 @@
             .map(({ i }) => i)
         : wavenumber.map((_, i) => i);
       traces.push({
-        x: baselineIndices.map((i) => xData[i]),
-        y: baselineIndices.map((i) => baseline[i]),
+        ...nativeCoordinates(baselineIndices.map((i) => xData[i]), baselineIndices.map((i) => baseline[i]), baselineIndices),
         type: 'scatter',
         mode: 'lines',
         name: 'baseline',
@@ -264,21 +263,9 @@
 
     // Fit curve (green) — only within the fitting range
     if (!useWavelength && showOverlayFit && fitCurve && stage === 'raman_fitted') {
-      let fitX = xData;
-      let fitY = fitCurve;
-      if (fitRange) {
-        const indices: number[] = [];
-        for (let i = 0; i < wavenumber.length; i++) {
-          if (wavenumber[i] >= fitRange[0] && wavenumber[i] <= fitRange[1]) {
-            indices.push(i);
-          }
-        }
-        fitX = indices.map((i) => xData[i]);
-        fitY = indices.map((i) => fitCurve[i]);
-      }
+      const indices = xData.map((_, i) => i).filter(i => !fitRange || (wavenumber[i] >= fitRange[0] && wavenumber[i] <= fitRange[1]));
       traces.push({
-        x: fitX,
-        y: fitY,
+        ...nativeCoordinates(indices.map(i => xData[i]), indices.map(i => fitCurve[i]), indices),
         type: 'scatter',
         mode: 'lines',
         name: 'fit',
@@ -524,8 +511,7 @@
     if (!useWavelength && showResidual && showOverlayResidual && residual) {
       // Subplot: main spectrum + residual below
       const residualTrace: Plotly.Data = {
-        x: xData,
-        y: residual,
+        ...nativeCoordinates(xData, residual),
         type: 'scatter',
         mode: 'lines',
         name: 'residual',
@@ -596,7 +582,8 @@
 
   function renderComparisons(viewKey: string) {
     if (!Plotly) return;
-    const displays = comparisonDisplays(primaryTrace, comparisonTraces, domain, stacked);
+    const displays = comparisonDisplays(primaryTrace, comparisonTraces, domain, stacked)
+      .map(item => ({ ...item, trace: evidenceColor(item.trace, theme) }));
     figureEvidence = evidenceExport(displays);
     const traces: Plotly.Data[] = displays.map(item => {
       const x: (number | null)[] = [];

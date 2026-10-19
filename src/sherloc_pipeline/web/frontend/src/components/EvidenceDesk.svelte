@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ProcessingSnapshot } from '../lib/types';
   import type { EvidenceDomain, EvidenceTheme } from '../lib/evidenceTypes';
-  import { comparisonDisplays, evidenceTrace, pinnedTraces } from '../lib/evidenceStore';
+  import { comparisonDisplays, evidenceColor, evidenceTrace, pinnedTraces } from '../lib/evidenceStore';
   import RamanView from './RamanView.svelte';
   import EvidenceRail from './EvidenceRail.svelte';
   import ExportMenu from './ExportMenu.svelte';
@@ -16,10 +16,10 @@
     spike_mask: $$restProps.spikeMask ?? null, spike_method: $$restProps.spikeMethod ?? null,
     badpix: showBadpix ? $$restProps.badpix : null,
   });
-  $: nativeDomain = snapshot?.trace?.wavelength?.length && snapshot.trace.provenance.region && snapshot.trace.provenance.region !== 'R1'
+  $: nativeDomain = snapshot?.trace?.wavelength?.length && (snapshot.trace.region ?? snapshot.trace.provenance.region) && (snapshot.trace.region ?? snapshot.trace.provenance.region) !== 'R1'
     ? 'emission_wavelength' : snapshot?.raman.wavenumber.length ? 'raman_shift' : 'emission_wavelength';
   $: domain = (view === 'emission' ? 'emission_wavelength' : view === 'processing' ? nativeDomain : 'raman_shift') as EvidenceDomain;
-  $: displays = comparisonDisplays(primary, $pinnedTraces, domain, view === 'stacked');
+  $: displays = comparisonDisplays(primary, $pinnedTraces, domain, view === 'stacked').map(item => ({ ...item, trace: evidenceColor(item.trace, theme) }));
   $: committedSelection = snapshot?.trace?.selection;
   $: committedMode = (committedSelection?.mode ?? 'average') as 'average' | 'subset' | 'point';
   $: committedIndices = Array.isArray(committedSelection?.indices) ? committedSelection.indices as number[] : [];
