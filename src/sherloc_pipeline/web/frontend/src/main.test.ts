@@ -4,7 +4,7 @@ import { get } from 'svelte/store';
 
 const state = vi.hoisted(() => ({
   error: null as null | { kind: string; returnTo: string },
-  authenticated: true, redirecting: false, bootstrapFails: false,
+  authenticated: true, redirecting: false, bootstrapFails: false, scienceMounts: 0,
 }));
 
 vi.mock('./lib/auth', () => ({
@@ -21,6 +21,7 @@ vi.mock('./App.svelte', () => ({
   default: class {
     node = document.createElement('div');
     constructor({ target }: { target: HTMLElement }) {
+      state.scienceMounts += 1;
       this.node.dataset.testid = 'app-stub';
       target.appendChild(this.node);
     }
@@ -36,6 +37,7 @@ beforeEach(async () => {
   state.authenticated = true;
   state.redirecting = false;
   state.bootstrapFails = false;
+  state.scienceMounts = 0;
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ auth: { auth_mode: 'cf-access' } }) }));
   const { getConfig } = await import('./lib/api');
   vi.mocked(getConfig).mockResolvedValue({
@@ -47,14 +49,27 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 async function mount() { return (await import('./main')).default; }
-function expectClosed() { expect(document.querySelector('[data-testid="app-stub"]')).toBeNull(); }
+function expectClosed(heading: string | null = 'Sign-in did not complete') {
+  const root = document.getElementById('app')!;
+  expect(root.querySelector('[data-testid="app-stub"]')).toBeNull();
+  if (heading === null) {
+    expect(root.innerHTML).toBe('');
+  } else {
+    expect(root.children).toHaveLength(1);
+    expect(root.querySelector('main h1')?.textContent).toBe(heading);
+    expect(root.textContent).toContain('Sign in');
+  }
+  expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual(['/api/config/bootstrap']);
+}
 
 describe('main.ts bootstrap', () => {
   it('mounts the access page when Auth0 refused the sign-in', async () => {
     state.error = { kind: 'team_required', returnTo: '/' };
     await mount();
     expect(document.querySelector('h1')?.textContent).toBe('Team membership required');
-    expectClosed();
+    expectClosed('Team membership required');
+    expect(state.scienceMounts).toBe(0);
+    expect((await import('./lib/api')).getConfig).not.toHaveBeenCalled();
   });
 
   it('mounts only after the authenticated config check succeeds', async () => {
@@ -63,7 +78,8 @@ describe('main.ts bootstrap', () => {
     vi.mocked(getConfig).mockReturnValue(new Promise((r) => { resolve = r; }));
     const pending = mount();
     await vi.waitFor(() => expect(getConfig).toHaveBeenCalled());
-    expectClosed();
+    expectClosed(null);
+    expect(state.scienceMounts).toBe(0);
     resolve({ access_mode: 'public', tier: 'public', capabilities: {
       references: false, identification: false, experimental_candidates: false,
     } } as never);
@@ -76,6 +92,7 @@ describe('main.ts bootstrap', () => {
     vi.mocked(getConfig).mockRejectedValue(new Error(`synthetic ${status}`));
     await mount();
     expectClosed();
+    expect(state.scienceMounts).toBe(0);
   });
 
   it.each(['http', 'network', 'invalid-json'])('fails closed on bootstrap %s failure', async (kind) => {
@@ -84,19 +101,22 @@ describe('main.ts bootstrap', () => {
       : vi.fn().mockResolvedValue({ ok: kind !== 'http', json: async () => { throw new Error('synthetic JSON failure'); } }));
     await mount();
     expectClosed();
+    expect(state.scienceMounts).toBe(0);
   });
 
   it('fails closed when auth initialization throws', async () => {
     state.bootstrapFails = true;
     await mount();
     expectClosed();
+    expect(state.scienceMounts).toBe(0);
   });
 
   it.each([false, true])('does not mount a signed-out visitor (redirect=%s)', async (redirect) => {
     state.authenticated = false;
     state.redirecting = redirect;
     await mount();
-    expectClosed();
+    expectClosed(redirect ? null : 'Sign-in did not complete');
+    expect(state.scienceMounts).toBe(0);
     expect((await import('./lib/api')).getConfig).not.toHaveBeenCalled();
   });
 
@@ -110,13 +130,15 @@ describe('main.ts bootstrap', () => {
     vi.mocked((await import('./lib/api')).getConfig).mockResolvedValue(config as never);
     await mount();
     expectClosed();
+    expect(state.scienceMounts).toBe(0);
   });
 
   it('destroys mounted science UI and clears stores on sign-out', async () => {
     await mount();
     const stores = await import('./lib/stores');
     stores.clearSessionState();
-    expectClosed();
+    expectClosed(null);
+    expect(state.scienceMounts).toBe(1);
     expect(get(stores.appConfig)).toBeNull();
     expect(get(stores.scienceAuthorized)).toBe(false);
   });
