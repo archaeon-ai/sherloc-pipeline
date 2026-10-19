@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import socket
+import zipfile
 from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import Mock
@@ -498,3 +499,35 @@ def test_catalog_delete_rejected_and_reimport_preserves_rows(snapshot, database,
             assert release.status == "ready"
     finally:
         engine.dispose()
+
+
+def test_bounded_scalar_metadata_alongside_reference_vectors():
+    from types import SimpleNamespace
+    from sherloc_pipeline.services.reference_import import read_arrays
+
+    data = io.BytesIO()
+    np.savez(data, x=np.array([1., 2., 3.]), y=np.array([4., 2., 5.]),
+             metadata=json.dumps({"source": "synthetic scalar metadata"}))
+    arrays = read_arrays(data.getvalue(), [SimpleNamespace(x_key="x", y_key="y")])
+    assert set(arrays) == {"x", "y"}
+    np.testing.assert_array_equal(arrays["x"], [1., 2., 3.])
+    np.testing.assert_array_equal(arrays["y"], [4., 2., 5.])
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("count", [4, 2**31, 2**62])
+def test_array_header_size_checked_before_numpy_load(monkeypatch, version, count):
+    from sherloc_pipeline.services import reference_import
+
+    member = io.BytesIO()
+    writer = getattr(np.lib.format, f"write_array_header_{version}_0")
+    writer(member, {"descr": "<f8", "fortran_order": False, "shape": (count,)})
+    member.write(b"\0" * 8)
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        archive.writestr("synthetic.npy", member.getvalue())
+    loader = Mock(side_effect=AssertionError("invalid header reached NumPy allocation"))
+    monkeypatch.setattr(reference_import.np, "load", loader)
+    with pytest.raises(ValueError, match="header exceeds byte limits"):
+        reference_import.read_arrays(data.getvalue(), [])
+    loader.assert_not_called()

@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import math
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +59,21 @@ def array_archive_size(data: bytes) -> int:
 
 def read_arrays(data: bytes, traces) -> dict:
     array_archive_size(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        for member in archive.infolist():
+            with archive.open(member) as stream:
+                version = np.lib.format.read_magic(stream)
+                if version == (1, 0):
+                    shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
+                elif version == (2, 0):
+                    shape, _, dtype = np.lib.format.read_array_header_2_0(stream)
+                else:
+                    raise ValueError("unsupported reference array header version")
+                size = math.prod(shape) * dtype.itemsize
+                if any(dimension < 0 for dimension in shape) or dtype.hasobject:
+                    raise ValueError("invalid reference array header")
+                if size > min(member.file_size - stream.tell(), MAX_OBJECT_BYTES, MAX_RELEASE_BYTES):
+                    raise ValueError("reference array header exceeds byte limits")
     arrays = {}
     with np.load(io.BytesIO(data), allow_pickle=False) as archive:
         for trace in traces:
