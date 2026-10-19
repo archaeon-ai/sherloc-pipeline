@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { AuthRequiredError, fetchAciImage, getConfig, postFit } from './api';
+import { AuthRequiredError, fetchAciImage, getConfig, getMapData, getMapJobResults, getMapJobStatus, getMapLayers, getJobStatus, getPointSpectrum, postFit, postSpectraSubset, startMapFit } from './api';
 import { clearSessionState, lastFitResult, scienceAuthorized, sessionRequests } from './stores';
 
-const getToken = vi.hoisted(() => vi.fn());
+const { getToken, isAuthenticated } = vi.hoisted(() => ({ getToken: vi.fn(), isAuthenticated: vi.fn() }));
 
 vi.mock('./auth', () => ({
   bootstrapAuthReady: Promise.resolve(null),
-  getSession: () => ({ mode: 'auth0', isAuthenticated: async () => true, getToken }),
+  getSession: () => ({ mode: 'auth0', isAuthenticated, getToken }),
 }));
 
 function deferred<T>() {
@@ -18,6 +18,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   getToken.mockReset().mockResolvedValue('synthetic-token');
+  isAuthenticated.mockReset().mockResolvedValue(true);
   clearSessionState();
   scienceAuthorized.set(true);
 });
@@ -128,4 +129,28 @@ it('removes completed requests from the session abort set', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"synthetic":true}')));
   await getConfig();
   expect(sessionRequests.size).toBe(0);
+});
+
+
+it.each([
+  ['map layers', () => getMapLayers('synthetic-scan')],
+  ['map data', () => getMapData('synthetic-scan', 'synthetic-domain', 'synthetic-value')],
+  ['point spectrum', () => getPointSpectrum('synthetic-scan', 0)],
+  ['map fit', () => startMapFit('synthetic-scan', ['synthetic-domain'])],
+  ['map status', () => getMapJobStatus('synthetic-job')],
+  ['map results', () => getMapJobResults('synthetic-job')],
+  ['job status', () => getJobStatus('synthetic-job')],
+  ['subset spectrum', () => postSpectraSubset('synthetic-scan', {})],
+  ['image', () => fetchAciImage('synthetic-scan')],
+])('never sends %s when authentication resolves after sign-out', async (_label, request) => {
+  const authenticated = deferred<boolean>();
+  isAuthenticated.mockReturnValue(authenticated.promise);
+  vi.stubGlobal('fetch', vi.fn());
+  const rejected = expect(request()).rejects.toBeInstanceOf(AuthRequiredError);
+  await vi.waitFor(() => expect(isAuthenticated).toHaveBeenCalled());
+  clearSessionState();
+  authenticated.resolve(true);
+  await rejected;
+  expect(fetch).not.toHaveBeenCalled();
+  expect(getToken).not.toHaveBeenCalled();
 });

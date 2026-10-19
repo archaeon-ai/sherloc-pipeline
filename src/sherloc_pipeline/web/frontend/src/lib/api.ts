@@ -68,16 +68,21 @@ export class AuthRequiredError extends Error {
  *   - bootstrap settled with no session at all, OR
  *   - auth0 mode but isAuthenticated() === false.
  */
-async function ensureAuthenticated(): Promise<void> {
+async function ensureAuthenticated(generation: number): Promise<void> {
   await bootstrapAuthReady;
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   const session = getSession();
   if (session === null) {
     clearSessionState();
     throw new AuthRequiredError();
   }
-  if (session.mode === 'auth0' && !(await session.isAuthenticated())) {
-    clearSessionState();
-    throw new AuthRequiredError();
+  if (session.mode === 'auth0') {
+    const authenticated = await session.isAuthenticated();
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    if (!authenticated) {
+      clearSessionState();
+      throw new AuthRequiredError();
+    }
   }
 }
 
@@ -97,6 +102,7 @@ async function withSessionRequest<T>(
   generation: number,
   request: (headers: Record<string, string>, signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   const headers = await authHeaders();
   if (generation !== sessionGeneration) throw new AuthRequiredError();
   const controller = new AbortController();
@@ -111,8 +117,7 @@ async function withSessionRequest<T>(
   }
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const generation = sessionGeneration;
+async function fetchJson<T>(path: string, init?: RequestInit, generation = sessionGeneration): Promise<T> {
   return withSessionRequest(generation, async (headers, signal) => {
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
@@ -195,9 +200,11 @@ export async function getPointSpectrum(
   idx: number,
   params: SpectrumParams = {},
 ): Promise<SpectrumResponse> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   const query = buildQuery(params);
-  return fetchJson<SpectrumResponse>(`/spectra/${scanId}/point/${idx}${query}`);
+  return fetchJson<SpectrumResponse>(`/spectra/${scanId}/point/${idx}${query}`, undefined, generation);
 }
 
 export async function postSubsetAverage(
@@ -351,7 +358,7 @@ export async function fetchAciImage(
   opts: AciFetchOpts = {},
 ): Promise<HTMLImageElement> {
   const generation = sessionGeneration;
-  await ensureAuthenticated();
+  await ensureAuthenticated(generation);
   if (generation !== sessionGeneration) throw new AuthRequiredError();
   const params = new URLSearchParams();
   if (opts.colorized) params.set('colorized', 'true');
@@ -422,8 +429,10 @@ export interface MapLayersResponse {
  * Throws AuthRequiredError or ApiError per the same contract as `fetchAciImage`.
  */
 export async function getMapLayers(scanId: string): Promise<MapLayersResponse> {
-  await ensureAuthenticated();
-  return fetchJson<MapLayersResponse>(`/map/layers/${encodeURIComponent(scanId)}`);
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  return fetchJson<MapLayersResponse>(`/map/layers/${encodeURIComponent(scanId)}`, undefined, generation);
 }
 
 /**
@@ -456,13 +465,15 @@ export async function getMapData(
   valueType: string,
   classId?: string,
 ): Promise<MapDataResponse> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   const params = new URLSearchParams();
   params.set('domain', domain);
   params.set('value_type', valueType);
   if (classId) params.set('class_id', classId);
   return fetchJson<MapDataResponse>(
-    `/map/data/${encodeURIComponent(scanId)}?${params.toString()}`,
+    `/map/data/${encodeURIComponent(scanId)}?${params.toString()}`, undefined, generation,
   );
 }
 
@@ -483,11 +494,13 @@ export async function startMapFit(
   scanId: string,
   domains: string[],
 ): Promise<MapFitResponse> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   return fetchJson<MapFitResponse>(`/map/fit`, {
     method: 'POST',
     body: JSON.stringify({ scan_id: scanId, domains }),
-  });
+  }, generation);
 }
 
 /**
@@ -498,8 +511,10 @@ export async function startMapFit(
  * silent job is waiting its turn or genuinely slow (issue #6).
  */
 export async function getMapJobStatus(jobId: string): Promise<MapJobStatus> {
-  await ensureAuthenticated();
-  return fetchJson<MapJobStatus>(`/map/jobs/${encodeURIComponent(jobId)}`);
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  return fetchJson<MapJobStatus>(`/map/jobs/${encodeURIComponent(jobId)}`, undefined, generation);
 }
 
 /**
@@ -511,8 +526,10 @@ export async function getMapJobStatus(jobId: string): Promise<MapJobStatus> {
  * database — that returns an earlier pipeline run's peaks (issue #6).
  */
 export async function getMapJobResults(jobId: string): Promise<MapJobResults> {
-  await ensureAuthenticated();
-  return fetchJson<MapJobResults>(`/map/jobs/${encodeURIComponent(jobId)}/results`);
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  return fetchJson<MapJobResults>(`/map/jobs/${encodeURIComponent(jobId)}/results`, undefined, generation);
 }
 
 export interface JobStatus {
@@ -526,8 +543,10 @@ export interface JobStatus {
  * `lib/websocket.ts` which produced 401s under Auth0 Bearer-token mode.
  */
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
-  await ensureAuthenticated();
-  return fetchJson<JobStatus>(`/jobs/${encodeURIComponent(jobId)}`);
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  return fetchJson<JobStatus>(`/jobs/${encodeURIComponent(jobId)}`, undefined, generation);
 }
 
 /**
@@ -542,9 +561,11 @@ export async function postSpectraSubset<T = unknown>(
   scanId: string,
   body: unknown,
 ): Promise<T> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   return fetchJson<T>(`/spectra/${encodeURIComponent(scanId)}/subset`, {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, generation);
 }
