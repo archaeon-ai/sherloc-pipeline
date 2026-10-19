@@ -194,3 +194,17 @@ it.each(['R1', 'R2', 'R3'].flatMap(region => [undefined, 'unknown'].flatMap(unit
   expect(output.traces[0].displayed).toEqual(snapshot.raman.intensity);
   expect(output.traces[0].x).toEqual(region === 'R1' ? snapshot.raman.wavenumber : snapshot.trace!.wavelength);
 });
+
+
+it.each(['dark', 'light'] as const)('keeps the processing legend readable in %s with several traces', async theme => {
+  const snapshot = input();
+  render(RamanView, { processingTrace: evidenceTrace(snapshot), theme, wavenumber: snapshot.raman.wavenumber,
+    intensity: snapshot.raman.intensity, rawIntensity: [2, 3, 4], baseline: [1, 1, 1], fitCurve: [2, 2, 2],
+    residual: [0, 1, 0], stage: 'raman_fitted', showRaw: true, showResidual: true }); await flush();
+  expect(last()[1].length).toBeGreaterThan(3);
+  const layout = last()[2];
+  expect(layout.showlegend).toBe(true);
+  expect(layout.legend.bgcolor).toBe(theme === 'dark' ? 'rgba(15,23,42,0.85)' : 'rgba(255,255,255,0.85)');
+  expect(layout.legend.bordercolor).toBe(theme === 'dark' ? '#475569' : '#e2e8f0');
+  expect(layout.legend.font.color).toBe(layout.font.color);
+});

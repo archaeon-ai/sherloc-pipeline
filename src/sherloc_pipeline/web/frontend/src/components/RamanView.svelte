@@ -486,10 +486,10 @@
         x: 1,
         y: 1,
         xanchor: 'right',
-        bgcolor: 'rgba(255,255,255,0.85)',
-        bordercolor: '#e2e8f0',
+        bgcolor: dark ? 'rgba(15,23,42,0.85)' : 'rgba(255,255,255,0.85)',
+        bordercolor: dark ? '#475569' : '#e2e8f0',
         borderwidth: 1,
-        font: { size: 11 },
+        font: { size: 11, color: dark ? '#e2e8f0' : '#1e293b' },
       },
     };
 
