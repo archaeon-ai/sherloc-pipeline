@@ -34,6 +34,7 @@ vi.mock('plotly.js-basic-dist-min', () => ({
 
 import RamanView from './RamanView.svelte';
 import type { Peak } from '../lib/types';
+import type { IdentificationEvidence } from '../lib/identification';
 
 it.each([false, true])('names the four axis inputs when the evidence desk is enabled (%s)', async evidenceDesk => {
   const { getByRole, queryByRole } = render(RamanView, {
@@ -47,7 +48,7 @@ it.each([false, true])('names the four axis inputs when the evidence desk is ena
 });
 
 it('hides the axis inputs only while the identification fit is plotted', async () => {
-  const identification = {
+  const identification: IdentificationEvidence = {
     result_digest: 'a'.repeat(64), source_digest: 'b'.repeat(64), status: 'candidate', reasons: [],
     method: { method_id: 'raman-pearson', release_id: 'c'.repeat(64), support_min: .8, status: 'provisional' },
     reference_release_id: 'd'.repeat(64), reference_subset_id: 'e'.repeat(64), ranking: [],
