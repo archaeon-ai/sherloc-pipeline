@@ -1332,6 +1332,31 @@ describe('ProcessingWorkbench evidence session boundaries', () => {
     await flush(); expect(get(pinnedTraces)).toEqual([]);
   });
 
+  it('clears target A pins when target B metadata succeeds but its points fail', async () => {
+    const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    expect(get(pinnedTraces)).toHaveLength(1);
+    first.unmount();
+    vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Other invented' } });
+    let failPoints = () => {};
+    vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      failPoints = () => reject(new Error('Synthetic points failure'));
+    }));
+    const second = render(ProcessingWorkbench, { scanId: 'synthetic-second' });
+    await flush();
+    expect(get(pinnedTraces)).toEqual([]);
+    expect(second.container.textContent).not.toContain('Other invented');
+    expect(second.container.querySelector('.workbench-layout')).toBeNull();
+    failPoints(); await flush();
+    expect(second.container.querySelector('.workbench-layout')).toBeNull();
+    second.unmount();
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(screen.getByLabelText('Evidence desk')).toBeTruthy();
+    expect(get(pinnedTraces)).toEqual([]);
+  });
+
   it('denies a spectrum completing after sign-out before it can populate or pin state', async () => {
     let resolve = (_value: SpectrumResponse) => {};
     getAvg.mockReturnValue(new Promise(done => { resolve = done; }));

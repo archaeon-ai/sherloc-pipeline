@@ -322,18 +322,18 @@
       if (requestBoundary === null) {
         scan = res.scan;
         applyDespikeDefault(scan.ml_mask_count ?? 0);
+      } else {
+        // Authorized metadata establishes the target lifecycle even if points fail.
+        const target = res.scan.target;
+        const identity = target?.trim() ? ['target', target] : ['scan', res.scan.id];
+        evidenceContextKey = JSON.stringify([mountedSession, requestBoundary, res.scan.sol_number, identity]);
+        setEvidenceContext(evidenceContextKey);
       }
       const ptRes = await getScanPoints(scanId);
       if (stale()) return;
       // Metadata and points belong to the same authorized load.
       scan = res.scan;
       points = ptRes.points;
-      if (evidenceEnabled) {
-        const target = scan.target;
-        const identity = target?.trim() ? ['target', target] : ['scan', scan.id];
-        evidenceContextKey = JSON.stringify([mountedSession, requestBoundary, scan.sol_number, identity]);
-        setEvidenceContext(evidenceContextKey);
-      }
       // Apply ML-or-none default once, before the first loadSpectrum call.
       // Funnel through the named helper — never set despikeMethod in a $: block
       // (FRONTEND_HAZARDS H1). Revalidation uses the freshly authorized metadata.
