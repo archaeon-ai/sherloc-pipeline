@@ -10,7 +10,7 @@ from scipy.ndimage import gaussian_filter1d
 from tests.unit.test_evidence_api import evidence_api  # noqa: F401
 from tests.unit.test_reference_release import snapshot  # noqa: F401
 from sherloc_pipeline.core.identification.mixture import background_basis, fit_mixture, retrieve
-from sherloc_pipeline.core.identification.prep import Prepared, grid_for
+from sherloc_pipeline.core.identification.prep import Prepared, grid_for, prepare
 from sherloc_pipeline.core.identification.recipe import load_mixture_recipe, load_recipe, recipe_for_release
 from sherloc_pipeline.web.feature_policy import FeaturePolicy
 
@@ -151,6 +151,57 @@ def test_broadened_cosine_retrieval(recipe):
     assert "support" not in match
 
 
+@pytest.mark.parametrize("shift", [-10., 0., 10.])
+def test_twenty_width_remains_eligible_with_real_preparation_masks(recipe, shift):
+    recipe = recipe.model_copy(update={"extra_fwhm_cm1": [20.], "shifts": [shift]})
+    x = np.arange(760., 1840.1, 5.)
+    y = np.exp(-((x-1223.)/7.)**2) + .6*np.exp(-((x-1537.)/9.)**2)
+    reference = prepare(x, y, recipe)
+    query = prepare(x, gaussian_filter1d(y, 20./recipe.fwhm_to_sigma/5., mode="nearest"), recipe)
+    assert reference.vector is not None and query.vector is not None
+    assert (~reference.mask).sum() == 8
+    variant = retrieve(query, reference, recipe)
+    assert variant is not None
+    assert variant["extra_fwhm_cm1"] == 20.
+    assert variant["shift_cm_1"] == shift
+    # At zero shift, eight excluded bins and their radius-seven halo leave
+    # 172 eligible bins. They are 100% covered, despite 172/201 being below .9.
+    if shift == 0.:
+        assert variant["mask"].sum() == 172
+    reference.vector[~reference.mask] = np.inf
+    repeated = retrieve(query, reference, recipe)
+    np.testing.assert_array_equal(variant["vector"], repeated["vector"])
+    assert repeated["retrieval_score"] == variant["retrieval_score"]
+    row = {"template_id": "a"*64, "species_name": "Syntheticite", **variant}
+    fitted = fit_mixture(query, [row], recipe)
+    assert fitted["reason"] != "insufficient_joint_overlap"
+    assert fitted["components"]
+    np.testing.assert_array_equal(fitted["evidence"]["mask"], query.mask & variant["mask"])
+
+
+def test_frozen_retrieval_can_select_twenty_width_after_preparation(recipe):
+    x = np.arange(760., 1840.1, 5.)
+    y = np.exp(-((x-1223.)/7.)**2) + .6*np.exp(-((x-1537.)/9.)**2)
+    query = prepare(x, gaussian_filter1d(y, 20./recipe.fwhm_to_sigma/5., mode="nearest"), recipe)
+    variant = retrieve(query, prepare(x, y, recipe), recipe)
+    assert variant is not None
+    assert variant["extra_fwhm_cm1"] == 20.
+    assert variant["shift_cm_1"] == 0.
+
+
+def test_missing_data_outside_recipe_exclusions_still_rejects_twenty_width(recipe):
+    recipe = recipe.model_copy(update={"extra_fwhm_cm1": [20.], "shifts": [0.]})
+    x = np.arange(760., 1840.1, 5.)
+    y = np.exp(-((x-1223.)/7.)**2) + .6*np.exp(-((x-1537.)/9.)**2)
+    query = prepare(x, y, recipe)
+    # Nine missing bins pass preparation's .95 coverage floor. Broadening
+    # contaminates 23 otherwise eligible bins, which must still cost overlap.
+    native = ~((x >= 1350.) & (x <= 1390.))
+    reference = prepare(x[native], y[native], recipe)
+    assert reference.vector is not None and query.vector is not None
+    assert retrieve(query, reference, recipe) is None
+
+
 def test_joint_mask_and_residual(recipe):
     vectors, _ = analytic_vectors(recipe)
     rows = candidates(vectors)
@@ -171,7 +222,7 @@ def test_frozen_method_hashes_and_pearson_unchanged(recipe):
     pearson, pearson_id = load_recipe()
     assert pearson_id == "3a2d27da061756c69ef9c2473a59fbd2def13fe2df1ae3be429dcab37f010bce"
     assert load_mixture_recipe() == load_mixture_recipe()
-    assert load_mixture_recipe()[1] != pearson_id
+    assert load_mixture_recipe()[1] == "92ec79146b8e4ae9fb0f221596c686d3e2c5da66f90ba0b38fd3232b93b17b5a"
     assert recipe_for_release(load_mixture_recipe()[1])[0] == recipe
     assert pearson.method_id == "raman-pearson" and pearson.support_min == .8
     assert (recipe.support_min, recipe.status, recipe.threshold_source) == (.6, "provisional", "fixed_provisional")

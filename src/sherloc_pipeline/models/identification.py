@@ -37,6 +37,7 @@ class MixtureRecipe(MethodRecipe):
     version: Literal["0.1.0"]
     support_min: Literal[0.60]
     extra_fwhm_cm1: list[float]
+    overlap_basis: Literal["eligible_after_exclusions_broadening_and_shift"]
     retrieval_metric: Literal["cosine"]
     retrieval_count: Literal[5]
     fwhm_to_sigma: float

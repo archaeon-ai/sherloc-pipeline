@@ -34,6 +34,7 @@
   ],
   "min_coverage": 0.95,
   "min_overlap": 0.9,
+  "overlap_basis": "eligible_after_exclusions_broadening_and_shift",
   "max_gap": 30.0,
   "min_samples": 30,
   "baseline_lambda": 100000.0,

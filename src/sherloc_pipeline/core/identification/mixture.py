@@ -10,6 +10,23 @@ from scipy.ndimage import gaussian_filter1d
 from sherloc_pipeline.core.identification.prep import grid_for
 
 
+def eligible_overlap(recipe, width=0., shift=0.):
+    """Expected comparison domain for complete data under recipe exclusions.
+
+    Excluded bins, their Gaussian contamination halo and shifted grid edges
+    cannot provide evidence. Missing data elsewhere still reduces overlap.
+    """
+    grid = grid_for(recipe)
+    allowed = np.ones(len(grid), dtype=bool)
+    for low, high in recipe.excluded_intervals:
+        allowed &= ~((grid >= low) & (grid <= high))
+    valid = allowed
+    if width:
+        sigma = width / recipe.fwhm_to_sigma / recipe.grid[2]
+        valid = gaussian_filter1d((~allowed).astype(float), sigma, mode=recipe.smoothing_mode) == 0
+    return allowed & (np.interp(grid-shift, grid, valid.astype(float), left=0, right=0) == 1)
+
+
 def retrieve(query, reference, recipe):
     """Best broadened cosine variant; deterministic width/shift ties."""
     if query.vector is None or reference.vector is None:
@@ -34,7 +51,8 @@ def retrieve(query, reference, recipe):
                 np.interp(grid-shift, grid, broadened_valid.astype(float), left=0, right=0) == 1
             )
             keep = query.mask & valid
-            if keep.mean() < recipe.min_overlap:
+            eligible = eligible_overlap(recipe, width, shift)
+            if not eligible.any() or keep[eligible].mean() < recipe.min_overlap:
                 continue
             a, b = query.vector[keep], vector[keep]
             denominator = np.linalg.norm(a) * np.linalg.norm(b)
@@ -93,9 +111,11 @@ def fit_mixture(query, candidates, recipe):
         return reject("no_compatible_species_references")
     candidates = candidates[:recipe.retrieval_count]
     keep = query.mask.copy()
+    eligible = eligible_overlap(recipe)
     for item in candidates:
         keep &= item["mask"]
-    if keep.mean() < recipe.min_overlap:
+        eligible &= eligible_overlap(recipe, item.get("extra_fwhm_cm1", 0.), item.get("shift_cm_1", 0.))
+    if not eligible.any() or keep[eligible].mean() < recipe.min_overlap:
         return reject("insufficient_joint_overlap")
     target = query.vector[keep]
     design = np.column_stack([row["vector"][keep] for row in candidates])
