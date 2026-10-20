@@ -10,6 +10,14 @@
   export let contextKey: string;
   export let pinDisabled = false;
   export let onPin: () => void = () => {};
+
+  // Only a completed fit lists the references it saw; abstentions before the solver prune nothing.
+  function topLabel(evidence: IdentificationEvidence, templateId: string) {
+    const mixture = evidence.mixture;
+    if (!mixture || mixture.components.some(component => component.template_id === templateId)) return 'Leading candidate';
+    return mixture.diagnostics.finite_solution && mixture.diagnostics.template_ids?.includes(templateId)
+      ? 'Top retrieval (pruned by fit)' : 'Top retrieval';
+  }
 </script>
 
 <div class="evidence-rail">
@@ -26,10 +34,7 @@
       {/each}
     {/if}
     {#each result.ranking.slice(0, 5) as candidate, index}
-      <div class="pin"><span>{index === 0
-        ? result.mixture && !result.mixture.components.some(component => component.template_id === candidate.template_id)
-          ? 'Top retrieval (pruned by fit)' : 'Leading candidate'
-        : 'Alternative'}: {candidate.species_name} ·
+      <div class="pin"><span>{index === 0 ? topLabel(result, candidate.template_id) : 'Alternative'}: {candidate.species_name} ·
         {result.mixture ? `retrieval score ${candidate.retrieval_score?.toFixed(3)}` : `support ${candidate.support?.toFixed(3)}`}</span>
         {#each candidate.trace_revision_ids as identity}
           <button class="btn-secondary btn-sm" on:click={() => onCandidate(identity)}>Add {candidate.species_name} trace</button>

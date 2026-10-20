@@ -50,7 +50,7 @@ export interface IdentificationEvidence {
   mixture?: {
     support: number | null;
     components: { template_id: string; species_name: string; coefficient: number; weight: number }[];
-    diagnostics: { converged: boolean; finite_solution: boolean };
+    diagnostics: { converged: boolean; finite_solution: boolean; template_ids?: string[] };
   } | null;
   evidence?: {
     grid: number[];
