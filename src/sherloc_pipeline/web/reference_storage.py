@@ -6,9 +6,13 @@ import io
 from typing import BinaryIO
 
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
-from sherloc_pipeline.models.references import ReferenceTrace, known_rights
+from sherloc_pipeline.models.feature_policy import FeaturePolicy
 from sherloc_pipeline.services.reference_store import MAX_OBJECT_BYTES, object_locator
-from sherloc_pipeline.web.feature_policy import FeaturePolicy
+# Serving checks live in the services layer; re-exported here for web callers.
+from sherloc_pipeline.services import reference_serving
+from sherloc_pipeline.services.reference_serving import can_serve_trace
+
+__all__ = ["R2ReferenceStore", "can_serve_template", "can_serve_trace"]
 
 
 class R2ReferenceStore:
@@ -51,32 +55,11 @@ class R2ReferenceStore:
             stream.close()
 
 
-def can_serve_trace(
-    trace: ReferenceTraceORM, release: ReferenceReleaseORM, policy: FeaturePolicy, tier: str,
-) -> bool:
-    refs = policy.references
-    if (
-        tier != "team" or refs.mode == "off" or release.status != "ready"
-        or refs.release_id != release.release_id or trace.release_id != release.release_id
-        or refs.serving_policy_version != release.serving_policy_sha256
-        or not trace.rights_known or trace.serving_status != "approved"
-        or "team" not in trace.permitted_tiers
-        or refs.mode == "allowlist" and trace.trace_revision_id not in refs.allowed_trace_ids
-    ):
-        return False
-    try:
-        return known_rights(ReferenceTrace.model_validate(trace.metadata_json))
-    except ValueError:
-        return False
-
-
 def can_serve_template(
     template: ReferenceTemplateORM, members: list[ReferenceTraceORM],
     release: ReferenceReleaseORM, policy: FeaturePolicy, tier: str,
 ) -> bool:
-    return (
-        template.release_id == release.release_id and "team" in template.permitted_tiers
-        and bool(members)
-        and [member.trace_revision_id for member in members] == template.member_trace_ids
-        and all(can_serve_trace(member, release, policy, tier) for member in members)
+    # Resolve the trace check through this module so template checks follow its current binding.
+    return reference_serving.can_serve_template(
+        template, members, release, policy, tier, trace_check=can_serve_trace,
     )
