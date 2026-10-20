@@ -25,9 +25,11 @@ export interface SharedChain {
   steps: SharedStep[];
 }
 
+// Every chain step gets one outcome, also on a refused or failed trace:
+// not_run marks the steps after the one that refused or failed.
 export interface StepOutcome {
   step: SharedStep['step'];
-  status: 'applied' | 'not_applicable';
+  status: 'applied' | 'not_applicable' | 'refused' | 'failed' | 'not_run';
   reason?: string;
   params_used?: Record<string, unknown>;
 }
@@ -49,6 +51,8 @@ export interface SharedOutcome {
   reference_processing_state?: ReferenceStateRecord;
   intensity: number[] | null;
   stage: ProcessingStage;
+  // The shared despike step's mask, when that step ran.
+  spike_mask?: boolean[];
 }
 
 export interface ChainApi {
@@ -140,58 +144,60 @@ function referenceState(trace: EvidenceTrace) {
     source_processing_evidence: provenance.source_processing_evidence };
 }
 
-type Plan =
-  | { refusal: string; reference?: ReferenceStateRecord }
-  | { refusal: null; run: SharedStep[]; skipped: Map<number, string>; reference?: ReferenceStateRecord };
+type Decision = { status: 'run' } | { status: 'not_applicable' | 'refused'; reason: string };
+
+interface Plan {
+  // A trace-level refusal (domain or axis) applies before any step is considered.
+  refusal: string | null;
+  decisions: Decision[];
+  reference?: ReferenceStateRecord;
+}
 
 // Decide every step before any request.
 export function planSharedChain(trace: EvidenceTrace, chain: SharedChain, ppp: number | null): Plan {
   const x = trace.snapshot.trace.wavenumber;
   const y = trace.snapshot.trace.intensity;
-  const skipped = new Map<number, string>();
-  const baseline = chain.steps.find(step => step.step === 'baseline') as Extract<SharedStep, { step: 'baseline' }> | undefined;
   if (trace.nativeDomain !== 'raman_shift' || trace.snapshot.trace.region !== 'R1') {
-    return { refusal: isReference(trace) ? 'wavelength-domain reference: the shared Raman chain does not apply'
+    return { decisions: [], refusal: isReference(trace) ? 'wavelength-domain reference: the shared Raman chain does not apply'
       : 'luminescence-domain trace: the shared Raman chain does not apply' };
   }
-  if (!x?.length || x.length !== y?.length) return { refusal: 'trace has no source Raman axis of matching length' };
+  if (!x?.length || x.length !== y?.length) return { decisions: [], refusal: 'trace has no source Raman axis of matching length' };
   if (isReference(trace)) {
-    let reference: ReferenceStateRecord = { consulted: false, note: 'state not consulted: no baseline step' };
-    chain.steps.forEach((step, index) => {
-      if (step.step === 'despike') skipped.set(index, 'not_applicable: instrument_cosmic_ray_correction');
-      if (step.step === 'bg_subtract') skipped.set(index, 'not_applicable: instrument_background');
-    });
-    if (baseline) {
-      const state = referenceState(trace);
-      reference = { consulted: true, ...state };
-      const evidence = typeof state.source_processing_evidence === 'string' && state.source_processing_evidence.trim() !== '';
+    const hasBaseline = chain.steps.some(step => step.step === 'baseline');
+    const state = referenceState(trace);
+    const reference: ReferenceStateRecord = hasBaseline ? { consulted: true, ...state }
+      : { consulted: false, note: 'state not consulted: no baseline step' };
+    const decisions = chain.steps.map((step): Decision => {
+      if (step.step === 'despike') return { status: 'not_applicable', reason: 'not_applicable: instrument_cosmic_ray_correction' };
+      if (step.step === 'bg_subtract') return { status: 'not_applicable', reason: 'not_applicable: instrument_background' };
       const release = state.release_id ?? 'unknown';
       if (state.source_processing_state !== 'unprocessed' && state.source_processing_state !== 'baseline_corrected') {
-        return { refusal: `reference processing state not recorded in release ${release}`, reference };
+        return { status: 'refused', reason: `reference processing state not recorded in release ${release}` };
       }
-      if (!evidence) return { refusal: `reference processing state recorded without evidence in release ${release}`, reference };
+      if (typeof state.source_processing_evidence !== 'string' || state.source_processing_evidence.trim() === '') {
+        return { status: 'refused', reason: `reference processing state recorded without evidence in release ${release}` };
+      }
       if (state.source_processing_state === 'baseline_corrected') {
-        skipped.set(chain.steps.indexOf(baseline), 'not_applicable: reference_already_baseline_corrected');
-      } else {
-        const refusal = baselineRefusal(x, baseline.params);
-        if (refusal) return { refusal, reference };
+        return { status: 'not_applicable', reason: 'not_applicable: reference_already_baseline_corrected' };
       }
-    }
-    return { refusal: null, run: chain.steps.filter((_, index) => !skipped.has(index)), skipped, reference };
+      const refusal = baselineRefusal(x, step.params);
+      return refusal ? { status: 'refused', reason: refusal } : { status: 'run' };
+    });
+    return { refusal: null, decisions, reference };
   }
-  for (const step of chain.steps) {
-    if (step.step === 'despike' && trace.snapshot.trace.provenance.processing_chain?.some(item => item.step === 'despike')) {
-      return { refusal: 'source already despiked (ML); no double despike' };
-    }
+  const mlDespiked = trace.snapshot.trace.provenance.processing_chain?.some(item => item.step === 'despike');
+  const decisions = chain.steps.map((step): Decision => {
+    if (step.step === 'despike' && mlDespiked) return { status: 'refused', reason: 'source already despiked (ML); no double despike' };
     if (step.step === 'bg_subtract' && step.scale_mode === 'auto' && ppp === null) {
-      return { refusal: 'shots per point not recorded for this pin; auto background scale unavailable' };
+      return { status: 'refused', reason: 'shots per point not recorded for this pin; auto background scale unavailable' };
     }
     if (step.step === 'baseline') {
       const refusal = baselineRefusal(x, step.params);
-      if (refusal) return { refusal };
+      if (refusal) return { status: 'refused', reason: refusal };
     }
-  }
-  return { refusal: null, run: chain.steps, skipped };
+    return { status: 'run' };
+  });
+  return { refusal: null, decisions };
 }
 
 const STAGES: Record<SharedStep['step'], ProcessingStage> = {
@@ -206,20 +212,34 @@ export async function runSharedChain(
 ): Promise<SharedOutcome | null> {
   const plan = planSharedChain(trace, chain, ppp);
   const base = { derived_from: trace.id, label: trace.label, ...(plan.reference ? { reference_processing_state: plan.reference } : {}) };
-  if (plan.refusal !== null) return { ...base, refusal: plan.refusal, steps: [], scale_used: null, intensity: null, stage: 'raw' };
+  const refused = (reason: string, steps: StepOutcome[]): SharedOutcome =>
+    ({ ...base, refusal: reason, steps, scale_used: null, intensity: null, stage: 'raw' });
+  const notRun = (from: number) => chain.steps.slice(from).map((step): StepOutcome => ({ step: step.step, status: 'not_run' }));
+  if (plan.refusal !== null) return refused(plan.refusal, notRun(0));
+  // A refusing step stops the trace before any request; earlier recorded skips are kept.
+  const refusing = plan.decisions.findIndex(decision => decision.status === 'refused');
+  if (refusing >= 0) {
+    const recorded = plan.decisions.slice(0, refusing).map((decision, index): StepOutcome =>
+      decision.status === 'not_applicable' ? { step: chain.steps[index].step, status: 'not_applicable', reason: decision.reason }
+        : { step: chain.steps[index].step, status: 'not_run' });
+    const reason = (plan.decisions[refusing] as { reason: string }).reason;
+    return refused(reason, [...recorded, { step: chain.steps[refusing].step, status: 'refused', reason }, ...notRun(refusing + 1)]);
+  }
   const x = trace.snapshot.trace.wavenumber;
   let y = trace.snapshot.trace.intensity;
   let stage: ProcessingStage = 'raw';
   let scaleUsed: number | null = null;
+  let spikeMask: boolean[] | undefined;
   const steps: StepOutcome[] = [];
-  try {
-    for (const [index, step] of chain.steps.entries()) {
-      const skip = plan.skipped.get(index);
-      if (skip) { steps.push({ step: step.step, status: 'not_applicable', reason: skip }); continue; }
+  for (const [index, step] of chain.steps.entries()) {
+    const decision = plan.decisions[index];
+    if (decision.status === 'not_applicable') { steps.push({ step: step.step, status: 'not_applicable', reason: decision.reason }); continue; }
+    try {
       if (step.step === 'despike') {
         const result = await api.postDespike({ wavenumber: x, intensity: y, params: step.params });
         if (stale()) return null;
         y = result.despiked;
+        spikeMask = result.spike_mask;
         steps.push({ step: 'despike', status: 'applied', params_used: despikeStepRecord(result.n_spikes, { ...result.params_used }) });
       } else if (step.step === 'bg_subtract') {
         const result = await api.postBackground({ wavenumber: x, intensity: y, bg_type: step.bg_type,
@@ -234,13 +254,13 @@ export async function runSharedChain(
         y = result.corrected;
         steps.push({ step: 'baseline', status: 'applied', params_used: baselineStepRecord({ ...result.params_used }) });
       }
-      stage = STAGES[step.step];
+    } catch (error) {
+      if (stale()) return null;
+      const reason = error instanceof ApiError && error.status === 429 ? 'shared chain failed (rate limited)'
+        : `shared chain failed: ${error instanceof Error ? error.message : 'request error'}`;
+      return refused(reason, [...steps, { step: step.step, status: 'failed', reason }, ...notRun(index + 1)]);
     }
-  } catch (error) {
-    if (stale()) return null;
-    const reason = error instanceof ApiError && error.status === 429 ? 'shared chain failed (rate limited)'
-      : `shared chain failed: ${error instanceof Error ? error.message : 'request error'}`;
-    return { ...base, refusal: reason, steps: [], scale_used: null, intensity: null, stage: 'raw' };
+    stage = STAGES[step.step];
   }
-  return { ...base, refusal: null, steps, scale_used: scaleUsed, intensity: y, stage };
+  return { ...base, refusal: null, steps, scale_used: scaleUsed, intensity: y, stage, ...(spikeMask ? { spike_mask: spikeMask } : {}) };
 }

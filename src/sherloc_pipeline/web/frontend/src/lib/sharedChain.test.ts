@@ -104,6 +104,7 @@ describe('applying the shared chain', () => {
     expect(vi.mocked(calls.postDespike).mock.calls[0][0].intensity).toEqual([10, 11, 12, 13, 14]);
     expect(vi.mocked(calls.postBackground).mock.calls[0][0]).toMatchObject({ intensity: [11, 12, 13, 14, 15], scale: 'auto', scan_ppp: 1800 });
     expect(outcome.intensity).toEqual([18, 20, 22, 24, 26]);
+    expect(outcome.spike_mask).toEqual([false, false, false, false, false]);
     expect(outcome).toMatchObject({ refusal: null, stage: 'baseline_corrected', scale_used: 2, derived_from: pin.id });
     expect(outcome.steps.map(step => [step.step, step.status])).toEqual([['despike', 'applied'], ['bg_subtract', 'applied'], ['baseline', 'applied']]);
     expect(outcome.steps[1].params_used).toEqual({ step: 'bg_subtract', bg_type: 'fs', scale_used: 2 });
@@ -117,16 +118,18 @@ describe('applying the shared chain', () => {
   });
 
   it.each([
-    ['an ML-despiked source', mars([], { mlDespiked: true }), 1800, all, 'source already despiked (ML); no double despike'],
-    ['a pin without shots per point', mars(), null, all, 'shots per point not recorded for this pin; auto background scale unavailable'],
-    ['a luminescence-domain trace', mars([], { region: 'R2' }), 1800, all, 'luminescence-domain trace: the shared Raman chain does not apply'],
-    ['a decreasing axis', mars([], { x: [...X].reverse() }), 1800, all.slice(2), 'baseline needs at least 3 strictly increasing axis values'],
+    ['an ML-despiked source', mars([], { mlDespiked: true }), 1800, all, 'source already despiked (ML); no double despike', ['refused', 'not_run', 'not_run']],
+    ['a pin without shots per point', mars(), null, all, 'shots per point not recorded for this pin; auto background scale unavailable', ['not_run', 'refused', 'not_run']],
+    ['a luminescence-domain trace', mars([], { region: 'R2' }), 1800, all, 'luminescence-domain trace: the shared Raman chain does not apply', ['not_run', 'not_run', 'not_run']],
+    ['a decreasing axis', mars([], { x: [...X].reverse() }), 1800, all.slice(2), 'baseline needs at least 3 strictly increasing axis values', ['refused']],
     ['an uncovered baseline range', mars(), 1800, [{ step: 'baseline', params: { method: 'aspls', wavenumber_range: [600, 1000] } }],
-      'baseline range 600–1000 cm⁻¹ is not covered by this trace\'s axis; never extrapolated'],
-  ] as [string, EvidenceTrace, number | null, SharedStep[], string][])('refuses %s before any request', async (_name, trace, ppp, steps, reason) => {
+      'baseline range 600–1000 cm⁻¹ is not covered by this trace\'s axis; never extrapolated', ['refused']],
+  ] as [string, EvidenceTrace, number | null, SharedStep[], string, string[]][])('refuses %s before any request and records every step', async (_name, trace, ppp, steps, reason, statuses) => {
     const calls = api();
     const outcome = (await runSharedChain(trace, await chainOf(steps), ppp, undefined, calls))!;
-    expect(outcome).toMatchObject({ refusal: reason, intensity: null, steps: [] });
+    expect(outcome).toMatchObject({ refusal: reason, intensity: null });
+    expect(outcome.steps.map(step => [step.step, step.status])).toEqual(steps.map((step, i) => [step.step, statuses[i]]));
+    expect(outcome.steps.find(step => step.status === 'refused')?.reason ?? null).toBe(statuses.includes('refused') ? reason : null);
     expect(calls.calls).toEqual([]);
   });
 
@@ -135,11 +138,18 @@ describe('applying the shared chain', () => {
     expect(plan.refusal).toBeNull();
   });
 
-  it('reports a rate-limited or failed request and drops a superseded one', async () => {
+  it('reports a rate-limited or failed request with the steps already applied, and drops a superseded one', async () => {
     const limited = api();
-    vi.mocked(limited.postBaseline).mockRejectedValueOnce(new ApiError(429, 'rate_limited'));
-    expect(await runSharedChain(mars(), await chainOf(all.slice(2)), 1800, undefined, limited))
-      .toMatchObject({ refusal: 'shared chain failed (rate limited)', intensity: null });
+    vi.mocked(limited.postBackground).mockRejectedValueOnce(new ApiError(429, 'rate_limited'));
+    const outcome = (await runSharedChain(mars(), await chainOf(all), 1800, undefined, limited))!;
+    expect(outcome).toMatchObject({ refusal: 'shared chain failed (rate limited)', intensity: null });
+    expect(outcome.steps).toEqual([
+      { step: 'despike', status: 'applied', params_used: { step: 'despike', method: 'modz', n_spikes: 0, window_size: 5 } },
+      { step: 'bg_subtract', status: 'failed', reason: 'shared chain failed (rate limited)' },
+      { step: 'baseline', status: 'not_run' },
+    ]);
+    expect(limited.postBackground).toHaveBeenCalledTimes(1);
+    expect(limited.postBaseline).not.toHaveBeenCalled();
     const failed = api();
     vi.mocked(failed.postBaseline).mockRejectedValueOnce(new ApiError(422, 'invalid_input', 'synthetic detail'));
     expect((await runSharedChain(mars(), await chainOf(all.slice(2)), 1800, undefined, failed))!.refusal)
@@ -190,6 +200,11 @@ describe('references under the shared chain', () => {
     const calls = api();
     const outcome = (await runSharedChain(reference(provenance), await chainOf(all), null, undefined, calls))!;
     expect(outcome).toMatchObject({ refusal: reason, intensity: null });
+    expect(outcome.steps).toEqual([
+      { step: 'despike', status: 'not_applicable', reason: 'not_applicable: instrument_cosmic_ray_correction' },
+      { step: 'bg_subtract', status: 'not_applicable', reason: 'not_applicable: instrument_background' },
+      { step: 'baseline', status: 'refused', reason },
+    ]);
     expect(outcome.reference_processing_state).toMatchObject({ consulted: true, release_id: 'e'.repeat(64) });
     expect(calls.calls).toEqual([]);
   });

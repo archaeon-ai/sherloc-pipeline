@@ -120,13 +120,18 @@ export function cacheSharedOutcome(chainId: string, outcome: SharedOutcome, epoc
 }
 
 // A read-only trace for the shared chain's output. The pin itself is never changed.
+// It carries only the shared chain's results: none of the pin's own params or
+// artifacts (fit, baseline, background), and no spike mask from its own despike.
+// An ML mask describes the source itself and is kept.
 export function derivedTrace(trace: EvidenceTrace, chain: SharedChain, outcome: SharedOutcome): EvidenceTrace | null {
   if (outcome.refusal !== null || !outcome.intensity) return null;
   const { snapshot } = trace;
   const records = outcome.steps.map(step => ({ ...(step.params_used ?? { step: step.step }),
     shared_chain_id: chain.shared_chain_id, status: step.status, ...(step.reason ? { reason: step.reason } : {}) }));
-  return freeze({ ...copy(trace), id: JSON.stringify([trace.id, chain.shared_chain_id]),
-    snapshot: copy({ ...snapshot, stage: outcome.stage, processingChain: records,
+  const annotations = outcome.spike_mask ? { ...trace.annotations, spike_mask: outcome.spike_mask, spike_method: 'modz' }
+    : trace.annotations.spike_method === 'modz' ? { ...trace.annotations, spike_mask: null, spike_method: null } : trace.annotations;
+  return freeze({ ...copy(trace), id: JSON.stringify([trace.id, chain.shared_chain_id]), annotations: copy(annotations),
+    snapshot: copy({ stage: outcome.stage, processingChain: records, params: {}, trace: snapshot.trace,
       raman: { wavenumber: snapshot.trace.wavenumber, intensity: outcome.intensity } }),
     breaks: sourceBreaks(snapshot.trace, outcome.intensity),
     derived: copy({ derived_from: trace.id, shared_chain_id: chain.shared_chain_id,
@@ -186,7 +191,7 @@ export function comparisonDisplays(primary: EvidenceTrace | null, pinned: Eviden
 export interface SharedEvidence {
   chain: SharedChain;
   primary_label: string;
-  refused: { label: string; derived_from: string; reason: string; reference_processing_state?: unknown }[];
+  refused: { label: string; derived_from: string; reason: string; steps: unknown[]; reference_processing_state?: unknown }[];
 }
 
 // Schema 2 only when a shared chain produced or refused a trace; otherwise today's schema 1, unchanged.

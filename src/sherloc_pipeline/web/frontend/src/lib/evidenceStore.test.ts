@@ -180,7 +180,27 @@ describe('shared processing chain', () => {
     expect(derived.derived).toMatchObject({ derived_from: pin.id, original_processing_chain: [] });
     expect(pin.snapshot.raman.intensity).toEqual([-2, 2, 5]);
     expect(Object.isFrozen(derived.snapshot)).toBe(true);
+    expect(Object.keys(derived.snapshot).sort()).toEqual(['params', 'processingChain', 'raman', 'stage', 'trace']);
+    expect(derived.snapshot.params).toEqual({});
     expect(derivedTrace(pin, chain, { ...outcome, refusal: 'synthetic refusal', intensity: null })).toBeNull();
+  });
+
+  it('drops the pin own processing artifacts and own despike mask, and keeps a source ML mask', async () => {
+    const { chain, outcome } = await shared();
+    const processed = snapshot(1);
+    processed.stage = 'raman_fitted'; processed.params = { synthetic_fit: true };
+    processed.processingChain = [{ step: 'despike', method: 'modz' }, { step: 'raman_fit', n_peaks: 1 }];
+    processed.artifacts = { baseline: [0, 0, 0], fitCurve: [1, 1, 1] } as ProcessingSnapshot['artifacts'];
+    const own = evidenceTrace(processed, { spike_mask: [true, false, false], spike_method: 'modz', badpix: [1] })!;
+    const derived = derivedTrace(own, chain, { ...outcome, derived_from: own.id })!;
+    expect(derived.snapshot).not.toHaveProperty('artifacts');
+    expect(derived.snapshot.params).toEqual({});
+    expect(derived.annotations).toEqual({ spike_mask: null, spike_method: null, badpix: [1] });
+    expect(derived.derived!.original_processing_chain).toEqual(processed.processingChain);
+    const despiked = derivedTrace(own, chain, { ...outcome, derived_from: own.id, spike_mask: [false, true, false] })!;
+    expect(despiked.annotations).toEqual({ spike_mask: [false, true, false], spike_method: 'modz', badpix: [1] });
+    const ml = evidenceTrace(snapshot(2), { spike_mask: [false, false, true], spike_method: 'ml', badpix: null })!;
+    expect(derivedTrace(ml, chain, { ...outcome, derived_from: ml.id })!.annotations).toEqual(ml.annotations);
   });
 
   it('exports schema 1 unchanged unless a shared chain produced or refused a trace', async () => {
@@ -198,7 +218,9 @@ describe('shared processing chain', () => {
     expect(JSON.stringify(output.traces[0])).toBe(JSON.stringify(evidenceExport(displays).traces[0]));
     expect((output.traces[1] as Record<string, unknown>).processing).toMatchObject({ mode: 'shared', derived_from: pin.id,
       shared_chain_id: chain.shared_chain_id, steps: outcome.steps });
-    const refused = evidenceExport(displays, null, { ...idle, refused: [{ label: pin.label, derived_from: pin.id, reason: 'synthetic refusal' }] });
+    const refused = evidenceExport(displays, null, { ...idle, refused: [{ label: pin.label, derived_from: pin.id, reason: 'synthetic refusal',
+      steps: [{ step: 'baseline', status: 'refused', reason: 'synthetic refusal' }] }] });
+    expect((refused as Record<string, unknown> & { shared_chain: { refused: unknown[] } }).shared_chain.refused[0]).toMatchObject({ steps: [{ status: 'refused' }] });
     expect(refused.schema_version).toBe('pipeline-evidence-2');
     expect(JSON.stringify(refused.traces)).toBe(JSON.stringify(evidenceExport(displays).traces));
     expect(JSON.parse(evidenceCsv(derived, null, idle).split('\n')[0].slice('# provenance: '.length))).toEqual(output);

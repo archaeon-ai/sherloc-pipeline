@@ -61,11 +61,14 @@
   // Reschedule only when the chain, the traces or the opt-outs change, not on every re-render.
   $: scheduleShared(JSON.stringify([chain?.shared_chain_id ?? null, candidates.map(item => item.id), [...ownProcessing].sort()]));
   $: sharedActive = sharing && chain !== null;
-  $: viewed = sharedActive && chain ? sharedComparisons(chain, candidates, ownProcessing, outcomeVersion) : comparisons;
+  // While a new chain id is computed, only opted-out traces are drawn; nothing mixes old and new processing.
+  $: chainPending = sharing && steps !== null && chain === null;
+  $: viewed = sharedActive && chain ? sharedComparisons(chain, candidates, ownProcessing, outcomeVersion)
+    : chainPending ? candidates.filter(item => ownProcessing.has(item.id)) : comparisons;
   $: refused = sharedActive && chain ? sharedRefusals(chain, candidates, ownProcessing, outcomeVersion) : [];
   $: sharedEvidence = sharedActive && chain && primary ? {
     chain, primary_label: primary.label,
-    refused: refused.map(item => ({ label: item.label, derived_from: item.derived_from, reason: item.refusal!,
+    refused: refused.map(item => ({ label: item.label, derived_from: item.derived_from, reason: item.refusal!, steps: item.steps,
       ...(item.reference_processing_state ? { reference_processing_state: item.reference_processing_state } : {}) })),
   } as SharedEvidence : null;
 
@@ -77,7 +80,12 @@
     const token = ++chainToken;
     const source = primary;
     const chainSteps = steps;
-    if (!source || !chainSteps) { chain = null; return; }
+    // Retire the old chain at once: its in-flight requests become stale, and
+    // nothing from it is shown while the new id is computed.
+    chain = null;
+    sharedToken += 1;
+    if (sharedTimer) clearTimeout(sharedTimer);
+    if (!source || !chainSteps) return;
     const next = await sharedChain(source, chainSteps);
     if (token === chainToken) chain = next;
   }

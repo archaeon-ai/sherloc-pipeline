@@ -93,7 +93,8 @@ describe('Evidence desk shared processing chain', () => {
     const reason = 'baseline range 800–1000 cm⁻¹ is not covered by this trace\'s axis; never extrapolated';
     expect(screen.getByRole('status').textContent).toBe(`Not shown: ${pin.label}. ${reason}`);
     expect(plotted()).toHaveLength(1);
-    expect(meta().shared_chain.refused).toEqual([{ label: pin.label, derived_from: pin.id, reason }]);
+    expect(meta().shared_chain.refused).toEqual([{ label: pin.label, derived_from: pin.id, reason,
+      steps: [{ step: 'baseline', status: 'refused', reason }] }]);
     expect(postBaseline).not.toHaveBeenCalled();
   });
 
@@ -110,8 +111,43 @@ describe('Evidence desk shared processing chain', () => {
     expect(vi.mocked(postBackground).mock.calls[0][0]).toMatchObject({ scale: 'auto', scan_ppp: 450 });
     expect(meta().shared_chain.steps).toEqual([{ step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto' }]);
     expect(meta().traces[1].processing.scale_used).toBe(0.5);
-    expect(meta().shared_chain.refused).toEqual([{ label: without.label, derived_from: without.id,
-      reason: 'shots per point not recorded for this pin; auto background scale unavailable' }]);
+    const reason = 'shots per point not recorded for this pin; auto background scale unavailable';
+    expect(meta().shared_chain.refused).toEqual([{ label: without.label, derived_from: without.id, reason,
+      steps: [{ step: 'bg_subtract', status: 'refused', reason }] }]);
+  });
+
+  it('drops a result from a chain that changed while its request was in flight', async () => {
+    let release = () => {};
+    vi.mocked(postBaseline).mockImplementationOnce(body => new Promise(resolve => {
+      release = () => resolve({ schema_version: '1', raw: body.intensity, baseline: [0, 0, 0], corrected: [100, 100, 100],
+        wavenumber: body.wavenumber, params_used: { ...body.params } });
+    }));
+    pinTrace(evidenceTrace(input(1))!, 'synthetic-context', 900);
+    const { component } = await desk(input(0, [baseline]));
+    await fireEvent.click(screen.getByLabelText('Apply this trace\'s chain to all'));
+    await settle();
+    expect(postBaseline).toHaveBeenCalledTimes(1);
+    // Hold the new chain's hash open so the old request finishes inside that window.
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    let hashed = () => {};
+    const held = vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce((...args) => new Promise(resolve => {
+      hashed = () => resolve(digest(...args));
+    }));
+    component.$set({ snapshot: input(0, [{ ...baseline, lam: 1e5 }]) });
+    await flush();
+    release();
+    await settle();
+    expect(JSON.stringify(react.mock.calls.at(-1)![2].meta)).not.toContain('100,100,100');
+    expect(plotted()).toHaveLength(1);
+    hashed();
+    await settle();
+    held.mockRestore();
+    expect(postBaseline).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(postBaseline).mock.calls[1][0].params).toEqual({ method: 'aspls', lam: 1e5, max_iter: 10 });
+    expect(meta().traces[1].original).toEqual([-2, 4, 8]);
+    expect(meta().traces[1].processing.shared_chain_id).toBe(meta().shared_chain.shared_chain_id);
+    expect(meta().shared_chain.steps).toEqual([{ step: 'baseline', params: { method: 'aspls', lam: 1e5, max_iter: 10 } }]);
+    expect(JSON.stringify(meta())).not.toContain('100,100,100');
   });
 });
 
