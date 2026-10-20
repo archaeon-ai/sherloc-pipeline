@@ -10,6 +10,9 @@
   export let contextKey: string;
   export let pinDisabled = false;
   export let onPin: () => void = () => {};
+  export let shotsPerPoint: number | null = null;
+  // With a shared chain active, scores still come from the identification prep.
+  export let sharedActive = false;
 
   // Only a completed fit lists the references it saw; abstentions before the solver prune nothing.
   function topLabel(evidence: IdentificationEvidence, templateId: string) {
@@ -22,7 +25,7 @@
 
 <div class="evidence-rail">
   <button class="btn-secondary btn-sm" disabled={pinDisabled || !primary || $pinnedTraces.length >= MAX_PINNED_TRACES || $pinnedTraces.some(item => item.id === primary?.id)}
-    on:click={() => { if (primary && pinTrace(primary, contextKey)) onPin(); }}>Pin current trace</button>
+    on:click={() => { if (primary && pinTrace(primary, contextKey, shotsPerPoint)) onPin(); }}>Pin current trace</button>
   <p>Read-only comparisons: current selection plus up to three pins. Pins stay in this session for this target.</p>
   {#if result}
     <p>{result.mixture ? 'Mixture support' : 'Support'} · provisional threshold {result.method.support_min.toFixed(2)}
@@ -35,7 +38,7 @@
     {/if}
     {#each result.ranking.slice(0, 5) as candidate, index}
       <div class="pin"><span>{index === 0 ? topLabel(result, candidate.template_id) : 'Alternative'}: {candidate.species_name} ·
-        {result.mixture ? `retrieval score ${candidate.retrieval_score?.toFixed(3)}` : `support ${candidate.support?.toFixed(3)}`}</span>
+        {result.mixture ? `retrieval score ${candidate.retrieval_score?.toFixed(3)}` : `support ${candidate.support?.toFixed(3)}`}{sharedActive ? ' · score from identification prep (unchanged)' : ''}</span>
         {#each candidate.trace_revision_ids as identity}
           <button class="btn-secondary btn-sm" on:click={() => onCandidate(identity)}>Add {candidate.species_name} trace</button>
           <small>Trace: {identity} · Citation: {evidenceCitation(candidate.citations.find(item => item.trace_revision_id === identity))}</small>

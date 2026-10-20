@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
 import { accessMode, appConfig, clearSessionState } from './stores';
 import { clearEvidence, setEvidenceContext, evidenceTrace, pinTrace, pinnedTraces,
-  displayTrace, comparisonDisplays, evidenceCsv, evidenceExport, toggleTrace, removeTrace } from './evidenceStore';
+  displayTrace, comparisonDisplays, evidenceCsv, evidenceExport, toggleTrace, removeTrace,
+  cacheSharedOutcome, cachedSharedOutcome, derivedTrace, dropFailedSharedOutcomes, pinShotsPerPoint, sharedOutcomeEpoch } from './evidenceStore';
+import type { SharedEvidence } from './evidenceStore';
+import { sharedChain } from './sharedChain';
+import type { SharedOutcome } from './sharedChain';
 import type { ConfigResponse, ProcessingSnapshot } from './types';
 
 function snapshot(index = 0): ProcessingSnapshot {
@@ -140,4 +144,80 @@ it('uses axes only for unknown regions and rejects unsupported declared regions'
   const trace = evidenceTrace(input)!;
   expect(displayTrace(trace, 'raman_shift')).toBeNull();
   expect(displayTrace(trace, 'emission_wavelength')).toBeNull();
+});
+
+
+describe('shared processing chain', () => {
+  async function shared() {
+    const primary = evidenceTrace(snapshot())!;
+    const chain = await sharedChain(primary, [{ step: 'baseline', params: { method: 'aspls', lam: 1e6, max_iter: 10 } }]);
+    const pin = evidenceTrace(snapshot(1))!;
+    const outcome: SharedOutcome = { derived_from: pin.id, label: pin.label, refusal: null, stage: 'baseline_corrected', scale_used: null,
+      intensity: [1, 2, 3], steps: [{ step: 'baseline', status: 'applied', params_used: { step: 'baseline', method: 'aspls', lam: 1e6, max_iter: 10 } }] };
+    return { primary, chain, pin, outcome };
+  }
+
+  it('keeps the pin-time shots per point beside the pin without changing the pin', () => {
+    const plain = evidenceTrace(snapshot())!;
+    expect(pinTrace(plain, 'session:team:invented', 1800)).toBe(true);
+    expect(get(pinnedTraces)[0].id).toBe(evidenceTrace(snapshot())!.id);
+    expect(pinShotsPerPoint(plain.id)).toBe(1800);
+    pinTrace(evidenceTrace(snapshot(1))!, 'session:team:invented', Number.NaN);
+    pinTrace(evidenceTrace(snapshot(2))!, 'session:team:invented');
+    expect([1, 2].map(i => pinShotsPerPoint(evidenceTrace(snapshot(i))!.id))).toEqual([null, null]);
+    removeTrace(plain.id); expect(pinShotsPerPoint(plain.id)).toBeNull();
+    pinTrace(plain, 'session:team:invented', 900); clearEvidence(); expect(pinShotsPerPoint(plain.id)).toBeNull();
+  });
+
+  it('derives a read-only trace and leaves the pin untouched', async () => {
+    const { chain, pin, outcome } = await shared();
+    const derived = derivedTrace(pin, chain, outcome)!;
+    expect(derived.id).toBe(JSON.stringify([pin.id, chain.shared_chain_id]));
+    expect(derived.snapshot.raman.intensity).toEqual([1, 2, 3]);
+    expect(derived.snapshot.stage).toBe('baseline_corrected');
+    expect(derived.snapshot.processingChain).toEqual([{ step: 'baseline', method: 'aspls', lam: 1e6, max_iter: 10,
+      shared_chain_id: chain.shared_chain_id, status: 'applied' }]);
+    expect(derived.derived).toMatchObject({ derived_from: pin.id, original_processing_chain: [] });
+    expect(pin.snapshot.raman.intensity).toEqual([-2, 2, 5]);
+    expect(Object.isFrozen(derived.snapshot)).toBe(true);
+    expect(derivedTrace(pin, chain, { ...outcome, refusal: 'synthetic refusal', intensity: null })).toBeNull();
+  });
+
+  it('exports schema 1 unchanged unless a shared chain produced or refused a trace', async () => {
+    const { primary, chain, pin, outcome } = await shared();
+    const displays = comparisonDisplays(primary, [pin], 'raman_shift', false);
+    const idle: SharedEvidence = { chain, primary_label: primary.label, refused: [] };
+    for (const output of [evidenceExport(displays, null, null), evidenceExport(displays, null, idle)]) {
+      expect(JSON.stringify(output)).toBe(JSON.stringify(evidenceExport(displays)));
+    }
+    expect(evidenceCsv(displays, null, idle)).toBe(evidenceCsv(displays));
+    const derived = comparisonDisplays(primary, [derivedTrace(pin, chain, outcome)!], 'raman_shift', false);
+    const output = evidenceExport(derived, null, idle) as ReturnType<typeof evidenceExport> & Record<string, unknown>;
+    expect(output.schema_version).toBe('pipeline-evidence-2');
+    expect(output.shared_chain).toMatchObject({ shared_chain_id: chain.shared_chain_id, primary_trace_id: primary.id, primary_label: primary.label });
+    expect(JSON.stringify(output.traces[0])).toBe(JSON.stringify(evidenceExport(displays).traces[0]));
+    expect((output.traces[1] as Record<string, unknown>).processing).toMatchObject({ mode: 'shared', derived_from: pin.id,
+      shared_chain_id: chain.shared_chain_id, steps: outcome.steps });
+    const refused = evidenceExport(displays, null, { ...idle, refused: [{ label: pin.label, derived_from: pin.id, reason: 'synthetic refusal' }] });
+    expect(refused.schema_version).toBe('pipeline-evidence-2');
+    expect(JSON.stringify(refused.traces)).toBe(JSON.stringify(evidenceExport(displays).traces));
+    expect(JSON.parse(evidenceCsv(derived, null, idle).split('\n')[0].slice('# provenance: '.length))).toEqual(output);
+  });
+
+  it('caches outcomes until the pins clear, ignores results from before a clear and retries failures', async () => {
+    const { chain, pin, outcome } = await shared();
+    const epoch = sharedOutcomeEpoch();
+    cacheSharedOutcome(chain.shared_chain_id, outcome, epoch);
+    expect(cachedSharedOutcome(pin.id, chain.shared_chain_id)).toBe(outcome);
+    clearEvidence();
+    expect(cachedSharedOutcome(pin.id, chain.shared_chain_id)).toBeUndefined();
+    cacheSharedOutcome(chain.shared_chain_id, outcome, epoch);
+    expect(cachedSharedOutcome(pin.id, chain.shared_chain_id)).toBeUndefined();
+    const failed = { ...outcome, refusal: 'shared chain failed (rate limited)', intensity: null };
+    cacheSharedOutcome(chain.shared_chain_id, failed, sharedOutcomeEpoch());
+    cacheSharedOutcome('synthetic-other-chain', { ...outcome, refusal: 'synthetic refusal', intensity: null }, sharedOutcomeEpoch());
+    dropFailedSharedOutcomes();
+    expect(cachedSharedOutcome(pin.id, chain.shared_chain_id)).toBeUndefined();
+    expect(cachedSharedOutcome(pin.id, 'synthetic-other-chain')).toBeDefined();
+  });
 });

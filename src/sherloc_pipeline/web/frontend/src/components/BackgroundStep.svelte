@@ -35,8 +35,9 @@ Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation.
   // keeps the radio selection in sync with what's actually applied to the
   // displayed spectrum.
   export let bgType: 'none' | 'as' | 'fs' = 'none';
-  let autoScale = true;
-  let manualScale = 1.0;
+  // Bound by ProcessingChain so the Evidence desk can share the scale mode.
+  export let autoScale = true;
+  export let manualScale = 1.0;
 
   let computing = false;
   let error = '';

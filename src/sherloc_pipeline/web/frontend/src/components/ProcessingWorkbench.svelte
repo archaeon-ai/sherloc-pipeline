@@ -4,6 +4,7 @@
   import { appConfig, navigate, sessionGeneration } from '../lib/stores';
   import { evidenceGeneration, evidenceBoundary, setEvidenceContext } from '../lib/evidenceStore';
   import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
+  import type { BackgroundScale } from '../lib/sharedChain';
   import {
     getScan,
     getScanPoints,
@@ -146,6 +147,7 @@
 
   // Raw snapshot for reset
   let rawSnapshot: ProcessingSnapshot | null = null;
+  let backgroundScale: BackgroundScale = { mode: 'auto', value: 1 };
   let rawSnapshotToken = 0;
 
   // Current state derived from store
@@ -765,6 +767,7 @@
                 {mlAggregateView}
                 visibleRange={selectedRegion === 'R1' ? visibleBaselineRange : null}
                 onRegionSwitch={(reg) => switchRegion(reg)}
+                bind:backgroundScale
                 on:stateUpdate={onChainStateUpdate}
                 on:despikeMethodChange={onDespikeMethodChange}
               />
@@ -832,6 +835,9 @@
               <EvidenceDesk
                 snapshot={currentState}
                 contextKey={evidenceContextKey}
+                {backgroundScale}
+                shotsPerPoint={scan?.shots_per_point ?? null}
+                chainPpp={scan?.shots_per_point ?? 900}
                 wavenumber={currentWavenumber}
                 intensity={currentIntensity}
                 rawIntensity={rawSnapshot?.raman.intensity ?? []}

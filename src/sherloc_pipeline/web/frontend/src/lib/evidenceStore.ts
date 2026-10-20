@@ -1,13 +1,20 @@
 import { get, writable } from 'svelte/store';
 import type { IdentificationEvidence } from './identification';
-import type { ProcessingSnapshot } from './types';
+import type { ExportTrace, ProcessingSnapshot } from './types';
 import type { EvidenceDisplay, EvidenceDomain, EvidenceTrace, EvidenceTheme } from './evidenceTypes';
+import type { SharedChain, SharedOutcome } from './sharedChain';
 
 // The current selection occupies one of the four comparison slots.
 export const MAX_PINNED_TRACES = 3;
 const pins = writable<EvidenceTrace[]>([]);
 export const pinnedTraces = { subscribe: pins.subscribe };
 let context: string | null = null;
+// Pin-time metadata kept beside the pins, so pin ids and pin snapshots stay unchanged.
+const pinShots = new Map<string, number | null>();
+// Shared-chain results by [trace id, shared chain id]; an epoch keeps a result
+// computed before a clear from landing after it.
+const sharedOutcomes = new Map<string, SharedOutcome>();
+let sharedEpoch = 0;
 export let evidenceGeneration = 0;
 const boundary = writable(evidenceGeneration);
 export const evidenceBoundary = { subscribe: boundary.subscribe };
@@ -26,6 +33,9 @@ export function evidenceColor(trace: EvidenceTrace, theme: EvidenceTheme): Evide
 
 export function clearEvidence(): void {
   context = null;
+  pinShots.clear();
+  sharedOutcomes.clear();
+  sharedEpoch += 1;
   pins.set([]);
 }
 
@@ -65,21 +75,63 @@ export function evidenceTrace(snapshot: ProcessingSnapshot | null, annotations: 
   return freeze({ id, label: `${trace.source.scan_name ?? trace.source.scan_id ?? 'Pipeline'} · ${JSON.stringify(trace.selection)} · ${snapshot.stage}`,
     nativeDomain: trace.region === 'R1' ? 'raman_shift' : trace.region === 'R2' || trace.region === 'R3' ? 'emission_wavelength' : null,
     snapshot: captured, annotations: copy(annotations), visible: true, color: '#1e293b',
-    breaks: y.map((v, i) => !Number.isFinite(v) ||
-      (i > 0 && trace.channel_indices.length === y.length && trace.channel_indices[i] !== trace.channel_indices[i - 1] + 1)),
+    breaks: sourceBreaks(trace, y),
   });
 }
 
-export function pinTrace(trace: EvidenceTrace, expectedContext: string): boolean {
+function sourceBreaks(trace: ExportTrace, y: number[]): boolean[] {
+  return y.map((v, i) => !Number.isFinite(v) ||
+    (i > 0 && trace.channel_indices.length === y.length && trace.channel_indices[i] !== trace.channel_indices[i - 1] + 1));
+}
+
+export function pinTrace(trace: EvidenceTrace, expectedContext: string, shotsPerPoint: number | null = null): boolean {
   if (expectedContext !== context || trace.snapshot.trace.region === 'R123') return false;
   const current = get(pins);
   if (current.some(item => item.id === trace.id) || current.length >= MAX_PINNED_TRACES) return false;
+  pinShots.set(trace.id, Number.isFinite(shotsPerPoint) && shotsPerPoint! > 0 ? shotsPerPoint : null);
   pins.set([...current, freeze({ ...copy(trace), color: colors.find(color => !current.some(item => item.color === color))! })]);
   return true;
 }
 
+export function pinShotsPerPoint(id: string): number | null {
+  return pinShots.get(id) ?? null;
+}
+
 export function removeTrace(id: string): void {
+  pinShots.delete(id);
   pins.update(items => items.filter(item => item.id !== id));
+}
+
+export function sharedOutcomeEpoch(): number {
+  return sharedEpoch;
+}
+
+export function cachedSharedOutcome(traceId: string, chainId: string): SharedOutcome | undefined {
+  return sharedOutcomes.get(JSON.stringify([traceId, chainId]));
+}
+
+// Failed requests (e.g. rate limited) are retried when sharing is turned on again.
+export function dropFailedSharedOutcomes(): void {
+  for (const [key, outcome] of sharedOutcomes) if (outcome.refusal?.startsWith('shared chain failed')) sharedOutcomes.delete(key);
+}
+
+export function cacheSharedOutcome(chainId: string, outcome: SharedOutcome, epoch: number): void {
+  if (epoch === sharedEpoch) sharedOutcomes.set(JSON.stringify([outcome.derived_from, chainId]), outcome);
+}
+
+// A read-only trace for the shared chain's output. The pin itself is never changed.
+export function derivedTrace(trace: EvidenceTrace, chain: SharedChain, outcome: SharedOutcome): EvidenceTrace | null {
+  if (outcome.refusal !== null || !outcome.intensity) return null;
+  const { snapshot } = trace;
+  const records = outcome.steps.map(step => ({ ...(step.params_used ?? { step: step.step }),
+    shared_chain_id: chain.shared_chain_id, status: step.status, ...(step.reason ? { reason: step.reason } : {}) }));
+  return freeze({ ...copy(trace), id: JSON.stringify([trace.id, chain.shared_chain_id]),
+    snapshot: copy({ ...snapshot, stage: outcome.stage, processingChain: records,
+      raman: { wavenumber: snapshot.trace.wavenumber, intensity: outcome.intensity } }),
+    breaks: sourceBreaks(snapshot.trace, outcome.intensity),
+    derived: copy({ derived_from: trace.id, shared_chain_id: chain.shared_chain_id,
+      original_processing_chain: snapshot.processingChain ?? [], steps: outcome.steps, scale_used: outcome.scale_used,
+      ...(outcome.reference_processing_state ? { reference_processing_state: outcome.reference_processing_state } : {}) }) });
 }
 
 export function toggleTrace(id: string): void {
@@ -131,7 +183,26 @@ export function comparisonDisplays(primary: EvidenceTrace | null, pinned: Eviden
     .map((item, i) => displayTrace(item.trace, domain, stacked ? i * 1.25 : 0)!);
 }
 
-export function evidenceExport(displays: EvidenceDisplay[], identification: IdentificationEvidence | null = null) {
+export interface SharedEvidence {
+  chain: SharedChain;
+  primary_label: string;
+  refused: { label: string; derived_from: string; reason: string; reference_processing_state?: unknown }[];
+}
+
+// Schema 2 only when a shared chain produced or refused a trace; otherwise today's schema 1, unchanged.
+export function evidenceExport(displays: EvidenceDisplay[], identification: IdentificationEvidence | null = null,
+  shared: SharedEvidence | null = null) {
+  const base = nativeEvidenceExport(displays, identification);
+  if (!shared || !(shared.refused.length || displays.some(item => item.trace.derived))) return base;
+  return { ...base, schema_version: 'pipeline-evidence-2',
+    shared_chain: { ...shared.chain, primary_label: shared.primary_label, refused: shared.refused },
+    traces: base.traces.map((entry, i) => {
+      const derived = displays[i].trace.derived;
+      return derived ? { ...entry, processing: { mode: 'shared', ...derived } } : entry;
+    }) };
+}
+
+function nativeEvidenceExport(displays: EvidenceDisplay[], identification: IdentificationEvidence | null) {
   return { schema_version: 'pipeline-evidence-1', ...(identification ? { identification } : {}), traces: displays.map(item => ({
     label: item.trace.label, domain: item.domain, color: item.trace.color,
     x_unit: (item.domain === 'raman_shift' ? item.trace.snapshot.trace.provenance.wavenumber_unit : item.trace.snapshot.trace.provenance.wavelength_unit) ?? null,
@@ -142,8 +213,9 @@ export function evidenceExport(displays: EvidenceDisplay[], identification: Iden
   })) };
 }
 
-export function evidenceCsv(displays: EvidenceDisplay[], identification: IdentificationEvidence | null = null): string {
-  const lines = [`# provenance: ${JSON.stringify(evidenceExport(displays, identification))}`,
+export function evidenceCsv(displays: EvidenceDisplay[], identification: IdentificationEvidence | null = null,
+  shared: SharedEvidence | null = null): string {
+  const lines = [`# provenance: ${JSON.stringify(evidenceExport(displays, identification, shared))}`,
     'trace_index,domain,x,original,displayed,break_before'];
   displays.forEach((item, index) => item.x.forEach((x, i) => {
     const number = (v: number) => Number.isFinite(v) ? String(v) : '';
