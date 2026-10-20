@@ -69,8 +69,15 @@ def identification_binding(request, policy, release):
     identify = policy.identification
     if not identify.enabled or not identify.experimental_candidates:
         return None
-    rows = request.state.db.query(ReferenceTemplateORM).filter_by(release_id=release.release_id).order_by(
-        ReferenceTemplateORM.template_id).limit(identify.max_templates + 1).all()
+    ids = policy.references.template_ids
+    if len(ids) > identify.max_templates:
+        return None
+    query = request.state.db.query(ReferenceTemplateORM).filter_by(release_id=release.release_id)
+    if ids:
+        query = query.filter(ReferenceTemplateORM.template_id.in_(ids))
+    rows = query.order_by(ReferenceTemplateORM.template_id).limit(identify.max_templates + 1).all()
+    if ids and [row.template_id for row in rows] != ids:
+        return None
     ids = [row.template_id for row in rows]
     if not ids or len(ids) > identify.max_templates or digest(ids) != policy.references.subset_id:
         return None

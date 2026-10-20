@@ -395,3 +395,34 @@ def test_stored_product_denial_without_metadata_alias(evidence_api, monkeypatch)
     response = s.client.post('/api/identify', json=s.body)
     assert response.status_code == 422
     worker.assert_not_called()
+
+
+
+def test_pinned_subset_binding_ignores_unrelated_unpermitted_templates(evidence_api):
+    s = evidence_api
+    with Session(s.engine) as session:
+        row = session.query(ReferenceTemplateORM).one()
+        metadata = copy.deepcopy(row.metadata_json)
+        metadata['name'] = 'synthetic-unpermitted-template'
+        metadata['members'][0]['trace_index'] = 2
+        metadata['members'] = metadata['members'][:1]
+        session.add(ReferenceTemplateORM(template_id='f' * 64, release_id=row.release_id,
+                    name=metadata['name'], recipe_sha256=row.recipe_sha256, member_trace_ids=[s.unknown],
+                    permitted_tiers=[], metadata_json=metadata))
+        session.commit()
+    policy = s.app.state.feature_policy.model_dump()
+    policy['references']['template_ids'] = s.binding['template_ids']
+    s.app.state.feature_policy = FeaturePolicy.model_validate(policy)
+    response = s.client.get('/api/references', params={'release_id': s.imported.release_id})
+    assert response.status_code == 200
+    assert response.json()['binding'] == s.binding
+    # An explicit subset never relaxes permissions on any selected member.
+    policy['references'].update(mode='allowlist', allowed_trace_ids=[s.trace_ids[0]])
+    s.app.state.feature_policy = FeaturePolicy.model_validate(policy)
+    assert s.client.get('/api/references', params={'release_id': s.imported.release_id}).json()['binding'] is None
+
+
+@pytest.mark.parametrize('ids', [['b' * 64, 'a' * 64], ['a' * 64, 'a' * 64], ['b' * 64]])
+def test_explicit_subset_policy_requires_sorted_unique_matching_ids(ids):
+    with pytest.raises(ValueError, match='exact pinned subset'):
+        FeaturePolicy.model_validate({'references': {'template_ids': ids, 'subset_id': digest(['a' * 64])}})
