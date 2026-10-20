@@ -1475,7 +1475,7 @@ it.each(['R2', 'R3'])('keeps wavelength-only %s ML annotations in plot, pin and 
   vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_A, {
     region, wavenumber: [], wavelength: [285, 305, 325], masked_positions: [1],
     despike_applied: true, despike_method: 'ml', n_masked_channels: 1,
-    provenance: { calibration_version: null, wavelength_unit: 'nm', intensity_unit: null },
+    provenance: { calibration_version: null, wavelength_unit: 'nm', intensity_unit: null } as unknown as import('../lib/types').SpectrumProvenance,
   }));
   const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
   expect(lastSpikeTrace()?.x).toEqual([305]);
@@ -1492,7 +1492,7 @@ it.each([undefined, false])('keeps legacy wavelength-only ML masks absent with c
   vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_A, {
     region: 'R2', wavenumber: [], wavelength: [285, 305, 325], masked_positions: [1],
     despike_applied: true, despike_method: 'ml', n_masked_channels: 1,
-    provenance: { calibration_version: null, wavelength_unit: 'nm', intensity_unit: null },
+    provenance: { calibration_version: null, wavelength_unit: 'nm', intensity_unit: null } as unknown as import('../lib/types').SpectrumProvenance,
   }));
   const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
   expect(screen.getByText('No spectrum data available')).toBeTruthy();
@@ -1514,4 +1514,52 @@ it('keeps distinct nonblank target values separate without trimming identity', a
   vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), id: 'synthetic-space', target: 'Synthetic Alpha ' } });
   render(ProcessingWorkbench, { scanId: 'synthetic-space' }); await flush();
   expect(get(pinnedTraces)).toEqual([]);
+});
+
+
+it.each([['getScan', 'tier'], ['getScan', 'access'], ['getScanPoints', 'tier'], ['getScanPoints', 'access']] as const)('retries initial %s across an authorized %s boundary', async (pendingMethod, boundary) => {
+  accessMode.set('internal'); scienceAuthorized.set(true);
+  currentHash.set('#/scan/synthetic/workbench');
+  const generation = sessionGeneration;
+  vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
+  let finish = () => {};
+  if (pendingMethod === 'getScan') {
+    vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+      finish = () => resolve({ schema_version: '1', scan: { ...fakeScan(), target: 'Stale synthetic' } });
+    }));
+  } else {
+    vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+      finish = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [], n_points: 0 });
+    }));
+  }
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } });
+  await flush();
+  expect(api.getPointSpectrum).not.toHaveBeenCalled();
+  if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  else accessMode.set('public');
+  await flush();
+  finish(); await flush(); await flush();
+  expect(api.getScan).toHaveBeenCalledTimes(2);
+  expect(api.getScanPoints).toHaveBeenCalledTimes(pendingMethod === 'getScan' ? 1 : 2);
+  expect(api.getPointSpectrum).toHaveBeenCalled();
+  expect(get(processingState)?.trace?.source.target).toBe('Invented');
+  expect(container.querySelector('.raman-view')).toBeTruthy();
+  expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+  expect(sessionGeneration).toBe(generation); expect(get(scienceAuthorized)).toBe(true);
+  expect(get(currentHash)).toBe('#/scan/synthetic/workbench');
+});
+
+it.each(['destroy', 'session', 'capability'] as const)('does not retry an invalidated initial scan after %s ends eligibility', async ended => {
+  let finish = () => {};
+  vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+    finish = () => resolve({ schema_version: '1', scan: fakeScan() });
+  }));
+  const view = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  if (ended === 'destroy') view.unmount();
+  else if (ended === 'session') clearSessionState();
+  else appConfig.set({ tier: 'public', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  finish(); await flush();
+  expect(api.getScan).toHaveBeenCalledOnce(); expect(api.getScanPoints).not.toHaveBeenCalled();
+  expect(get(processingState)).toBeNull();
 });

@@ -294,8 +294,9 @@
     await loadBadpix();
   });
 
-  async function loadScan() {
+  async function loadScan(): Promise<void> {
     const requestBoundary = requestEvidence();
+    let metadataLoaded = false;
     loading = true;
     error = '';
     try {
@@ -316,6 +317,7 @@
       const ptRes = await getScanPoints(scanId);
       if (destroyed || staleEvidence(requestBoundary)) return;
       points = ptRes.points;
+      metadataLoaded = true;
 
       // Validate deep links before fetching any spectrum; never fall back to
       // the scan average when a requested point is missing or malformed.
@@ -332,13 +334,20 @@
 
       await loadSpectrum();
     } catch (e) {
+      if (destroyed || staleEvidence(requestBoundary)) return;
       if (e instanceof Error) {
         error = e.message;
       } else {
         error = 'Failed to load scan';
       }
     } finally {
-      loading = false;
+      // Retry mount-time metadata invalidated by an authorized access boundary.
+      if (!metadataLoaded && !destroyed && mountedSession === sessionGeneration &&
+          get(appConfig)?.capabilities?.evidence_desk === true && staleEvidence(requestBoundary)) {
+        await loadScan();
+      } else {
+        loading = false;
+      }
     }
   }
 
