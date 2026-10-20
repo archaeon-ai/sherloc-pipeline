@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Name = Annotated[str, Field(min_length=1, max_length=1000)]
 SourceIdentifier = Annotated[str, Field(min_length=1, max_length=1000, pattern=r"^[^:]+$")]
+# Room for two maximal source identifiers, both delimiters and any trace index.
+TraceKey = Annotated[str, Field(min_length=1, max_length=2 * 1000 + 2 + 20)]
 
 
 class ReferenceModel(BaseModel):
@@ -108,7 +110,7 @@ class ReferenceSnapshot(ReferenceModel):
 
 class ServingPolicy(ReferenceModel):
     schema_version: Literal["reference-serving-1"] = "reference-serving-1"
-    approved_trace_keys: list[Name] = Field(default_factory=list)
+    approved_trace_keys: list[TraceKey] = Field(default_factory=list)
 
 
 def trace_key(record_id: str, file_id: str, trace_index: int) -> str:

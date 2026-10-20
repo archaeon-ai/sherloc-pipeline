@@ -434,6 +434,16 @@ def test_revisions_immutable_and_retired_release_denied(snapshot, database, tmp_
         import_release(root, database, tmp_path / "objects", policy)
 
 
+def test_maximal_source_identities_can_be_approved(snapshot, database, tmp_path):
+    root, manifest, policy = snapshot
+    record_id, file_id = "r" * 1000, "f" * 1000
+    for identity in (manifest["files"][0], manifest["templates"][0]["members"][0]):
+        identity.update(record_id=record_id, file_id=file_id)
+    policy.write_text(json.dumps({"approved_trace_keys": [f"{record_id}:{file_id}:0"]}))
+    save_manifest(root, manifest)
+    result = import_release(root, database, tmp_path / "objects", policy)
+    assert result.team_permitted == 1 and result.public_permitted == 0
+
 @pytest.mark.parametrize("record_id,file_id", [("synthetic-a:b", "c"), ("synthetic-a", "b:c")])
 @pytest.mark.parametrize("location", ["file", "template"])
 def test_delimited_source_identity_rejected_before_writes(snapshot, database, tmp_path, record_id, file_id, location):
