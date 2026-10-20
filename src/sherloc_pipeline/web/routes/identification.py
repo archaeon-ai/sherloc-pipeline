@@ -98,9 +98,9 @@ def identify(request: Request, body: IdentifyBody):
             raise HTTPException(422, "Unsupported stored selection")
         metadata = (scan.pds4_metadata if scan.data_source == "pds4" else scan.loupe_metadata) or {}
         # PDS4 scans persist the logical identifier; its last segment is the product ID.
-        lids = (metadata.get("lidvid"), scan.scan_id)
-        candidates = (metadata.get("product_id"), *(lid.split("::")[0].rsplit(":", 1)[-1] for lid in lids
-                                                    if isinstance(lid, str)), scan.scan_id, scan.id)
+        lid_products = [lid.split("::")[0].rsplit(":", 1)[-1] for lid in (metadata.get("lidvid"), scan.scan_id)
+                        if isinstance(lid, str) and ":" in lid]
+        candidates = (metadata.get("product_id"), *lid_products, scan.scan_id, scan.id)
         products = list(dict.fromkeys(value for value in candidates
                                      if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value)))
         selection = PointSelection(
@@ -111,6 +111,9 @@ def identify(request: Request, body: IdentifyBody):
         # An allowed metadata alias cannot hide a denied persisted identity.
         for product in products or [scan.id]:
             deny_source(selection.model_copy(update={"product_id": product}), policy.identification.source_denylist)
+        # A logical identifier without a usable product ID cannot be checked, so it is refused.
+        if not products or not all(re.fullmatch(r"[A-Za-z0-9_-]{1,200}", product) for product in lid_products):
+            raise HTTPException(422, "Source product identity unavailable")
         resolver = StoredPointResolver(request, body)
         service = IdentificationService(request.state.db, reference_store(request), resolver, policy, "team", runtime)
         result = service.identify(IdentificationRequest(

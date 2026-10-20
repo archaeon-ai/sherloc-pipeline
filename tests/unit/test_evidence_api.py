@@ -540,11 +540,14 @@ def test_metadata_alias_cannot_hide_any_denied_persisted_identity(evidence_api, 
     store.assert_not_called()
 
 
-@pytest.mark.parametrize('lidvid_suffix', ['', '::1.0'])
-def test_denylist_matches_product_id_of_persisted_pds4_logical_identifier(evidence_api, monkeypatch, lidvid_suffix):
+@pytest.mark.parametrize('lidvid_suffix, persisted', [('', 'ss__9999_0000000000_002rrs__synthetic'),
+                                                      ('::1.0', 'ss__9999_0000000000_002rrs__synthetic'),
+                                                      ('::1.0', 'SS__9999_0000000000_002RRS__SYNTHETIC')])
+def test_denylist_matches_product_id_of_persisted_pds4_logical_identifier(evidence_api, monkeypatch, lidvid_suffix,
+                                                                          persisted):
     s = evidence_api
     product = 'ss__9999_0000000000_002rrs__synthetic'
-    lid = f'urn:nasa:pds:synthetic_bundle:data_processed:{product}'
+    lid = f'urn:nasa:pds:synthetic_bundle:data_processed:{persisted}'
     with Session(s.engine) as session:
         session.execute(update(ScanORM).values(
             scan_id=lid, pds4_metadata={'lidvid': lid + lidvid_suffix, 'intensity_unit': 'synthetic units'}))
@@ -559,6 +562,25 @@ def test_denylist_matches_product_id_of_persisted_pds4_logical_identifier(eviden
     response = s.client.post('/api/identify', json=s.body)
     assert response.status_code == 422
     assert response.headers['cache-control'] == 'private, no-store'
+    worker.assert_not_called()
+    store.assert_not_called()
+
+
+@pytest.mark.parametrize('lid', ['urn:nasa:pds:synthetic_bundle:data_processed:',
+                                 'urn:nasa:pds:synthetic_bundle:data_processed:synthetic product'])
+def test_unparsable_logical_identifier_is_refused_before_reads(evidence_api, monkeypatch, lid):
+    s = evidence_api
+    with Session(s.engine) as session:
+        session.execute(update(ScanORM).values(scan_id=lid, pds4_metadata={'lidvid': lid,
+                                                                             'intensity_unit': 'synthetic units'}))
+        session.commit()
+    worker = Mock(side_effect=AssertionError('source worker without a product identity'))
+    store = Mock(side_effect=AssertionError('reference store without a product identity'))
+    monkeypatch.setattr('sherloc_pipeline.web.routes.identification.run_process', worker)
+    monkeypatch.setattr('sherloc_pipeline.web.routes.identification.reference_store', store)
+    response = s.client.post('/api/identify', json=s.body)
+    assert response.status_code == 422
+    assert response.json()['detail'] == 'Source product identity unavailable'
     worker.assert_not_called()
     store.assert_not_called()
 
