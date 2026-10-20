@@ -5,9 +5,12 @@ import hashlib
 import io
 from typing import BinaryIO
 
+from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
+from sherloc_pipeline.models.feature_policy import FeaturePolicy
 from sherloc_pipeline.services.reference_store import MAX_OBJECT_BYTES, object_locator
 # Serving checks live in the services layer; re-exported here for web callers.
-from sherloc_pipeline.services.reference_serving import can_serve_template, can_serve_trace
+from sherloc_pipeline.services import reference_serving
+from sherloc_pipeline.services.reference_serving import can_serve_trace
 
 __all__ = ["R2ReferenceStore", "can_serve_template", "can_serve_trace"]
 
@@ -50,3 +53,13 @@ class R2ReferenceStore:
             return b"".join(chunks)
         finally:
             stream.close()
+
+
+def can_serve_template(
+    template: ReferenceTemplateORM, members: list[ReferenceTraceORM],
+    release: ReferenceReleaseORM, policy: FeaturePolicy, tier: str,
+) -> bool:
+    # Resolve the trace check through this module so template checks follow its current binding.
+    return reference_serving.can_serve_template(
+        template, members, release, policy, tier, trace_check=can_serve_trace,
+    )

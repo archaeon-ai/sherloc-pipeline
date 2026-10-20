@@ -20,9 +20,8 @@ def test_web_policy_reexports_are_the_model_objects(name):
     assert getattr(web_policy, name) is getattr(policy_models, name)
 
 
-@pytest.mark.parametrize("name", ["can_serve_trace", "can_serve_template"])
-def test_web_serving_reexports_are_the_service_objects(name):
-    assert getattr(reference_storage, name) is getattr(reference_serving, name)
+def test_web_trace_check_reexport_is_the_service_object():
+    assert reference_storage.can_serve_trace is reference_serving.can_serve_trace
 
 
 def test_default_policy_stays_off(monkeypatch):
@@ -89,3 +88,13 @@ def test_serving_denials_unchanged():
     other = synthetic_trace(trace_revision_id="d" * 64)
     assert not reference_storage.can_serve_template(template, [other], RELEASE, enabled, "team")
     assert not reference_storage.can_serve_template(template, [], RELEASE, enabled, "team")
+
+
+def test_web_template_check_follows_web_trace_binding(monkeypatch):
+    trace = synthetic_trace()
+    template = SimpleNamespace(release_id=DIGEST, permitted_tiers=["team"], member_trace_ids=[trace.trace_revision_id])
+    policy = serving_policy()
+    assert reference_storage.can_serve_template(template, [trace], RELEASE, policy, "team")
+    monkeypatch.setattr(reference_storage, "can_serve_trace", lambda *args: False)
+    assert not reference_storage.can_serve_template(template, [trace], RELEASE, policy, "team")
+    assert reference_serving.can_serve_template(template, [trace], RELEASE, policy, "team")

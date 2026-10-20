@@ -1,5 +1,7 @@
 """Tier-aware reference serving checks; shared by web adapters and services."""
 
+from collections.abc import Callable
+
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
 from sherloc_pipeline.models.feature_policy import FeaturePolicy
 from sherloc_pipeline.models.references import ReferenceTrace, known_rights
@@ -27,10 +29,11 @@ def can_serve_trace(
 def can_serve_template(
     template: ReferenceTemplateORM, members: list[ReferenceTraceORM],
     release: ReferenceReleaseORM, policy: FeaturePolicy, tier: str,
+    trace_check: Callable[..., bool] = can_serve_trace,
 ) -> bool:
     return (
         template.release_id == release.release_id and "team" in template.permitted_tiers
         and bool(members)
         and [member.trace_revision_id for member in members] == template.member_trace_ids
-        and all(can_serve_trace(member, release, policy, tier) for member in members)
+        and all(trace_check(member, release, policy, tier) for member in members)
     )
