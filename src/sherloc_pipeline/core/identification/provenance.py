@@ -22,6 +22,8 @@ IMPLEMENTATION_FILES = (
     "models/identification.py",
     "models/references.py",
     "services/identification.py",
+    "services/identification_runtime.py",
+    "services/identification_source.py",
     "services/reference_import.py",
     "services/reference_serving.py",
     "services/reference_store.py",

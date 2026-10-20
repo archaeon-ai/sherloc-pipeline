@@ -575,3 +575,18 @@ export async function postSpectraSubset<T = unknown>(
     body: JSON.stringify(body),
   }, generation);
 }
+
+
+export async function getReferences(release: string, cursor?: string): Promise<import('./identification').ReferencePage> {
+  const params = new URLSearchParams({ release_id: release });
+  if (cursor) params.set('cursor', cursor);
+  return fetchJson(`/references?${params}`);
+}
+
+export async function getReference(release: string, identity: string): Promise<import('./identification').ReferenceRecord & { x: number[]; y: number[] }> {
+  return fetchJson(`/references/${encodeURIComponent(identity)}?release_id=${encodeURIComponent(release)}`);
+}
+
+export async function identifyStoredPoint(body: Record<string, unknown>): Promise<import('./identification').IdentificationEvidence> {
+  return fetchJson('/identify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}

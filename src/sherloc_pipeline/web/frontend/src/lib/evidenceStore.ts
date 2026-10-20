@@ -1,4 +1,5 @@
 import { get, writable } from 'svelte/store';
+import type { IdentificationEvidence } from './identification';
 import type { ProcessingSnapshot } from './types';
 import type { EvidenceDisplay, EvidenceDomain, EvidenceTrace, EvidenceTheme } from './evidenceTypes';
 
@@ -100,9 +101,9 @@ export function nativeRenderTrace(trace: EvidenceTrace, domain: EvidenceDomain):
     normalization: 'native', divisor: null, scalable: false, offset: 0 };
 }
 
-export function nativeFigureEvidence(trace: EvidenceTrace, domain: EvidenceDomain) {
+export function nativeFigureEvidence(trace: EvidenceTrace, domain: EvidenceDomain, identification: IdentificationEvidence | null = null) {
   const native = nativeRenderTrace(trace, domain);
-  return evidenceExport(native ? [native] : []);
+  return evidenceExport(native ? [native] : [], identification);
 }
 
 export function displayTrace(trace: EvidenceTrace, domain: EvidenceDomain, offset = 0): EvidenceDisplay | null {
@@ -130,8 +131,8 @@ export function comparisonDisplays(primary: EvidenceTrace | null, pinned: Eviden
     .map((item, i) => displayTrace(item.trace, domain, stacked ? i * 1.25 : 0)!);
 }
 
-export function evidenceExport(displays: EvidenceDisplay[]) {
-  return { schema_version: 'pipeline-evidence-1', traces: displays.map(item => ({
+export function evidenceExport(displays: EvidenceDisplay[], identification: IdentificationEvidence | null = null) {
+  return { schema_version: 'pipeline-evidence-1', ...(identification ? { identification } : {}), traces: displays.map(item => ({
     label: item.trace.label, domain: item.domain, color: item.trace.color,
     x_unit: (item.domain === 'raman_shift' ? item.trace.snapshot.trace.provenance.wavenumber_unit : item.trace.snapshot.trace.provenance.wavelength_unit) ?? null,
     intensity_unit: item.trace.snapshot.trace.provenance.intensity_unit ?? null,
@@ -141,8 +142,8 @@ export function evidenceExport(displays: EvidenceDisplay[]) {
   })) };
 }
 
-export function evidenceCsv(displays: EvidenceDisplay[]): string {
-  const lines = [`# provenance: ${JSON.stringify(evidenceExport(displays))}`,
+export function evidenceCsv(displays: EvidenceDisplay[], identification: IdentificationEvidence | null = null): string {
+  const lines = [`# provenance: ${JSON.stringify(evidenceExport(displays, identification))}`,
     'trace_index,domain,x,original,displayed,break_before'];
   displays.forEach((item, index) => item.x.forEach((x, i) => {
     const number = (v: number) => Number.isFinite(v) ? String(v) : '';

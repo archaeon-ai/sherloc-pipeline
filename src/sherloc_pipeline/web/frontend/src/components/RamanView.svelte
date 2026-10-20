@@ -43,6 +43,8 @@
   export let wavelength: number[] | null = null;
   export let region: string = 'R1';
 
+  import type { IdentificationEvidence } from '../lib/identification';
+  export let identification: IdentificationEvidence | null = null;
   export let evidenceDesk = false;
   export let xDomain: EvidenceDomain | null = null;
   export let traceIdentity = '';
@@ -180,7 +182,7 @@
     if (evidenceMode || primaryTrace || comparisonTraces.length) { renderComparisons(viewKey); return; }
     const coloredTrace = processingTrace ? evidenceColor(processingTrace, theme) : null;
     const nativeDisplay = coloredTrace ? nativeRenderTrace(coloredTrace, domain) : null;
-    figureEvidence = coloredTrace ? nativeFigureEvidence(coloredTrace, domain) : null;
+    figureEvidence = coloredTrace ? nativeFigureEvidence(coloredTrace, domain, identification) : null;
     if (evidenceEnabled && xData.length === 0) { Plotly.react(plotDiv, [], {}, { responsive: true }); return; }
 
     // Preserve current axis ranges from interactive zoom/pan,
@@ -598,7 +600,7 @@
     if (!Plotly) return;
     const displays = (comparisonItems ?? [])
       .map(item => ({ ...item, trace: evidenceColor(item.trace, theme) }));
-    figureEvidence = evidenceExport(displays);
+    figureEvidence = evidenceExport(displays, identification);
     const traces: Plotly.Data[] = displays.map(item => {
       const x: (number | null)[] = [];
       const y: (number | null)[] = [];
@@ -637,7 +639,7 @@
 
   export function downloadAs(format: 'png' | 'svg') {
     if (!Plotly || !plotDiv) return;
-    const evidence = figureEvidence;
+    const evidence = figureEvidence ? { ...figureEvidence, ...(identification ? { identification } : {}) } : null;
     Plotly.downloadImage(plotDiv, {
       format,
       filename: `sherloc_raman_${stage}`,

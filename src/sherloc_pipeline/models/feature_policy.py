@@ -1,5 +1,7 @@
 """Strict, default-off reference and identification deployment policy models."""
 
+import hashlib
+import json
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -21,8 +23,17 @@ class ReferencePolicy(PolicyModel):
     release_id: Digest | None = None
     subset_id: Digest | None = None
     allowed_trace_ids: list[Digest] = Field(default_factory=list)
+    template_ids: list[Digest] = Field(default_factory=list, max_length=10000)
     serving_policy_version: Digest | None = None
     storage_backend: Literal["local", "r2"] = "local"
+
+    @model_validator(mode="after")
+    def validate_template_subset(self):
+        if self.template_ids:
+            identity = hashlib.sha256(json.dumps(self.template_ids, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            if self.template_ids != sorted(set(self.template_ids)) or identity != self.subset_id:
+                raise ValueError("reference template IDs require the exact pinned subset digest")
+        return self
 
 
 class MethodBinding(PolicyModel):

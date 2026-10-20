@@ -3,6 +3,8 @@
   import { evidenceCsv, evidenceExport } from '../lib/evidenceStore';
   import type { ExportTrace, ProcessingArtifacts } from '../lib/types';
 
+  import type { IdentificationEvidence } from '../lib/identification';
+  export let identification: IdentificationEvidence | null = null;
   export let evidenceDesk = false;
   export let evidenceMode = false;
   export let evidenceDisplays: EvidenceDisplay[] = [];
@@ -89,6 +91,7 @@
     const provenance = trace?.provenance;
     return {
       ...provenance,
+      ...(identification ? { identification } : {}),
       source: trace?.source ?? {
         scan_id: scanId, sol: solNumber, target, scan_name: scanName, data_origin: null,
       },
@@ -122,7 +125,7 @@
   // --- CSV generation ---
 
   function buildCsvContent(): string {
-    if (evidenceMode) return evidenceCsv(evidenceDisplays);
+    if (evidenceMode) return evidenceCsv(evidenceDisplays, identification);
     const provenance = buildProvenanceJson();
     const lines: string[] = [];
 
@@ -292,7 +295,7 @@
   }
 
   function copyProvenance() {
-    const json = JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays) : buildProvenanceJson(), null, 2);
+    const json = JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays, identification) : buildProvenanceJson(), null, 2);
     navigator.clipboard.writeText(json).catch(() => {
       // Fallback: select text in the pre element
       const el = document.querySelector('.provenance-json');
@@ -359,7 +362,7 @@
         <button class="btn-secondary btn-sm" on:click={closeProvenance}>Close</button>
       </div>
       <div class="modal-body">
-        <pre class="provenance-json">{JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays) : buildProvenanceJson(), null, 2)}</pre>
+        <pre class="provenance-json">{JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays, identification) : buildProvenanceJson(), null, 2)}</pre>
       </div>
       <div class="modal-footer">
         <button class="btn-primary btn-sm" on:click={copyProvenance}>
