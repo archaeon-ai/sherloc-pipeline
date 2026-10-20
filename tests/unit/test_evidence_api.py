@@ -275,12 +275,24 @@ def test_deadline_kills_and_reaps_worker(tmp_path, monkeypatch):
         spawned.append(process.pid)
 
     monkeypatch.setattr(process_class, 'start', recording_start)
+    # Record the exact deadline run_process computes and hands to _receive.
+    original_receive = runtime_worker._receive
+    deadlines = []
+
+    def recording_receive(reader, deadline):
+        deadlines.append(deadline)
+        return original_receive(reader, deadline)
+
+    monkeypatch.setattr(runtime_worker, '_receive', recording_receive)
     started = time.monotonic()
     with pytest.raises(ExecutionFailed, match='time limit'):
         run_process(_hang, (str(path),), 3.)
     returned = time.monotonic()
     monkeypatch.undo()
     assert len(spawned) == 1 and spawned[0], 'spawn wrapper did not capture the worker pid'
+    assert len(deadlines) == 1, 'receive wrapper did not capture the deadline'
+    deadline = deadlines[0]
+    assert returned >= deadline
     assert returned - started >= 3. - .05
     with pytest.raises(ProcessLookupError):
         os.kill(spawned[0], 0)
@@ -289,7 +301,10 @@ def test_deadline_kills_and_reaps_worker(tmp_path, monkeypatch):
                            'host load); SIGTERM-to-kill escalation not exercised')
     assert int(path.read_text()) == spawned[0]
     ready = float(Path(ready_path(path)).read_text())
-    assert returned - max(started + 3., ready) < 2.
+    # A worker that becomes ready after the deadline, before a delayed parent kills it, is still a start-up overrun.
+    assert ready < deadline, (f'worker did not start within the 3 s deadline (ready {ready - deadline:.2f} s after it; '
+                              'host load); SIGTERM-to-kill escalation not exercised')
+    assert returned - deadline < 2.
     with pytest.raises(ExecutionFailed, match='worker failed'):
         run_process(_crash, (), 3.)
 
