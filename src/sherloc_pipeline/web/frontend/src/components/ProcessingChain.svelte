@@ -10,6 +10,17 @@
     FitParams,
     FitProvenance,
   } from '../lib/types';
+  import {
+    backgroundInput,
+    backgroundStepRecord,
+    baselineInput,
+    baselineStepRecord,
+    chainRecords,
+    currentStage,
+    despikeStepRecord,
+    fitInput,
+  } from '../lib/processingChainRun';
+  import type { ChainState } from '../lib/processingChainRun';
   import DespikeStep from './DespikeStep.svelte';
   import BackgroundStep from './BackgroundStep.svelte';
   import BaselineStep from './BaselineStep.svelte';
@@ -148,29 +159,26 @@
   // intensity and their snapshot token are tracked — writes hide in the helper.
   $: applyRawInputReset(wavenumber, intensity, inputToken);
 
-  // Compute what each step receives as input. The despike step only diverts
-  // the stream when modz is the active method AND it has produced a result.
+  // Event handlers read the current chain state after their own assignments.
+  function chainNow(): ChainState {
+    return {
+      rawIntensity, afterDespikeIntensity, afterBgIntensity, afterBaselineIntensity,
+      modzActive, bgEnabled, baselineEnabled,
+    };
+  }
+
+  // Compute what each step receives as input (lib/processingChainRun.ts). Each
+  // reactive call lists exactly the fields its input depends on.
   $: despikeInput = rawIntensity;
-  $: bgInput = modzActive && afterDespikeIntensity ? afterDespikeIntensity : rawIntensity;
-  $: baselineInput = bgEnabled && afterBgIntensity
-    ? afterBgIntensity
-    : modzActive && afterDespikeIntensity
-      ? afterDespikeIntensity
-      : rawIntensity;
-  $: fitInput = baselineEnabled && afterBaselineIntensity
-    ? afterBaselineIntensity
-    : bgEnabled && afterBgIntensity
-      ? afterBgIntensity
-      : modzActive && afterDespikeIntensity
-        ? afterDespikeIntensity
-        : rawIntensity;
+  $: bgInput = backgroundInput({ rawIntensity, afterDespikeIntensity, modzActive });
+  $: baselineStepInput = baselineInput({ rawIntensity, afterDespikeIntensity, afterBgIntensity, modzActive, bgEnabled });
+  $: fitStepInput = fitInput({
+    rawIntensity, afterDespikeIntensity, afterBgIntensity, afterBaselineIntensity,
+    modzActive, bgEnabled, baselineEnabled,
+  });
 
   function computeCurrentStage(): ProcessingStage {
-    // The "latest completed" stage
-    if (afterBaselineIntensity && baselineEnabled) return 'baseline_corrected';
-    if (afterBgIntensity && bgEnabled) return 'bg_subtracted';
-    if (afterDespikeIntensity && modzActive) return 'despiked';
-    return 'raw';
+    return currentStage(chainNow());
   }
 
   function emitState(
@@ -184,12 +192,8 @@
       if (stage === 'bg_subtracted') backgroundRecord = stepParams;
       if (stage === 'baseline_corrected') baselineRecord = stepParams;
     }
-    const processingChain = [
-      modzActive && afterDespikeIntensity ? despikeRecord : null,
-      bgEnabled && afterBgIntensity ? backgroundRecord : null,
-      baselineEnabled && afterBaselineIntensity ? baselineRecord : null,
-      stage === 'raman_fitted' ? stepParams : null,
-    ].filter((record): record is Record<string, unknown> => record != null);
+    const processingChain = chainRecords(chainNow(), despikeRecord, backgroundRecord, baselineRecord,
+      stage === 'raman_fitted' ? stepParams ?? null : null);
     const snapshot: ProcessingSnapshot = {
       inputToken: rawInputToken,
       stage,
@@ -224,12 +228,8 @@
     // Downstream steps need to re-run; reset their results since input changed.
     afterBgIntensity = null;
     afterBaselineIntensity = null;
-    emitState('despiked', e.detail.despiked, undefined, {
-      step: 'despike',
-      method: 'modz',
-      n_spikes: e.detail.nSpikes,
-      ...(e.detail.params as Record<string, unknown>),
-    });
+    emitState('despiked', e.detail.despiked, undefined,
+      despikeStepRecord(e.detail.nSpikes, e.detail.params as Record<string, unknown>));
   }
 
   // User picked a despike method in the step. Bubble to the workbench, which
@@ -261,17 +261,14 @@
   }
 
   function onBgApply(e: CustomEvent<{ subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; bgType: string; inputIntensity: number[] }>) {
-    const input = modzActive && afterDespikeIntensity ? afterDespikeIntensity : rawIntensity;
+    const input = backgroundInput(chainNow());
     if (!bgEnabled || e.detail.inputIntensity !== input) return;
     afterBgIntensity = e.detail.subtracted;
     backgroundScaled = e.detail.backgroundScaled;
     // Reset downstream
     afterBaselineIntensity = null;
-    emitState('bg_subtracted', e.detail.subtracted, undefined, {
-      step: 'bg_subtract',
-      bg_type: e.detail.bgType,
-      scale_used: e.detail.scaleUsed,
-    });
+    emitState('bg_subtracted', e.detail.subtracted, undefined,
+      backgroundStepRecord(e.detail.bgType, e.detail.scaleUsed));
   }
 
   function onBgToggle(e: CustomEvent<{ enabled: boolean }>) {
@@ -282,22 +279,19 @@
       background = undefined;
       afterBaselineIntensity = null;
       const stage = computeCurrentStage();
-      const output = modzActive && afterDespikeIntensity ? afterDespikeIntensity : rawIntensity;
+      const output = backgroundInput(chainNow());
       emitState(stage, output);
     }
   }
 
   function onBaselineApply(e: CustomEvent<{ corrected: number[]; baseline: number[]; params: BaselineParams; inputIntensity: number[] }>) {
-    const input = bgEnabled && afterBgIntensity ? afterBgIntensity
-      : modzActive && afterDespikeIntensity ? afterDespikeIntensity : rawIntensity;
+    const input = baselineInput(chainNow());
     if (!baselineEnabled || e.detail.inputIntensity !== input) return;
     afterBaselineIntensity = e.detail.corrected;
     baseline = e.detail.baseline;
     appliedBaselineRange = e.detail.params.wavenumber_range;
-    emitState('baseline_corrected', e.detail.corrected, undefined, {
-      step: 'baseline',
-      ...(e.detail.params as Record<string, unknown>),
-    });
+    emitState('baseline_corrected', e.detail.corrected, undefined,
+      baselineStepRecord(e.detail.params as Record<string, unknown>));
   }
 
   function onBaselineToggle(e: CustomEvent<{ enabled: boolean }>) {
@@ -307,11 +301,7 @@
       baseline = undefined;
       appliedBaselineRange = undefined;
       const stage = computeCurrentStage();
-      const output = bgEnabled && afterBgIntensity
-        ? afterBgIntensity
-        : modzActive && afterDespikeIntensity
-          ? afterDespikeIntensity
-          : rawIntensity;
+      const output = baselineInput(chainNow());
       emitState(stage, output);
     }
   }
@@ -332,9 +322,7 @@
   }>) {
     const d = e.detail;
     if (d.generation !== inputGeneration) return;
-    const input = baselineEnabled && afterBaselineIntensity ? afterBaselineIntensity
-      : bgEnabled && afterBgIntensity ? afterBgIntensity
-      : modzActive && afterDespikeIntensity ? afterDespikeIntensity : rawIntensity;
+    const input = fitInput(chainNow());
     if (d.inputIntensity !== input) return;
     // Don't include baseline from fit response — fit no longer applies a baseline
     // (workbench's BaselineStep is the canonical source). Letting d.baseline (all zeros)
@@ -393,7 +381,7 @@
 
   <BaselineStep
     wavenumber={rawWavenumber}
-    intensity={baselineInput}
+    intensity={baselineStepInput}
     enabled={baselineEnabled}
     {inputGeneration}
     {visibleRange}
@@ -404,7 +392,7 @@
   <RamanFitStep
     wavenumber={rawWavenumber}
     {wavelength}
-    intensity={fitInput}
+    intensity={fitStepInput}
     {onRegionSwitch}
     {targetType}
     {inputGeneration}
