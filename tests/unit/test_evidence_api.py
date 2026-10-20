@@ -540,6 +540,29 @@ def test_metadata_alias_cannot_hide_any_denied_persisted_identity(evidence_api, 
     store.assert_not_called()
 
 
+@pytest.mark.parametrize('lidvid_suffix', ['', '::1.0'])
+def test_denylist_matches_product_id_of_persisted_pds4_logical_identifier(evidence_api, monkeypatch, lidvid_suffix):
+    s = evidence_api
+    product = 'ss__9999_0000000000_002rrs__synthetic'
+    lid = f'urn:nasa:pds:synthetic_bundle:data_processed:{product}'
+    with Session(s.engine) as session:
+        session.execute(update(ScanORM).values(
+            scan_id=lid, pds4_metadata={'lidvid': lid + lidvid_suffix, 'intensity_unit': 'synthetic units'}))
+        session.commit()
+    policy = s.app.state.feature_policy.model_dump()
+    policy['identification']['source_denylist']['product_ids'] = [product]
+    s.app.state.feature_policy = FeaturePolicy.model_validate(policy)
+    worker = Mock(side_effect=AssertionError('source worker after identity denial'))
+    store = Mock(side_effect=AssertionError('reference store after identity denial'))
+    monkeypatch.setattr('sherloc_pipeline.web.routes.identification.run_process', worker)
+    monkeypatch.setattr('sherloc_pipeline.web.routes.identification.reference_store', store)
+    response = s.client.post('/api/identify', json=s.body)
+    assert response.status_code == 422
+    assert response.headers['cache-control'] == 'private, no-store'
+    worker.assert_not_called()
+    store.assert_not_called()
+
+
 @pytest.mark.parametrize('matches', [0, 1, 2])
 def test_binding_requires_one_bundled_method_match(evidence_api, matches):
     s = evidence_api

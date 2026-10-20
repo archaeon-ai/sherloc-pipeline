@@ -97,7 +97,11 @@ def identify(request: Request, body: IdentifyBody):
         if body.selection.index >= scan.n_points or body.spectrum_type != _resolve_spectrum_type(scan):
             raise HTTPException(422, "Unsupported stored selection")
         metadata = (scan.pds4_metadata if scan.data_source == "pds4" else scan.loupe_metadata) or {}
-        products = list(dict.fromkeys(value for value in (metadata.get("product_id"), scan.scan_id, scan.id)
+        # PDS4 scans persist the logical identifier; its last segment is the product ID.
+        lids = (metadata.get("lidvid"), scan.scan_id)
+        candidates = (metadata.get("product_id"), *(lid.split("::")[0].rsplit(":", 1)[-1] for lid in lids
+                                                    if isinstance(lid, str)), scan.scan_id, scan.id)
+        products = list(dict.fromkeys(value for value in candidates
                                      if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value)))
         selection = PointSelection(
             product_id=products[0] if products else scan.id, sol=scan.sol_number, target=scan.target or scan.scan_name,
