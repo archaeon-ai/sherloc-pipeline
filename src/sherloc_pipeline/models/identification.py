@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from sherloc_pipeline.models.references import Digest, Name
 
@@ -86,6 +86,13 @@ class Candidate(IdentificationModel):
     extra_fwhm_cm1: Annotated[float, Field(ge=0, allow_inf_nan=False)]
     citations: list[dict[str, Any]] = Field(default_factory=list)
 
+    @model_serializer(mode="wrap")
+    def serialize_candidate(self, handler):
+        payload = handler(self)
+        if self.retrieval_score is None:
+            payload.pop("retrieval_score", None)
+        return payload
+
 
 class MixtureComponent(IdentificationModel):
     template_id: Digest
@@ -122,3 +129,11 @@ class IdentificationResult(IdentificationModel):
     diagnostics: dict[str, Any]
     evidence: dict[str, Any]
     result_digest: Digest
+
+
+    @model_serializer(mode="wrap")
+    def serialize_result(self, handler):
+        payload = handler(self)
+        if self.mixture is None:
+            payload.pop("mixture", None)
+        return payload
