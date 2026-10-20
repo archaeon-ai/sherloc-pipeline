@@ -82,7 +82,7 @@ def public_axis_gate(axis_db, tmp_path, monkeypatch):
     index = synthetic_index(tmp_path, monkeypatch, [PRODUCT_ID])
     with Session(axis_db) as session:
         scan = session.get(ScanORM, SCAN_ID)
-        scan.pds4_metadata = index.apply(PRODUCT_ID, {"version": "synthetic-v1"})
+        scan.pds4_metadata = index.apply(PRODUCT_ID, {"version": "synthetic-v1", "source_sha256": "a" * 64})
         session.commit()
     gate = DataAccessService("public", index)
     monkeypatch.setattr(spectra, "_get_data_access", lambda request: gate)

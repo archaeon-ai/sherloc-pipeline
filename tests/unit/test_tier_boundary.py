@@ -1,6 +1,7 @@
 """Tier/config boundary using only invented identities and local synthetic records."""
 
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -24,7 +25,8 @@ from sherloc_pipeline.web.feature_policy import FeaturePolicy, load_feature_poli
 from tests.unit.public_release_helpers import synthetic_index
 
 PRODUCT = "ss__9999_0000000000_000rrs__synthetic"
-DIGEST = "a" * 64
+SOURCE_BYTES = b"invented spectral product bytes"
+DIGEST = hashlib.sha256(SOURCE_BYTES).hexdigest()
 
 
 @pytest.fixture(autouse=True)
@@ -209,7 +211,7 @@ async def test_public_index_opt_out_warning_once(engine, tmp_path, monkeypatch, 
     {"index_sha256": None}, {"release_id": 123}, {"version_id": 123},
 ])
 def test_list_and_direct_agree(engine, tmp_path, mutation):
-    meta = PublicReleaseIndex(write_index(tmp_path)).apply(PRODUCT, {"version": "synthetic-v1"})
+    meta = PublicReleaseIndex(write_index(tmp_path)).apply(PRODUCT, {"version": "synthetic-v1", "source_sha256": DIGEST})
     meta["public_release"].update(mutation)
     scan = make_scan(metadata=meta)
     gate = DataAccessService("public", PublicReleaseIndex(write_index(tmp_path)))
@@ -228,7 +230,7 @@ def test_list_and_direct_agree(engine, tmp_path, mutation):
 def test_ingestion_index_and_backfill_fail_closed(engine, tmp_path):
     index = PublicReleaseIndex(write_index(tmp_path))
     with Session(engine) as session:
-        scan = make_scan(metadata={"version": "synthetic-v1", "untouched": "synthetic"})
+        scan = make_scan(metadata={"version": "synthetic-v1", "source_sha256": DIGEST, "untouched": "synthetic"})
         session.add(scan)
         session.flush()
         assert backfill_public_release(session, index) == 1
@@ -240,11 +242,124 @@ def test_ingestion_index_and_backfill_fail_closed(engine, tmp_path):
         assert index.apply(PRODUCT, {"version": "unknown"}) == {"version": "unknown"}
 
 
+@pytest.mark.parametrize("source_digest", [None, "b" * 64])
+def test_unverified_source_denied_even_with_old_release_evidence(engine, tmp_path, source_digest):
+    index = PublicReleaseIndex(write_index(tmp_path))
+    meta = index.apply(PRODUCT, {"version": "synthetic-v1", "source_sha256": DIGEST})
+    meta["source_sha256"] = source_digest
+    scan = make_scan(metadata=meta)
+    gate = DataAccessService("public", index)
+    with Session(engine) as session:
+        session.add(scan)
+        session.flush()
+        assert gate.filter_scans_query(session.query(ScanORM)).all() == []
+        with pytest.raises(HTTPException):
+            gate.validate_scan_access(scan)
+        issues = []
+        backfill_public_release(session, index, issues=issues)
+        assert "public_release" not in scan.pds4_metadata
+        assert len(issues) == 1
+        assert PRODUCT in issues[0]
+
+
+@pytest.mark.parametrize("source_digest,reason", [
+    ("b" * 64, "source digest mismatch"),
+    (None, "missing ingestion source digest"),
+])
+def test_backfill_dry_run_reports_unverified_source(tmp_path, source_digest, reason):
+    from typer.testing import CliRunner
+    from sherloc_pipeline.cli.app import app
+    from sherloc_pipeline.database.connection import get_engine
+
+    path = tmp_path / "synthetic.db"
+    db = get_engine(path)
+    Base.metadata.create_all(db)
+    with Session(db) as session:
+        session.add(SolORM(sol_number=9999, data_source="pds4"))
+        session.add(make_scan(metadata={"version": "synthetic-v1", "source_sha256": source_digest}))
+        session.commit()
+    db.dispose()
+    before = path.read_bytes()
+    result = CliRunner().invoke(app, [
+        "backfill-public-release", "--database", str(path),
+        "--release-index", str(write_index(tmp_path)), "--dry-run",
+    ])
+    assert result.exit_code == 0, result.output
+    assert PRODUCT in result.output
+    assert reason in result.output
+    assert "Would update 1 PDS scans" in result.output
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_ingested_bytes_bind_release_evidence(engine, tmp_path, monkeypatch, caplog, changed):
+    from sherloc_pipeline.core.pds_parsers import PDSSpectralParser
+    from sherloc_pipeline.services.pds_ingestion import PDSIngestionService
+
+    filename = "ss__9999_1999999999_000rrs__9999999srlc00000synthetic01.csv"
+    row = ",".join(["250"] * 2148)
+    raw = (f"WAVELENGTH (NM):\nchannels\n{row}\n"
+           f"LASER-NORMALIZED_SPECTRA:_REGION_1\nchannels\n{row}\n").encode()
+    expected = hashlib.sha256(raw).hexdigest()
+    index_path = write_index(tmp_path)
+    document = json.loads(index_path.read_text())
+    document["products"][0]["sha256"] = expected
+    index_path.write_text(json.dumps(document))
+    index = PublicReleaseIndex(index_path)
+    local_bytes = raw.replace(b"250", b"251") if changed else raw
+    (tmp_path / filename).write_bytes(local_bytes)
+    (tmp_path / "synthetic.xml").write_text("invented label placeholder")
+    metadata = SimpleNamespace(
+        logical_identifier=PRODUCT, version_id="synthetic-v1", sclk_start_int=0,
+        spacecraft_clock_stop=None, n_spectra=1, site_drive_str=None,
+        to_pds4_metadata_dict=lambda: {"version": "synthetic-v1", "source_sha256": expected,
+                                      "public_release": {"eligible": True}},
+    )
+    group = SimpleNamespace(
+        sol=9999, sclk=0, obs_id="synthetic", scan_type=None, sequence_code=None,
+        observation_key="synthetic-observation",
+        products={"rrs": SimpleNamespace(csv_filename=filename, xml_filename="synthetic.xml")},
+    )
+    service = object.__new__(PDSIngestionService)
+    service.pds_engine = engine
+    service._public_release_index = index
+    service._spectral_parser = PDSSpectralParser()
+    service._label_parser = SimpleNamespace(parse_label=lambda _: metadata)
+    service._target_resolver = SimpleNamespace(resolve=lambda **_: "Synthetic")
+    monkeypatch.setattr(service, "_enrich_sol_metadata", lambda *_: None)
+    # Hash and parse the same byte snapshot, even if the file changes during parsing.
+    split = service._spectral_parser._split_sections
+
+    def replace_after_read(path, **kwargs):
+        path.write_bytes(b"substituted after read")
+        return split(path, **kwargs)
+
+    monkeypatch.setattr(service._spectral_parser, "_split_sections", replace_after_read)
+    result = service._ingest_observation(group, tmp_path)
+    assert not result.errors
+    assert result.spectra_ingested == 1
+    with Session(engine) as session:
+        scan = session.query(ScanORM).one()
+        assert scan.pds4_metadata["source_sha256"] == hashlib.sha256(local_bytes).hexdigest()
+        gate = DataAccessService("public", index)
+        assert bool(gate.filter_scans_query(session.query(ScanORM)).all()) is not changed
+        if changed:
+            assert "public_release" not in scan.pds4_metadata
+            with pytest.raises(HTTPException):
+                gate.validate_scan_access(scan)
+            assert "source digest mismatch" in caplog.text
+        else:
+            assert scan.pds4_metadata["public_release"]["source_sha256"] == expected
+            gate.validate_scan_access(scan)
+        backfill_public_release(session, index)
+        assert ("public_release" in scan.pds4_metadata) is not changed
+
+
 @pytest.mark.parametrize("source", [None, "unknown", "loupe", "pds4"])
 @pytest.mark.asyncio
 async def test_every_direct_surface_denies_unknown_release(app, engine, source):
     with Session(engine) as session:
-        session.add(make_scan(data_source=source, metadata={"version": "synthetic-v1"}))
+        session.add(make_scan(data_source=source, metadata={"version": "synthetic-v1", "source_sha256": DIGEST}))
         session.commit()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
         listed = await client.get("/api/scans")
@@ -265,7 +380,7 @@ async def test_every_direct_surface_denies_unknown_release(app, engine, source):
 
 @pytest.mark.asyncio
 async def test_released_list_detail_and_config(app, engine, tmp_path):
-    meta = PublicReleaseIndex(write_index(tmp_path)).apply(PRODUCT, {"version": "synthetic-v1"})
+    meta = PublicReleaseIndex(write_index(tmp_path)).apply(PRODUCT, {"version": "synthetic-v1", "source_sha256": DIGEST})
     with Session(engine) as session:
         session.add(make_scan(metadata=meta))
         session.commit()
@@ -311,7 +426,7 @@ async def test_authenticated_config_uses_effective_tier(engine, monkeypatch, cas
         app.state.map_executor.shutdown(wait=False)
 
 
-def test_pds_build_scan_persists_local_evidence(tmp_path):
+def test_pds_build_scan_waits_for_local_byte_evidence(tmp_path):
     from sherloc_pipeline.services.pds_ingestion import PDSIngestionService
 
     service = object.__new__(PDSIngestionService)
@@ -324,7 +439,9 @@ def test_pds_build_scan_persists_local_evidence(tmp_path):
         to_pds4_metadata_dict=lambda: {"version": "synthetic-v1"},
     )
     scan = service._build_scan(group, metadata, target="Synthetic")
-    DataAccessService("public", index).validate_scan_access(scan)
+    assert "public_release" not in scan.pds4_metadata
+    with pytest.raises(HTTPException):
+        DataAccessService("public", index).validate_scan_access(scan)
     changed = copy.deepcopy(scan)
     changed.pds4_metadata["version"] = "synthetic-v2"
     with pytest.raises(HTTPException):
@@ -337,7 +454,7 @@ async def test_gated_image_cannot_be_shared_or_browser_cached(app, engine, tmp_p
     from PIL import Image
     from sherloc_pipeline.web.routes import images
 
-    meta = PublicReleaseIndex(write_index(tmp_path)).apply(PRODUCT, {"version": "synthetic-v1"})
+    meta = PublicReleaseIndex(write_index(tmp_path)).apply(PRODUCT, {"version": "synthetic-v1", "source_sha256": DIGEST})
     with Session(engine) as session:
         session.add(make_scan(metadata=meta))
         session.commit()
@@ -391,7 +508,7 @@ def test_public_startup_requires_verified_index(tmp_path, monkeypatch, case):
 def test_changed_index_denies_old_evidence_without_backfill(engine, tmp_path, change):
     path = write_index(tmp_path)
     old = PublicReleaseIndex(path)
-    scan = make_scan(metadata=old.apply(PRODUCT, {"version": "synthetic-v1"}))
+    scan = make_scan(metadata=old.apply(PRODUCT, {"version": "synthetic-v1", "source_sha256": DIGEST}))
     raw = json.loads(path.read_text())
     if change == "revoked":
         raw["products"][0]["released"] = False

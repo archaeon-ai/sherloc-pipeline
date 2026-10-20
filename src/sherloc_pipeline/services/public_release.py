@@ -1,6 +1,7 @@
 """Trusted local release-index ingestion; no discovery or remote lookups."""
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Literal
 
@@ -9,6 +10,8 @@ from sqlalchemy import false, func, tuple_
 from sqlalchemy.orm import Session
 
 from sherloc_pipeline.database.models import ScanORM
+
+logger = logging.getLogger(__name__)
 
 
 class ReleaseProduct(BaseModel):
@@ -43,12 +46,17 @@ class PublicReleaseIndex:
         metadata = {k: v for k, v in metadata.items() if k != "public_release"}
         product = self.products.get((product_id, metadata.get("version")))
         if product is not None and product.released:
+            source_sha256 = metadata.get("source_sha256")
+            if source_sha256 != product.sha256:
+                reason = "source digest mismatch" if source_sha256 else "missing ingestion source digest"
+                logger.warning("%s: %s; release evidence withheld", product_id, reason)
+                return metadata
             metadata["public_release"] = {
                 "schema_version": "public-release-1",
                 "eligible": True,
                 "product_id": product.product_id,
                 "version_id": product.version_id,
-                "source_sha256": product.sha256,
+                "source_sha256": source_sha256,
                 "release_id": self.release_id,
                 "index_sha256": self.sha256,
             }
@@ -75,6 +83,7 @@ def public_release_expression(index: PublicReleaseIndex | None):
         & (evidence["version_id"].as_string() == meta["version"].as_string())
         & (func.json_type(meta, "$.version") == "text")
         & (func.json_type(meta, "$.public_release.version_id") == "text")
+        & (meta["source_sha256"].as_string() == evidence["source_sha256"].as_string())
         & tuple_(
             evidence["product_id"].as_string(),
             evidence["version_id"].as_string(),
@@ -101,13 +110,22 @@ def has_public_release(scan, index: PublicReleaseIndex | None) -> bool:
         and evidence.get("product_id") == product.product_id
         and evidence.get("version_id") == product.version_id
         and evidence.get("source_sha256") == product.sha256
+        and meta.get("source_sha256") == product.sha256
         and evidence.get("release_id") == index.release_id
         and evidence.get("index_sha256") == index.sha256
     )
 
 
-def backfill_public_release(session: Session, index: PublicReleaseIndex) -> int:
+def backfill_public_release(
+    session: Session, index: PublicReleaseIndex, *, issues: list[str] | None = None,
+) -> int:
+    """Use only byte hashes recorded at ingestion; legacy rows need re-ingestion."""
     scans = session.query(ScanORM).filter(ScanORM.data_source == "pds4").all()
     for scan in scans:
         scan.pds4_metadata = index.apply(scan.scan_id, scan.pds4_metadata or {})
+        product = index.products.get((scan.scan_id, scan.pds4_metadata.get("version")))
+        if issues is not None and product is not None and product.released and "public_release" not in scan.pds4_metadata:
+            reason = ("source digest mismatch" if scan.pds4_metadata.get("source_sha256")
+                      else "missing ingestion source digest; re-ingestion required")
+            issues.append(f"{scan.scan_id}: {reason}; release evidence withheld")
     return len(scans)

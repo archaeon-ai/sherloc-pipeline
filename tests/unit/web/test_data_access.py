@@ -12,7 +12,7 @@ from tests.unit.public_release_helpers import synthetic_index
 
 
 def synthetic_release_metadata(product_id, index):
-    return {"version": "synthetic-v1", "public_release": {
+    return {"version": "synthetic-v1", "source_sha256": "a" * 64, "public_release": {
         "schema_version": "public-release-1", "eligible": True,
         "product_id": product_id, "version_id": "synthetic-v1",
         "source_sha256": "a" * 64, "index_sha256": index.sha256,

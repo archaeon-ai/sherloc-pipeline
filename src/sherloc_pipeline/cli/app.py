@@ -1883,9 +1883,12 @@ def backfill_public_release_cmd(
     engine = get_engine(database)
     try:
         with get_session(engine) as session:
-            count = backfill_public_release(session, index)
+            issues: list[str] = []
+            count = backfill_public_release(session, index, issues=issues)
             if dry_run:
                 session.rollback()
+        for issue in issues:
+            console.print(issue)
         console.print(f"{'Would update' if dry_run else 'Updated'} {count} PDS scans")
     finally:
         engine.dispose()

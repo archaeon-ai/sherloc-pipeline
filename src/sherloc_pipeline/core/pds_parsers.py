@@ -34,6 +34,8 @@ Usage:
     100
 """
 
+import hashlib
+import io
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -367,6 +369,7 @@ class ParsedSpectralCSV:
     """
     product: PDSSpectralProduct
     spectra: Dict[str, np.ndarray]
+    source_sha256: Optional[str] = None
 
 
 class PDSSpectralParser:
@@ -425,7 +428,8 @@ class PDSSpectralParser:
             )
 
         # Read and split into sections
-        sections = self._split_sections(csv_path)
+        source_bytes = csv_path.read_bytes()
+        sections = self._split_sections(csv_path, source_bytes=source_bytes)
 
         # Validate wavelength section present
         if _WAVELENGTH_HEADER not in sections:
@@ -497,10 +501,13 @@ class PDSSpectralParser:
             source_path=str(csv_path),
         )
 
-        return ParsedSpectralCSV(product=product, spectra=spectra)
+        return ParsedSpectralCSV(
+            product=product, spectra=spectra,
+            source_sha256=hashlib.sha256(source_bytes).hexdigest(),
+        )
 
     def _split_sections(
-        self, csv_path: Path
+        self, csv_path: Path, *, source_bytes: Optional[bytes] = None
     ) -> Dict[str, List[str]]:
         """Split a CSV file into named sections.
 
@@ -514,7 +521,9 @@ class PDSSpectralParser:
         current_header: Optional[str] = None
         skip_column_header = False
 
-        with open(csv_path, "r") as f:
+        if source_bytes is None:
+            source_bytes = csv_path.read_bytes()
+        with io.StringIO(source_bytes.decode("utf-8"), newline=None) as f:
             for line in f:
                 line = line.strip()
                 if not line:
