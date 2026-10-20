@@ -11,6 +11,7 @@ from sherloc_pipeline.models.feature_policy import (
     PublicReleasePolicy,
     ReferencePolicy,
     MethodBinding,
+    SourceDenylist,
     IdentificationPolicy,
     FeaturePolicy,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "PublicReleasePolicy",
     "ReferencePolicy",
     "MethodBinding",
+    "SourceDenylist",
     "IdentificationPolicy",
     "FeaturePolicy",
     "load_feature_policy",

@@ -50,6 +50,10 @@ from sherloc_pipeline.cli.references import app as references_app
 
 app.add_typer(references_app, name="references")
 
+from sherloc_pipeline.cli.identification import app as identification_app
+
+app.add_typer(identification_app, name="identify")
+
 console = Console()
 
 
