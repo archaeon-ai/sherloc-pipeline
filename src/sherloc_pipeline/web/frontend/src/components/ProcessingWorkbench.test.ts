@@ -1231,6 +1231,69 @@ function syntheticSpectrum(intensity: number[], overrides: Partial<SpectrumRespo
 
 describe('ProcessingWorkbench evidence session boundaries', () => {
   beforeEach(() => { getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A)); });
+  it('renders retained pins after an initial 404 on remount and then commits a valid point', async () => {
+    const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    first.unmount();
+    getAvg.mockRejectedValueOnce(new api.ApiError(404, 'Synthetic selection unavailable'));
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(get(processingState)).toBeNull();
+    expect(get(pinnedTraces)).toHaveLength(1);
+    expect(screen.getByLabelText('Evidence desk')).toBeTruthy();
+    await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'overlay' } });
+    await flush();
+    expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+    vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
+    await fireEvent.click(container.querySelector('.point-chip')!);
+    await flush();
+    expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+    expect(screen.getByLabelText('Evidence desk')).toBeTruthy();
+    expect(get(pinnedTraces)).toHaveLength(1);
+  });
+
+  it.each([403, 'network'] as const)('withholds retained pins when the remount spectrum fails with %s', async failure => {
+    const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    first.unmount();
+    getAvg.mockRejectedValueOnce(failure === 403 ? new api.ApiError(403, 'Synthetic forbidden') : new Error('Synthetic network failure'));
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(get(pinnedTraces)).toHaveLength(1);
+    expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+    expect(get(processingState)).toBeNull();
+  });
+
+  it.each([200, 404])('does not validate the desk with a stale %s spectrum', async status => {
+    let finish = () => {};
+    getAvg.mockReturnValueOnce(new Promise((resolve, reject) => {
+      finish = () => status === 200 ? resolve(syntheticSpectrum(INTENSITY_STALE)) : reject(new api.ApiError(404, 'Synthetic unavailable'));
+    }));
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    // Keep the current boundary unvalidated while the old boundary completes.
+    vi.mocked(api.getScan).mockReturnValueOnce(new Promise(() => {}));
+    appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+    await flush();
+    finish(); await flush();
+    expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+    expect(get(processingState)).toBeNull();
+  });
+
+  it('validates a later successful selection after a denied initial spectrum', async () => {
+    getAvg.mockRejectedValueOnce(new api.ApiError(403, 'Synthetic forbidden'));
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+    vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
+    await fireEvent.click(container.querySelector('.point-chip')!);
+    await flush();
+    expect(screen.getByLabelText('Evidence desk')).toBeTruthy();
+    expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  });
+
   it('displays same-target pins with axis controls after the current selection returns 404', async () => {
     const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await flush();

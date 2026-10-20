@@ -353,7 +353,6 @@
       });
 
       await loadSpectrum(revalidate);
-      if (!stale() && requestBoundary !== null && spectrum) validatedEvidenceBoundary = requestBoundary;
     } catch (e) {
       if (stale()) return;
       if (e instanceof Error) {
@@ -431,6 +430,7 @@
       // so the ML marker/export gate keys on what is actually committed.
       committedSelectionMode = requestMode;
       initProcessingState(requestSelection);
+      if (requestBoundary !== null) validatedEvidenceBoundary = requestBoundary;
     } catch (e) {
       // Stale-failure guard (PR #7 review F5): if a newer request superseded
       // this one, its failure is irrelevant — neither surface an error UI
@@ -444,6 +444,8 @@
         // A committed "no spectrum" for this selection: record its mode so the
         // gate never inherits a stale context from the previous commit.
         committedSelectionMode = requestMode;
+        // An authorized empty selection still validates retained same-target pins.
+        if (requestBoundary !== null) validatedEvidenceBoundary = requestBoundary;
       } else {
         // Non-404 failure: the committed spectrum (and its recorded selection
         // context) remain those of the LAST successful commit — the displayed
