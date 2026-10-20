@@ -1659,3 +1659,62 @@ it.each([undefined, false])('preserves legacy metadata timing and boundary behav
   expect(container.querySelector('.aci-viewer')).toBeTruthy();
   expect(container.querySelector('.error-message')).toBeTruthy();
 });
+
+
+it('keeps the desk unmounted when enablement spectrum revalidation is denied', async () => {
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  accessMode.set('internal');
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Private synthetic', ml_mask_count: 0 } });
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), target: 'Public synthetic', ml_mask_count: 0 } });
+  getAvg.mockRejectedValue(new api.ApiError(403, 'Synthetic spectrum forbidden'));
+  accessMode.set('public');
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  await flush();
+  expect(container.textContent).not.toContain('Private synthetic');
+  expect(container.textContent).not.toContain('Loading scan');
+  expect(container.textContent).toContain('Synthetic spectrum forbidden');
+  expect(container.querySelector('[aria-label="Evidence desk"]')).toBeNull();
+  expect(get(processingState)).toBeNull();
+});
+
+it.each(['access-first', 'config-first'] as const)('revalidates a legacy TEAM scan before enabling evidence (%s)', async order => {
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  accessMode.set('internal');
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Private synthetic', ml_mask_count: 0 } });
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  expect(get(processingState)?.trace?.source.target).toBe('Private synthetic');
+  const pending: Array<() => void> = [];
+  vi.mocked(api.getScan).mockImplementation(() => new Promise(resolve => {
+    pending.push(() => resolve({ schema_version: '1', scan: { ...fakeScan(), target: 'Public synthetic', ml_mask_count: 0 } }));
+  }));
+  const enable = () => appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  if (order === 'access-first') accessMode.set('public');
+  else enable();
+  await flush();
+  if (order === 'access-first') enable();
+  else accessMode.set('public');
+  expect(get(processingState)).toBeNull();
+  await flush();
+  expect(container.textContent).not.toContain('Private synthetic');
+  expect(container.querySelector('.workbench-layout')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Pin current trace' })).toBeNull();
+  let finishSpectrum = () => {};
+  getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_NEW));
+  getAvg.mockReturnValueOnce(new Promise(resolve => {
+    finishSpectrum = () => resolve(fakeSpectrum(INTENSITY_NEW));
+  }));
+  pending.at(-1)!(); await flush();
+  expect(container.querySelector('.workbench-layout')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Pin current trace' })).toBeNull();
+  expect(get(processingState)).toBeNull();
+  finishSpectrum(); await flush();
+  expect(container.textContent).toContain('Public synthetic');
+  expect(screen.getByRole('button', { name: 'Pin current trace' })).toBeTruthy();
+  expect(get(processingState)?.trace?.source.target).toBe('Public synthetic');
+  expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  // An earlier enablement load cannot overwrite the settled public load.
+  if (pending.length > 1) { pending[0](); await flush(); }
+  expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  expect(api.getScanPoints).toHaveBeenCalledTimes(2);
+});

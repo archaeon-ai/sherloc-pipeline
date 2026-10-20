@@ -47,7 +47,7 @@ let stopEvidenceAccess: (() => void) | null = null;
 function setConfig(config: ConfigResponse | null): void {
   const enabled = config?.capabilities?.evidence_desk === true;
   const wasEnabled = configValue?.capabilities?.evidence_desk === true;
-  if (wasEnabled && (!enabled || configValue?.tier !== config?.tier)) invalidateEvidence();
+  if (enabled !== wasEnabled || (enabled && configValue?.tier !== config?.tier)) invalidateEvidence();
   if (enabled && !stopEvidenceAccess) {
     let previous: string | null = null;
     stopEvidenceAccess = accessMode.subscribe(mode => {

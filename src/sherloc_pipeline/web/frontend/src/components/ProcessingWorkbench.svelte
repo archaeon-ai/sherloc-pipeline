@@ -53,6 +53,7 @@
   }
   $: evidenceEnabled = $appConfig?.capabilities?.evidence_desk === true;
   let evidenceContextKey = '';
+  let validatedEvidenceBoundary: number | null = null;
   let scan: ScanDetail | null = null;
   let points: ScanPoint[] = [];
   let spectrum: SpectrumResponse | null = null;
@@ -272,6 +273,7 @@
     scan = null;
     points = [];
     evidenceContextKey = '';
+    validatedEvidenceBoundary = null;
     selectionMode = 'average';
     selectedIndices = [];
     selectedPointIdx = null;
@@ -351,6 +353,7 @@
       });
 
       await loadSpectrum();
+      if (!stale() && requestBoundary !== null && spectrum) validatedEvidenceBoundary = requestBoundary;
     } catch (e) {
       if (stale()) return;
       if (e instanceof Error) {
@@ -823,7 +826,7 @@
             </div>
           </div>
           <div class="card-body">
-            {#if evidenceEnabled}
+            {#if evidenceEnabled && validatedEvidenceBoundary === evidenceGeneration}
               <EvidenceDesk
                 snapshot={currentState}
                 contextKey={evidenceContextKey}
@@ -858,7 +861,7 @@
                   if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
                 }}
               />
-            {:else}
+            {:else if !evidenceEnabled}
               {#if currentWavenumber.length > 0}
                 <RamanView
                   wavenumber={currentWavenumber}
