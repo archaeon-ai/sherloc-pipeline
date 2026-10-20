@@ -25,7 +25,7 @@ Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation.
   export let inputGeneration: number = 0;
 
   const dispatch = createEventDispatcher<{
-    apply: { subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; bgType: string; inputIntensity: number[] };
+    apply: { subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; scaleMode: 'auto' | 'manual'; bgType: string; inputIntensity: number[] };
     toggle: { enabled: boolean };
   }>();
 
@@ -74,6 +74,7 @@ Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation.
     if (bgType === 'none' || wavenumber.length === 0) return;
     const gen = inputGeneration;
     const inputIntensity = intensity;
+    const scaleMode = autoScale ? 'auto' : 'manual';
     computing = true;
     error = '';
     try {
@@ -81,7 +82,7 @@ Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation.
         wavenumber,
         intensity,
         bg_type: bgType as 'as' | 'fs',
-        scale: autoScale ? 'auto' : manualScale,
+        scale: scaleMode === 'auto' ? 'auto' : manualScale,
         scan_ppp: scanPpp,
       });
       if (gen !== inputGeneration) return;
@@ -91,6 +92,7 @@ Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation.
         subtracted: result.subtracted,
         backgroundScaled: result.background_scaled,
         scaleUsed: result.scale_used,
+        scaleMode,
         bgType: result.bg_type,
       });
     } catch (e) {

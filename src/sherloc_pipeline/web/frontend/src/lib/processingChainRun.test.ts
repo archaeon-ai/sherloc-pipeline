@@ -60,7 +60,7 @@ describe('processingChainRun — step input routing', () => {
 describe('processingChainRun — chain records', () => {
   it('keeps the existing record shapes', () => {
     expect(despikeStepRecord(2, { window_size: 5 })).toEqual({ step: 'despike', method: 'modz', n_spikes: 2, window_size: 5 });
-    expect(backgroundStepRecord('as', 1.5)).toEqual({ step: 'bg_subtract', bg_type: 'as', scale_used: 1.5 });
+    expect(backgroundStepRecord('as', 1.5, 'manual')).toEqual({ step: 'bg_subtract', bg_type: 'as', scale_mode: 'manual', scale_used: 1.5 });
     expect(baselineStepRecord({ method: 'aspls', lam: 100 })).toEqual({ step: 'baseline', method: 'aspls', lam: 100 });
   });
 

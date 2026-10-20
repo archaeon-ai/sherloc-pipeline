@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from './api';
 import { evidenceTrace } from './evidenceStore';
 import { referenceEvidence } from './identification';
-import { planSharedChain, runSharedChain, sharedChain, sharedSteps } from './sharedChain';
+import { planSharedChain, runSharedChain, sharedChain, sharedSource, sharedSteps } from './sharedChain';
 import type { ChainApi, SharedStep } from './sharedChain';
 import type { EvidenceTrace } from './evidenceTypes';
 import type { ProcessingSnapshot } from './types';
@@ -29,7 +29,7 @@ function reference(provenance: Record<string, unknown> = {}, quantity = 'raman_s
 }
 
 const despike = { step: 'despike', method: 'modz', n_spikes: 1, window_size: 5, zscore_threshold: 3.5, max_iterations: 1, sulfate_guard: false };
-const background = { step: 'bg_subtract', bg_type: 'as', scale_used: 2 };
+const background = { step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto', scale_used: 2 };
 const baseline = { step: 'baseline', method: 'aspls', lam: 1e6, max_iter: 10 };
 const fit = { step: 'raman_fit', n_peaks: 2 };
 
@@ -53,33 +53,46 @@ async function chainOf(steps: SharedStep[], primary = mars([baseline])) {
 
 describe('shared chain source', () => {
   it('takes the committed despike, background and baseline steps and never the fit', () => {
-    const steps = sharedSteps(mars([despike, background, baseline, fit]), { mode: 'auto', value: 1 }, 1800);
+    const steps = sharedSteps(mars([despike, background, baseline, fit]));
     expect(steps).toEqual([
       { step: 'despike', params: { window_size: 5, zscore_threshold: 3.5, max_iterations: 1, sulfate_guard: false } },
       { step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto' },
       { step: 'baseline', params: { method: 'aspls', lam: 1e6, max_iter: 10 } },
     ]);
-    expect(sharedSteps(mars([background]), { mode: 'manual', value: 2 }, 900)).toEqual([
+    expect(sharedSteps(mars([{ ...background, scale_mode: 'manual' }]))).toEqual([
       { step: 'bg_subtract', bg_type: 'as', scale_mode: 'manual', scale: 2 }]);
   });
 
+  it('reads the background scale mode only from the committed record', () => {
+    // An automatic scale that equals a manual value is still automatic.
+    expect(sharedSteps(mars([{ ...background, scale_used: 1 }]))).toEqual([{ step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto' }]);
+    // Undo restores an earlier record, and with it that record's mode.
+    const manual = mars([{ ...background, scale_mode: 'manual', scale_used: 2 }]);
+    const restored = mars([background]);
+    expect(sharedSteps(manual)).toEqual([{ step: 'bg_subtract', bg_type: 'as', scale_mode: 'manual', scale: 2 }]);
+    expect(sharedSteps(restored)).toEqual([{ step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto' }]);
+  });
+
+  it('refuses a background record stored without a scale mode instead of guessing', () => {
+    const reason = 'background scale mode not recorded for this trace\'s background step; re-apply it to share the chain';
+    for (const record of [{ step: 'bg_subtract', bg_type: 'as', scale_used: 2 }, { ...background, scale_mode: 'synthetic' },
+      { ...background, scale_mode: 'manual', scale_used: null }]) {
+      expect(sharedSource(mars([baseline, record]))).toEqual({ steps: null, refusal: reason });
+    }
+    expect(sharedSource(mars([baseline]))).toMatchObject({ refusal: null });
+  });
+
   it('shares nothing it cannot reproduce', () => {
-    const scale = { mode: 'auto' as const, value: 1 };
-    expect(sharedSteps(null, scale, 900)).toBeNull();
-    expect(sharedSteps(mars([]), scale, 900)).toBeNull();
-    expect(sharedSteps(mars([fit]), scale, 900)).toBeNull();
-    expect(sharedSteps(mars([baseline], { region: 'R2' }), scale, 900)).toBeNull();
-    expect(sharedSteps(mars([{ step: 'synthetic-step' }, baseline]), scale, 900)).toBeNull();
-    expect(sharedSteps(reference(), scale, 900)).toBeNull();
-    // The background record must agree with the Workbench's scale mode.
-    expect(sharedSteps(mars([background]), null, 1800)).toBeNull();
-    expect(sharedSteps(mars([background]), scale, 900)).toBeNull();
-    expect(sharedSteps(mars([background]), scale, null)).toBeNull();
-    expect(sharedSteps(mars([background]), { mode: 'manual', value: 3 }, 1800)).toBeNull();
+    expect(sharedSteps(null)).toBeNull();
+    expect(sharedSteps(mars([]))).toBeNull();
+    expect(sharedSteps(mars([fit]))).toBeNull();
+    expect(sharedSteps(mars([baseline], { region: 'R2' }))).toBeNull();
+    expect(sharedSteps(mars([{ step: 'synthetic-step' }, baseline]))).toBeNull();
+    expect(sharedSteps(reference())).toBeNull();
   });
 
   it('identifies the chain by its steps and its primary', async () => {
-    const steps = sharedSteps(mars([baseline]), null, null)!;
+    const steps = sharedSteps(mars([baseline]))!;
     const first = await chainOf(steps);
     expect(first.shared_chain_id).toMatch(/^[0-9a-f]{64}$/);
     expect((await chainOf(steps)).shared_chain_id).toBe(first.shared_chain_id);
@@ -107,7 +120,7 @@ describe('applying the shared chain', () => {
     expect(outcome.spike_mask).toEqual([false, false, false, false, false]);
     expect(outcome).toMatchObject({ refusal: null, stage: 'baseline_corrected', scale_used: 2, derived_from: pin.id });
     expect(outcome.steps.map(step => [step.step, step.status])).toEqual([['despike', 'applied'], ['bg_subtract', 'applied'], ['baseline', 'applied']]);
-    expect(outcome.steps[1].params_used).toEqual({ step: 'bg_subtract', bg_type: 'fs', scale_used: 2 });
+    expect(outcome.steps[1].params_used).toEqual({ step: 'bg_subtract', bg_type: 'fs', scale_mode: 'auto', scale_used: 2 });
   });
 
   it('applies one manual scale to every pin', async () => {

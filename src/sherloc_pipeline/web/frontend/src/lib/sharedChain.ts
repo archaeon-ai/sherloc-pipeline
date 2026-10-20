@@ -8,11 +8,6 @@ import type { EvidenceTrace } from './evidenceTypes';
 // shared). Each trace starts from its own source array, so the shared chain
 // replaces a pin's own processing instead of stacking on it.
 
-export interface BackgroundScale {
-  mode: 'auto' | 'manual';
-  value: number;
-}
-
 export type SharedStep =
   | { step: 'despike'; params: DespikeParams }
   | { step: 'bg_subtract'; bg_type: 'as' | 'fs'; scale_mode: 'auto' }
@@ -85,32 +80,43 @@ function isReference(trace: EvidenceTrace): boolean {
   return trace.snapshot.trace.provenance.data_origin === 'reference';
 }
 
-// The primary's committed transform steps, or null when it has nothing to
-// share. The background scale mode comes from the Workbench (it is not in the
-// step record); the record's scale_used must agree with it, so a chain caught
-// between a mode change and its re-apply is not shared.
-export function sharedSteps(primary: EvidenceTrace | null, scale: BackgroundScale | null, primaryPpp: number | null): SharedStep[] | null {
-  if (!primary || isReference(primary) || primary.snapshot.trace.region !== 'R1' || primary.nativeDomain !== 'raman_shift') return null;
+export interface SharedSource {
+  steps: SharedStep[] | null;
+  // Why the primary's chain cannot be shared, when it has steps but one of
+  // them cannot be reproduced.
+  refusal: string | null;
+}
+
+const NOTHING: SharedSource = { steps: null, refusal: null };
+
+// The primary's committed transform steps. The background scale mode is read
+// only from the committed record; a record without one (stored before the
+// mode was recorded) is refused instead of guessed.
+export function sharedSource(primary: EvidenceTrace | null): SharedSource {
+  if (!primary || isReference(primary) || primary.snapshot.trace.region !== 'R1' || primary.nativeDomain !== 'raman_shift') return NOTHING;
   const steps: SharedStep[] = [];
   for (const record of primary.snapshot.processingChain ?? []) {
     if (record.step === 'despike' && record.method === 'modz') {
       steps.push({ step: 'despike', params: pick(record, DESPIKE_KEYS) as DespikeParams });
     } else if (record.step === 'bg_subtract' && (record.bg_type === 'as' || record.bg_type === 'fs')) {
-      if (!scale) return null;
-      if (scale.mode === 'manual') {
-        if (record.scale_used !== scale.value) return null;
-        steps.push({ step: 'bg_subtract', bg_type: record.bg_type, scale_mode: 'manual', scale: scale.value });
-      } else {
-        if (primaryPpp === null || record.scale_used !== primaryPpp / 900) return null;
+      if (record.scale_mode === 'auto') {
         steps.push({ step: 'bg_subtract', bg_type: record.bg_type, scale_mode: 'auto' });
+      } else if (record.scale_mode === 'manual' && typeof record.scale_used === 'number' && Number.isFinite(record.scale_used)) {
+        steps.push({ step: 'bg_subtract', bg_type: record.bg_type, scale_mode: 'manual', scale: record.scale_used });
+      } else {
+        return { steps: null, refusal: 'background scale mode not recorded for this trace\'s background step; re-apply it to share the chain' };
       }
     } else if (record.step === 'baseline') {
       steps.push({ step: 'baseline', params: pick(record, BASELINE_KEYS) as BaselineParams });
     } else if (record.step !== 'raman_fit') {
-      return null;
+      return NOTHING;
     }
   }
-  return steps.length ? steps : null;
+  return steps.length ? { steps, refusal: null } : NOTHING;
+}
+
+export function sharedSteps(primary: EvidenceTrace | null): SharedStep[] | null {
+  return sharedSource(primary).steps;
 }
 
 // Changing the primary changes the chain id even when the steps are equal.
@@ -247,7 +253,7 @@ export async function runSharedChain(
         if (stale()) return null;
         y = result.subtracted;
         scaleUsed = result.scale_used;
-        steps.push({ step: 'bg_subtract', status: 'applied', params_used: backgroundStepRecord(result.bg_type, result.scale_used) });
+        steps.push({ step: 'bg_subtract', status: 'applied', params_used: backgroundStepRecord(result.bg_type, result.scale_used, step.scale_mode) });
       } else {
         const result = await api.postBaseline({ wavenumber: x, intensity: y, params: step.params });
         if (stale()) return null;

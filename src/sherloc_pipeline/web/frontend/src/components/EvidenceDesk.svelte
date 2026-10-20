@@ -11,8 +11,8 @@
   import { cacheSharedOutcome, cachedSharedOutcome, comparisonDisplays, derivedTrace, dropFailedSharedOutcomes, evidenceColor, evidenceTrace,
     pinShotsPerPoint, pinnedTraces, sharedOutcomeEpoch } from '../lib/evidenceStore';
   import type { SharedEvidence } from '../lib/evidenceStore';
-  import { runSharedChain, sharedChain, sharedSteps } from '../lib/sharedChain';
-  import type { BackgroundScale, SharedChain, SharedOutcome, SharedStep } from '../lib/sharedChain';
+  import { runSharedChain, sharedChain, sharedSource } from '../lib/sharedChain';
+  import type { SharedChain, SharedOutcome } from '../lib/sharedChain';
   import RamanView from './RamanView.svelte';
   import EvidenceRail from './EvidenceRail.svelte';
   import ExportMenu from './ExportMenu.svelte';
@@ -20,10 +20,8 @@
   export let snapshot: ProcessingSnapshot | null = null;
   export let contextKey: string;
   export let showBadpix = false;
-  // Shared processing chain inputs from the Workbench (never part of a snapshot).
-  export let backgroundScale: BackgroundScale | null = null;
+  // The current scan's shots per point, stored with a pin for the shared chain's auto background scale.
   export let shotsPerPoint: number | null = null;
-  export let chainPpp: number | null = null;
   let view = 'processing';
   let theme: EvidenceTheme = 'system';
   let plot: RamanView;
@@ -55,7 +53,8 @@
   let outcomeVersion = 0;
   let sharedToken = 0;
   let sharedTimer: ReturnType<typeof setTimeout> | null = null;
-  $: steps = sharing ? sharedSteps(primary, backgroundScale, chainPpp) : null;
+  $: source = sharing ? sharedSource(primary) : null;
+  $: steps = source?.steps ?? null;
   $: refreshChain(JSON.stringify([primary?.id ?? null, steps]));
   $: candidates = comparisons.filter(item => item.id !== primary?.id);
   // Reschedule only when the chain, the traces or the opt-outs change, not on every re-render.
@@ -248,6 +247,8 @@
             {#if chain}
               <small>Shared chain {chain.shared_chain_id.slice(0, 12)} from {primary.label}: {chain.steps.map(step => step.step).join(' → ')}.
                 Each trace starts from its source array; the fit is not shared.</small>
+            {:else if source?.refusal}
+              <small role="status">Chain not shared: {source.refusal}.</small>
             {:else if !steps}
               <small>This trace has no committed despike, background or baseline step to share.</small>
             {/if}

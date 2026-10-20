@@ -21,7 +21,6 @@
     fitInput,
   } from '../lib/processingChainRun';
   import type { ChainState } from '../lib/processingChainRun';
-  import type { BackgroundScale } from '../lib/sharedChain';
   import DespikeStep from './DespikeStep.svelte';
   import BackgroundStep from './BackgroundStep.svelte';
   import BaselineStep from './BaselineStep.svelte';
@@ -63,9 +62,6 @@
   // instead of per-position provenance. Owned by the Workbench (it owns the
   // selection mode) and threaded down purely for the provenance display.
   export let mlAggregateView: boolean = false;
-  // The background step's scale mode is not in its step record; the Evidence
-  // desk reads it here to share the chain.
-  export let backgroundScale: BackgroundScale = { mode: 'auto', value: 1 };
 
   const dispatch = createEventDispatcher<{
     stateUpdate: ProcessingSnapshot;
@@ -82,9 +78,6 @@
   // bgType is owned here (not in BackgroundStep) so the reactive reset block
   // below can clear it back to 'none' when raw spectrum input changes.
   let bgType: 'none' | 'as' | 'fs' = 'none';
-  let bgAutoScale = true;
-  let bgManualScale = 1.0;
-  $: backgroundScale = { mode: bgAutoScale ? 'auto' : 'manual', value: bgManualScale };
 
   // Generation counter bumped on every raw-input change. Child steps
   // (DespikeStep, BaselineStep, BackgroundStep) capture the current
@@ -267,7 +260,7 @@
     }
   }
 
-  function onBgApply(e: CustomEvent<{ subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; bgType: string; inputIntensity: number[] }>) {
+  function onBgApply(e: CustomEvent<{ subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; scaleMode: 'auto' | 'manual'; bgType: string; inputIntensity: number[] }>) {
     const input = backgroundInput(chainNow());
     if (!bgEnabled || e.detail.inputIntensity !== input) return;
     afterBgIntensity = e.detail.subtracted;
@@ -275,7 +268,7 @@
     // Reset downstream
     afterBaselineIntensity = null;
     emitState('bg_subtracted', e.detail.subtracted, undefined,
-      backgroundStepRecord(e.detail.bgType, e.detail.scaleUsed));
+      backgroundStepRecord(e.detail.bgType, e.detail.scaleUsed, e.detail.scaleMode));
   }
 
   function onBgToggle(e: CustomEvent<{ enabled: boolean }>) {
@@ -381,8 +374,6 @@
     {scanPpp}
     {isSinglePoint}
     bind:bgType
-    bind:autoScale={bgAutoScale}
-    bind:manualScale={bgManualScale}
     {inputGeneration}
     on:apply={onBgApply}
     on:toggle={onBgToggle}

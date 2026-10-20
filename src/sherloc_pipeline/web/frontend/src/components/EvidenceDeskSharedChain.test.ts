@@ -103,8 +103,7 @@ describe('Evidence desk shared processing chain', () => {
     const without = evidenceTrace(input(2))!;
     pinTrace(withPpp, 'synthetic-context', 450);
     pinTrace(without, 'synthetic-context');
-    await desk(input(0, [{ step: 'bg_subtract', bg_type: 'as', scale_used: 2 }]),
-      { backgroundScale: { mode: 'auto', value: 1 }, chainPpp: 1800, shotsPerPoint: 1800 });
+    await desk(input(0, [{ step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto', scale_used: 2 }]), { shotsPerPoint: 1800 });
     await fireEvent.click(screen.getByLabelText('Apply this trace\'s chain to all'));
     await settle();
     expect(postBackground).toHaveBeenCalledTimes(1);
@@ -114,6 +113,36 @@ describe('Evidence desk shared processing chain', () => {
     const reason = 'shots per point not recorded for this pin; auto background scale unavailable';
     expect(meta().shared_chain.refused).toEqual([{ label: without.label, derived_from: without.id, reason,
       steps: [{ step: 'bg_subtract', status: 'refused', reason }] }]);
+  });
+
+  it('keeps an auto background automatic through undo, even when a manual value equals its scale', async () => {
+    pinTrace(evidenceTrace(input(1))!, 'synthetic-context', 450);
+    const auto = input(0, [{ step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto', scale_used: 2 }]);
+    const view = await desk(auto, { shotsPerPoint: 1800 });
+    await fireEvent.click(screen.getByLabelText('Apply this trace\'s chain to all'));
+    await settle();
+    expect(vi.mocked(postBackground).mock.calls.at(-1)![0]).toMatchObject({ scale: 'auto', scan_ppp: 450 });
+    // A manual re-apply at the same scale value, then undo back to the auto record.
+    await view.component.$set({ snapshot: input(0, [{ step: 'bg_subtract', bg_type: 'as', scale_mode: 'manual', scale_used: 2 }]) });
+    await settle();
+    expect(vi.mocked(postBackground).mock.calls.at(-1)![0]).toMatchObject({ scale: 2 });
+    await view.component.$set({ snapshot: auto });
+    await settle();
+    expect(meta().shared_chain.steps).toEqual([{ step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto' }]);
+    expect(meta().traces[1].processing.scale_used).toBe(0.5);
+  });
+
+  it('refuses, without throwing or requesting, a background step stored before its scale mode was recorded', async () => {
+    const pin = evidenceTrace(input(1))!;
+    pinTrace(pin, 'synthetic-context', 900);
+    await desk(input(0, [{ step: 'bg_subtract', bg_type: 'as', scale_used: 2 }, baseline]));
+    const today = JSON.stringify(meta());
+    await fireEvent.click(screen.getByLabelText('Apply this trace\'s chain to all'));
+    await settle();
+    expect(screen.getByText(/Chain not shared: background scale mode not recorded/)).toBeTruthy();
+    expect(postBackground).not.toHaveBeenCalled();
+    expect(postBaseline).not.toHaveBeenCalled();
+    expect(JSON.stringify(meta())).toBe(today);
   });
 
   it('drops a result from a chain that changed while its request was in flight', async () => {
