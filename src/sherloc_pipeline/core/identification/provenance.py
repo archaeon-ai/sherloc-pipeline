@@ -17,8 +17,14 @@ IMPLEMENTATION_FILES = (
     "core/identification/prep.py",
     "core/identification/provenance.py",
     "core/identification/recipe.py",
+    "database/reference_models.py",
+    "models/feature_policy.py",
     "models/identification.py",
+    "models/references.py",
     "services/identification.py",
+    "services/reference_import.py",
+    "services/reference_serving.py",
+    "services/reference_store.py",
 )
 
 

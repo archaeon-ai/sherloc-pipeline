@@ -664,6 +664,25 @@ def test_source_and_environment_provenance_affect_result_digest(system, monkeypa
     assert changed_source.result_digest != changed_runtime.result_digest
 
 
+
+@pytest.mark.parametrize("shared", [
+    "database/reference_models.py", "models/feature_policy.py", "models/references.py",
+    "services/reference_import.py", "services/reference_serving.py", "services/reference_store.py",
+])
+def test_shared_engine_modules_affect_code_fingerprint(monkeypatch, shared):
+    from sherloc_pipeline.core.identification import provenance
+
+    root = provenance.files("sherloc_pipeline")
+    original = provenance.implementation_fingerprint()
+
+    def changed(path):
+        data = b"synthetic changed shared module" if path == shared else root.joinpath(path).read_bytes()
+        return SimpleNamespace(read_bytes=lambda: data)
+
+    monkeypatch.setattr(provenance, "files", lambda package: SimpleNamespace(joinpath=changed))
+    assert shared in provenance.IMPLEMENTATION_FILES
+    assert provenance.implementation_fingerprint() != original
+
 @pytest.mark.parametrize("target", ["Syntheticite Ridge", "SYNTHETICITE_RIDGE", "Syntheticite-Ridge"])
 def test_named_denial_normalizes_only_configured_names(target):
     point = selection(target=target)
