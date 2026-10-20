@@ -1135,14 +1135,17 @@ def test_pearson_real_runtime_payload_matches_pr7_except_implementation_identity
     from pathlib import Path
 
     # Captured at rebuilt pr7-integration f429ba3 using this unchanged synthetic
-    # request and real runtime provenance. Keep the entire payload, including
-    # environment identity; only installed-source identity and its digest differ.
+    # request and real runtime provenance. Only installed-source identity and its
+    # digest differ; the Python/NumPy/SciPy identity is the host's, so it is taken
+    # from the runtime rather than the capture host.
     expected = json.loads(Path(__file__).with_name("pearson_runtime_pr7_golden.json").read_text())
     result = pearson_golden_case(system, real_provenance=True)
     actual = result.model_dump(mode="json")
     assert actual["method"]["code_identity_basis"] == "installed_source_bytes"
     assert actual["method"]["code_sha256"] != expected["method"]["code_sha256"]
     assert actual["result_digest"] != expected["result_digest"]
+    for key in ("environment", "environment_sha256"):
+        expected["method"][key] = actual["method"][key]
     expected["method"]["code_sha256"] = actual["method"]["code_sha256"]
     expected["result_digest"] = actual["result_digest"]
     assert actual == expected
