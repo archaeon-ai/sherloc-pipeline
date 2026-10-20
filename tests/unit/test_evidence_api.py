@@ -452,3 +452,26 @@ def test_binding_rejects_large_aggregate_before_loading_members(evidence_api):
         assert identification_binding(request, policy, release) is None
     assert db.query.call_count == 1
     db.get.assert_not_called()
+
+
+@pytest.mark.parametrize('route_path,method', [
+    ('/api/identify', 'POST'), ('/api/references', 'GET'),
+    ('/api/references/{trace_revision_id}', 'GET'),
+])
+def test_unhandled_evidence_errors_are_private_no_store(evidence_api, monkeypatch, route_path, method):
+    s = evidence_api
+
+    def fail():
+        raise RuntimeError('synthetic unhandled route exception')
+
+    monkeypatch.setitem(s.app.dependency_overrides, require_authenticated_request, fail)
+    url = route_path.replace('{trace_revision_id}', s.trace_ids[0])
+    client = TestClient(s.app, raise_server_exceptions=False)
+    try:
+        response = client.request(method, url, params={'release_id': s.imported.release_id} if method == 'GET' else {},
+                                  json=s.body if method == 'POST' else None)
+    finally:
+        client.close()
+    assert response.status_code == 500
+    assert response.json()['error'] == 'internal_error'
+    assert response.headers['cache-control'] == 'private, no-store'

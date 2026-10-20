@@ -261,6 +261,9 @@ def create_app(
         logger.exception("Internal server error")
         return JSONResponse(
             status_code=500,
+            headers={"Cache-Control": "private, no-store"} if (
+                request.url.path == "/api/identify" or request.url.path.startswith("/api/references")
+            ) else None,
             content={
                 "schema_version": API_SCHEMA_VERSION,
                 "error": "internal_error",
