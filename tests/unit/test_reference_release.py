@@ -1,6 +1,7 @@
 """Entirely synthetic local reference imports, verified reads and real migrations."""
 
 import copy
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -25,7 +26,7 @@ from sherloc_pipeline.cli.app import app as references_cli
 from sherloc_pipeline.database.models import Base
 from sherloc_pipeline.database.reference_catalog_ddl import CATALOG_TABLES, catalog_triggers
 from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
-from sherloc_pipeline.models.references import ReferenceTrace
+from sherloc_pipeline.models.references import ReferenceSnapshot, ReferenceTrace
 from sherloc_pipeline.services.reference_import import REFERENCE_REVISION, import_release
 from sherloc_pipeline.services.reference_store import LocalReferenceStore, object_locator
 from sherloc_pipeline.web.feature_policy import FeaturePolicy
@@ -114,6 +115,30 @@ def snapshot(tmp_path):
     policy.write_text(json.dumps({"schema_version": "reference-serving-1",
                                   "approved_trace_keys": ["synthetic-0001:synthetic-file-1:0"]}))
     return root, manifest, policy
+
+
+PROCESSING_STATE_KEYS = ("source_processing_state", "source_processing_evidence")
+
+
+def without_processing_state(trace):
+    return {key: value for key, value in trace.items() if key not in PROCESSING_STATE_KEYS}
+
+
+@contextmanager
+def importer_before_processing_state():
+    """Import exactly as before traces had a processing state: the same dumps without its two keys."""
+    snapshot_dump, trace_dump = ReferenceSnapshot.model_dump, ReferenceTrace.model_dump
+
+    def snapshot_without(self, **kwargs):
+        data = snapshot_dump(self, **kwargs)
+        for file in data["files"]:
+            file["traces"] = [without_processing_state(trace) for trace in file["traces"]]
+        return data
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ReferenceSnapshot, "model_dump", snapshot_without)
+        patch.setattr(ReferenceTrace, "model_dump", lambda self, **kwargs: without_processing_state(trace_dump(self, **kwargs)))
+        yield
 
 
 def save_manifest(root, manifest):
@@ -300,12 +325,31 @@ def test_unrecognized_source_processing_state_rejected_before_writes(snapshot, d
     assert database.read_bytes() == before and not objects.exists()
 
 
-def test_metadata_stored_before_processing_state_reads_as_unknown(snapshot):
-    _, manifest, _ = snapshot
-    trace = ReferenceTrace.model_validate(manifest["files"][0]["traces"][0])
-    stored = trace.model_dump(mode="json", exclude={"source_processing_state", "source_processing_evidence"})
-    reread = ReferenceTrace.model_validate(stored)
-    assert reread.source_processing_state == "unknown" and reread.source_processing_evidence is None
+def test_unchanged_manifest_reimport_after_processing_state_is_a_new_release(snapshot, database, tmp_path):
+    root, _, policy = snapshot
+    objects = tmp_path / "objects"
+    with importer_before_processing_state():
+        before = import_release(root, database, objects, policy)
+        assert import_release(root, database, objects, policy).existing
+    after = import_release(root, database, objects, policy)
+    assert not after.existing and after.release_id != before.release_id
+    engine = engine_for(database)
+    try:
+        with Session(engine) as session:
+            assert session.query(ReferenceReleaseORM).count() == 2
+            old = session.query(ReferenceTraceORM).filter_by(release_id=before.release_id).one()
+            new = session.query(ReferenceTraceORM).filter_by(release_id=after.release_id).one()
+            assert old.trace_revision_id != new.trace_revision_id
+            assert not set(PROCESSING_STATE_KEYS) & set(old.metadata_json)
+            assert new.metadata_json == {**old.metadata_json, "source_processing_state": "unknown",
+                                         "source_processing_evidence": None}
+            assert session.get(ReferenceReleaseORM, before.release_id).status == "ready"
+            legacy = ReferenceTrace.model_validate(old.metadata_json)
+            assert legacy.source_processing_state == "unknown" and legacy.source_processing_evidence is None
+            release = session.get(ReferenceReleaseORM, before.release_id)
+            assert can_serve_trace(old, release, runtime_policy(release, [old]), "team")
+    finally:
+        engine.dispose()
 
 
 def test_uncertainty_mean_and_tier_limited_template(snapshot, database, tmp_path):
