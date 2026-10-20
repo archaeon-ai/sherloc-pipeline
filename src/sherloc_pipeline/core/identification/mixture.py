@@ -111,6 +111,19 @@ def fit_mixture(query, candidates, recipe):
         if j not in active:
             coef[j] = cap[j] = 0.
     coef, refit_info = coordinate_descent(design, target, penalty, cap, second, recipe.solver_tolerance, coef)
+    # Prune before scoring so every fitted reference is visible in components.
+    # Refitting can push another coefficient below cutoff; never reactivate it.
+    cutoff_refits = []
+    while True:
+        retained = [j for j in active if coef[j] > recipe.coefficient_cutoff]
+        if retained == active:
+            break
+        for j in active:
+            if j not in retained:
+                coef[j] = cap[j] = 0.
+        active = retained
+        coef, info = coordinate_descent(design, target, penalty, cap, second, recipe.solver_tolerance, coef)
+        cutoff_refits.append(info)
     bgcoef, null_info = coordinate_descent(bg, target, np.zeros(3), np.full(3, recipe.background_cap),
                                           null, recipe.solver_tolerance)
     fitted = design @ coef
@@ -122,11 +135,11 @@ def fit_mixture(query, candidates, recipe):
     if not finite:
         return reject("nonfinite_solution")
     support = max(0., 1 - sse / max(null_sse, recipe.denominator_floor))
-    selected = [j for j in active if coef[j] > recipe.coefficient_cutoff]
+    selected = active
     total = sum(coef[j] for j in selected)
     components = [{"template_id": candidates[j]["template_id"], "species_name": candidates[j]["species_name"],
                    "coefficient": float(coef[j]), "weight": float(coef[j]/total)} for j in selected]
-    converged = all(info["converged"] for info in (initial_info, refit_info, null_info))
+    converged = all(info["converged"] for info in (initial_info, refit_info, *cutoff_refits, null_info))
     reason = None
     if not converged:
         reason = "fit_not_converged"
@@ -146,7 +159,8 @@ def fit_mixture(query, candidates, recipe):
             "sse": sse, "background_only_sse": null_sse,
             "background_coefficients": coef[n:].tolist(), "background_only_coefficients": bgcoef.tolist(),
             "diagnostics": {"converged": converged, "finite_solution": finite,
-                            "initial_fit": initial_info, "active_refit": refit_info, "background_only": null_info,
+                            "initial_fit": initial_info, "active_refit": refit_info, "cutoff_refits": cutoff_refits,
+                            "background_only": null_info,
                             "coefficients": coef[:n].tolist(), "template_ids": [r["template_id"] for r in candidates],
                             "shift_at_boundary": any(abs(candidates[j]["shift_cm_1"]) == max(map(abs, recipe.shifts))
                                                      for j in selected)},

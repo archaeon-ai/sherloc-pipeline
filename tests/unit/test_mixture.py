@@ -82,7 +82,7 @@ def test_nonnegative_at_most_two_and_cutoff(recipe):
     assert negative["components"] == []
     assert negative["reason"] == "no_component_above_cutoff"
     tiny = fit_mixture(prepared(.07*vectors[:, 0]), candidates(vectors), recipe)
-    assert tiny["diagnostics"]["coefficients"][0] == pytest.approx(.04)
+    assert tiny["diagnostics"]["coefficients"] == [0., 0., 0.]
     assert tiny["components"] == []
 
 
@@ -257,3 +257,59 @@ def test_top_five_species_and_nonconvergence_in_result(recipe):
     assert result.candidate is None
     assert result.reasons == ["fit_not_converged"]
     assert not result.mixture.diagnostics["converged"]
+
+
+def test_cutoff_refit_prevents_hidden_threshold_crossing(recipe):
+    vectors, bg = analytic_vectors(recipe)
+    a, b = .772, .079
+    null_sse = (a*a - recipe.l1_penalty**2) / .595
+    c = np.sqrt(null_sse - a*a - b*b)
+    target = vectors @ [a, b, c] + bg @ np.array([.04, .07, .02])
+    # The unpruned .049 coefficient would push support past the .60 threshold.
+    assert 1 - (2*recipe.l1_penalty**2 + c*c) / null_sse > recipe.support_min
+    result = fit_mixture(prepared(target), candidates(vectors[:, :2]), recipe)
+    assert result["reason"] == "below_support_threshold"
+    assert result["support"] == pytest.approx(.595, abs=1e-9)
+    assert result["sse"] == pytest.approx(recipe.l1_penalty**2 + b*b + c*c, abs=1e-9)
+    assert result["background_only_sse"] == pytest.approx(null_sse, abs=1e-9)
+    assert result["components"] == [{"template_id": "1"*64, "species_name": "Syntheticite 0",
+                                     "coefficient": pytest.approx(.742), "weight": 1.}]
+    assert result["diagnostics"]["coefficients"] == pytest.approx([.742, 0.])
+    assert result["diagnostics"]["cutoff_refits"]
+    np.testing.assert_allclose(result["background_coefficients"], [.04, .07, .02], atol=1e-6)
+    fit = np.array(result["evidence"]["fit"], float)
+    residual = np.array(result["evidence"]["residual"], float)
+    np.testing.assert_allclose(fit, .742*vectors[:, 0] + bg @ np.array([.04, .07, .02]), atol=1e-6)
+    np.testing.assert_allclose(residual, target-fit, atol=1e-12)
+    assert residual @ residual == pytest.approx(result["sse"])
+
+
+def test_cutoff_refit_reoptimizes_background(recipe):
+    vectors, bg = analytic_vectors(recipe)
+    # A sub-cutoff reference also contains a broad contribution.
+    mixed = vectors[:, 1] + .4*bg[:, 1]
+    mixed /= np.linalg.norm(mixed)
+    rows = candidates(np.column_stack([vectors[:, 0], mixed]))
+    target = .8*vectors[:, 0] + .07*mixed + .02*bg[:, 1]
+    result = fit_mixture(prepared(target), rows, recipe)
+    only_retained = fit_mixture(prepared(target), rows[:1], recipe)
+    assert len(result["components"]) == 1
+    assert result["diagnostics"]["coefficients"][1] == 0.
+    assert result["support"] == pytest.approx(only_retained["support"], abs=1e-10)
+    np.testing.assert_allclose(result["background_coefficients"], only_retained["background_coefficients"], atol=1e-6)
+    np.testing.assert_allclose(result["evidence"]["fit"], only_retained["evidence"]["fit"], atol=1e-6)
+
+
+def test_cutoff_refit_prunes_coefficients_that_shrink_during_refit(recipe):
+    vectors, _ = analytic_vectors(recipe)
+    design = np.column_stack([vectors[:, 0], -.8*vectors[:, 0] + .6*vectors[:, 1]])
+    # With both columns the penalized coefficients are .06 and .04. Removing
+    # the second shrinks the first to .028, so neither may remain in the fit.
+    target = design @ np.linalg.solve(design.T @ design, [.058, .022])
+    result = fit_mixture(prepared(target), candidates(design), recipe)
+    assert result["reason"] == "no_component_above_cutoff"
+    assert result["components"] == []
+    assert result["diagnostics"]["coefficients"] == [0., 0.]
+    assert len(result["diagnostics"]["cutoff_refits"]) == 2
+    np.testing.assert_allclose(result["evidence"]["fit"], 0., atol=1e-10)
+    assert result["sse"] == pytest.approx(result["background_only_sse"])
