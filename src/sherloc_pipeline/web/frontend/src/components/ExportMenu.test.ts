@@ -244,7 +244,7 @@ it.each([null, undefined])('preserves unknown committed axis units in JSON and C
     evidenceDesk: true, wavenumber, intensity,
     trace: { wavenumber, wavelength: [281, 301, 321], intensity, channel_indices: [0, 1, 2],
       source: { scan_id: 'synthetic-unknown-units' }, selection: { mode: 'average' },
-      provenance: { calibration_version: null, wavenumber_unit: unit, wavelength_unit: unit, intensity_unit: null } },
+      provenance: { calibration_version: null, wavenumber_unit: unit, wavelength_unit: unit, intensity_unit: null } as unknown as import('../lib/types').SpectrumProvenance },
   } });
   await tick(); await fireEvent.click(getByText(/Export/i));
   await fireEvent.click(getByText('CSV at current stage')); await tick();
@@ -262,4 +262,23 @@ it('keeps legacy axis defaults when there is no committed trace', async () => {
   const metadata = JSON.parse(csv.split('\n').find(line => line.startsWith('# provenance: '))!.slice(14));
   expect(metadata.axes.wavenumber_unit).toBe('cm-1');
   expect(metadata.axes.wavelength_unit).toBe('nm');
+});
+
+
+it.each([undefined, false])('keeps committed legacy axis defaults with omitted units (desk=%s)', async evidenceDesk => {
+  const { container, getByText } = render(ExportMenu, { props: {
+    evidenceDesk, wavenumber, intensity,
+    trace: { wavenumber, wavelength: [281, 301, 321], intensity, channel_indices: [0, 1, 2],
+      source: { scan_id: 'synthetic-legacy-units' }, selection: { mode: 'average' },
+      provenance: { calibration_version: null, intensity_unit: null } as unknown as import('../lib/types').SpectrumProvenance },
+  } });
+  await tick(); await fireEvent.click(getByText(/Export/i));
+  await fireEvent.click(getByText('CSV at current stage')); await tick();
+  const metadata = JSON.parse(capturedCsv.split('\n').find(line => line.startsWith('# provenance: '))!.slice(14));
+  expect(metadata.axes).toEqual({ wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: null });
+  expect(capturedCsv).toContain('# wavenumber_unit: cm-1');
+  expect(capturedCsv).toContain('# wavelength_unit: nm');
+  await fireEvent.click(getByText(/Export/i));
+  await fireEvent.click(getByText('Full provenance JSON')); await tick();
+  expect(JSON.parse(container.querySelector('.provenance-json')!.textContent!)).toEqual(metadata);
 });

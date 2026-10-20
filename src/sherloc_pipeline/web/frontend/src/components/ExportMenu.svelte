@@ -108,8 +108,8 @@
         timestamp: exportTimestamp,
       },
       stage,
-      axes: { wavenumber_unit: provenance?.wavenumber_unit ?? (trace ? null : 'cm-1'),
-        wavelength_unit: provenance?.wavelength_unit ?? (trace ? null : 'nm'), intensity_unit: provenance?.intensity_unit ?? null },
+      axes: { wavenumber_unit: provenance?.wavenumber_unit ?? (evidenceDesk && trace ? null : 'cm-1'),
+        wavelength_unit: provenance?.wavelength_unit ?? (evidenceDesk && trace ? null : 'nm'), intensity_unit: provenance?.intensity_unit ?? null },
       data: { wavenumber, wavelength: trace?.wavelength ?? null, intensity,
         channel_indices: trace?.channel_indices ?? [], source_intensity: trace?.intensity ?? null },
       annotations: {
