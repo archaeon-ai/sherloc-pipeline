@@ -47,6 +47,60 @@ class _RateLimiter:
             return True
 
 
+# Ten thousand 64-character template IDs plus bounded metadata fit in 1 MiB.
+IDENTIFY_BODY_LIMIT = 1024 * 1024
+
+
+class _IdentifyBodyLimit:
+    """Bound actual ASGI bytes before request parsing in either access tier."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["path"].rstrip("/") != "/api/identify":
+            return await self.app(scope, receive, send)
+
+        async def reject():
+            response = JSONResponse(
+                status_code=413,
+                headers={"Cache-Control": "private, no-store"},
+                content={"schema_version": API_SCHEMA_VERSION, "error": "payload_too_large",
+                         "detail": "Identification request body exceeds 1 MiB limit"},
+            )
+            await response(scope, receive, send)
+
+        for name, value in scope.get("headers", []):
+            if name.lower() == b"content-length":
+                try:
+                    if int(value) > IDENTIFY_BODY_LIMIT:
+                        return await reject()
+                except ValueError:
+                    pass
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            if len(body) + len(chunk) > IDENTIFY_BODY_LIMIT:
+                return await reject()
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+
+        pending = True
+
+        async def replay():
+            nonlocal pending
+            if pending:
+                pending = False
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+
 def create_app(
     *,
     engine: Optional[Engine] = None,
@@ -198,7 +252,7 @@ def create_app(
         async def public_guards_middleware(request: Request, call_next):
             # Body size limit (256 KB)
             content_length = request.headers.get("content-length")
-            if content_length and int(content_length) > 256 * 1024:
+            if request.url.path.rstrip("/") != "/api/identify" and content_length and int(content_length) > 256 * 1024:
                 return JSONResponse(
                     status_code=413,
                     content={
@@ -277,6 +331,9 @@ def create_app(
         if request.url.path == "/api/identify" or request.url.path.startswith("/api/references"):
             response.headers["Cache-Control"] = "private, no-store"
         return response
+
+    # Registered last so byte admission wraps DB, auth and JSON parsing.
+    app.add_middleware(_IdentifyBodyLimit)
 
     # Register route modules
     from sherloc_pipeline.web.routes import config as config_routes
