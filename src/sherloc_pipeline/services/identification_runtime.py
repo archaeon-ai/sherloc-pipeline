@@ -3,6 +3,10 @@
 from collections import OrderedDict, deque
 import copy
 import multiprocessing
+from multiprocessing.reduction import ForkingPickler
+import os
+import select
+import struct
 import threading
 import time
 
@@ -26,6 +30,44 @@ def _worker(connection, function, args):
         connection.close()
 
 
+def _receive(connection, deadline):
+    """Read the complete Connection frame without blocking beyond its deadline."""
+    descriptor = connection.fileno()
+    os.set_blocking(descriptor, False)
+
+    def read_exact(length):
+        payload = bytearray()
+        while len(payload) < length:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ExecutionFailed("identification time limit reached")
+            if not select.select([descriptor], [], [], remaining)[0]:
+                raise ExecutionFailed("identification time limit reached")
+            try:
+                chunk = os.read(descriptor, min(length - len(payload), 65536))
+            except BlockingIOError:
+                continue
+            if not chunk:
+                raise ExecutionFailed("identification worker failed")
+            payload.extend(chunk)
+        return payload
+
+    # multiprocessing.Connection uses a signed four-byte size, or -1 followed
+    # by an unsigned eight-byte size for messages larger than its short frame.
+    length = struct.unpack("!i", read_exact(4))[0]
+    if length == -1:
+        length = struct.unpack("!Q", read_exact(8))[0]
+    elif length < 0:
+        raise ExecutionFailed("identification worker failed")
+    payload = read_exact(length)
+    if time.monotonic() >= deadline:
+        raise ExecutionFailed("identification time limit reached")
+    result = ForkingPickler.loads(payload)
+    if time.monotonic() >= deadline:
+        raise ExecutionFailed("identification time limit reached")
+    return result
+
+
 def run_process(function, args, timeout):
     """Spawn with detached arguments; always reap, including crash and timeout."""
     if timeout <= 0:
@@ -37,12 +79,7 @@ def run_process(function, args, timeout):
     try:
         process.start()
         writer.close()
-        if not reader.poll(max(0., deadline - time.monotonic())):
-            raise ExecutionFailed("identification time limit reached")
-        try:
-            success, result = reader.recv()
-        except EOFError as exc:
-            raise ExecutionFailed("identification worker failed") from exc
+        success, result = _receive(reader, deadline)
         if not success:
             if result is not None:
                 raise WorkRejected(result)
