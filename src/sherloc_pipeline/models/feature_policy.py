@@ -31,7 +31,14 @@ class MethodBinding(PolicyModel):
     reference_subset_id: Digest
 
 
+class SourceDenylist(PolicyModel):
+    sols: list[Annotated[int, Field(ge=0)]] = Field(default_factory=list)
+    product_ids: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,200}$")]] = Field(default_factory=list)
+    target_names: list[Annotated[str, Field(min_length=1, pattern=r"[A-Za-z0-9]")]] = Field(default_factory=list)
+
+
 class IdentificationPolicy(PolicyModel):
+    source_denylist: SourceDenylist = Field(default_factory=SourceDenylist)
     enabled: bool = False
     experimental_candidates: bool = False
     allowed_method_releases: list[MethodBinding] = Field(default_factory=list)

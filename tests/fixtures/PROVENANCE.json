@@ -166,6 +166,11 @@
       "path": "src/sherloc_pipeline/models/schemas/cli_contract.golden.json",
       "category": "metadata",
       "description": "Frozen structural contract (JSON schema + shape fingerprint) of the --json CLI output envelope; generated from the models by cli_contract.py, value-free"
+    },
+    {
+      "path": "src/sherloc_pipeline/core/identification/recipes/raman-pearson-0.2.0.json",
+      "category": "metadata",
+      "description": "Frozen provisional Pearson identification recipe: method parameters only (grid, shifts, thresholds, baseline settings), no measured values"
     }
   ]
 }

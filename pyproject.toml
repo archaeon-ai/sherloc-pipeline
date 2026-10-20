@@ -143,7 +143,7 @@ where = ["src"]
 # layer (issue #9). Resolved via importlib.resources at module load; the
 # wheel-installed runtime image needs the entry to serve the endpoint.
 [tool.setuptools.package-data]
-sherloc_pipeline = ["config.yaml", "data/background/*.csv", "data/badpix_channels.csv"]
+sherloc_pipeline = ["config.yaml", "data/background/*.csv", "data/badpix_channels.csv", "core/identification/recipes/*.json"]
 
 
 [tool.pytest.ini_options]
