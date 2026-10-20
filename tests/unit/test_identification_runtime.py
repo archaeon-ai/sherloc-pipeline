@@ -95,3 +95,21 @@ def test_worker_module_imports_neither_services_nor_scientific_stacks():
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run([sys.executable, "-c", probe], cwd=root / "src", capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "[]"
+
+
+def test_runtime_package_sources_import_only_the_standard_library():
+    # The parent sherloc_pipeline package still loads in the child; the runtime package adds nothing beyond stdlib.
+    import ast
+
+    package = Path(runtime.__file__).resolve().parent
+    for source in (package / "__init__.py", package / "worker.py"):
+        for node in ast.walk(ast.parse(source.read_text())):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                assert node.level == 0, f"{source.name}: relative import"
+                names = [node.module]
+            else:
+                continue
+            for name in names:
+                assert name.split('.')[0] in sys.stdlib_module_names, f"{source.name}: {name}"
