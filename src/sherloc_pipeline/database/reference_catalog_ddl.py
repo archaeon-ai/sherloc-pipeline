@@ -17,6 +17,23 @@ def catalog_triggers():
                 " WHEN NOT (((OLD.status = 'staged' AND NEW.status = 'ready') OR "
                 "(OLD.status = 'ready' AND NEW.status = 'retired')) AND " + unchanged + ")"
             )
+        identity = {
+            "reference_releases": "release_id = NEW.release_id",
+            "reference_files": "file_revision_id = NEW.file_revision_id OR "
+                               "(release_id = NEW.release_id AND record_id = NEW.record_id AND file_id = NEW.file_id)",
+            "reference_traces": "trace_revision_id = NEW.trace_revision_id OR "
+                                "(file_revision_id = NEW.file_revision_id AND trace_index = NEW.trace_index)",
+            "reference_templates": "template_id = NEW.template_id OR "
+                                   "(release_id = NEW.release_id AND name = NEW.name)",
+        }[table]
+        staged = ("NEW.status IS 'staged'" if table == "reference_releases" else
+                  "EXISTS (SELECT 1 FROM reference_releases WHERE release_id = NEW.release_id AND status = 'staged')")
+        name = f"{table}_immutable_insert"
+        yield name, (
+            f"CREATE TRIGGER {name} BEFORE INSERT ON {table} "
+            f"WHEN NOT ({staged}) OR EXISTS (SELECT 1 FROM {table} WHERE {identity}) "
+            "BEGIN SELECT RAISE(ABORT, 'reference catalog rows are immutable'); END"
+        )
         for operation in ("UPDATE", "DELETE"):
             name = f"{table}_immutable_{operation.lower()}"
             guard = condition if operation == "UPDATE" else ""

@@ -279,6 +279,7 @@ def import_release(
             session.add_all(traces)
             session.flush()
             session.add_all(templates)
+            session.flush()
             release.status = "ready"
     finally:
         engine.dispose()

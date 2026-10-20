@@ -731,3 +731,92 @@ def test_malformed_array_cli_fails_before_writes(snapshot, database, tmp_path, k
     assert "Reference import failed:" in result.output and "Traceback" not in result.output
     assert isinstance(result.exception, SystemExit)
     assert database.read_bytes() == before and not objects.exists()
+
+
+@pytest.fixture(params=["migration", "metadata"])
+def insertion_catalog(request, snapshot, database, tmp_path):
+    root, manifest, policy = snapshot
+    manifest["files"][0]["traces"][0]["rights_status"] = "unknown"
+    save_manifest(root, manifest)
+    if request.param == "metadata":
+        database = tmp_path / "metadata.db"
+        engine = engine_for(database)
+        Base.metadata.create_all(engine, tables=[Base.metadata.tables[name] for name in CATALOG_TABLES])
+        engine.dispose()
+    import_release(root, database, tmp_path / "objects", policy)
+    engine = engine_for(database)
+    try:
+        with engine.begin() as connection:
+            rows = {name: dict(connection.execute(Base.metadata.tables[name].select()).mappings().one())
+                    for name in CATALOG_TABLES}
+            rows["reference_releases"].update(release_id="f" * 64, status="staged")
+            rows["reference_files"].update(release_id="f" * 64, file_revision_id="e" * 64)
+            rows["reference_traces"].update(release_id="f" * 64, file_revision_id="e" * 64,
+                                            trace_revision_id="d" * 64)
+            rows["reference_templates"].update(release_id="f" * 64, template_id="c" * 64,
+                                               member_trace_ids=["d" * 64])
+            for name, row in rows.items():
+                connection.execute(Base.metadata.tables[name].insert().values(**row))
+        yield engine, rows
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("status", ["ready", "retired"])
+def test_release_must_be_inserted_staged(insertion_catalog, status):
+    engine, rows = insertion_catalog
+    table = Base.metadata.tables["reference_releases"]
+    with engine.begin() as connection:
+        with pytest.raises(IntegrityError, match="immutable"):
+            connection.execute(table.insert().values(**{**rows[table.name], "release_id": "b" * 64, "status": status}))
+
+
+@pytest.mark.parametrize("name", CATALOG_TABLES[1:])
+@pytest.mark.parametrize("status", ["ready", "retired"])
+def test_catalog_cannot_append_after_ready(insertion_catalog, name, status):
+    engine, rows = insertion_catalog
+    table = Base.metadata.tables[name]
+    values = {**rows[name], next(iter(table.primary_key.columns)).name: "b" * 64}
+    if name == "reference_files":
+        values["record_id"] = "synthetic-new-record"
+    elif name == "reference_traces":
+        values["trace_index"] = 1
+    else:
+        values["name"] = "synthetic-new-template"
+    with engine.begin() as connection:
+        connection.exec_driver_sql("UPDATE reference_releases SET status = 'ready' WHERE release_id = ?", ("f" * 64,))
+        if status == "retired":
+            connection.exec_driver_sql("UPDATE reference_releases SET status = 'retired' WHERE release_id = ?", ("f" * 64,))
+        with pytest.raises(IntegrityError, match="immutable"):
+            connection.execute(table.insert().values(**values))
+        assert connection.scalar(text(f"SELECT count(*) FROM {name}")) == 2
+
+
+@pytest.mark.parametrize("name", CATALOG_TABLES)
+@pytest.mark.parametrize("status", ["staged", "ready", "retired"])
+@pytest.mark.parametrize("identity", ["primary", "natural"])
+def test_catalog_insert_or_replace_cannot_replace_any_identity(insertion_catalog, name, status, identity):
+    engine, rows = insertion_catalog
+    table = Base.metadata.tables[name]
+    values = dict(rows[name])
+    if identity == "natural" and name != "reference_releases":
+        values[next(iter(table.primary_key.columns)).name] = "b" * 64
+    if name == "reference_releases":
+        values["source_name"] = "synthetic replacement"
+    elif name == "reference_traces":
+        values.update(rights_known=True, serving_status="approved", permitted_tiers=["team"])
+    else:
+        values["metadata_json"] = {"synthetic": "replacement"}
+    with engine.begin() as connection:
+        assert connection.scalar(text("PRAGMA recursive_triggers")) == 0
+        if status != "staged":
+            connection.exec_driver_sql("UPDATE reference_releases SET status = 'ready' WHERE release_id = ?", ("f" * 64,))
+        if status == "retired":
+            connection.exec_driver_sql("UPDATE reference_releases SET status = 'retired' WHERE release_id = ?", ("f" * 64,))
+        before = connection.execute(table.select()).mappings().all()
+        with pytest.raises(IntegrityError, match="immutable"):
+            connection.execute(table.insert().prefix_with("OR REPLACE").values(**values))
+        assert connection.execute(table.select()).mappings().all() == before
+        trace = connection.execute(Base.metadata.tables["reference_traces"].select().where(
+            Base.metadata.tables["reference_traces"].c.trace_revision_id == "d" * 64)).mappings().one()
+        assert not trace["rights_known"] and trace["serving_status"] == "off" and trace["permitted_tiers"] == []
