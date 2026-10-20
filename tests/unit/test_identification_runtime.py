@@ -5,11 +5,14 @@ import os
 from pathlib import Path
 import signal
 import struct
+import subprocess
+import sys
 import time
 
 import pytest
 
-from sherloc_pipeline.services import identification_runtime as runtime
+from sherloc_pipeline.runtime import worker as runtime
+from sherloc_pipeline.services import identification_runtime
 
 
 # Keep spawned deadline helpers independent of API and scientific imports.
@@ -74,3 +77,18 @@ def test_stalled_receipt_times_out_and_kills_and_reaps_the_worker(monkeypatch, t
     # Reaping frees the caller to start another worker successfully.
     monkeypatch.undo()
     assert runtime.run_process(_large_payload, (1,), 5) == b"synthetic"
+
+
+def test_services_reexport_the_worker_objects():
+    for name in ("ExecutionFailed", "WorkRejected", "run_process"):
+        assert getattr(identification_runtime, name) is getattr(runtime, name)
+
+
+def test_worker_module_imports_neither_services_nor_scientific_stacks():
+    # A spawned child imports this module before its target; keep that cost small.
+    probe = ("import sys, sherloc_pipeline.runtime.worker; "
+             "print(sorted(m for m in sys.modules if m == 'sherloc_pipeline.services' or "
+             "m.split('.')[0] in {'matplotlib', 'sklearn', 'scipy'}))")
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run([sys.executable, "-c", probe], cwd=root / "src", capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "[]"

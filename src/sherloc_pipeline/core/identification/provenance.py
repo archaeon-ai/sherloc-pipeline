@@ -22,6 +22,7 @@ IMPLEMENTATION_FILES = (
     "models/feature_policy.py",
     "models/identification.py",
     "models/references.py",
+    "runtime/worker.py",
     "services/identification.py",
     "services/identification_runtime.py",
     "services/identification_source.py",
