@@ -2,6 +2,7 @@
   import { pinTrace, pinnedTraces, removeTrace, toggleTrace, MAX_PINNED_TRACES } from '../lib/evidenceStore';
   import type { EvidenceTrace } from '../lib/evidenceTypes';
 
+  import { evidenceCitation } from '../lib/identification';
   import type { IdentificationEvidence } from '../lib/identification';
   export let result: IdentificationEvidence | null = null;
   export let onCandidate: (identity: string) => void = () => {};
@@ -21,7 +22,7 @@
       <div class="pin"><span>{index === 0 ? 'Leading candidate' : 'Alternative'}: {candidate.species_name} · support {candidate.support.toFixed(3)}</span>
         {#each candidate.trace_revision_ids as identity}
           <button class="btn-secondary btn-sm" on:click={() => onCandidate(identity)}>Add {candidate.species_name} trace</button>
-          <small>Trace: {identity} · Citation: {candidate.citations.find(item => item.trace_revision_id === identity)?.citation_text ?? 'missing'}</small>
+          <small>Trace: {identity} · Citation: {evidenceCitation(candidate.citations.find(item => item.trace_revision_id === identity))}</small>
         {/each}
       </div>
     {/each}

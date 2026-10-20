@@ -88,6 +88,18 @@ describe('Identification evidence', () => {
     expect(plot.react.mock.calls.at(-1)![2].meta.identification).toEqual(result());
   });
 
+  it('shows a per-trace DOI when citation text is missing', async () => {
+    const evidence = result();
+    evidence.ranking[0].citations[0] = { trace_revision_id: trace, citation_text: null, citation_doi: 'synthetic:reference-0001' };
+    api.identifyStoredPoint.mockResolvedValue(evidence);
+    api.getReference.mockResolvedValue({ ...reference, provenance: { ...reference.provenance, citation_text: null, citation_doi: 'synthetic:reference-0001' } });
+    const { container } = render(EvidenceDesk, { snapshot: input(), contextKey: 'synthetic-context' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Identify' })); await flush();
+    expect(container.textContent).toContain('Citation: synthetic:reference-0001');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Syntheticite trace' })); await flush();
+    expect(plot.react.mock.calls.at(-1)![2].meta.traces[1].snapshot.trace.source.citation).toBe('synthetic:reference-0001');
+  });
+
   it('browses a permitted reference independently of identification', async () => {
     appConfig.set(config([true, false, false]));
     render(EvidenceDesk, { snapshot: input(), contextKey: 'synthetic-context' });

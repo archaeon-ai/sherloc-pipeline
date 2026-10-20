@@ -49,6 +49,10 @@ export interface IdentificationEvidence {
   [key: string]: unknown;
 }
 
+export function evidenceCitation(citation: Record<string, unknown> | undefined): string {
+  return String(citation?.citation_text || citation?.citation_doi || citation?.citation_source || 'missing');
+}
+
 export function referenceEvidence(record: ReferenceRecord & { x: number[]; y: number[] }): EvidenceTrace | null {
   const p = record.provenance;
   if (p.x_quantity !== 'raman_shift' && p.x_quantity !== 'wavelength') return null;
@@ -56,10 +60,10 @@ export function referenceEvidence(record: ReferenceRecord & { x: number[]; y: nu
   const x = raman ? record.x : [];
   const trace = evidenceTrace({ stage: 'raw', params: {}, processingChain: [],
     raman: { wavenumber: x, intensity: record.y },
-    trace: { region: raman ? 'R1' : 'R2', source: { reference: record, citation: p.citation_text },
+    trace: { region: raman ? 'R1' : 'R2', source: { reference: record, citation: evidenceCitation(p) },
       selection: { trace_revision_id: record.trace_revision_id }, channel_indices: [],
       wavenumber: x, wavelength: raman ? null : record.x, intensity: record.y,
-      provenance: { calibration_version: null, data_origin: 'reference', source: { citation: p.citation_text, reference: record },
+      provenance: { calibration_version: null, data_origin: 'reference', source: { citation: evidenceCitation(p), reference: record },
         wavenumber_unit: raman ? p.x_unit : 'unknown', wavelength_unit: raman ? 'unknown' : p.x_unit, intensity_unit: p.y_unit } },
   });
   return trace ? { ...trace, label: p.species_name ?? p.source_label, color: '#059669' } : null;
