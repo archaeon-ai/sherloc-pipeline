@@ -1231,6 +1231,30 @@ function syntheticSpectrum(intensity: number[], overrides: Partial<SpectrumRespo
 
 describe('ProcessingWorkbench evidence session boundaries', () => {
   beforeEach(() => { getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A)); });
+  it('displays same-target pins with axis controls after the current selection returns 404', async () => {
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    await flush();
+    getAvg.mockRejectedValue(new api.ApiError(404, 'Synthetic selection unavailable'));
+    await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'mean' } });
+    await flush();
+    expect(get(processingState)).toBeNull();
+    expect(get(pinnedTraces)).toHaveLength(1);
+    expect(screen.getByLabelText('View')).toHaveValue('overlay');
+    expect(screen.queryByText('No spectrum data loaded')).toBeNull();
+    expect(container.querySelectorAll('.axis-controls .axis-input')).toHaveLength(4);
+    const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
+    expect(traces).toHaveLength(1);
+    expect(layout.meta.traces[0].snapshot.trace.source.scan_id).toBe(SCAN_ID);
+    expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+    await fireEvent.click(container.querySelector('.pin input[type="checkbox"]')!);
+    await flush();
+    expect(screen.getByText('No spectrum data loaded')).toBeTruthy();
+    expect(container.querySelector('.axis-controls')).toBeNull();
+    expect(reactSpy.mock.calls.at(-1)![1]).toEqual([]);
+  });
+
   it('retains a pin across scans of the same target and clears it for a new target', async () => {
     const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await flush();

@@ -62,6 +62,9 @@
     : useWavelength ? 'nm' : 'cm-1';
   $: xUnit = recordedUnit === 'cm-1' ? 'cm\u207B\u00B9' : recordedUnit;
   $: xLabel = `${useWavelength ? 'Wavelength' : 'Raman Shift'} (${xUnit})`;
+  $: comparisonItems = evidenceEnabled && (evidenceMode || primaryTrace || comparisonTraces.length)
+    ? comparisonDisplays(primaryTrace, comparisonTraces, domain, stacked) : null;
+  $: empty = evidenceEnabled ? (comparisonItems ? comparisonItems.length === 0 : xData.length === 0) : wavenumber.length === 0;
 
   let plotDiv: HTMLDivElement;
   let plotInitialized = false;
@@ -592,7 +595,7 @@
 
   function renderComparisons(viewKey: string) {
     if (!Plotly) return;
-    const displays = comparisonDisplays(primaryTrace, comparisonTraces, domain, stacked)
+    const displays = (comparisonItems ?? [])
       .map(item => ({ ...item, trace: evidenceColor(item.trace, theme) }));
     figureEvidence = evidenceExport(displays);
     const traces: Plotly.Data[] = displays.map(item => {
@@ -652,7 +655,7 @@
 
 <div class="raman-view">
   <div bind:this={plotDiv} class="plot-div"></div>
-  {#if evidenceEnabled ? xData.length === 0 && !primaryTrace : wavenumber.length === 0}
+  {#if empty}
     <div class="plot-empty">No spectrum data loaded</div>
   {:else}
     <div class="axis-controls">
