@@ -237,3 +237,29 @@ it('exports badpix positions against wavelength-only intensity rows', async () =
   const index = rows[0].split(',').indexOf('badpix');
   expect(rows.slice(1).map(row => row.split(',')[index])).toEqual(['0', '1', '0']);
 });
+
+
+it.each([null, undefined])('preserves unknown committed axis units in JSON and CSV (%s)', async unit => {
+  const { container, getByText } = render(ExportMenu, { props: {
+    evidenceDesk: true, wavenumber, intensity,
+    trace: { wavenumber, wavelength: [281, 301, 321], intensity, channel_indices: [0, 1, 2],
+      source: { scan_id: 'synthetic-unknown-units' }, selection: { mode: 'average' },
+      provenance: { calibration_version: null, wavenumber_unit: unit, wavelength_unit: unit, intensity_unit: null } },
+  } });
+  await tick(); await fireEvent.click(getByText(/Export/i));
+  await fireEvent.click(getByText('CSV at current stage')); await tick();
+  const metadata = JSON.parse(capturedCsv.split('\n').find(line => line.startsWith('# provenance: '))!.slice(14));
+  expect(metadata.axes).toEqual({ wavenumber_unit: null, wavelength_unit: null, intensity_unit: null });
+  expect(capturedCsv).toContain('# wavenumber_unit: unknown');
+  expect(capturedCsv).toContain('# wavelength_unit: unknown');
+  await fireEvent.click(getByText(/Export/i));
+  await fireEvent.click(getByText('Full provenance JSON')); await tick();
+  expect(JSON.parse(container.querySelector('.provenance-json')!.textContent!)).toEqual(metadata);
+});
+
+it('keeps legacy axis defaults when there is no committed trace', async () => {
+  const csv = await exportCsv({ stage: 'raw' });
+  const metadata = JSON.parse(csv.split('\n').find(line => line.startsWith('# provenance: '))!.slice(14));
+  expect(metadata.axes.wavenumber_unit).toBe('cm-1');
+  expect(metadata.axes.wavelength_unit).toBe('nm');
+});

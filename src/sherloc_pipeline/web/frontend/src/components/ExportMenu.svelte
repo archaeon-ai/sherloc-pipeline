@@ -108,8 +108,8 @@
         timestamp: exportTimestamp,
       },
       stage,
-      axes: { wavenumber_unit: provenance?.wavenumber_unit ?? 'cm-1',
-        wavelength_unit: provenance?.wavelength_unit ?? 'nm', intensity_unit: provenance?.intensity_unit ?? null },
+      axes: { wavenumber_unit: provenance?.wavenumber_unit ?? (trace ? null : 'cm-1'),
+        wavelength_unit: provenance?.wavelength_unit ?? (trace ? null : 'nm'), intensity_unit: provenance?.intensity_unit ?? null },
       data: { wavenumber, wavelength: trace?.wavelength ?? null, intensity,
         channel_indices: trace?.channel_indices ?? [], source_intensity: trace?.intensity ?? null },
       annotations: {
@@ -139,8 +139,8 @@
     lines.push(`# calibration_version: ${provenance.calibration.version ?? 'unknown'}`);
     lines.push(`# laser_nm: ${provenance.calibration.laser_nm ?? 'unknown'}`);
     lines.push(`# application_version: ${provenance.application.version ?? 'unknown'}`);
-    lines.push(`# wavenumber_unit: ${provenance.axes.wavenumber_unit}`);
-    lines.push(`# wavelength_unit: ${provenance.axes.wavelength_unit}`);
+    lines.push(`# wavenumber_unit: ${provenance.axes.wavenumber_unit ?? 'unknown'}`);
+    lines.push(`# wavelength_unit: ${provenance.axes.wavelength_unit ?? 'unknown'}`);
     lines.push(`# intensity_unit: ${provenance.axes.intensity_unit ?? 'unknown'}`);
     lines.push(`# exported_at: ${provenance.application.timestamp}`);
     lines.push(`# n_channels: ${channelCount}`);
