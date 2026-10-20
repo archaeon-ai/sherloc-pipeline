@@ -30,6 +30,7 @@ from sherloc_pipeline.services.reference_store import LocalReferenceStore
 from sherloc_pipeline.web.app import create_app
 from sherloc_pipeline.web.auth import require_authenticated_request
 from sherloc_pipeline.web.feature_policy import FeaturePolicy
+from sherloc_pipeline.web.routes.references import trace_metadata
 
 
 @pytest.fixture
@@ -128,6 +129,8 @@ def test_route_to_engine_candidate_native_provenance_and_cache(evidence_api):
     assert response.status_code == 200
     assert response.json()['x'] == s.x.tolist()
     assert response.json()['provenance']['citation_text'] == 'Synthetic citation'
+    assert response.json()['provenance']['source_processing_state'] == 'unknown'
+    assert response.json()['provenance']['source_processing_evidence'] is None
     assert 'locator' not in response.text and 'x_key' not in response.text
     result = s.client.post('/api/identify', json=s.body)
     assert result.status_code == 200, result.text
@@ -141,6 +144,17 @@ def test_route_to_engine_candidate_native_provenance_and_cache(evidence_api):
     assert payload['source_digest'] == s.body['expected_source_digest']
     assert payload['input']['selection']['contributor_indices'] == [0]
     assert s.client.post('/api/identify', json=s.body).json() == payload
+
+
+def test_trace_provenance_carries_recorded_processing_state(snapshot):  # noqa: F811
+    _, manifest, _ = snapshot
+    recorded = {**manifest['files'][0]['traces'][0], 'source_processing_state': 'baseline_corrected',
+                'source_processing_evidence': 'synthetic baseline record'}
+    row = SimpleNamespace(metadata_json=recorded, trace_revision_id='b' * 64, release_id='c' * 64,
+                          axis_sha256='d' * 64, intensity_sha256='e' * 64, point_count=4)
+    provenance = trace_metadata(row)['provenance']
+    assert provenance['source_processing_state'] == 'baseline_corrected'
+    assert provenance['source_processing_evidence'] == 'synthetic baseline record'
 
 
 @pytest.mark.parametrize('tier', ['team', 'public'])

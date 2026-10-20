@@ -25,6 +25,7 @@ from sherloc_pipeline.cli.app import app as references_cli
 from sherloc_pipeline.database.models import Base
 from sherloc_pipeline.database.reference_catalog_ddl import CATALOG_TABLES, catalog_triggers
 from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
+from sherloc_pipeline.models.references import ReferenceTrace
 from sherloc_pipeline.services.reference_import import REFERENCE_REVISION, import_release
 from sherloc_pipeline.services.reference_store import LocalReferenceStore, object_locator
 from sherloc_pipeline.web.feature_policy import FeaturePolicy
@@ -213,7 +214,7 @@ def test_import_repeat_native_arrays_and_policy(snapshot, database, tmp_path):
         engine.dispose()
 
 
-@pytest.mark.parametrize("change", ["bytes", "citation", "license", "qa", "parser", "grouping"])
+@pytest.mark.parametrize("change", ["bytes", "citation", "license", "qa", "processing", "parser", "grouping"])
 def test_changes_make_new_release_without_deleting_old(snapshot, database, tmp_path, change):
     root, manifest, policy = snapshot
     objects = tmp_path / "objects"
@@ -230,6 +231,8 @@ def test_changes_make_new_release_without_deleting_old(snapshot, database, tmp_p
         trace["license_identifier"] = "synthetic-license-2"
     elif change == "qa":
         trace["qa_flags"] = ["synthetic-exclusion"]
+    elif change == "processing":
+        trace.update(source_processing_state="unprocessed", source_processing_evidence="synthetic processing record")
     elif change == "parser":
         manifest["parser_version"] = "synthetic-parser-2"
     else:
@@ -264,6 +267,45 @@ def test_missing_rights_and_citation_stay_unknown(snapshot, database, tmp_path, 
         assert trace.metadata_json["citation_text"] is None
         assert not can_serve_trace(trace, release, runtime_policy(release, [trace]), "team")
     engine.dispose()
+
+
+@pytest.mark.parametrize("recorded", [{}, {"source_processing_state": "unknown"},
+                                      {"source_processing_state": "unprocessed",
+                                       "source_processing_evidence": "synthetic processing record"},
+                                      {"source_processing_state": "baseline_corrected",
+                                       "source_processing_evidence": "synthetic baseline record"}])
+def test_source_processing_state_stored_only_as_recorded(snapshot, database, tmp_path, recorded):
+    root, manifest, policy = snapshot
+    manifest["files"][0]["traces"][0].update(recorded)
+    save_manifest(root, manifest)
+    import_release(root, database, tmp_path / "objects", policy)
+    engine = engine_for(database)
+    with Session(engine) as session:
+        metadata = session.query(ReferenceTraceORM).one().metadata_json
+    engine.dispose()
+    assert metadata["source_processing_state"] == recorded.get("source_processing_state", "unknown")
+    assert metadata["source_processing_evidence"] == recorded.get("source_processing_evidence")
+    assert metadata["source_processing"] == []
+
+
+@pytest.mark.parametrize("state", ["raw", "Unprocessed", None, 1])
+def test_unrecognized_source_processing_state_rejected_before_writes(snapshot, database, tmp_path, state):
+    root, manifest, policy = snapshot
+    manifest["files"][0]["traces"][0]["source_processing_state"] = state
+    save_manifest(root, manifest)
+    before = database.read_bytes()
+    objects = tmp_path / "objects"
+    with pytest.raises(ValueError):
+        import_release(root, database, objects, policy)
+    assert database.read_bytes() == before and not objects.exists()
+
+
+def test_metadata_stored_before_processing_state_reads_as_unknown(snapshot):
+    _, manifest, _ = snapshot
+    trace = ReferenceTrace.model_validate(manifest["files"][0]["traces"][0])
+    stored = trace.model_dump(mode="json", exclude={"source_processing_state", "source_processing_evidence"})
+    reread = ReferenceTrace.model_validate(stored)
+    assert reread.source_processing_state == "unknown" and reread.source_processing_evidence is None
 
 
 def test_uncertainty_mean_and_tier_limited_template(snapshot, database, tmp_path):
