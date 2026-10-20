@@ -110,6 +110,8 @@ def get_config(request: Request, response: Response) -> ConfigResponse:
 
     return ConfigResponse(
         config_hash=config_hash,
+        evidence_policy_digest=hashlib.sha256(policy.model_dump_json().encode()).hexdigest(),
+        reference_release_id=policy.references.release_id if access_mode == "internal" and policy.references.mode != "off" else None,
         fitting=config.fitting,
         fluorescence_fitting=config.fluorescence_fitting,
         preprocessing=config.preprocessing,

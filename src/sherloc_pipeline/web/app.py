@@ -169,6 +169,10 @@ def create_app(
     app.state.map_registry = map_registry
     app.state.map_executor = map_executor
     app.state.access_mode = access_mode
+    from sherloc_pipeline.services.identification_runtime import IdentificationRuntime, ResponseCache
+
+    app.state.identification_runtime = IdentificationRuntime(feature_policy.identification.max_concurrency)
+    app.state.reference_cache = ResponseCache(capacity=4)
     app.state.feature_policy = feature_policy
     app.state.public_release_index = public_release_index
 
@@ -264,6 +268,13 @@ def create_app(
             },
         )
 
+    @app.middleware("http")
+    async def evidence_no_store(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/api/identify" or request.url.path.startswith("/api/references"):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
+
     # Register route modules
     from sherloc_pipeline.web.routes import config as config_routes
     from sherloc_pipeline.web.routes import health as health_routes
@@ -276,6 +287,8 @@ def create_app(
     from sherloc_pipeline.web.routes import processing as processing_routes
     from sherloc_pipeline.web.routes import scans as scan_routes
     from sherloc_pipeline.web.routes import spectra as spectra_routes
+    from sherloc_pipeline.web.routes import references as references_routes
+    from sherloc_pipeline.web.routes import identification as identification_routes
     from sherloc_pipeline.web import ws as ws_module
     from sherloc_pipeline.web import ws_map as ws_map_module
 
@@ -323,6 +336,8 @@ def create_app(
 
     app.include_router(scan_routes.router, dependencies=auth_dep)
     app.include_router(spectra_routes.router, dependencies=auth_dep)
+    app.include_router(references_routes.router, dependencies=auth_dep)
+    app.include_router(identification_routes.router, dependencies=auth_dep)
     app.include_router(processing_routes.router, dependencies=auth_dep)
     app.include_router(plots_routes.router, dependencies=auth_dep)
     app.include_router(pds_routes.router, dependencies=auth_dep)

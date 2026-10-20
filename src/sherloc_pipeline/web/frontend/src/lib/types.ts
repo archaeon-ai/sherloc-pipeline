@@ -328,6 +328,8 @@ export interface FeaturesConfig {
 }
 
 export interface ConfigResponse {
+  evidence_policy_digest?: string | null;
+  reference_release_id?: string | null;
   schema_version: string;
   config_hash: string;
   fitting: {

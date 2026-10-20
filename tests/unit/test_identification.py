@@ -27,6 +27,25 @@ from sherloc_pipeline.services.reference_store import object_locator, verify_byt
 from sherloc_pipeline.web.feature_policy import FeaturePolicy, SourceDenylist
 
 
+class SyntheticResolver:
+    def __init__(self, x, y):
+        self.resolve = Mock(return_value=(x, y))
+
+    def resolve_bounded(self, selection, timeout):
+        return self.resolve(selection)
+
+
+class SyntheticStore:
+    def __init__(self, data):
+        self.data = data
+        self.read_verified = Mock(side_effect=lambda locator, expected: verify_bytes(self.data, expected))
+
+    def __reduce__(self):
+        checksum = hashlib.sha256(self.data).hexdigest()
+        data = self.read_verified(object_locator(checksum), checksum)
+        return SyntheticStore, (data,)
+
+
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", Mock(side_effect=AssertionError("network forbidden")))
@@ -110,15 +129,13 @@ def system():
                                      member_trace_ids=[trace_id], permitted_tiers=["team"],
                                      metadata_json=template_meta.model_dump(mode="json"))
     file = ReferenceFileORM(file_revision_id=file_id, release_id=release_id,
-                            array_locator=object_locator(sha), array_sha256=sha)
+                            array_locator=object_locator(sha), array_sha256=sha, metadata_json={"arrays_size": len(data)})
     rows = {(ReferenceReleaseORM, release_id): release, (ReferenceTraceORM, trace_id): trace,
             (ReferenceTemplateORM, template_id): template, (ReferenceFileORM, file_id): file}
     session = Mock()
     session.get.side_effect = lambda cls, identity: rows.get((cls, identity))
-    store = Mock()
-    store.read_verified.side_effect = lambda locator, expected: verify_bytes(data, expected)
-    resolver = Mock()
-    resolver.resolve.return_value = (x, y)
+    store = SyntheticStore(data)
+    resolver = SyntheticResolver(x, y)
     service = IdentificationService(session, store, resolver, policy, "team")
     return SimpleNamespace(**locals())
 
@@ -569,7 +586,7 @@ def test_cli_enabled_synthetic(system, tmp_path, monkeypatch, team_deployment, t
     system.file.raw_locator = object_locator(system.sha)
     system.file.raw_sha256 = system.sha
     system.file.raw_size = len(system.data)
-    system.file.metadata_json = {}
+    system.file.metadata_json = {"arrays_size": len(system.data)}
     system.trace.source_key = "synthetic-0001:synthetic-file-1:0"
     system.release.status = "staged"
     with Session(engine) as session:
@@ -720,3 +737,17 @@ def test_negative_inspection_disclosed_without_changing_signed_support():
     assert result["offset"] == pytest.approx(7.)
     assert result["sse"] < 1e-25
     assert signed_pearson(query, reference) == before == pytest.approx(-1.)
+
+
+@pytest.mark.parametrize("bound", ["points", "bytes", "members"])
+def test_admission_before_source_or_reference_arrays(system, bound):
+    if bound == "points":
+        system.trace.point_count = 1000000
+    elif bound == "bytes":
+        system.file.metadata_json = {"arrays_size": 1000000000}
+    else:
+        system.template.member_trace_ids = [system.trace_id] * 101
+    with pytest.raises(ValueError):
+        system.service.identify(system.request)
+    system.resolver.resolve.assert_not_called()
+    system.store.read_verified.assert_not_called()

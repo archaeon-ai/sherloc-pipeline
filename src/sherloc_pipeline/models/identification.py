@@ -62,6 +62,7 @@ class Candidate(IdentificationModel):
     support: Annotated[float, Field(ge=-1, le=1, allow_inf_nan=False)]
     shift_cm_1: float
     extra_fwhm_cm1: Literal[0.0]
+    citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class IdentificationResult(IdentificationModel):
