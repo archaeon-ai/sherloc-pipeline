@@ -5,7 +5,6 @@ import hashlib
 import io
 import json
 import os
-import signal
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -19,6 +18,7 @@ from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import Session
 
 from tests.unit.test_reference_release import snapshot  # noqa: F401
+from tests.unit.test_identification_runtime import _crash, _hang
 from sherloc_pipeline.core.identification.recipe import load_recipe
 from sherloc_pipeline.database.models import Base, ScanORM, ScanPointORM, SolORM, SpectrumORM
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
@@ -259,18 +259,6 @@ def test_source_metadata_and_decompression_limits(evidence_api):
         session.execute(update(SpectrumORM).values(intensities=zlib.compress(b'\0' * 1000000)))
         session.commit()
     assert s.client.post('/api/identify', json=s.body).status_code == 429
-
-
-def _hang(path):
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    with open(path, 'w') as stream:
-        stream.write(str(os.getpid()))
-    while True:
-        time.sleep(.01)
-
-
-def _crash():
-    os._exit(7)
 
 
 def test_deadline_kills_and_reaps_worker(tmp_path):

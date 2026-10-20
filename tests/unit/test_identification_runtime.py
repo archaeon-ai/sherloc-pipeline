@@ -12,6 +12,19 @@ import pytest
 from sherloc_pipeline.services import identification_runtime as runtime
 
 
+# Keep spawned deadline helpers independent of API and scientific imports.
+def _hang(path):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open(path, 'w') as stream:
+        stream.write(str(os.getpid()))
+    while True:
+        time.sleep(.01)
+
+
+def _crash():
+    os._exit(7)
+
+
 def _large_payload(length):
     return b"synthetic" * length
 
