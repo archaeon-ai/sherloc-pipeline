@@ -38,6 +38,7 @@ beforeEach(async () => {
   state.redirecting = false;
   state.bootstrapFails = false;
   state.scienceMounts = 0;
+  sessionStorage.clear();
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ auth: { auth_mode: 'cf-access' } }) }));
   const { getConfig } = await import('./lib/api');
   vi.mocked(getConfig).mockResolvedValue({
@@ -63,13 +64,23 @@ function expectClosed(heading: string | null = 'Sign-in did not complete') {
 }
 
 describe('main.ts bootstrap', () => {
+  it('preserves the saved Scan Browser filters through a successful team reload', async () => {
+    const saved = '#/?target=Synthetic&search=synthetic';
+    sessionStorage.setItem('sherloc.scanBrowserHash', saved);
+    await mount();
+    expect(state.scienceMounts).toBe(1);
+    expect(sessionStorage.getItem('sherloc.scanBrowserHash')).toBe(saved);
+  });
+
   it('mounts the access page when Auth0 refused the sign-in', async () => {
+    sessionStorage.setItem('sherloc.scanBrowserHash', '#/?target=Synthetic');
     state.error = { kind: 'team_required', returnTo: '/' };
     await mount();
     expect(document.querySelector('h1')?.textContent).toBe('Team membership required');
     expectClosed('Team membership required');
     expect(state.scienceMounts).toBe(0);
     expect((await import('./lib/api')).getConfig).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem('sherloc.scanBrowserHash')).toBeNull();
   });
 
   it('mounts only after the authenticated config check succeeds', async () => {
@@ -88,11 +99,13 @@ describe('main.ts bootstrap', () => {
   });
 
   it.each([401, 403, 503])('fails closed on authenticated check failure %s', async (status) => {
+    sessionStorage.setItem('sherloc.scanBrowserHash', '#/?target=Synthetic');
     const { getConfig } = await import('./lib/api');
     vi.mocked(getConfig).mockRejectedValue(new Error(`synthetic ${status}`));
     await mount();
     expectClosed();
     expect(state.scienceMounts).toBe(0);
+    expect(sessionStorage.getItem('sherloc.scanBrowserHash')).toBeNull();
   });
 
   it.each(['http', 'network', 'invalid-json'])('fails closed on bootstrap %s failure', async (kind) => {
@@ -135,11 +148,13 @@ describe('main.ts bootstrap', () => {
 
   it('destroys mounted science UI and clears stores on sign-out', async () => {
     await mount();
+    sessionStorage.setItem('sherloc.scanBrowserHash', '#/?target=Synthetic');
     const stores = await import('./lib/stores');
     stores.clearSessionState();
     expectClosed(null);
     expect(state.scienceMounts).toBe(1);
     expect(get(stores.appConfig)).toBeNull();
     expect(get(stores.scienceAuthorized)).toBe(false);
+    expect(sessionStorage.getItem('sherloc.scanBrowserHash')).toBeNull();
   });
 });

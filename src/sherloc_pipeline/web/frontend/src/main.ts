@@ -9,7 +9,6 @@ import {
 import type { BootstrapConfigResponse } from './lib/types';
 
 async function bootstrap(): Promise<App | AccessError | null> {
-  clearSessionState();
   try {
     const res = await fetch('/api/config/bootstrap', { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error('Authentication bootstrap unavailable');
@@ -18,6 +17,7 @@ async function bootstrap(): Promise<App | AccessError | null> {
     if (redirectingToLogin()) return null;
     const refused = authCallbackError();
     if (refused) {
+      clearSessionState();
       return new AccessError({ target: document.getElementById('app')!, props: { error: refused } });
     }
     if (!(await session.isAuthenticated())) throw new Error('Sign-in required');
