@@ -515,3 +515,26 @@ def test_native_reference_worker_errors_are_classified_and_reaped(evidence_api, 
     recovered = s.client.get(f'/api/references/{s.trace_ids[0]}', params={'release_id': s.imported.release_id})
     assert recovered.status_code == 200
     assert recovered.json()['x'] == s.x.tolist()
+
+
+@pytest.mark.parametrize('denied_identity', ['canonical', 'alias', 'internal'])
+def test_metadata_alias_cannot_hide_any_denied_persisted_identity(evidence_api, monkeypatch, denied_identity):
+    s = evidence_api
+    alias = 'ss__9999_0000000000_001rrs__synthetic_alias'
+    with Session(s.engine) as session:
+        session.execute(update(ScanORM).values(pds4_metadata={'product_id': alias, 'intensity_unit': 'synthetic units'}))
+        session.commit()
+    identities = {'canonical': 'ss__9999_0000000000_000rrs__synthetic',
+                  'alias': alias, 'internal': 'synthetic-scan'}
+    policy = s.app.state.feature_policy.model_dump()
+    policy['identification']['source_denylist']['product_ids'] = [identities[denied_identity]]
+    s.app.state.feature_policy = FeaturePolicy.model_validate(policy)
+    worker = Mock(side_effect=AssertionError('source worker after identity denial'))
+    store = Mock(side_effect=AssertionError('reference store after identity denial'))
+    monkeypatch.setattr('sherloc_pipeline.web.routes.identification.run_process', worker)
+    monkeypatch.setattr('sherloc_pipeline.web.routes.identification.reference_store', store)
+    response = s.client.post('/api/identify', json=s.body)
+    assert response.status_code == 422
+    assert response.headers['cache-control'] == 'private, no-store'
+    worker.assert_not_called()
+    store.assert_not_called()

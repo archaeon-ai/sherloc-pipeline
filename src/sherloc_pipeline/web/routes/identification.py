@@ -97,14 +97,16 @@ def identify(request: Request, body: IdentifyBody):
         if body.selection.index >= scan.n_points or body.spectrum_type != _resolve_spectrum_type(scan):
             raise HTTPException(422, "Unsupported stored selection")
         metadata = (scan.pds4_metadata if scan.data_source == "pds4" else scan.loupe_metadata) or {}
-        product = next((value for value in (metadata.get("product_id"), scan.scan_id, scan.id)
-                        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value)), scan.id)
+        products = list(dict.fromkeys(value for value in (metadata.get("product_id"), scan.scan_id, scan.id)
+                                     if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value)))
         selection = PointSelection(
-            product_id=product, sol=scan.sol_number, target=scan.target or scan.scan_name,
+            product_id=products[0] if products else scan.id, sol=scan.sol_number, target=scan.target or scan.scan_name,
             point_index=body.selection.index, source_sha256=body.expected_source_digest,
             modality="raman", x_quantity="raman_shift", x_unit="cm-1",
             excitation_nm=float(scan.laser_wavelength_nm), excitation_evidence="scan_record_or_nominal_default")
-        deny_source(selection, policy.identification.source_denylist)
+        # An allowed metadata alias cannot hide a denied persisted identity.
+        for product in products or [scan.id]:
+            deny_source(selection.model_copy(update={"product_id": product}), policy.identification.source_denylist)
         resolver = StoredPointResolver(request, body)
         service = IdentificationService(request.state.db, reference_store(request), resolver, policy, "team", runtime)
         result = service.identify(IdentificationRequest(
