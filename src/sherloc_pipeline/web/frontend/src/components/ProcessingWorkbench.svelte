@@ -45,8 +45,8 @@
   export let queryParams: Record<string, string> = {};
 
   const mountedSession = sessionGeneration;
-  function requestEvidence(): number | null {
-    return get(appConfig)?.capabilities?.evidence_desk === true ? evidenceGeneration : null;
+  function requestEvidence(revalidate = false): number | null {
+    return revalidate || get(appConfig)?.capabilities?.evidence_desk === true ? evidenceGeneration : null;
   }
   function staleEvidence(generation: number | null): boolean {
     return generation !== null && (mountedSession !== sessionGeneration || generation !== evidenceGeneration);
@@ -120,8 +120,8 @@
   // Drop older annotation requests during region transitions.
   let badpixRequestGen = 0;
 
-  async function loadBadpix(): Promise<void> {
-    const requestBoundary = requestEvidence();
+  async function loadBadpix(revalidate = false): Promise<void> {
+    const requestBoundary = requestEvidence(revalidate);
     if (destroyed || staleEvidence(requestBoundary)) return;
     const gen = ++badpixRequestGen;
     // Region transition: clear immediately so the previous region's
@@ -287,10 +287,9 @@
     undoStack.set([]);
     // Let config/session updates finish before starting one load in the new boundary.
     void Promise.resolve().then(async () => {
-      if (destroyed || mountedSession !== sessionGeneration || generation !== evidenceGeneration ||
-          get(appConfig)?.capabilities?.evidence_desk !== true) return;
-      await loadScan();
-      if (!destroyed && generation === evidenceGeneration && scan) await loadBadpix();
+      if (destroyed || mountedSession !== sessionGeneration || generation !== evidenceGeneration) return;
+      await loadScan(true);
+      if (!destroyed && mountedSession === sessionGeneration && generation === evidenceGeneration && scan) await loadBadpix(true);
     });
   });
 
@@ -309,10 +308,11 @@
     await loadBadpix();
   });
 
-  async function loadScan(): Promise<void> {
+  async function loadScan(revalidate = false): Promise<void> {
     const requestBoundary = requestEvidence();
+    const requestGuard = requestEvidence(revalidate);
     const gen = ++metadataRequestGen;
-    const stale = () => destroyed || gen !== metadataRequestGen || staleEvidence(requestBoundary);
+    const stale = () => destroyed || gen !== metadataRequestGen || staleEvidence(requestGuard);
     loading = true;
     error = '';
     try {
@@ -352,7 +352,7 @@
         pointIdx: selectedPointIdx ?? undefined,
       });
 
-      await loadSpectrum();
+      await loadSpectrum(revalidate);
       if (!stale() && requestBoundary !== null && spectrum) validatedEvidenceBoundary = requestBoundary;
     } catch (e) {
       if (stale()) return;
@@ -373,8 +373,8 @@
   // raw response.
   let spectrumRequestGen = 0;
 
-  async function loadSpectrum() {
-    const requestBoundary = requestEvidence();
+  async function loadSpectrum(revalidate = false) {
+    const requestBoundary = requestEvidence(revalidate);
     if (destroyed || staleEvidence(requestBoundary)) return;
     const gen = ++spectrumRequestGen;
     // The selection context this request is FOR (PR #13 review F1): captured

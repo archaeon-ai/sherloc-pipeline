@@ -1554,7 +1554,7 @@ it.each([['getScan', 'tier'], ['getScan', 'access'], ['getScanPoints', 'tier'], 
   expect(get(currentHash)).toBe('#/scan/synthetic/workbench');
 });
 
-it.each(['destroy', 'session', 'capability'] as const)('does not retry an invalidated initial scan after %s ends eligibility', async ended => {
+it.each(['destroy', 'session'] as const)('does not retry an invalidated initial scan after %s ends eligibility', async ended => {
   let finish = () => {};
   vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
     finish = () => resolve({ schema_version: '1', scan: fakeScan() });
@@ -1562,8 +1562,7 @@ it.each(['destroy', 'session', 'capability'] as const)('does not retry an invali
   const view = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
   appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
   if (ended === 'destroy') view.unmount();
-  else if (ended === 'session') clearSessionState();
-  else appConfig.set({ tier: 'public', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  else clearSessionState();
   finish(); await flush();
   expect(api.getScan).toHaveBeenCalledOnce(); expect(api.getScanPoints).not.toHaveBeenCalled();
   expect(get(processingState)).toBeNull();
@@ -1717,4 +1716,76 @@ it.each(['access-first', 'config-first'] as const)('revalidates a legacy TEAM sc
   if (pending.length > 1) { pending[0](); await flush(); }
   expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
   expect(api.getScanPoints).toHaveBeenCalledTimes(2);
+});
+
+
+it.each(['loaded', 'scan-pending'] as const)('reloads through the legacy path after capability removal (%s)', async initial => {
+  let finishInitial = () => {};
+  if (initial === 'scan-pending') {
+    vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+      finishInitial = () => resolve({ schema_version: '1', scan: { ...fakeScan(), target: 'Stale synthetic' } });
+    }));
+  }
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  let finishScan = () => {};
+  let finishPoints = () => {};
+  vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+    finishScan = () => resolve({ schema_version: '1', scan: { ...fakeScan(), target: 'Legacy synthetic', ml_mask_count: 0 } });
+  }));
+  vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+    finishPoints = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [fakePoint()], n_points: 1 });
+  }));
+  getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_NEW));
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  accessMode.set('public');
+  expect(get(processingState)).toBeNull();
+  await flush();
+  expect(api.getScan).toHaveBeenCalledTimes(2);
+  finishScan(); await flush();
+  // Capability removal uses the legacy metadata assignment before points land.
+  expect(container.textContent).toContain('Legacy synthetic');
+  expect(container.textContent).toContain('Loading scan');
+  finishPoints(); await flush(); finishInitial(); await flush();
+  expect(container.textContent).not.toContain('Loading scan');
+  expect(container.textContent).not.toContain('Stale synthetic');
+  expect(container.querySelector('.workbench-layout')).toBeTruthy();
+  expect(container.querySelector('.aci-viewer')).toBeTruthy();
+  expect(container.querySelector('.raman-view')).toBeTruthy();
+  expect(container.querySelector('[aria-label="Evidence desk"]')).toBeNull();
+  expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+  expect(get(processingState)?.trace?.source.target).toBe('Legacy synthetic');
+  expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+});
+
+
+it.each([
+  ['getScan', 'session'], ['getScanPoints', 'session'], ['getAverageSpectrum', 'session'],
+  ['getScan', 'destroy'], ['getScanPoints', 'destroy'], ['getAverageSpectrum', 'destroy'],
+] as const)('abandons capability-removal recovery with %s pending on %s', async (pendingMethod, ended) => {
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  const view = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  let finish = () => {};
+  if (pendingMethod === 'getScan') {
+    vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+      finish = () => resolve({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+    }));
+  } else if (pendingMethod === 'getScanPoints') {
+    vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+      finish = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [fakePoint()], n_points: 1 });
+    }));
+  } else {
+    getAvg.mockReturnValueOnce(new Promise(resolve => { finish = () => resolve(fakeSpectrum(INTENSITY_STALE)); }));
+  }
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  await flush();
+  const pointCalls = vi.mocked(api.getScanPoints).mock.calls.length;
+  const spectrumCalls = getAvg.mock.calls.length;
+  const annotationCalls = vi.mocked(api.getBadpixChannels).mock.calls.length;
+  if (ended === 'session') clearSessionState();
+  else { view.unmount(); processingState.set(null); }
+  finish(); await flush();
+  expect(get(processingState)).toBeNull();
+  expect(api.getScanPoints).toHaveBeenCalledTimes(pointCalls);
+  expect(getAvg).toHaveBeenCalledTimes(spectrumCalls);
+  expect(api.getBadpixChannels).toHaveBeenCalledTimes(annotationCalls);
 });
