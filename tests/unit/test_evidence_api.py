@@ -379,3 +379,19 @@ def test_synthetic_budgets(evidence_api):
                              'result_bytes': len(response.content), 'parent_peak_rss_kib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                              'worker_peak_rss_kib': resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss})
     print('SYNTHETIC_BUDGETS=' + json.dumps(measurements, sort_keys=True))
+
+
+
+def test_stored_product_denial_without_metadata_alias(evidence_api, monkeypatch):
+    s = evidence_api
+    with Session(s.engine) as session:
+        session.execute(update(ScanORM).values(pds4_metadata={"intensity_unit": "synthetic units"}))
+        session.commit()
+    policy = s.app.state.feature_policy.model_dump()
+    policy['identification']['source_denylist']['product_ids'] = ['ss__9999_0000000000_000rrs__synthetic']
+    s.app.state.feature_policy = FeaturePolicy.model_validate(policy)
+    worker = Mock(side_effect=AssertionError('source worker after denial'))
+    monkeypatch.setattr('sherloc_pipeline.web.routes.identification.run_process', worker)
+    response = s.client.post('/api/identify', json=s.body)
+    assert response.status_code == 422
+    worker.assert_not_called()
