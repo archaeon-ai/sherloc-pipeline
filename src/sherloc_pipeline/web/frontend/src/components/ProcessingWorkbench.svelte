@@ -224,12 +224,13 @@
   $: mlAggregateView = despikeMethod === 'ml' && !mlPointView;
 
   // ML mask keyed off the fetched spectrum's served length (the ML trace is the
-  // fetched array, so the mask aligns to spectrum.wavenumber === currentWavenumber
-  // at the raw stage). Recomputed whenever the fetch lands. Built only on a
+  // fetched intensity array, including wavelength-only spectra). Recomputed
+  // whenever the fetch lands. Built only on a
   // point view (issue #12 — aggregate union markers are misleading).
   $: mlSpikeMask =
     despikeMethod === 'ml' && mlPointView
-      ? buildMlSpikeMask(spectrum?.masked_positions, spectrum?.wavenumber.length ?? 0)
+      ? buildMlSpikeMask(spectrum?.masked_positions,
+          (evidenceEnabled ? spectrum?.intensity.length : spectrum?.wavenumber.length) ?? 0)
       : null;
 
   // The effective mask + provenance handed to RamanView/ExportMenu, gated

@@ -1469,3 +1469,38 @@ it.each(['tier', 'access'])('accepts fresh spectrum, annotations and processing 
   expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
   expect(get(currentHash)).toBe('#/scan/synthetic/workbench');
 });
+
+
+it.each(['R2', 'R3'])('keeps wavelength-only %s ML annotations in plot, pin and exports', async region => {
+  vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_A, {
+    region, wavenumber: [], wavelength: [285, 305, 325], masked_positions: [1],
+    despike_applied: true, despike_method: 'ml', n_masked_channels: 1,
+    provenance: { calibration_version: null, wavelength_unit: 'nm', intensity_unit: null },
+  }));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
+  expect(lastSpikeTrace()?.x).toEqual([305]);
+  const metadata = csvProvenance(await exportCsv(container));
+  expect(metadata.annotations.spike_mask).toEqual([false, true, false]);
+  expect(metadata.annotations.spike_method).toBe('ml');
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' })); await flush();
+  expect(get(pinnedTraces)[0].annotations.spike_mask).toEqual([false, true, false]);
+});
+
+
+it.each([undefined, false])('keeps legacy wavelength-only ML masks absent with capability %s', async enabled => {
+  appConfig.set({ tier: 'team', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse);
+  vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_A, {
+    region: 'R2', wavenumber: [], wavelength: [285, 305, 325], masked_positions: [1],
+    despike_applied: true, despike_method: 'ml', n_masked_channels: 1,
+    provenance: { calibration_version: null, wavelength_unit: 'nm', intensity_unit: null },
+  }));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
+  expect(screen.getByText('No spectrum data available')).toBeTruthy();
+  expect(lastSpikeTrace()).toBeUndefined();
+  expect(screen.queryByLabelText('Spike markers')).toBeNull();
+  expect(container.querySelector('.export-trigger')).toBeDisabled();
+  const csv = await exportCsv(container);
+  expect(csvHasSpikeMaskColumn(csv)).toBe(false);
+  expect(csv).not.toContain('spike_mask_method');
+  expect(csvProvenance(csv).annotations).not.toHaveProperty('spike_mask');
+});
