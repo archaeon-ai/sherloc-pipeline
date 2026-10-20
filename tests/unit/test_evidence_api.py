@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import Session
 
-from tests.unit.test_reference_release import snapshot  # noqa: F401
+from tests.unit.test_reference_release import PROCESSING_STATE_KEYS, importer_before_processing_state, snapshot  # noqa: F401
 from tests.unit._spawn_helpers import HangingStore, _crash, _hang, ready_path
 from sherloc_pipeline.core.identification.recipe import load_recipe
 from sherloc_pipeline.database.models import Base, ScanORM, ScanPointORM, SolORM, SpectrumORM
@@ -46,15 +46,17 @@ def evidence_api(tmp_path, snapshot, monkeypatch, request):
     trace = file['traces'][0]
     trace.update(excitation_value=250., excitation_unit='nm', excitation_evidence='synthetic stated excitation',
                  instrument='Synthetic instrument', sample_form='pure')
+    options = getattr(request, 'param', {})
     for index in (1, 2):
         extra = copy.deepcopy(trace)
         extra.update(trace_index=index, source_label=f'Synthetic trace {index}')
         if index == 2:
             extra.update(rights_status='unknown', license_identifier=None, license_source=None)
+        if index == 1 and 'processing_state' in options:
+            extra.update(options['processing_state'])
         file['traces'].append(extra)
     manifest['templates'][0]['recipe_sha256'] = load_recipe()[1]
     manifest['templates'][0]['members'].append({**manifest['templates'][0]['members'][0], 'trace_index': 1})
-    options = getattr(request, 'param', {})
     for index in range(1, options.get('templates', 1)):
         extra = copy.deepcopy(manifest['templates'][0])
         extra['name'] = f'synthetic-template-{index}'
@@ -70,7 +72,11 @@ def evidence_api(tmp_path, snapshot, monkeypatch, request):
     engine = create_engine(f'sqlite:///{database}', connect_args={'check_same_thread': False})
     Base.metadata.create_all(engine)
     objects = tmp_path / 'objects'
-    imported = import_release(root, database, objects, serving)
+    if options.get('before_processing_state'):
+        with importer_before_processing_state():
+            imported = import_release(root, database, objects, serving)
+    else:
+        imported = import_release(root, database, objects, serving)
     with Session(engine) as session:
         release = session.get(ReferenceReleaseORM, imported.release_id)
         template = session.query(ReferenceTemplateORM).filter_by(name='synthetic-template').one()
@@ -128,6 +134,8 @@ def test_route_to_engine_candidate_native_provenance_and_cache(evidence_api):
     assert response.status_code == 200
     assert response.json()['x'] == s.x.tolist()
     assert response.json()['provenance']['citation_text'] == 'Synthetic citation'
+    assert response.json()['provenance']['source_processing_state'] == 'unknown'
+    assert response.json()['provenance']['source_processing_evidence'] is None
     assert 'locator' not in response.text and 'x_key' not in response.text
     result = s.client.post('/api/identify', json=s.body)
     assert result.status_code == 200, result.text
@@ -141,6 +149,34 @@ def test_route_to_engine_candidate_native_provenance_and_cache(evidence_api):
     assert payload['source_digest'] == s.body['expected_source_digest']
     assert payload['input']['selection']['contributor_indices'] == [0]
     assert s.client.post('/api/identify', json=s.body).json() == payload
+
+
+@pytest.mark.parametrize('evidence_api', [{'processing_state': {
+    'source_processing_state': 'baseline_corrected', 'source_processing_evidence': 'synthetic baseline record'}}],
+    indirect=True)
+def test_route_serves_recorded_processing_state(evidence_api):
+    s = evidence_api
+    provenance = [s.client.get(f'/api/references/{trace_id}', params={'release_id': s.imported.release_id}).json()['provenance']
+                  for trace_id in s.trace_ids]
+    assert [(p['source_processing_state'], p['source_processing_evidence']) for p in provenance] == [
+        ('unknown', None), ('baseline_corrected', 'synthetic baseline record')]
+
+
+@pytest.mark.parametrize('evidence_api', [{'before_processing_state': True}], indirect=True)
+def test_catalog_imported_before_processing_state_serves_and_identifies(evidence_api):
+    s = evidence_api
+    with Session(s.engine) as session:
+        assert all(not set(PROCESSING_STATE_KEYS) & set(row.metadata_json) for row in session.query(ReferenceTraceORM))
+    for trace_id in s.trace_ids:
+        response = s.client.get(f'/api/references/{trace_id}', params={'release_id': s.imported.release_id})
+        assert response.status_code == 200
+        provenance = response.json()['provenance']
+        assert provenance['source_processing_state'] == 'unknown' and provenance['source_processing_evidence'] is None
+    listed = s.client.get('/api/references', params={'release_id': s.imported.release_id})
+    assert listed.status_code == 200 and len(listed.json()['items']) == 2
+    result = s.client.post('/api/identify', json=s.body)
+    assert result.status_code == 200, result.text
+    assert result.json()['ranking']
 
 
 @pytest.mark.parametrize('tier', ['team', 'public'])

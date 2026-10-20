@@ -36,6 +36,9 @@ class ReferenceTrace(ReferenceModel):
     specimen_is_proxy: bool = True
     sample_form: str | None = None
     source_processing: list[str] = Field(default_factory=list)
+    # Recorded only from the snapshot manifest; the importer never infers it.
+    source_processing_state: Literal["unprocessed", "baseline_corrected", "unknown"] = "unknown"
+    source_processing_evidence: str | None = None
     column_role: Literal["measurement", "uncertainty", "source_mean"] = "measurement"
     qa_flags: list[str] = Field(default_factory=list)
     qa_evidence: dict[str, Any] = Field(default_factory=dict)

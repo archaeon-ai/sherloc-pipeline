@@ -1,6 +1,7 @@
 """Entirely synthetic local reference imports, verified reads and real migrations."""
 
 import copy
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -25,6 +26,7 @@ from sherloc_pipeline.cli.app import app as references_cli
 from sherloc_pipeline.database.models import Base
 from sherloc_pipeline.database.reference_catalog_ddl import CATALOG_TABLES, catalog_triggers
 from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
+from sherloc_pipeline.models.references import ReferenceSnapshot, ReferenceTrace
 from sherloc_pipeline.services.reference_import import REFERENCE_REVISION, import_release
 from sherloc_pipeline.services.reference_store import LocalReferenceStore, object_locator
 from sherloc_pipeline.web.feature_policy import FeaturePolicy
@@ -113,6 +115,30 @@ def snapshot(tmp_path):
     policy.write_text(json.dumps({"schema_version": "reference-serving-1",
                                   "approved_trace_keys": ["synthetic-0001:synthetic-file-1:0"]}))
     return root, manifest, policy
+
+
+PROCESSING_STATE_KEYS = ("source_processing_state", "source_processing_evidence")
+
+
+def without_processing_state(trace):
+    return {key: value for key, value in trace.items() if key not in PROCESSING_STATE_KEYS}
+
+
+@contextmanager
+def importer_before_processing_state():
+    """Import exactly as before traces had a processing state: the same dumps without its two keys."""
+    snapshot_dump, trace_dump = ReferenceSnapshot.model_dump, ReferenceTrace.model_dump
+
+    def snapshot_without(self, **kwargs):
+        data = snapshot_dump(self, **kwargs)
+        for file in data["files"]:
+            file["traces"] = [without_processing_state(trace) for trace in file["traces"]]
+        return data
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ReferenceSnapshot, "model_dump", snapshot_without)
+        patch.setattr(ReferenceTrace, "model_dump", lambda self, **kwargs: without_processing_state(trace_dump(self, **kwargs)))
+        yield
 
 
 def save_manifest(root, manifest):
@@ -213,7 +239,7 @@ def test_import_repeat_native_arrays_and_policy(snapshot, database, tmp_path):
         engine.dispose()
 
 
-@pytest.mark.parametrize("change", ["bytes", "citation", "license", "qa", "parser", "grouping"])
+@pytest.mark.parametrize("change", ["bytes", "citation", "license", "qa", "processing", "parser", "grouping"])
 def test_changes_make_new_release_without_deleting_old(snapshot, database, tmp_path, change):
     root, manifest, policy = snapshot
     objects = tmp_path / "objects"
@@ -230,6 +256,8 @@ def test_changes_make_new_release_without_deleting_old(snapshot, database, tmp_p
         trace["license_identifier"] = "synthetic-license-2"
     elif change == "qa":
         trace["qa_flags"] = ["synthetic-exclusion"]
+    elif change == "processing":
+        trace.update(source_processing_state="unprocessed", source_processing_evidence="synthetic processing record")
     elif change == "parser":
         manifest["parser_version"] = "synthetic-parser-2"
     else:
@@ -264,6 +292,64 @@ def test_missing_rights_and_citation_stay_unknown(snapshot, database, tmp_path, 
         assert trace.metadata_json["citation_text"] is None
         assert not can_serve_trace(trace, release, runtime_policy(release, [trace]), "team")
     engine.dispose()
+
+
+@pytest.mark.parametrize("recorded", [{}, {"source_processing_state": "unknown"},
+                                      {"source_processing_state": "unprocessed",
+                                       "source_processing_evidence": "synthetic processing record"},
+                                      {"source_processing_state": "baseline_corrected",
+                                       "source_processing_evidence": "synthetic baseline record"}])
+def test_source_processing_state_stored_only_as_recorded(snapshot, database, tmp_path, recorded):
+    root, manifest, policy = snapshot
+    manifest["files"][0]["traces"][0].update(recorded)
+    save_manifest(root, manifest)
+    import_release(root, database, tmp_path / "objects", policy)
+    engine = engine_for(database)
+    with Session(engine) as session:
+        metadata = session.query(ReferenceTraceORM).one().metadata_json
+    engine.dispose()
+    assert metadata["source_processing_state"] == recorded.get("source_processing_state", "unknown")
+    assert metadata["source_processing_evidence"] == recorded.get("source_processing_evidence")
+    assert metadata["source_processing"] == []
+
+
+@pytest.mark.parametrize("state", ["raw", "Unprocessed", None, 1])
+def test_unrecognized_source_processing_state_rejected_before_writes(snapshot, database, tmp_path, state):
+    root, manifest, policy = snapshot
+    manifest["files"][0]["traces"][0]["source_processing_state"] = state
+    save_manifest(root, manifest)
+    before = database.read_bytes()
+    objects = tmp_path / "objects"
+    with pytest.raises(ValueError):
+        import_release(root, database, objects, policy)
+    assert database.read_bytes() == before and not objects.exists()
+
+
+def test_unchanged_manifest_reimport_after_processing_state_is_a_new_release(snapshot, database, tmp_path):
+    root, _, policy = snapshot
+    objects = tmp_path / "objects"
+    with importer_before_processing_state():
+        before = import_release(root, database, objects, policy)
+        assert import_release(root, database, objects, policy).existing
+    after = import_release(root, database, objects, policy)
+    assert not after.existing and after.release_id != before.release_id
+    engine = engine_for(database)
+    try:
+        with Session(engine) as session:
+            assert session.query(ReferenceReleaseORM).count() == 2
+            old = session.query(ReferenceTraceORM).filter_by(release_id=before.release_id).one()
+            new = session.query(ReferenceTraceORM).filter_by(release_id=after.release_id).one()
+            assert old.trace_revision_id != new.trace_revision_id
+            assert not set(PROCESSING_STATE_KEYS) & set(old.metadata_json)
+            assert new.metadata_json == {**old.metadata_json, "source_processing_state": "unknown",
+                                         "source_processing_evidence": None}
+            assert session.get(ReferenceReleaseORM, before.release_id).status == "ready"
+            legacy = ReferenceTrace.model_validate(old.metadata_json)
+            assert legacy.source_processing_state == "unknown" and legacy.source_processing_evidence is None
+            release = session.get(ReferenceReleaseORM, before.release_id)
+            assert can_serve_trace(old, release, runtime_policy(release, [old]), "team")
+    finally:
+        engine.dispose()
 
 
 def test_uncertainty_mean_and_tier_limited_template(snapshot, database, tmp_path):
