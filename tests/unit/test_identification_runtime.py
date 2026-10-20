@@ -14,27 +14,6 @@ import pytest
 from sherloc_pipeline.runtime import worker as runtime
 
 
-# Keep spawned deadline helpers independent of API and scientific imports.
-def _hang(path):
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    with open(path, 'w') as stream:
-        stream.write(str(os.getpid()))
-    while True:
-        time.sleep(.01)
-
-
-class HangingStore:
-    def __init__(self, path):
-        self.path = path
-
-    def read_verified(self, locator, sha256):
-        _hang(self.path)
-
-
-def _crash():
-    os._exit(7)
-
-
 def _large_payload(length):
     return b"synthetic" * length
 
@@ -113,3 +92,12 @@ def test_runtime_package_sources_import_only_the_standard_library():
                 continue
             for name in names:
                 assert name.split('.')[0] in sys.stdlib_module_names, f"{source.name}: {name}"
+
+
+def test_spawn_helpers_import_only_the_standard_library():
+    # Spawned children import this module before the deadline helpers run.
+    probe = ("import sys, tests.unit._spawn_helpers; "
+             "print(sorted({m.split('.')[0] for m in sys.modules} & {'sherloc_pipeline', 'pytest', 'numpy'}))")
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run([sys.executable, "-c", probe], cwd=root, capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "[]"

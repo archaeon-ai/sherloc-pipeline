@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+from pathlib import Path
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -18,10 +19,11 @@ from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import Session
 
 from tests.unit.test_reference_release import snapshot  # noqa: F401
-from tests.unit.test_identification_runtime import HangingStore, _crash, _hang
+from tests.unit._spawn_helpers import HangingStore, _crash, _hang, ready_path
 from sherloc_pipeline.core.identification.recipe import load_recipe
 from sherloc_pipeline.database.models import Base, ScanORM, ScanPointORM, SolORM, SpectrumORM
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
+from sherloc_pipeline.runtime import worker as runtime_worker
 from sherloc_pipeline.services.identification_runtime import ExecutionFailed, IdentificationRuntime, ResponseCache, WorkRejected, run_process
 from sherloc_pipeline.services.reference_import import digest, import_release
 from sherloc_pipeline.services.reference_store import LocalReferenceStore
@@ -261,15 +263,48 @@ def test_source_metadata_and_decompression_limits(evidence_api):
     assert s.client.post('/api/identify', json=s.body).status_code == 429
 
 
-def test_deadline_kills_and_reaps_worker(tmp_path):
+def test_deadline_kills_and_reaps_worker(tmp_path, monkeypatch):
     path = tmp_path / 'synthetic-worker.txt'
+    # Record the real child's pid at the class run_process spawns, even if it never reaches _hang.
+    process_class = runtime_worker.multiprocessing.get_context('spawn').Process
+    original_start = process_class.start
+    spawned = []
+
+    def recording_start(process):
+        original_start(process)
+        spawned.append(process.pid)
+
+    monkeypatch.setattr(process_class, 'start', recording_start)
+    # Record the exact deadline run_process computes and hands to _receive.
+    original_receive = runtime_worker._receive
+    deadlines = []
+
+    def recording_receive(reader, deadline):
+        deadlines.append(deadline)
+        return original_receive(reader, deadline)
+
+    monkeypatch.setattr(runtime_worker, '_receive', recording_receive)
     started = time.monotonic()
     with pytest.raises(ExecutionFailed, match='time limit'):
         run_process(_hang, (str(path),), 3.)
-    assert time.monotonic() - started < 5.
-    pid = int(path.read_text())
+    returned = time.monotonic()
+    monkeypatch.undo()
+    assert len(spawned) == 1 and spawned[0], 'spawn wrapper did not capture the worker pid'
+    assert len(deadlines) == 1, 'receive wrapper did not capture the deadline'
+    deadline = deadlines[0]
+    assert returned >= deadline
+    assert returned - started >= 3. - .05
     with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
+        os.kill(spawned[0], 0)
+    # Worker start-up (spawn and imports) counts against the deadline but is not what this test measures.
+    assert path.exists(), (f'worker did not start within the 3 s deadline ({returned - started:.2f} s elapsed; '
+                           'host load); SIGTERM-to-kill escalation not exercised')
+    assert int(path.read_text()) == spawned[0]
+    ready = float(Path(ready_path(path)).read_text())
+    # A worker that becomes ready after the deadline, before a delayed parent kills it, is still a start-up overrun.
+    assert ready < deadline, (f'worker did not start within the 3 s deadline (ready {ready - deadline:.2f} s after it; '
+                              'host load); SIGTERM-to-kill escalation not exercised')
+    assert returned - deadline < 2.
     with pytest.raises(ExecutionFailed, match='worker failed'):
         run_process(_crash, (), 3.)
 
