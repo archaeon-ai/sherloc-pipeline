@@ -26,7 +26,10 @@
       {/each}
     {/if}
     {#each result.ranking.slice(0, 5) as candidate, index}
-      <div class="pin"><span>{index === 0 ? 'Leading candidate' : 'Alternative'}: {candidate.species_name} ·
+      <div class="pin"><span>{index === 0
+        ? result.mixture && !result.mixture.components.some(component => component.template_id === candidate.template_id)
+          ? 'Top retrieval (pruned by fit)' : 'Leading candidate'
+        : 'Alternative'}: {candidate.species_name} ·
         {result.mixture ? `retrieval score ${candidate.retrieval_score?.toFixed(3)}` : `support ${candidate.support?.toFixed(3)}`}</span>
         {#each candidate.trace_revision_ids as identity}
           <button class="btn-secondary btn-sm" on:click={() => onCandidate(identity)}>Add {candidate.species_name} trace</button>
