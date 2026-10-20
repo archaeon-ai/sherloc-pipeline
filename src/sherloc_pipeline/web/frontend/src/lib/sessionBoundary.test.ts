@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { AuthRequiredError, fetchAciImage, getConfig, getMapData, getMapJobResults, getMapJobStatus, getMapLayers, getJobStatus, getPointSpectrum, postFit, postSpectraSubset, startMapFit } from './api';
+import { AuthRequiredError, fetchAciImage, getConfig, getScan, getMapData, getMapJobResults, getMapJobStatus, getMapLayers, getJobStatus, getPointSpectrum, postFit, postPdsDownload, postSpectraSubset, startMapFit } from './api';
 import { clearSessionState, lastFitResult, scienceAuthorized, sessionRequests } from './stores';
 
 const { getToken, isAuthenticated } = vi.hoisted(() => ({ getToken: vi.fn(), isAuthenticated: vi.fn() }));
@@ -47,15 +47,31 @@ it('also discards a reply whose JSON body completes after logout', async () => {
 });
 
 it.each([401, 403])('clears session state on denied JSON response %s', async (status) => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status })));
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', {
+    status, headers: status === 403 ? { 'X-Sherloc-Auth-Failure': 'authorization' } : {},
+  })));
   await expect(getConfig()).rejects.toThrow();
   expect(get(scienceAuthorized)).toBe(false);
 });
 
 it.each([401, 403])('clears session state on denied image response %s', async (status) => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status })));
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', {
+    status, headers: status === 403 ? { 'X-Sherloc-Auth-Failure': 'authorization' } : {},
+  })));
   await expect(fetchAciImage('synthetic-scan')).rejects.toThrow();
   expect(get(scienceAuthorized)).toBe(false);
+});
+
+it.each([
+  ['scan', () => getScan('synthetic-scan')],
+  ['spectrum', () => getPointSpectrum('synthetic-scan', 0)],
+  ['PDS download', () => postPdsDownload({ sol: 9999 })],
+  ['image', () => fetchAciImage('synthetic-scan')],
+])('preserves the session for a resource-level %s denial', async (_kind, request) => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"detail":"Synthetic resource denied"}', { status: 403 })));
+  await expect(request())
+    .rejects.toMatchObject({ status: 403, name: 'ApiError' });
+  expect(get(scienceAuthorized)).toBe(true);
 });
 
 it('discards an image whose bytes arrive after logout', async () => {

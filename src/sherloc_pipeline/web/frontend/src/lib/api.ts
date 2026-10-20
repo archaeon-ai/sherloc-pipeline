@@ -117,6 +117,12 @@ async function withSessionRequest<T>(
   }
 }
 
+function invalidateSessionOnAuthFailure(res: Response): void {
+  if (res.status === 401 || (
+    res.status === 403 && res.headers.get('X-Sherloc-Auth-Failure') === 'authorization'
+  )) clearSessionState();
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit, generation = sessionGeneration): Promise<T> {
   return withSessionRequest(generation, async (headers, signal) => {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -130,7 +136,7 @@ async function fetchJson<T>(path: string, init?: RequestInit, generation = sessi
     });
     if (generation !== sessionGeneration) throw new AuthRequiredError();
     if (!res.ok) {
-      if (res.status === 401 || res.status === 403) clearSessionState();
+      invalidateSessionOnAuthFailure(res);
       let errorClass = `HTTP ${res.status}`;
       let detail: string | undefined;
       try {
@@ -371,7 +377,7 @@ export async function fetchAciImage(
     const res = await fetch(url, { headers, signal });
     if (generation !== sessionGeneration) throw new AuthRequiredError();
     if (!res.ok) {
-      if (res.status === 401 || res.status === 403) clearSessionState();
+      invalidateSessionOnAuthFailure(res);
       throw new ApiError(res.status, `HTTP ${res.status}`);
     }
     const blob = await res.blob();

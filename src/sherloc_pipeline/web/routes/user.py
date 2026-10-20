@@ -25,6 +25,7 @@ from sherloc_pipeline.services.classification import (
     get_default_classification_rules,
 )
 from sherloc_pipeline.web.auth import (
+    AUTHORIZATION_FAILURE_HEADERS,
     AuthError,
     DevValidator,
     JWKSUnavailableError,
@@ -188,6 +189,7 @@ def _resolve_user(request: Request) -> tuple[Session, Optional[UserORM]]:
             raise HTTPException(
                 status_code=403,
                 detail=f"Required role missing: {required_role}",
+                headers=AUTHORIZATION_FAILURE_HEADERS,
             )
 
     # Per spec §13.1 + B.12 F4: ``sub`` is the stable identity key.
@@ -208,6 +210,7 @@ def _require_user(request: Request) -> tuple[Session, UserORM]:
         raise HTTPException(
             status_code=403,
             detail="Authentication required. Anonymous users cannot save preferences.",
+            headers=AUTHORIZATION_FAILURE_HEADERS,
         )
     return session, user
 

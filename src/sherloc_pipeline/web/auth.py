@@ -40,6 +40,8 @@ import jwt
 from fastapi import HTTPException, Request, WebSocket
 from jwt.exceptions import InvalidTokenError, PyJWKClientError
 
+AUTHORIZATION_FAILURE_HEADERS = {"X-Sherloc-Auth-Failure": "authorization"}
+
 # §2.6.1 contract: imported from the package, not redefined here.
 from phase_platform_auth import (
     Auth0Validator,
@@ -483,6 +485,7 @@ def _authenticate_token(
             raise HTTPException(
                 status_code=403,
                 detail=f"Required role missing: {required_role}",
+                headers=AUTHORIZATION_FAILURE_HEADERS,
             )
 
     # §2.6.1: successful validation logs the sub claim only.
