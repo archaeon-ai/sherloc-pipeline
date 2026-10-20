@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
 from sherloc_pipeline.models.references import Digest, ReferenceTrace
 from sherloc_pipeline.services.identification import MAX_NATIVE_POINTS, MAX_TOTAL_BYTES, load_reference
-from sherloc_pipeline.services.identification_runtime import run_process
+from sherloc_pipeline.services.identification_runtime import ExecutionFailed, WorkRejected, run_process
 from sherloc_pipeline.services.reference_import import array_digest, digest
 from sherloc_pipeline.services.reference_store import LocalReferenceStore
 from sherloc_pipeline.web.reference_storage import R2ReferenceStore, can_serve_template, can_serve_trace
@@ -171,7 +171,9 @@ def get_reference(request: Request, trace_revision_id: Digest, release_id: Diges
         if len(x) != row.point_count or array_digest(x) != row.axis_sha256 or array_digest(y) != row.intensity_sha256:
             raise ValueError("reference digest mismatch")
         result = {**trace_metadata(row), "x": x.tolist(), "y": y.tolist()}
-    except (ValueError, OSError) as exc:
-        raise HTTPException(503, "Reference execution failed") from exc
+    except WorkRejected as exc:
+        raise HTTPException(429, str(exc)) from exc
+    except (ExecutionFailed, ValueError, OSError) as exc:
+        raise HTTPException(503, {"code": "execution_failed", "detail": "Reference execution failed"}) from exc
     cache.put(key, result)
     return result

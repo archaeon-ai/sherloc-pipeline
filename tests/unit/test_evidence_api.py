@@ -22,7 +22,7 @@ from tests.unit.test_reference_release import snapshot  # noqa: F401
 from sherloc_pipeline.core.identification.recipe import load_recipe
 from sherloc_pipeline.database.models import Base, ScanORM, ScanPointORM, SolORM, SpectrumORM
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
-from sherloc_pipeline.services.identification_runtime import ExecutionFailed, IdentificationRuntime, ResponseCache, run_process
+from sherloc_pipeline.services.identification_runtime import ExecutionFailed, IdentificationRuntime, ResponseCache, WorkRejected, run_process
 from sherloc_pipeline.services.reference_import import digest, import_release
 from sherloc_pipeline.services.reference_store import LocalReferenceStore
 from sherloc_pipeline.web.app import create_app
@@ -475,3 +475,43 @@ def test_unhandled_evidence_errors_are_private_no_store(evidence_api, monkeypatc
     assert response.status_code == 500
     assert response.json()['error'] == 'internal_error'
     assert response.headers['cache-control'] == 'private, no-store'
+
+
+class SyntheticFailedNativeStore:
+    def __init__(self, failure, marker):
+        self.failure, self.marker = failure, marker
+
+    def read_verified(self, *_args, **_kwargs):
+        self.marker.write_text(str(os.getpid()))
+        if self.failure == 'crash':
+            os._exit(7)
+        if self.failure == 'deadline':
+            time.sleep(60)
+        if self.failure == 'rejected':
+            raise WorkRejected('synthetic native admission refusal')
+        raise OSError('synthetic missing object')
+
+
+@pytest.mark.parametrize('failure', ['crash', 'deadline', 'rejected', 'missing'])
+def test_native_reference_worker_errors_are_classified_and_reaped(evidence_api, tmp_path, failure):
+    s = evidence_api
+    marker = tmp_path / 'synthetic-native-pid.txt'
+    s.app.state.reference_store = SyntheticFailedNativeStore(failure, marker)
+    policy = s.app.state.feature_policy
+    s.app.state.feature_policy = policy.model_copy(update={
+        'identification': policy.identification.model_copy(update={'timeout_seconds': 5})})
+    response = s.client.get(f'/api/references/{s.trace_ids[0]}', params={'release_id': s.imported.release_id})
+    assert response.status_code == (429 if failure == 'rejected' else 503)
+    assert response.headers['cache-control'] == 'private, no-store'
+    if failure != 'rejected':
+        assert response.json()['detail']['code'] == 'execution_failed'
+    else:
+        assert response.json()['detail'] == 'synthetic native admission refusal'
+    assert marker.exists(), 'Native reader must have started'
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(marker.read_text()), 0)
+    # Failures release admission and never fill the success cache.
+    s.app.state.reference_store = LocalReferenceStore(s.objects)
+    recovered = s.client.get(f'/api/references/{s.trace_ids[0]}', params={'release_id': s.imported.release_id})
+    assert recovered.status_code == 200
+    assert recovered.json()['x'] == s.x.tolist()
