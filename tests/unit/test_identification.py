@@ -753,7 +753,7 @@ def test_admission_before_source_or_reference_arrays(system, bound):
     system.store.read_verified.assert_not_called()
 
 
-def pearson_golden_case(system):
+def pearson_golden_case(system, *, real_provenance=False):
     from sherloc_pipeline.services.identification import compute_identification
 
     recipe, recipe_id = load_recipe()
@@ -770,9 +770,13 @@ def pearson_golden_case(system):
         "axis_sha256": array_digest(x), "intensity_sha256": array_digest(y),
         "arrays": {"x": x, "y": y},
     }
-    # Hold provenance fixed: installed source fingerprints intentionally change.
+    # S1 substitutes provenance to isolate serialization; it does not cover identity.
     provenance = {"code_sha256": "f" * 64, "code_identity_basis": "synthetic",
                   "environment": {"runtime": "synthetic"}, "environment_sha256": "e" * 64}
+    if real_provenance:
+        from sherloc_pipeline.core.identification.provenance import runtime_provenance
+
+        provenance = runtime_provenance()
     return compute_identification(
         system.request.model_copy(update={"method_release_id": recipe_id}),
         recipe, recipe_id, provenance, query, [(template, [member])],
@@ -1125,3 +1129,21 @@ def test_pearson_complete_payload_matches_pr7_golden(system):
     assert json.loads(result.model_dump_json()) == expected
     # The response must retain its shape after the service cache round trip.
     assert type(result).model_validate(expected).model_dump(mode="json") == expected
+
+
+def test_pearson_real_runtime_payload_matches_pr7_except_implementation_identity(system):
+    from pathlib import Path
+
+    # Captured at rebuilt pr7-integration f429ba3 using this unchanged synthetic
+    # request and real runtime provenance. Keep the entire payload, including
+    # environment identity; only installed-source identity and its digest differ.
+    expected = json.loads(Path(__file__).with_name("pearson_runtime_pr7_golden.json").read_text())
+    result = pearson_golden_case(system, real_provenance=True)
+    actual = result.model_dump(mode="json")
+    assert actual["method"]["code_identity_basis"] == "installed_source_bytes"
+    assert actual["method"]["code_sha256"] != expected["method"]["code_sha256"]
+    assert actual["result_digest"] != expected["result_digest"]
+    expected["method"]["code_sha256"] = actual["method"]["code_sha256"]
+    expected["result_digest"] = actual["result_digest"]
+    assert actual == expected
+    assert json.loads(result.model_dump_json()) == expected
