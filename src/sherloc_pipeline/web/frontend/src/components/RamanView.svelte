@@ -57,9 +57,10 @@
   $: useWavelength = domain === 'emission_wavelength';
   $: xData = useWavelength ? (wavelength ?? []) : wavenumber;
   $: ramanArtifacts = !evidenceEnabled || !useWavelength;
-  $: recordedUnit = processingTrace
-    ? (useWavelength ? processingTrace.snapshot.trace.provenance.wavelength_unit : processingTrace.snapshot.trace.provenance.wavenumber_unit) ?? 'unknown unit'
-    : useWavelength ? 'nm' : 'cm-1';
+  $: unitTrace = comparisonItems ? comparisonItems[0]?.trace : processingTrace;
+  $: recordedUnit = unitTrace
+    ? (useWavelength ? unitTrace.snapshot.trace.provenance.wavelength_unit : unitTrace.snapshot.trace.provenance.wavenumber_unit) ?? 'unknown unit'
+    : comparisonItems ? 'unknown unit' : useWavelength ? 'nm' : 'cm-1';
   $: xUnit = recordedUnit === 'cm-1' ? 'cm\u207B\u00B9' : recordedUnit;
   $: xLabel = `${useWavelength ? 'Wavelength' : 'Raman Shift'} (${xUnit})`;
   $: comparisonItems = evidenceEnabled && (evidenceMode || primaryTrace || comparisonTraces.length)

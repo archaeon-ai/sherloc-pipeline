@@ -226,3 +226,26 @@ it('keeps R123 processing on its legacy wavelength axis and disables unsupported
   expect(pinTrace(evidenceTrace(snapshot)!, 'synthetic-context')).toBe(false);
   expect(container.querySelector('.export-trigger')).not.toBeDisabled();
 });
+
+
+it.each([
+  ['R1', 'emission_wavelength', undefined, 'Wavelength (nm)', 'nm'],
+  ['R1', 'emission_wavelength', 'synthetic-unit', 'Wavelength (nm)', 'nm'],
+  ['R2', 'raman_shift', undefined, 'Raman Shift (cm⁻¹)', 'cm-1'],
+  ['R2', 'raman_shift', 'synthetic-unit', 'Raman Shift (cm⁻¹)', 'cm-1'],
+] as const)('labels only displayed comparison units with excluded %s unit %s', async (region, domain, excludedUnit, label, unit) => {
+  const current = input(); current.trace!.region = region;
+  const pinned = input(1); pinned.trace!.region = region === 'R1' ? 'R2' : 'R1';
+  current.trace!.provenance = { ...current.trace!.provenance,
+    [domain === 'emission_wavelength' ? 'wavelength_unit' : 'wavenumber_unit']: excludedUnit };
+  const primary = evidenceTrace(current)!;
+  const comparison = evidenceTrace(pinned)!;
+  render(RamanView, { evidenceMode: true, xDomain: domain, processingTrace: primary,
+    primaryTrace: primary, comparisonTraces: [comparison] });
+  await flush();
+  expect(last()[1]).toHaveLength(1);
+  expect(last()[2].xaxis.title.text).toBe(label);
+  expect(last()[2].meta.traces).toHaveLength(1);
+  expect(last()[2].meta.traces[0].x_unit).toBe(unit);
+  expect(last()[2].meta.traces[0].snapshot.trace.source.scan_id).toBe('synthetic-1');
+});
