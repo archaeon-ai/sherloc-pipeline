@@ -16,15 +16,22 @@ def retrieve(query, reference, recipe):
         return None
     grid = grid_for(recipe)
     best = None
+    source_valid = reference.mask & np.isfinite(reference.vector)
+    source = np.where(source_valid, reference.vector, 0.)
     for width in recipe.extra_fwhm_cm1:
-        y = reference.vector if not width else gaussian_filter1d(
-            reference.vector, width / recipe.fwhm_to_sigma / recipe.grid[2],
-            mode=recipe.smoothing_mode,
-        )
+        y, broadened_valid = source, source_valid
+        if width:
+            sigma = width / recipe.fwhm_to_sigma / recipe.grid[2]
+            y = gaussian_filter1d(source, sigma, mode=recipe.smoothing_mode)
+            # The same positive kernel identifies every output touched by an
+            # invalid input, including edge extension under the smoothing mode.
+            contaminated = gaussian_filter1d((~source_valid).astype(float), sigma,
+                                             mode=recipe.smoothing_mode) > 0
+            broadened_valid = ~contaminated
         for shift in recipe.shifts:
             vector = np.interp(grid-shift, grid, y, left=np.nan, right=np.nan)
             valid = np.isfinite(vector) & (
-                np.interp(grid-shift, grid, reference.mask.astype(float), left=0, right=0) == 1
+                np.interp(grid-shift, grid, broadened_valid.astype(float), left=0, right=0) == 1
             )
             keep = query.mask & valid
             if keep.mean() < recipe.min_overlap:

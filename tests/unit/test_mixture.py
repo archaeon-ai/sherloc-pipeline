@@ -313,3 +313,48 @@ def test_cutoff_refit_prunes_coefficients_that_shrink_during_refit(recipe):
     assert len(result["diagnostics"]["cutoff_refits"]) == 2
     np.testing.assert_allclose(result["evidence"]["fit"], 0., atol=1e-10)
     assert result["sse"] == pytest.approx(result["background_only_sse"])
+
+
+@pytest.mark.parametrize('width,radius', [(0., 0), (10., 3), (20., 7)])
+@pytest.mark.parametrize('hidden', [1e12, np.nan, np.inf])
+def test_broadening_excludes_masked_values_and_contaminated_outputs(recipe, width, radius, hidden):
+    recipe = recipe.model_copy(update={'extra_fwhm_cm1': [width], 'shifts': [0.]})
+    grid = grid_for(recipe)
+    vector = np.exp(-((grid-1237.)/7.)**2) + .6*np.exp(-((grid-1537.)/9.)**2)
+    reference = prepared(vector.copy())
+    reference.mask[100:103] = False
+    query = prepared(gaussian_filter1d(vector, width/recipe.fwhm_to_sigma/5., mode='nearest') if width else vector)
+    clean = retrieve(query, reference, recipe)
+    reference.vector[~reference.mask] = hidden
+    changed = retrieve(query, reference, recipe)
+    assert clean is not None and changed is not None
+    assert clean['retrieval_score'] == changed['retrieval_score']
+    assert clean['extra_fwhm_cm1'] == changed['extra_fwhm_cm1'] == width
+    assert clean['shift_cm_1'] == changed['shift_cm_1'] == 0.
+    np.testing.assert_array_equal(clean['vector'], changed['vector'])
+    np.testing.assert_array_equal(clean['mask'], changed['mask'])
+    expected_mask = np.ones(len(grid), dtype=bool)
+    expected_mask[100-radius:103+radius] = False
+    np.testing.assert_array_equal(clean['mask'], expected_mask)
+    row = {'template_id': 'a'*64, 'species_name': 'Syntheticite'}
+    clean_fit = fit_mixture(query, [{**row, **clean}], recipe)
+    changed_fit = fit_mixture(query, [{**row, **changed}], recipe)
+    assert clean_fit == changed_fit
+    assert clean_fit['reason'] is None
+    assert clean_fit['evidence']['mask'] == expected_mask.tolist()
+
+
+def test_broadening_contamination_covers_edge_extension_and_shift(recipe):
+    recipe = recipe.model_copy(update={'extra_fwhm_cm1': [20.], 'shifts': [5.]})
+    grid = grid_for(recipe)
+    vector = np.exp(-((grid-1237.)/7.)**2)
+    reference = prepared(vector.copy())
+    reference.mask[:2] = False
+    original = retrieve(prepared(vector), reference, recipe)
+    reference.vector[:2] = 1e12
+    changed = retrieve(prepared(vector), reference, recipe)
+    np.testing.assert_array_equal(original['vector'], changed['vector'])
+    np.testing.assert_array_equal(original['mask'], changed['mask'])
+    # Radius seven plus two invalid edge samples, shifted one bin right.
+    assert not changed['mask'][:10].any()
+    assert changed['mask'][10:].all()
