@@ -12,7 +12,6 @@ import time
 import pytest
 
 from sherloc_pipeline.runtime import worker as runtime
-from sherloc_pipeline.services import identification_runtime
 
 
 # Keep spawned deadline helpers independent of API and scientific imports.
@@ -80,7 +79,11 @@ def test_stalled_receipt_times_out_and_kills_and_reaps_the_worker(monkeypatch, t
 
 
 def test_services_reexport_the_worker_objects():
-    for name in ("ExecutionFailed", "WorkRejected", "run_process"):
+    # Imported here, not at module level: spawned targets in this module are pickled by
+    # reference, so its top-level imports load in every child.
+    from sherloc_pipeline.services import identification_runtime
+
+    for name in ("ExecutionFailed", "WorkRejected", "_receive", "_worker", "run_process"):
         assert getattr(identification_runtime, name) is getattr(runtime, name)
 
 

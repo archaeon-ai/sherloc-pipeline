@@ -5,10 +5,12 @@ import copy
 import threading
 import time
 
-# Re-exported so existing imports keep working; the implementation lives outside services.
-from sherloc_pipeline.runtime.worker import ExecutionFailed, WorkRejected, run_process
+# Re-exported so existing imports keep working; the implementation lives outside services,
+# so monkeypatch runtime.worker (not these aliases) to affect run_process.
+from sherloc_pipeline.runtime.worker import ExecutionFailed, WorkRejected, _receive, _worker, run_process
 
-__all__ = ["ExecutionFailed", "IdentificationRuntime", "ResponseCache", "WorkRejected", "run_process"]
+__all__ = ["ExecutionFailed", "IdentificationRuntime", "ResponseCache", "WorkRejected", "_receive", "_worker",
+           "run_process"]
 
 
 class ResponseCache:
