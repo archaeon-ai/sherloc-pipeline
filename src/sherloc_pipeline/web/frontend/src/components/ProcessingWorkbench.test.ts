@@ -1327,6 +1327,8 @@ it.each(['tier', 'access'])('invalidates an in-flight spectrum on an authorized 
   getAvg.mockReturnValue(new Promise(done => { resolve = done; }));
   render(ProcessingWorkbench, { scanId: SCAN_ID });
   await flush();
+  // Hold revalidation while the spectrum from the old boundary completes.
+  vi.mocked(api.getScan).mockReturnValueOnce(new Promise(() => {}));
   if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
   else accessMode.set('public');
   resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
@@ -1446,17 +1448,20 @@ it.each(['tier', 'access'])('accepts fresh spectrum, annotations and processing 
   const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
   await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
   const generation = sessionGeneration;
+  let revalidate = () => {};
+  vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+    revalidate = () => resolve({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  }));
   if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
   else accessMode.set('public');
   await flush();
   expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
-  expect(container.querySelector('.export-trigger')).toBeDisabled();
-  expect(reactSpy.mock.calls.at(-1)![1]).toEqual([]);
+  expect(container.querySelector('.export-trigger')).toBeNull();
+  expect(container.querySelector('.aci-viewer')).toBeNull();
   getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
   vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '1', region: 'R123', n_channels: 3,
     badpix: [{ position: 1, channel: 600, tier: 1, source: 'synthetic-noisy' }] });
-  await fireEvent.click(Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r1')!);
-  await flush();
+  revalidate(); await flush();
   expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
   await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'processing' } }); await flush();
   await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
@@ -1562,4 +1567,95 @@ it.each(['destroy', 'session', 'capability'] as const)('does not retry an invali
   finish(); await flush();
   expect(api.getScan).toHaveBeenCalledOnce(); expect(api.getScanPoints).not.toHaveBeenCalled();
   expect(get(processingState)).toBeNull();
+});
+
+it.each([['loaded', 'tier'], ['loaded', 'access'], ['points-pending', 'tier'], ['points-pending', 'access']] as const)('clears scan, points and ACI across a denied boundary from %s via %s', async (initial, boundary) => {
+  accessMode.set('internal'); scienceAuthorized.set(true);
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Private synthetic' } });
+  let finishPoints = () => {};
+  if (initial === 'points-pending') {
+    vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+      finishPoints = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [fakePoint()], n_points: 1 });
+    }));
+  }
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  if (initial === 'loaded') {
+    expect(container.textContent).toContain('Private synthetic');
+    expect(container.querySelector('.aci-viewer')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+  } else {
+    expect(container.textContent).not.toContain('Private synthetic');
+  }
+  vi.mocked(api.getScan).mockRejectedValueOnce(new api.ApiError(403, 'Synthetic forbidden'));
+  if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  else accessMode.set('public');
+  expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+  expect(get(pointSelection)).toEqual({ mode: 'average' });
+  await flush(); finishPoints(); await flush();
+  expect(api.getScan).toHaveBeenCalledTimes(2);
+  expect(api.getScanPoints).toHaveBeenCalledOnce();
+  expect(container.textContent).not.toContain('Private synthetic');
+  expect(container.querySelector('.workbench-layout')).toBeNull();
+  expect(container.querySelector('.aci-viewer')).toBeNull();
+  expect(container.querySelector('.error-message')).toBeTruthy();
+  expect(container.textContent).not.toContain('Loading scan');
+  expect(get(processingState)).toBeNull();
+});
+
+it('commits fresh scan and points together and remounts ACI after revalidation', async () => {
+  accessMode.set('internal'); scienceAuthorized.set(true);
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  const oldAci = container.querySelector('.aci-viewer');
+  const aciCalls = vi.mocked(api.fetchAciImage).mock.calls.length;
+  let finishPoints = () => {};
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Public synthetic', n_points: 2 } });
+  vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+    finishPoints = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [fakePoint(), fakePoint(1)], n_points: 2 });
+  }));
+  appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  await flush();
+  expect(container.textContent).not.toContain('Invented');
+  expect(container.textContent).not.toContain('Public synthetic');
+  expect(container.querySelector('.aci-viewer')).toBeNull();
+  expect(get(processingState)).toBeNull();
+  finishPoints(); await flush();
+  expect(container.textContent).toContain('Public synthetic');
+  expect(container.querySelector('.aci-viewer')).toBeTruthy();
+  expect(container.querySelector('.aci-viewer')).not.toBe(oldAci);
+  expect(api.fetchAciImage).toHaveBeenCalledTimes(aciCalls + 1);
+  expect(api.getScan).toHaveBeenCalledTimes(2); expect(api.getScanPoints).toHaveBeenCalledTimes(2);
+  expect(get(processingState)?.trace?.source.target).toBe('Public synthetic');
+});
+
+
+it('leaves metadata cleared when point revalidation fails', async () => {
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Uncommitted synthetic' } });
+  vi.mocked(api.getScanPoints).mockRejectedValueOnce(new api.ApiError(403, 'Synthetic forbidden'));
+  appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  await flush();
+  expect(container.textContent).not.toContain('Uncommitted synthetic');
+  expect(container.textContent).not.toContain('Invented');
+  expect(container.querySelector('.aci-viewer')).toBeNull();
+  expect(container.querySelector('.workbench-layout')).toBeNull();
+  expect(container.querySelector('.error-message')).toBeTruthy();
+});
+
+it.each([undefined, false])('preserves legacy metadata timing and boundary behavior with capability %s', async enabled => {
+  appConfig.set({ tier: 'team', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse);
+  let failPoints = () => {};
+  vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise((_resolve, reject) => {
+    failPoints = () => reject(new api.ApiError(403, 'Synthetic forbidden'));
+  }));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  // Legacy metadata appears before points resolve and remains after a points error.
+  expect(container.textContent).toContain('Invented');
+  appConfig.set({ tier: 'public', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse);
+  accessMode.set('public');
+  failPoints(); await flush();
+  expect(api.getScan).toHaveBeenCalledOnce(); expect(api.getScanPoints).toHaveBeenCalledOnce();
+  expect(container.textContent).toContain('Invented');
+  expect(container.querySelector('.workbench-layout')).toBeTruthy();
+  expect(container.querySelector('.aci-viewer')).toBeTruthy();
+  expect(container.querySelector('.error-message')).toBeTruthy();
 });

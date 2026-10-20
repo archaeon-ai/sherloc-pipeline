@@ -261,28 +261,41 @@
 
   // Clear committed evidence synchronously at an access boundary. New operations
   // capture the new generation; only operations crossing the boundary are stale.
+  let metadataRequestGen = 0;
   let activeBoundary = evidenceGeneration;
   const stopBoundary = evidenceBoundary.subscribe(generation => {
     if (generation === activeBoundary) return;
     activeBoundary = generation;
+    metadataRequestGen += 1;
     spectrumRequestGen += 1;
     badpixRequestGen += 1;
+    scan = null;
+    points = [];
+    evidenceContextKey = '';
+    selectionMode = 'average';
+    selectedIndices = [];
+    selectedPointIdx = null;
+    pointSelection.set({ mode: 'average' });
+    loading = true;
+    error = '';
     spectrum = null;
     rawSnapshot = null;
     badpixCatalog = [];
     processingState.set(null);
     undoStack.set([]);
-    if (scan) {
-      const target = scan.target;
-      const identity = target?.trim() ? ['target', target] : ['scan', scan.id];
-      evidenceContextKey = JSON.stringify([mountedSession, generation, scan.sol_number, identity]);
-      setEvidenceContext(evidenceContextKey);
-    }
+    // Let config/session updates finish before starting one load in the new boundary.
+    void Promise.resolve().then(async () => {
+      if (destroyed || mountedSession !== sessionGeneration || generation !== evidenceGeneration ||
+          get(appConfig)?.capabilities?.evidence_desk !== true) return;
+      await loadScan();
+      if (!destroyed && generation === evidenceGeneration && scan) await loadBadpix();
+    });
   });
 
   onDestroy(() => {
     stopBoundary();
     destroyed = true;
+    metadataRequestGen += 1;
     spectrumRequestGen += 1;
     badpixRequestGen += 1;
   });
@@ -296,13 +309,23 @@
 
   async function loadScan(): Promise<void> {
     const requestBoundary = requestEvidence();
-    let metadataLoaded = false;
+    const gen = ++metadataRequestGen;
+    const stale = () => destroyed || gen !== metadataRequestGen || staleEvidence(requestBoundary);
     loading = true;
     error = '';
     try {
       const res = await getScan(scanId);
-      if (destroyed || staleEvidence(requestBoundary)) return;
+      if (stale()) return;
+      // Preserve legacy assignment timing when Evidence desk is off.
+      if (requestBoundary === null) {
+        scan = res.scan;
+        applyDespikeDefault(scan.ml_mask_count ?? 0);
+      }
+      const ptRes = await getScanPoints(scanId);
+      if (stale()) return;
+      // Metadata and points belong to the same authorized load.
       scan = res.scan;
+      points = ptRes.points;
       if (evidenceEnabled) {
         const target = scan.target;
         const identity = target?.trim() ? ['target', target] : ['scan', scan.id];
@@ -311,13 +334,8 @@
       }
       // Apply ML-or-none default once, before the first loadSpectrum call.
       // Funnel through the named helper — never set despikeMethod in a $: block
-      // (FRONTEND_HAZARDS H1). The user can override via the despike selector;
-      // applyDespikeDefault is never called again after mount.
-      applyDespikeDefault(scan.ml_mask_count ?? 0);
-      const ptRes = await getScanPoints(scanId);
-      if (destroyed || staleEvidence(requestBoundary)) return;
-      points = ptRes.points;
-      metadataLoaded = true;
+      // (FRONTEND_HAZARDS H1). Revalidation uses the freshly authorized metadata.
+      if (requestBoundary !== null) applyDespikeDefault(scan.ml_mask_count ?? 0);
 
       // Validate deep links before fetching any spectrum; never fall back to
       // the scan average when a requested point is missing or malformed.
@@ -334,20 +352,14 @@
 
       await loadSpectrum();
     } catch (e) {
-      if (destroyed || staleEvidence(requestBoundary)) return;
+      if (stale()) return;
       if (e instanceof Error) {
         error = e.message;
       } else {
         error = 'Failed to load scan';
       }
     } finally {
-      // Retry mount-time metadata invalidated by an authorized access boundary.
-      if (!metadataLoaded && !destroyed && mountedSession === sessionGeneration &&
-          get(appConfig)?.capabilities?.evidence_desk === true && staleEvidence(requestBoundary)) {
-        await loadScan();
-      } else {
-        loading = false;
-      }
+      if (!stale()) loading = false;
     }
   }
 
