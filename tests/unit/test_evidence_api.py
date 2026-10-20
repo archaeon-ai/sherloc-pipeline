@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import Session
 
 from tests.unit.test_reference_release import snapshot  # noqa: F401
-from tests.unit.test_identification_runtime import _crash, _hang
+from tests.unit.test_identification_runtime import HangingStore, _crash, _hang
 from sherloc_pipeline.core.identification.recipe import load_recipe
 from sherloc_pipeline.database.models import Base, ScanORM, ScanPointORM, SolORM, SpectrumORM
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
@@ -293,14 +293,6 @@ def test_cache_is_bounded_detached_and_scoped():
     assert expired.get(one) is None
     # A fresh app has its own slots and result cache.
     assert IdentificationRuntime().cache.get(one) is None
-
-
-class HangingStore:
-    def __init__(self, path):
-        self.path = path
-
-    def read_verified(self, locator, sha256):
-        _hang(self.path)
 
 
 def test_store_deadline_is_execution_failure_and_releases_slot(evidence_api, tmp_path):
