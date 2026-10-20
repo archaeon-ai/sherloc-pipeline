@@ -1436,3 +1436,36 @@ it.each(['', '   '])('isolates pins by scan identity for a blank target (%j)', a
   render(ProcessingWorkbench, { scanId: 'synthetic-other' }); await flush();
   expect(get(pinnedTraces)).toEqual([]);
 });
+
+
+it.each(['tier', 'access'])('accepts fresh spectrum, annotations and processing after an authorized %s boundary', async boundary => {
+  accessMode.set('internal');
+  scienceAuthorized.set(true);
+  currentHash.set('#/scan/synthetic/workbench');
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+  const generation = sessionGeneration;
+  if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  else accessMode.set('public');
+  await flush();
+  expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+  expect(container.querySelector('.export-trigger')).toBeDisabled();
+  expect(reactSpy.mock.calls.at(-1)![1]).toEqual([]);
+  getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
+  vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '1', region: 'R123', n_channels: 3,
+    badpix: [{ position: 1, channel: 600, tier: 1, source: 'synthetic-noisy' }] });
+  await fireEvent.click(Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r1')!);
+  await flush();
+  expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'processing' } }); await flush();
+  await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
+  expect(csvProvenance(await exportCsv(container)).annotations.badpix[0].source).toBe('synthetic-noisy');
+  vi.spyOn(api, 'postFit').mockResolvedValue(fakeFit());
+  const card = Array.from(container.querySelectorAll('.step-title')).find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
+  await fireEvent.click(card.querySelector('.step-header')!);
+  await fireEvent.click(card.querySelector('.btn-primary')!); await flush();
+  expect(get(processingState)?.stage).toBe('raman_fitted');
+  expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
+  expect(get(currentHash)).toBe('#/scan/synthetic/workbench');
+});

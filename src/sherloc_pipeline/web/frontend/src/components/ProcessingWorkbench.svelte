@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { appConfig, navigate, sessionGeneration } from '../lib/stores';
-  import { evidenceGeneration, setEvidenceContext } from '../lib/evidenceStore';
+  import { evidenceGeneration, evidenceBoundary, setEvidenceContext } from '../lib/evidenceStore';
   import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
   import {
     getScan,
@@ -45,9 +45,11 @@
   export let queryParams: Record<string, string> = {};
 
   const mountedSession = sessionGeneration;
-  const mountedEvidence = get(appConfig)?.capabilities?.evidence_desk === true ? evidenceGeneration : null;
-  function staleEvidence(): boolean {
-    return mountedEvidence !== null && (mountedSession !== sessionGeneration || mountedEvidence !== evidenceGeneration);
+  function requestEvidence(): number | null {
+    return get(appConfig)?.capabilities?.evidence_desk === true ? evidenceGeneration : null;
+  }
+  function staleEvidence(generation: number | null): boolean {
+    return generation !== null && (mountedSession !== sessionGeneration || generation !== evidenceGeneration);
   }
   $: evidenceEnabled = $appConfig?.capabilities?.evidence_desk === true;
   let evidenceContextKey = '';
@@ -118,7 +120,8 @@
   let badpixRequestGen = 0;
 
   async function loadBadpix(): Promise<void> {
-    if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
+    const requestBoundary = requestEvidence();
+    if (destroyed || staleEvidence(requestBoundary)) return;
     const gen = ++badpixRequestGen;
     // Region transition: clear immediately so the previous region's
     // annotations neither render nor export while the new region's list is
@@ -128,7 +131,7 @@
       const res = await getBadpixChannels('R123');
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely.
-      if (gen !== badpixRequestGen || (mountedEvidence !== null && (destroyed || staleEvidence()))) return;
+      if (gen !== badpixRequestGen || (requestBoundary !== null && (destroyed || staleEvidence(requestBoundary)))) return;
       badpixCatalog = res.badpix;
     } catch {
       // Annotation layer is best-effort: a failed fetch must never break the
@@ -255,7 +258,29 @@
         : null
   ) as 'ml' | 'modz' | null;
 
+  // Clear committed evidence synchronously at an access boundary. New operations
+  // capture the new generation; only operations crossing the boundary are stale.
+  let activeBoundary = evidenceGeneration;
+  const stopBoundary = evidenceBoundary.subscribe(generation => {
+    if (generation === activeBoundary) return;
+    activeBoundary = generation;
+    spectrumRequestGen += 1;
+    badpixRequestGen += 1;
+    spectrum = null;
+    rawSnapshot = null;
+    badpixCatalog = [];
+    processingState.set(null);
+    undoStack.set([]);
+    if (scan) {
+      const target = scan.target?.trim();
+      const identity = target ? ['target', target] : ['scan', scan.id];
+      evidenceContextKey = JSON.stringify([mountedSession, generation, scan.sol_number, identity]);
+      setEvidenceContext(evidenceContextKey);
+    }
+  });
+
   onDestroy(() => {
+    stopBoundary();
     destroyed = true;
     spectrumRequestGen += 1;
     badpixRequestGen += 1;
@@ -269,16 +294,17 @@
   });
 
   async function loadScan() {
+    const requestBoundary = requestEvidence();
     loading = true;
     error = '';
     try {
       const res = await getScan(scanId);
-      if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
+      if (destroyed || staleEvidence(requestBoundary)) return;
       scan = res.scan;
       if (evidenceEnabled) {
         const target = scan.target?.trim();
         const identity = target ? ['target', target] : ['scan', scan.id];
-        evidenceContextKey = JSON.stringify([mountedSession, mountedEvidence, scan.sol_number, identity]);
+        evidenceContextKey = JSON.stringify([mountedSession, requestBoundary, scan.sol_number, identity]);
         setEvidenceContext(evidenceContextKey);
       }
       // Apply ML-or-none default once, before the first loadSpectrum call.
@@ -287,7 +313,7 @@
       // applyDespikeDefault is never called again after mount.
       applyDespikeDefault(scan.ml_mask_count ?? 0);
       const ptRes = await getScanPoints(scanId);
-      if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
+      if (destroyed || staleEvidence(requestBoundary)) return;
       points = ptRes.points;
 
       // Validate deep links before fetching any spectrum; never fall back to
@@ -323,7 +349,8 @@
   let spectrumRequestGen = 0;
 
   async function loadSpectrum() {
-    if (destroyed || (mountedEvidence !== null && staleEvidence())) return;
+    const requestBoundary = requestEvidence();
+    if (destroyed || staleEvidence(requestBoundary)) return;
     const gen = ++spectrumRequestGen;
     // The selection context this request is FOR (PR #13 review F1): captured
     // at entry, synchronously with the branch below that reads selectionMode,
@@ -372,7 +399,7 @@
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely (do not touch spectrum or the
       // processing state).
-      if (gen !== spectrumRequestGen || (mountedEvidence !== null && (destroyed || staleEvidence()))) return;
+      if (gen !== spectrumRequestGen || (requestBoundary !== null && (destroyed || staleEvidence(requestBoundary)))) return;
       spectrum = result;
       // Commit-bound selection context (PR #13 review F1): recorded only here
       // and in the 404 arm below, in lockstep with the `spectrum` assignment,
@@ -383,7 +410,7 @@
       // Stale-failure guard (PR #7 review F5): if a newer request superseded
       // this one, its failure is irrelevant — neither surface an error UI
       // for an obsolete request nor clear a newer spectrum.
-      if (gen !== spectrumRequestGen || (mountedEvidence !== null && (destroyed || staleEvidence()))) return;
+      if (gen !== spectrumRequestGen || (requestBoundary !== null && (destroyed || staleEvidence(requestBoundary)))) return;
       if (e instanceof ApiError && e.status === 404) {
         spectrum = null;
         rawSnapshot = null;
@@ -514,7 +541,7 @@
 
   // Processing chain update
   function onChainStateUpdate(e: CustomEvent<ProcessingSnapshot>) {
-    if (destroyed || (mountedEvidence !== null && staleEvidence()) || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
+    if (destroyed || staleEvidence(requestEvidence()) || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
     const newState = { ...e.detail, trace: rawSnapshot?.trace };
     // Push current state to undo before updating
     if (currentState) {

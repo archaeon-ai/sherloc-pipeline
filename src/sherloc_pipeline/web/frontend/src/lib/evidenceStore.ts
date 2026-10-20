@@ -8,10 +8,13 @@ const pins = writable<EvidenceTrace[]>([]);
 export const pinnedTraces = { subscribe: pins.subscribe };
 let context: string | null = null;
 export let evidenceGeneration = 0;
+const boundary = writable(evidenceGeneration);
+export const evidenceBoundary = { subscribe: boundary.subscribe };
 
 export function invalidateEvidence(): void {
   evidenceGeneration += 1;
   clearEvidence();
+  boundary.set(evidenceGeneration);
 }
 const colors = ['#2563eb', '#c026d3', '#ea580c'];
 
