@@ -4,6 +4,7 @@
   import { appConfig, accessMode } from '../lib/stores';
   import { ApiError, getReferences, getReference, identifyStoredPoint } from '../lib/api';
   import { referenceEvidence } from '../lib/identification';
+  import { identificationPlot } from '../lib/identification';
   import type { IdentificationEvidence, ReferencePage } from '../lib/identification';
   import type { EvidenceTrace } from '../lib/evidenceTypes';
   import type { EvidenceDomain, EvidenceTheme } from '../lib/evidenceTypes';
@@ -108,7 +109,9 @@
   $: committedMode = (committedSelection?.mode ?? 'average') as 'average' | 'subset' | 'point';
   $: committedIndices = Array.isArray(committedSelection?.indices) ? committedSelection.indices as number[] : [];
   $: committedAverage = snapshot?.trace?.provenance.averaging_method ?? 'unknown';
-  $: comparing = !unsupportedRegion && view !== 'processing';
+  $: comparing = !unsupportedRegion && view !== 'processing' && view !== 'identification';
+  $: methodPlot = identificationPlot(result);
+  $: if (view === 'identification' && !methodPlot) view = 'processing';
   $: if (unsupportedRegion) view = 'processing';
 </script>
 
@@ -116,6 +119,7 @@
   <div class="evidence-controls">
     <label>View <select bind:value={view}>
       <option value="processing">Processing / fit and residual</option>
+      {#if methodPlot}<option value="identification">{methodPlot.label} and residual</option>{/if}
       <option value="overlay" disabled={unsupportedRegion}>Raman overlay</option>
       <option value="stacked" disabled={unsupportedRegion}>Raman stacked</option>
       <option value="emission" disabled={unsupportedRegion}>Luminescence (nm)</option>
@@ -160,7 +164,7 @@
       {#if !displays.length}<span>No compatible native axis for this view.</span>{/if}
     </p>
   {/if}
-  <RamanView identification={result} evidenceDesk={true} bind:this={plot} {...$$restProps} xDomain={domain} traceIdentity={primary?.id ?? ''}
+  <RamanView identification={result} showIdentificationFit={view === 'identification'} evidenceDesk={true} bind:this={plot} {...$$restProps} xDomain={domain} traceIdentity={primary?.id ?? ''}
     selectionMode={committedMode} selectedIndices={committedIndices}
     selectedPointIdx={committedMode === 'point' ? committedIndices[0] ?? null : null}
     nPoints={Number(committedSelection?.n_points ?? committedIndices.length)} averagingMethod={committedAverage}

@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from sherloc_pipeline.models.references import Digest, Name
 
@@ -32,6 +32,28 @@ class MethodRecipe(IdentificationModel):
     snr_min: float
 
 
+class MixtureRecipe(MethodRecipe):
+    method_id: Literal["raman-mixture"]
+    version: Literal["0.1.0"]
+    support_min: Literal[0.60]
+    extra_fwhm_cm1: list[float]
+    overlap_basis: Literal["eligible_after_exclusions_broadening_and_shift"]
+    retrieval_metric: Literal["cosine"]
+    retrieval_count: Literal[5]
+    fwhm_to_sigma: float
+    smoothing_mode: Literal["nearest"]
+    l1_penalty: float
+    background_cap: float
+    background_basis: Literal["three_linear_hats_unit_l2"]
+    max_components: Literal[2]
+    coefficient_cutoff: float
+    unexplained_support_min: float
+    solver_iterations: list[int] = Field(min_length=3, max_length=3)
+    solver_tolerance: float
+    denominator_floor: float
+    weight_basis: Literal["normalized_spectral_contributions"]
+
+
 class PointSelection(IdentificationModel):
     product_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,200}$")]
     sol: Annotated[int, Field(ge=0)]
@@ -59,10 +81,37 @@ class Candidate(IdentificationModel):
     species_name: Name
     supported_class: str | None
     trace_revision_ids: list[Digest]
-    support: Annotated[float, Field(ge=-1, le=1, allow_inf_nan=False)]
+    support: Annotated[float, Field(ge=-1, le=1, allow_inf_nan=False)] | None
+    retrieval_score: Annotated[float, Field(ge=-1, le=1, allow_inf_nan=False)] | None = None
     shift_cm_1: float
-    extra_fwhm_cm1: Literal[0.0]
+    extra_fwhm_cm1: Annotated[float, Field(ge=0, allow_inf_nan=False)]
     citations: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def serialize_candidate(self, handler):
+        payload = handler(self)
+        if self.retrieval_score is None:
+            payload.pop("retrieval_score", None)
+        return payload
+
+
+class MixtureComponent(IdentificationModel):
+    template_id: Digest
+    species_name: Name
+    coefficient: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    weight: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+
+
+class MixtureResult(IdentificationModel):
+    support_name: Literal["background_relative_sse"] = "background_relative_sse"
+    support: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None
+    weight_basis: Literal["normalized_spectral_contributions"] = "normalized_spectral_contributions"
+    components: list[MixtureComponent] = Field(max_length=2)
+    sse: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None
+    background_only_sse: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None
+    background_coefficients: list[float]
+    background_only_coefficients: list[float]
+    diagnostics: dict[str, Any]
 
 
 class IdentificationResult(IdentificationModel):
@@ -77,6 +126,15 @@ class IdentificationResult(IdentificationModel):
     effective_set_sha256: Digest
     ranking: list[Candidate]
     candidate: str | None
+    mixture: MixtureResult | None = None
     diagnostics: dict[str, Any]
     evidence: dict[str, Any]
     result_digest: Digest
+
+
+    @model_serializer(mode="wrap")
+    def serialize_result(self, handler):
+        payload = handler(self)
+        if self.mixture is None:
+            payload.pop("mixture", None)
+        return payload

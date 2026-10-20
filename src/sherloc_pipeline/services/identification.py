@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 from sherloc_pipeline.core.identification.compatibility import query_exclusion, reference_exclusion
 from sherloc_pipeline.core.identification.decision import decide
 from sherloc_pipeline.core.identification.inspection import inspection_fit
+from sherloc_pipeline.core.identification.mixture import fit_mixture, retrieve
 from sherloc_pipeline.core.identification.pearson import compare
 from sherloc_pipeline.core.identification.prep import Prepared, grid_for, prepare
-from sherloc_pipeline.core.identification.recipe import load_recipe
+from sherloc_pipeline.core.identification.recipe import load_recipe, recipe_for_release
 from sherloc_pipeline.core.identification.provenance import runtime_provenance
 from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
 from sherloc_pipeline.models.identification import Candidate, IdentificationRequest, IdentificationResult, PointSelection
@@ -134,6 +135,8 @@ class IdentificationService:
                 or digest(ids) != request.reference_subset_id):
             raise ValueError("template subset identity or bound mismatch")
         recipe, recipe_sha256 = load_recipe()
+        if recipe_sha256 != request.method_release_id:
+            recipe, recipe_sha256 = recipe_for_release(request.method_release_id)
         provenance = runtime_provenance()
         if recipe_sha256 != request.method_release_id:
             raise ValueError("method release is not the bundled frozen recipe")
@@ -248,6 +251,7 @@ def load_and_compute_identification(store, request, recipe, recipe_sha256, prove
 def compute_identification(request, recipe, recipe_sha256, provenance, query, templates):
     from types import SimpleNamespace
 
+    is_mixture = recipe.method_id == "raman-mixture"
     ranking, matches, exclusions = [], {}, []
     for template_data, member_data in templates:
         row = SimpleNamespace(**template_data)
@@ -289,14 +293,16 @@ def compute_identification(request, recipe, recipe_sha256, provenance, query, te
         vector = np.average([item.vector for item in prepared], axis=0,
                             weights=[member.weight for member in metadata.members])
         reference = Prepared(vector, mask, {})
-        match = compare(query, reference, recipe)
+        match = retrieve(query, reference, recipe) if is_mixture else compare(query, reference, recipe)
         if match is None:
             exclusions.append({"template_id": row.template_id, "reason": "insufficient_joint_overlap"})
             continue
         ranking.append(Candidate(template_id=row.template_id, species_name=metadata.species_name,
                                  supported_class=metadata.supported_class,
                                  trace_revision_ids=list(row.member_trace_ids),
-                                 support=match["support"], shift_cm_1=match["shift_cm_1"],
+                                 support=None if is_mixture else match["support"],
+                                 retrieval_score=match["retrieval_score"] if is_mixture else None,
+                                 shift_cm_1=match["shift_cm_1"],
                                  extra_fwhm_cm1=match["extra_fwhm_cm1"],
                                  citations=[{"trace_revision_id": identity, "citation_text": trace.citation_text,
                                              "citation_doi": trace.citation_doi, "citation_source": trace.citation_source,
@@ -305,14 +311,28 @@ def compute_identification(request, recipe, recipe_sha256, provenance, query, te
                                             for identity, trace in zip(row.member_trace_ids, traces, strict=True)]))
         matches[row.template_id] = match
     # Freeze one best template per species, retaining signed support and tie identity.
-    ranking.sort(key=lambda item: (-item.support, item.species_name, item.template_id))
+    ranking.sort(key=lambda item: (-(item.retrieval_score if is_mixture else item.support), item.species_name, item.template_id))
     species = set()
     ranking = [item for item in ranking if not (item.species_name in species or species.add(item.species_name))]
-    status, reasons = decide(ranking, query.diagnostics, recipe)
+    mixture = None
+    if is_mixture:
+        ranking = ranking[:recipe.retrieval_count]
+        mixture = fit_mixture(query, [{**item.model_dump(), **matches[item.template_id]} for item in ranking], recipe)
+        reason = query.diagnostics.get("reason")
+        if not reason and query.diagnostics.get("snr_proxy", 0) < recipe.snr_min:
+            reason = "insufficient_signal"
+        fit_reason = mixture.pop("reason")
+        reason = reason or fit_reason
+        reasons = [reason] if reason else []
+        status = "abstained" if reasons else "candidate"
+    else:
+        status, reasons = decide(ranking, query.diagnostics, recipe)
     evidence = {"grid": grid_for(recipe).tolist(), "mask": query.mask.tolist(),
                 "prepared_trace": None if query.vector is None else query.vector.tolist(),
                 "inspection": None}
-    if ranking:
+    if is_mixture:
+        evidence["mixture_fit"] = mixture.pop("evidence")
+    elif ranking:
         match = matches[ranking[0].template_id]
         evidence["inspection"] = inspection_fit(query.vector, match["vector"], match["mask"])
     payload = {
@@ -324,7 +344,9 @@ def compute_identification(request, recipe, recipe_sha256, provenance, query, te
         "reference_subset_id": request.reference_subset_id,
         "effective_set_sha256": digest(sorted(matches)),
         "ranking": [item.model_dump(mode="json") for item in ranking],
-        "candidate": ranking[0].species_name if status == "candidate" else None,
+        "candidate": (" + ".join(item["species_name"] for item in mixture["components"]) if is_mixture
+                      else ranking[0].species_name) if status == "candidate" else None,
+        **({"mixture": mixture} if is_mixture else {}),
         "diagnostics": {**query.diagnostics, "excluded_references": exclusions},
         "evidence": evidence,
     }

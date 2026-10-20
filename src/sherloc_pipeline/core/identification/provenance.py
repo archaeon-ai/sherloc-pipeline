@@ -13,6 +13,7 @@ IMPLEMENTATION_FILES = (
     "core/identification/compatibility.py",
     "core/identification/decision.py",
     "core/identification/inspection.py",
+    "core/identification/mixture.py",
     "core/identification/pearson.py",
     "core/identification/prep.py",
     "core/identification/provenance.py",

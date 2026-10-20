@@ -1,0 +1,62 @@
+{
+  "method_id": "raman-mixture",
+  "version": "0.1.0",
+  "status": "provisional",
+  "support_min": 0.6,
+  "threshold_source": "fixed_provisional",
+  "evaluation_unit": "point",
+  "grid": [
+    800.0,
+    1800.0,
+    5.0
+  ],
+  "shifts": [
+    -10.0,
+    -5.0,
+    0.0,
+    5.0,
+    10.0
+  ],
+  "extra_fwhm_cm1": [
+    0.0,
+    10.0,
+    20.0
+  ],
+  "excluded_intervals": [
+    [
+      790.0,
+      810.0
+    ],
+    [
+      965.0,
+      985.0
+    ]
+  ],
+  "min_coverage": 0.95,
+  "min_overlap": 0.9,
+  "overlap_basis": "eligible_after_exclusions_broadening_and_shift",
+  "max_gap": 30.0,
+  "min_samples": 30,
+  "baseline_lambda": 100000.0,
+  "baseline_iterations": 10,
+  "baseline_asymmetry": 0.01,
+  "snr_min": 3.0,
+  "retrieval_metric": "cosine",
+  "retrieval_count": 5,
+  "fwhm_to_sigma": 2.35482,
+  "smoothing_mode": "nearest",
+  "l1_penalty": 0.03,
+  "background_cap": 0.1,
+  "background_basis": "three_linear_hats_unit_l2",
+  "max_components": 2,
+  "coefficient_cutoff": 0.05,
+  "unexplained_support_min": 0.25,
+  "solver_iterations": [
+    400,
+    200,
+    100
+  ],
+  "solver_tolerance": 1e-07,
+  "denominator_floor": 1e-12,
+  "weight_basis": "normalized_spectral_contributions"
+}
