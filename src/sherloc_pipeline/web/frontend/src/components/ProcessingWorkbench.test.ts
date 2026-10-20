@@ -1504,3 +1504,14 @@ it.each([undefined, false])('keeps legacy wavelength-only ML masks absent with c
   expect(csv).not.toContain('spike_mask_method');
   expect(csvProvenance(csv).annotations).not.toHaveProperty('spike_mask');
 });
+
+
+it('keeps distinct nonblank target values separate without trimming identity', async () => {
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), target: 'Synthetic Alpha' } });
+  const first = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+  expect(get(pinnedTraces)).toHaveLength(1); first.unmount();
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), id: 'synthetic-space', target: 'Synthetic Alpha ' } });
+  render(ProcessingWorkbench, { scanId: 'synthetic-space' }); await flush();
+  expect(get(pinnedTraces)).toEqual([]);
+});

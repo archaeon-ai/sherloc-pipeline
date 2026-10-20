@@ -273,8 +273,8 @@
     processingState.set(null);
     undoStack.set([]);
     if (scan) {
-      const target = scan.target?.trim();
-      const identity = target ? ['target', target] : ['scan', scan.id];
+      const target = scan.target;
+      const identity = target?.trim() ? ['target', target] : ['scan', scan.id];
       evidenceContextKey = JSON.stringify([mountedSession, generation, scan.sol_number, identity]);
       setEvidenceContext(evidenceContextKey);
     }
@@ -303,8 +303,8 @@
       if (destroyed || staleEvidence(requestBoundary)) return;
       scan = res.scan;
       if (evidenceEnabled) {
-        const target = scan.target?.trim();
-        const identity = target ? ['target', target] : ['scan', scan.id];
+        const target = scan.target;
+        const identity = target?.trim() ? ['target', target] : ['scan', scan.id];
         evidenceContextKey = JSON.stringify([mountedSession, requestBoundary, scan.sol_number, identity]);
         setEvidenceContext(evidenceContextKey);
       }
