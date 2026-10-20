@@ -61,6 +61,8 @@
   $: useWavelength = domain === 'emission_wavelength';
   $: xData = useWavelength ? (wavelength ?? []) : wavenumber;
   $: ramanArtifacts = !evidenceEnabled || !useWavelength;
+  // The fit plot has fixed prepared-space axes, so the display-range inputs do not apply to it.
+  $: fitPlotActive = evidenceEnabled && showIdentificationFit && identificationPlot(identification) !== null;
   $: unitTrace = comparisonItems ? comparisonItems[0]?.trace : processingTrace;
   $: recordedUnit = unitTrace
     ? (useWavelength ? unitTrace.snapshot.trace.provenance.wavelength_unit : unitTrace.snapshot.trace.provenance.wavenumber_unit) ?? 'unknown unit'
@@ -686,6 +688,7 @@
   {#if empty}
     <div class="plot-empty">No spectrum data loaded</div>
   {:else}
+    {#if !fitPlotActive}
     <div class="axis-controls">
       <span class="axis-label">x:</span>
       <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'X minimum' : undefined} bind:value={xMin} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '280' : '640'} />
@@ -696,6 +699,7 @@
       <span class="axis-sep">-</span>
       <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'Y maximum' : undefined} bind:value={yMax} on:change={renderPlot} placeholder="auto" />
     </div>
+    {/if}
     {#if !evidenceMode}
     <div class="overlay-toggles">
       <label class="toggle-label"><input type="checkbox" bind:checked={showGridlines} on:change={renderPlot} /> Grid</label>
