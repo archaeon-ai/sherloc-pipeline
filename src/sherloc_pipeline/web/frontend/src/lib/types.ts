@@ -377,6 +377,7 @@ export interface ConfigResponse {
   access_mode: 'internal' | 'public';
   tier: 'team' | 'public';
   capabilities: {
+    evidence_desk: boolean;
     references: boolean;
     identification: boolean;
     experimental_candidates: boolean;
@@ -616,6 +617,7 @@ export interface ProcessingArtifacts {
 }
 
 export interface ExportTrace {
+  region?: string;
   provenance: SpectrumProvenance;
   source: Record<string, unknown>;
   selection: Record<string, unknown>;

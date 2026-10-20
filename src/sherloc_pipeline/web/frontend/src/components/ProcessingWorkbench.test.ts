@@ -19,7 +19,8 @@ import { tick } from 'svelte';
 import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
-import { accessMode } from '../lib/stores';
+import { clearEvidence, pinnedTraces } from '../lib/evidenceStore';
+import { accessMode, appConfig, scienceAuthorized, currentHash, sessionGeneration, clearSessionState } from '../lib/stores';
 import type { BadpixResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
@@ -238,6 +239,8 @@ let getAvg: MockInstance<[scanId: string, params?: SpectrumParams], Promise<Spec
 let originalGetContext: typeof HTMLCanvasElement.prototype.getContext;
 
 beforeEach(() => {
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  clearEvidence();
   vi.restoreAllMocks();
   reactSpy.mockClear();  // vi.mock factory spy survives restoreAllMocks
   // AciViewer calls canvas.getContext on mount; jsdom logs a noisy
@@ -1216,4 +1219,661 @@ it('public-tier JSON and CSV headers exclude private fields planted in source ro
   } finally {
     accessMode.set('internal');
   }
+});
+
+
+function syntheticSpectrum(intensity: number[], overrides: Partial<SpectrumResponse> = {}): SpectrumResponse {
+  return fakeSpectrum(intensity, { ...overrides, provenance: {
+    calibration_version: 'synthetic-calibration', wavenumber_unit: 'cm-1',
+    intensity_unit: 'synthetic-unit', ...overrides.provenance,
+  } });
+}
+
+describe('ProcessingWorkbench evidence session boundaries', () => {
+  beforeEach(() => { getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A)); });
+  it('renders retained pins after an initial 404 on remount and then commits a valid point', async () => {
+    const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    first.unmount();
+    getAvg.mockRejectedValueOnce(new api.ApiError(404, 'Synthetic selection unavailable'));
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(get(processingState)).toBeNull();
+    expect(get(pinnedTraces)).toHaveLength(1);
+    expect(screen.getByLabelText('Evidence desk')).toBeTruthy();
+    await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'overlay' } });
+    await flush();
+    expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+    vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
+    await fireEvent.click(container.querySelector('.point-chip')!);
+    await flush();
+    expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+    expect(screen.getByLabelText('Evidence desk')).toBeTruthy();
+    expect(get(pinnedTraces)).toHaveLength(1);
+  });
+
+  it.each([403, 'network'] as const)('withholds retained pins when the remount spectrum fails with %s', async failure => {
+    const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    first.unmount();
+    getAvg.mockRejectedValueOnce(failure === 403 ? new api.ApiError(403, 'Synthetic forbidden') : new Error('Synthetic network failure'));
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(get(pinnedTraces)).toHaveLength(1);
+    expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+    expect(get(processingState)).toBeNull();
+  });
+
+  it.each([200, 404])('does not validate the desk with a stale %s spectrum', async status => {
+    let finish = () => {};
+    getAvg.mockReturnValueOnce(new Promise((resolve, reject) => {
+      finish = () => status === 200 ? resolve(syntheticSpectrum(INTENSITY_STALE)) : reject(new api.ApiError(404, 'Synthetic unavailable'));
+    }));
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    // Keep the current boundary unvalidated while the old boundary completes.
+    vi.mocked(api.getScan).mockReturnValueOnce(new Promise(() => {}));
+    appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+    await flush();
+    finish(); await flush();
+    expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+    expect(get(processingState)).toBeNull();
+  });
+
+  it('validates a later successful selection after a denied initial spectrum', async () => {
+    getAvg.mockRejectedValueOnce(new api.ApiError(403, 'Synthetic forbidden'));
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+    vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
+    await fireEvent.click(container.querySelector('.point-chip')!);
+    await flush();
+    expect(screen.getByLabelText('Evidence desk')).toBeTruthy();
+    expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  });
+
+  it('displays same-target pins with axis controls after the current selection returns 404', async () => {
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    await flush();
+    getAvg.mockRejectedValue(new api.ApiError(404, 'Synthetic selection unavailable'));
+    await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'mean' } });
+    await flush();
+    expect(get(processingState)).toBeNull();
+    expect(get(pinnedTraces)).toHaveLength(1);
+    expect(screen.getByLabelText('View')).toHaveValue('overlay');
+    expect(screen.queryByText('No spectrum data loaded')).toBeNull();
+    expect(container.querySelectorAll('.axis-controls .axis-input')).toHaveLength(4);
+    const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
+    expect(traces).toHaveLength(1);
+    expect(layout.meta.traces[0].snapshot.trace.source.scan_id).toBe(SCAN_ID);
+    expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+    await fireEvent.click(container.querySelector('.pin input[type="checkbox"]')!);
+    await flush();
+    expect(screen.getByText('No spectrum data loaded')).toBeTruthy();
+    expect(container.querySelector('.axis-controls')).toBeNull();
+    expect(reactSpy.mock.calls.at(-1)![1]).toEqual([]);
+  });
+
+  it('retains a pin across scans of the same target and clears it for a new target', async () => {
+    const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    expect(get(pinnedTraces)).toHaveLength(1);
+    first.unmount();
+    vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), id: 'synthetic-second', scan_name: 'Synthetic second' } });
+    const second = render(ProcessingWorkbench, { scanId: 'synthetic-second' });
+    await flush(); expect(get(pinnedTraces)).toHaveLength(1); second.unmount();
+    vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), target: 'Other invented' } });
+    render(ProcessingWorkbench, { scanId: 'synthetic-third' });
+    await flush(); expect(get(pinnedTraces)).toEqual([]);
+  });
+
+  it('clears target A pins when target B metadata succeeds but its points fail', async () => {
+    const first = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    expect(get(pinnedTraces)).toHaveLength(1);
+    first.unmount();
+    vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Other invented' } });
+    let failPoints = () => {};
+    vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      failPoints = () => reject(new Error('Synthetic points failure'));
+    }));
+    const second = render(ProcessingWorkbench, { scanId: 'synthetic-second' });
+    await flush();
+    expect(get(pinnedTraces)).toEqual([]);
+    expect(second.container.textContent).not.toContain('Other invented');
+    expect(second.container.querySelector('.workbench-layout')).toBeNull();
+    failPoints(); await flush();
+    expect(second.container.querySelector('.workbench-layout')).toBeNull();
+    second.unmount();
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(screen.getByLabelText('Evidence desk')).toBeTruthy();
+    expect(get(pinnedTraces)).toEqual([]);
+  });
+
+  it('denies a spectrum completing after sign-out before it can populate or pin state', async () => {
+    let resolve = (_value: SpectrumResponse) => {};
+    getAvg.mockReturnValue(new Promise(done => { resolve = done; }));
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush(); clearSessionState();
+    resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
+    expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+  });
+
+  it('stops sequential requests when scan metadata completes after sign-out', async () => {
+    let resolve = (_value: Awaited<ReturnType<typeof api.getScan>>) => {};
+    vi.mocked(api.getScan).mockReturnValue(new Promise(done => { resolve = done; }));
+    render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush(); clearSessionState();
+    resolve({ schema_version: '1', scan: fakeScan() }); await flush();
+    expect(api.getScanPoints).not.toHaveBeenCalled(); expect(getAvg).not.toHaveBeenCalled();
+    expect(get(pinnedTraces)).toEqual([]);
+  });
+
+  it('pins the committed new request when an older reply finishes later', async () => {
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    let resolve = (_value: SpectrumResponse) => {};
+    getAvg.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'mean' } });
+    getAvg.mockResolvedValueOnce(syntheticSpectrum(INTENSITY_NEW));
+    await fireEvent.change(container.querySelector('.averaging-controls select')!, { target: { value: 'median' } });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+    resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
+    expect(get(pinnedTraces)[0].snapshot.raman.intensity).toEqual(INTENSITY_NEW);
+    expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  });
+
+  it('mounts and exports a wavelength-only committed spectrum', async () => {
+    getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A, { region: 'R2', wavenumber: [], wavelength: [280, 300, 320], channel_indices: [0, 1, 3],
+      provenance: { calibration_version: null, wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: 'synthetic', region: 'R2' } }));
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    expect(container.querySelector('.raman-view')).toBeTruthy();
+    expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+    const call = reactSpy.mock.calls.at(-1)!;
+    expect(call[1][0].x).toEqual([280, 300, null, 320]);
+    expect(call[2].xaxis.title.text).toBe('Wavelength (nm)');
+  });
+});
+
+
+it.each(['tier', 'access'])('invalidates an in-flight spectrum on an authorized %s transition', async boundary => {
+  accessMode.set('internal');
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  scienceAuthorized.set(true);
+  currentHash.set('#/scan/synthetic/workbench');
+  const generation = sessionGeneration;
+  let resolve = (_value: SpectrumResponse) => {};
+  getAvg.mockReturnValue(new Promise(done => { resolve = done; }));
+  render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await flush();
+  // Hold revalidation while the spectrum from the old boundary completes.
+  vi.mocked(api.getScan).mockReturnValueOnce(new Promise(() => {}));
+  if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  else accessMode.set('public');
+  resolve(syntheticSpectrum(INTENSITY_STALE)); await flush();
+  expect(get(scienceAuthorized)).toBe(true);
+  expect(get(currentHash)).toBe('#/scan/synthetic/workbench');
+  expect(sessionGeneration).toBe(generation);
+  expect(get(appConfig)?.capabilities?.evidence_desk).toBe(true);
+  expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+});
+
+
+it.each([undefined, false, true])('gates the evidence desk with capability %s', async enabled => {
+  appConfig.set({ tier: 'team', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse);
+  getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  expect(Boolean(screen.queryByLabelText('Evidence desk'))).toBe(enabled === true);
+  expect(container.querySelector('.raman-view')).toBeTruthy();
+  expect(container.querySelectorAll('.export-trigger')).toHaveLength(1);
+  expect(csvProvenance(await exportCsv(container)).data.intensity).toEqual(INTENSITY_A);
+});
+
+it.each(['R2', 'R3'])('commits authoritative %s without provenance.region', async region => {
+  getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A, { region, wavelength: [285, 305, 325],
+    provenance: { calibration_version: null, wavenumber_unit: 'cm-1', wavelength_unit: 'nm', intensity_unit: 'synthetic' } }));
+  render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  expect(get(processingState)?.trace?.region).toBe(region);
+  expect(reactSpy.mock.calls.at(-1)![2].xaxis.title.text).toBe('Wavelength (nm)');
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' })); await flush();
+  expect(get(pinnedTraces)[0].snapshot.trace.region).toBe(region);
+  expect(reactSpy.mock.calls.at(-1)![2].xaxis.title.text).toBe('Wavelength (nm)');
+});
+
+it.each(['sign-out', 'tier'])('rejects a late processing result after %s', async boundary => {
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  let finish = () => {};
+  vi.spyOn(api, 'postFit').mockReturnValue(new Promise(resolve => { finish = () => resolve(fakeFit()); }));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  const card = Array.from(container.querySelectorAll('.step-title')).find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
+  await fireEvent.click(card.querySelector('.step-header')!);
+  await fireEvent.click(card.querySelector('.btn-primary')!);
+  expect(api.postFit).toHaveBeenCalledOnce();
+  if (boundary === 'sign-out') clearSessionState();
+  else { scienceAuthorized.set(true); appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse); }
+  finish(); await flush();
+  if (boundary === 'sign-out') expect(get(processingState)).toBeNull();
+  else expect(get(processingState)?.stage).not.toBe('raman_fitted');
+  expect(get(pinnedTraces)).toEqual([]);
+});
+
+
+describe('capability-off legacy Workbench regression', () => {
+  it.each([undefined, false])('preserves tier transitions, R2 annotations and a light plot under dark system theme (capability=%s)', async enabled => {
+    const matchMedia = vi.fn(() => ({ matches: true }));
+    vi.stubGlobal('matchMedia', matchMedia);
+    try {
+      const config = { tier: 'team', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse;
+      appConfig.set(config);
+      scienceAuthorized.set(true);
+      accessMode.set('internal');
+      currentHash.set('#/scan/synthetic/workbench');
+      const generation = sessionGeneration;
+      const context = vi.spyOn(await import('../lib/evidenceStore'), 'setEvidenceContext');
+      const invalidate = vi.spyOn(await import('../lib/evidenceStore'), 'invalidateEvidence');
+      let finish = (_value: SpectrumResponse) => {};
+      const point = vi.spyOn(api, 'getPointSpectrum').mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+      const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
+      appConfig.set({ ...config, tier: 'public' }); accessMode.set('public'); await flush();
+      finish(syntheticSpectrum(INTENSITY_A)); await flush();
+      expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
+      expect(get(currentHash)).toBe('#/scan/synthetic/workbench'); expect(get(appConfig)?.tier).toBe('public');
+      expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_A);
+      vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '1', region: 'R123', n_channels: 3,
+        badpix: [{ position: 1, channel: 600, tier: 1, source: 'synthetic-noisy' }] });
+      point.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW, { region: 'R2', wavelength: [285, 305, 325],
+        despike_applied: true, despike_method: 'ml', n_masked_channels: 1, masked_positions: [1] }));
+      const region = Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r2')!;
+      await fireEvent.click(region); await flush();
+      await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
+      expect(screen.queryByLabelText('Evidence desk')).toBeNull();
+      const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
+      expect(traces[0].x).toEqual([285, 305, 325]); expect(traces[0].y).toEqual(INTENSITY_NEW);
+      expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').x).toEqual([305]);
+      expect(traces.find((trace: { name: string }) => trace.name === 'Known-noisy channels (1)').x).toEqual([305]);
+      expect(layout.xaxis.title.text).toBe('Wavelength (nm)');
+      expect(layout.plot_bgcolor).toBe('#ffffff'); expect(layout.paper_bgcolor).toBe('#ffffff');
+      expect(traces[0].line.color).toBe('#1e293b'); expect(layout.font.color).toBeUndefined();
+      expect(layout.legend.font.color).toBeUndefined(); expect(layout._viewKey).toBeUndefined();
+      expect(container.querySelector('.axis-input')).toHaveAttribute('placeholder', '640');
+      expect(matchMedia).not.toHaveBeenCalled(); expect(context).not.toHaveBeenCalled(); expect(invalidate).not.toHaveBeenCalled();
+      point.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW, { region: 'R2', wavenumber: [], wavelength: [285, 305, 325] }));
+      await fireEvent.click(Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r3')!);
+      await flush();
+      expect(screen.getByText('No spectrum data available')).toBeTruthy();
+      expect(container.querySelector('.export-trigger')).toBeDisabled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+
+it.each(['', '   '])('isolates pins by scan identity for a blank target (%j)', async target => {
+  getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_A));
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), target } });
+  const first = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+  expect(get(pinnedTraces)).toHaveLength(1); first.unmount();
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), id: 'synthetic-other', target } });
+  render(ProcessingWorkbench, { scanId: 'synthetic-other' }); await flush();
+  expect(get(pinnedTraces)).toEqual([]);
+});
+
+
+it.each(['tier', 'access'])('accepts fresh spectrum, annotations and processing after an authorized %s boundary', async boundary => {
+  accessMode.set('internal');
+  scienceAuthorized.set(true);
+  currentHash.set('#/scan/synthetic/workbench');
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+  const generation = sessionGeneration;
+  let revalidate = () => {};
+  vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+    revalidate = () => resolve({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  }));
+  if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  else accessMode.set('public');
+  await flush();
+  expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+  expect(container.querySelector('.export-trigger')).toBeNull();
+  expect(container.querySelector('.aci-viewer')).toBeNull();
+  getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
+  vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '1', region: 'R123', n_channels: 3,
+    badpix: [{ position: 1, channel: 600, tier: 1, source: 'synthetic-noisy' }] });
+  revalidate(); await flush();
+  expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'processing' } }); await flush();
+  await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
+  expect(csvProvenance(await exportCsv(container)).annotations.badpix[0].source).toBe('synthetic-noisy');
+  vi.spyOn(api, 'postFit').mockResolvedValue(fakeFit());
+  const card = Array.from(container.querySelectorAll('.step-title')).find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
+  await fireEvent.click(card.querySelector('.step-header')!);
+  await fireEvent.click(card.querySelector('.btn-primary')!); await flush();
+  expect(get(processingState)?.stage).toBe('raman_fitted');
+  expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
+  expect(get(currentHash)).toBe('#/scan/synthetic/workbench');
+});
+
+
+it.each(['R2', 'R3'])('keeps wavelength-only %s ML annotations in plot, pin and exports', async region => {
+  vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_A, {
+    region, wavenumber: [], wavelength: [285, 305, 325], masked_positions: [1],
+    despike_applied: true, despike_method: 'ml', n_masked_channels: 1,
+    provenance: { calibration_version: null, wavelength_unit: 'nm', intensity_unit: null } as unknown as import('../lib/types').SpectrumProvenance,
+  }));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
+  expect(lastSpikeTrace()?.x).toEqual([305]);
+  const metadata = csvProvenance(await exportCsv(container));
+  expect(metadata.annotations.spike_mask).toEqual([false, true, false]);
+  expect(metadata.annotations.spike_method).toBe('ml');
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' })); await flush();
+  expect(get(pinnedTraces)[0].annotations.spike_mask).toEqual([false, true, false]);
+});
+
+
+it.each([undefined, false])('keeps legacy wavelength-only ML masks absent with capability %s', async enabled => {
+  appConfig.set({ tier: 'team', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse);
+  vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_A, {
+    region: 'R2', wavenumber: [], wavelength: [285, 305, 325], masked_positions: [1],
+    despike_applied: true, despike_method: 'ml', n_masked_channels: 1,
+    provenance: { calibration_version: null, wavelength_unit: 'nm', intensity_unit: null } as unknown as import('../lib/types').SpectrumProvenance,
+  }));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
+  expect(screen.getByText('No spectrum data available')).toBeTruthy();
+  expect(lastSpikeTrace()).toBeUndefined();
+  expect(screen.queryByLabelText('Spike markers')).toBeNull();
+  expect(container.querySelector('.export-trigger')).toBeDisabled();
+  const csv = await exportCsv(container);
+  expect(csvHasSpikeMaskColumn(csv)).toBe(false);
+  expect(csv).not.toContain('spike_mask_method');
+  expect(csvProvenance(csv).annotations).not.toHaveProperty('spike_mask');
+});
+
+
+it('keeps distinct nonblank target values separate without trimming identity', async () => {
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), target: 'Synthetic Alpha' } });
+  const first = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+  expect(get(pinnedTraces)).toHaveLength(1); first.unmount();
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), id: 'synthetic-space', target: 'Synthetic Alpha ' } });
+  render(ProcessingWorkbench, { scanId: 'synthetic-space' }); await flush();
+  expect(get(pinnedTraces)).toEqual([]);
+});
+
+
+it.each([['getScan', 'tier'], ['getScan', 'access'], ['getScanPoints', 'tier'], ['getScanPoints', 'access']] as const)('retries initial %s across an authorized %s boundary', async (pendingMethod, boundary) => {
+  accessMode.set('internal'); scienceAuthorized.set(true);
+  currentHash.set('#/scan/synthetic/workbench');
+  const generation = sessionGeneration;
+  vi.spyOn(api, 'getPointSpectrum').mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
+  let finish = () => {};
+  if (pendingMethod === 'getScan') {
+    vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+      finish = () => resolve({ schema_version: '1', scan: { ...fakeScan(), target: 'Stale synthetic' } });
+    }));
+  } else {
+    vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+      finish = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [], n_points: 0 });
+    }));
+  }
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } });
+  await flush();
+  expect(api.getPointSpectrum).not.toHaveBeenCalled();
+  if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  else accessMode.set('public');
+  await flush();
+  finish(); await flush(); await flush();
+  expect(api.getScan).toHaveBeenCalledTimes(2);
+  expect(api.getScanPoints).toHaveBeenCalledTimes(pendingMethod === 'getScan' ? 1 : 2);
+  expect(api.getPointSpectrum).toHaveBeenCalled();
+  expect(get(processingState)?.trace?.source.target).toBe('Invented');
+  expect(container.querySelector('.raman-view')).toBeTruthy();
+  expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+  expect(sessionGeneration).toBe(generation); expect(get(scienceAuthorized)).toBe(true);
+  expect(get(currentHash)).toBe('#/scan/synthetic/workbench');
+});
+
+it.each(['destroy', 'session'] as const)('does not retry an invalidated initial scan after %s ends eligibility', async ended => {
+  let finish = () => {};
+  vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+    finish = () => resolve({ schema_version: '1', scan: fakeScan() });
+  }));
+  const view = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  if (ended === 'destroy') view.unmount();
+  else clearSessionState();
+  finish(); await flush();
+  expect(api.getScan).toHaveBeenCalledOnce(); expect(api.getScanPoints).not.toHaveBeenCalled();
+  expect(get(processingState)).toBeNull();
+});
+
+it.each([['loaded', 'tier'], ['loaded', 'access'], ['points-pending', 'tier'], ['points-pending', 'access']] as const)('clears scan, points and ACI across a denied boundary from %s via %s', async (initial, boundary) => {
+  accessMode.set('internal'); scienceAuthorized.set(true);
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Private synthetic' } });
+  let finishPoints = () => {};
+  if (initial === 'points-pending') {
+    vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+      finishPoints = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [fakePoint()], n_points: 1 });
+    }));
+  }
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  if (initial === 'loaded') {
+    expect(container.textContent).toContain('Private synthetic');
+    expect(container.querySelector('.aci-viewer')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
+  } else {
+    expect(container.textContent).not.toContain('Private synthetic');
+  }
+  vi.mocked(api.getScan).mockRejectedValueOnce(new api.ApiError(403, 'Synthetic forbidden'));
+  if (boundary === 'tier') appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  else accessMode.set('public');
+  expect(get(processingState)).toBeNull(); expect(get(pinnedTraces)).toEqual([]);
+  expect(get(pointSelection)).toEqual({ mode: 'average' });
+  await flush(); finishPoints(); await flush();
+  expect(api.getScan).toHaveBeenCalledTimes(2);
+  expect(api.getScanPoints).toHaveBeenCalledOnce();
+  expect(container.textContent).not.toContain('Private synthetic');
+  expect(container.querySelector('.workbench-layout')).toBeNull();
+  expect(container.querySelector('.aci-viewer')).toBeNull();
+  expect(container.querySelector('.error-message')).toBeTruthy();
+  expect(container.textContent).not.toContain('Loading scan');
+  expect(get(processingState)).toBeNull();
+});
+
+it('commits fresh scan and points together and remounts ACI after revalidation', async () => {
+  accessMode.set('internal'); scienceAuthorized.set(true);
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  const oldAci = container.querySelector('.aci-viewer');
+  const aciCalls = vi.mocked(api.fetchAciImage).mock.calls.length;
+  let finishPoints = () => {};
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Public synthetic', n_points: 2 } });
+  vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+    finishPoints = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [fakePoint(), fakePoint(1)], n_points: 2 });
+  }));
+  appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  await flush();
+  expect(container.textContent).not.toContain('Invented');
+  expect(container.textContent).not.toContain('Public synthetic');
+  expect(container.querySelector('.aci-viewer')).toBeNull();
+  expect(get(processingState)).toBeNull();
+  finishPoints(); await flush();
+  expect(container.textContent).toContain('Public synthetic');
+  expect(container.querySelector('.aci-viewer')).toBeTruthy();
+  expect(container.querySelector('.aci-viewer')).not.toBe(oldAci);
+  expect(api.fetchAciImage).toHaveBeenCalledTimes(aciCalls + 1);
+  expect(api.getScan).toHaveBeenCalledTimes(2); expect(api.getScanPoints).toHaveBeenCalledTimes(2);
+  expect(get(processingState)?.trace?.source.target).toBe('Public synthetic');
+});
+
+
+it('leaves metadata cleared when point revalidation fails', async () => {
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Uncommitted synthetic' } });
+  vi.mocked(api.getScanPoints).mockRejectedValueOnce(new api.ApiError(403, 'Synthetic forbidden'));
+  appConfig.set({ tier: 'public', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  await flush();
+  expect(container.textContent).not.toContain('Uncommitted synthetic');
+  expect(container.textContent).not.toContain('Invented');
+  expect(container.querySelector('.aci-viewer')).toBeNull();
+  expect(container.querySelector('.workbench-layout')).toBeNull();
+  expect(container.querySelector('.error-message')).toBeTruthy();
+});
+
+it.each([undefined, false])('preserves legacy metadata timing and boundary behavior with capability %s', async enabled => {
+  appConfig.set({ tier: 'team', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse);
+  let failPoints = () => {};
+  vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise((_resolve, reject) => {
+    failPoints = () => reject(new api.ApiError(403, 'Synthetic forbidden'));
+  }));
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  // Legacy metadata appears before points resolve and remains after a points error.
+  expect(container.textContent).toContain('Invented');
+  appConfig.set({ tier: 'public', capabilities: enabled === undefined ? undefined : { evidence_desk: enabled } } as import('../lib/types').ConfigResponse);
+  accessMode.set('public');
+  failPoints(); await flush();
+  expect(api.getScan).toHaveBeenCalledOnce(); expect(api.getScanPoints).toHaveBeenCalledOnce();
+  expect(container.textContent).toContain('Invented');
+  expect(container.querySelector('.workbench-layout')).toBeTruthy();
+  expect(container.querySelector('.aci-viewer')).toBeTruthy();
+  expect(container.querySelector('.error-message')).toBeTruthy();
+});
+
+
+it('keeps the desk unmounted when enablement spectrum revalidation is denied', async () => {
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  accessMode.set('internal');
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Private synthetic', ml_mask_count: 0 } });
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), target: 'Public synthetic', ml_mask_count: 0 } });
+  getAvg.mockRejectedValue(new api.ApiError(403, 'Synthetic spectrum forbidden'));
+  accessMode.set('public');
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  await flush();
+  expect(container.textContent).not.toContain('Private synthetic');
+  expect(container.textContent).not.toContain('Loading scan');
+  expect(container.textContent).toContain('Synthetic spectrum forbidden');
+  expect(container.querySelector('[aria-label="Evidence desk"]')).toBeNull();
+  expect(get(processingState)).toBeNull();
+});
+
+it.each(['access-first', 'config-first'] as const)('revalidates a legacy TEAM scan before enabling evidence (%s)', async order => {
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  accessMode.set('internal');
+  vi.mocked(api.getScan).mockResolvedValueOnce({ schema_version: '1', scan: { ...fakeScan(), target: 'Private synthetic', ml_mask_count: 0 } });
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  expect(get(processingState)?.trace?.source.target).toBe('Private synthetic');
+  const pending: Array<() => void> = [];
+  vi.mocked(api.getScan).mockImplementation(() => new Promise(resolve => {
+    pending.push(() => resolve({ schema_version: '1', scan: { ...fakeScan(), target: 'Public synthetic', ml_mask_count: 0 } }));
+  }));
+  const enable = () => appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
+  if (order === 'access-first') accessMode.set('public');
+  else enable();
+  await flush();
+  if (order === 'access-first') enable();
+  else accessMode.set('public');
+  expect(get(processingState)).toBeNull();
+  await flush();
+  expect(container.textContent).not.toContain('Private synthetic');
+  expect(container.querySelector('.workbench-layout')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Pin current trace' })).toBeNull();
+  let finishSpectrum = () => {};
+  getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_NEW));
+  getAvg.mockReturnValueOnce(new Promise(resolve => {
+    finishSpectrum = () => resolve(fakeSpectrum(INTENSITY_NEW));
+  }));
+  pending.at(-1)!(); await flush();
+  expect(container.querySelector('.workbench-layout')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Pin current trace' })).toBeNull();
+  expect(get(processingState)).toBeNull();
+  finishSpectrum(); await flush();
+  expect(container.textContent).toContain('Public synthetic');
+  expect(screen.getByRole('button', { name: 'Pin current trace' })).toBeTruthy();
+  expect(get(processingState)?.trace?.source.target).toBe('Public synthetic');
+  expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  // An earlier enablement load cannot overwrite the settled public load.
+  if (pending.length > 1) { pending[0](); await flush(); }
+  expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+  expect(api.getScanPoints).toHaveBeenCalledTimes(2);
+});
+
+
+it.each(['loaded', 'scan-pending'] as const)('reloads through the legacy path after capability removal (%s)', async initial => {
+  let finishInitial = () => {};
+  if (initial === 'scan-pending') {
+    vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+      finishInitial = () => resolve({ schema_version: '1', scan: { ...fakeScan(), target: 'Stale synthetic' } });
+    }));
+  }
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  let finishScan = () => {};
+  let finishPoints = () => {};
+  vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+    finishScan = () => resolve({ schema_version: '1', scan: { ...fakeScan(), target: 'Legacy synthetic', ml_mask_count: 0 } });
+  }));
+  vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+    finishPoints = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [fakePoint()], n_points: 1 });
+  }));
+  getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_NEW));
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  accessMode.set('public');
+  expect(get(processingState)).toBeNull();
+  await flush();
+  expect(api.getScan).toHaveBeenCalledTimes(2);
+  finishScan(); await flush();
+  // Capability removal uses the legacy metadata assignment before points land.
+  expect(container.textContent).toContain('Legacy synthetic');
+  expect(container.textContent).toContain('Loading scan');
+  finishPoints(); await flush(); finishInitial(); await flush();
+  expect(container.textContent).not.toContain('Loading scan');
+  expect(container.textContent).not.toContain('Stale synthetic');
+  expect(container.querySelector('.workbench-layout')).toBeTruthy();
+  expect(container.querySelector('.aci-viewer')).toBeTruthy();
+  expect(container.querySelector('.raman-view')).toBeTruthy();
+  expect(container.querySelector('[aria-label="Evidence desk"]')).toBeNull();
+  expect(container.querySelector('.export-trigger')).not.toBeDisabled();
+  expect(get(processingState)?.trace?.source.target).toBe('Legacy synthetic');
+  expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
+});
+
+
+it.each([
+  ['getScan', 'session'], ['getScanPoints', 'session'], ['getAverageSpectrum', 'session'],
+  ['getScan', 'destroy'], ['getScanPoints', 'destroy'], ['getAverageSpectrum', 'destroy'],
+] as const)('abandons capability-removal recovery with %s pending on %s', async (pendingMethod, ended) => {
+  vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+  const view = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  let finish = () => {};
+  if (pendingMethod === 'getScan') {
+    vi.mocked(api.getScan).mockReturnValueOnce(new Promise(resolve => {
+      finish = () => resolve({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
+    }));
+  } else if (pendingMethod === 'getScanPoints') {
+    vi.mocked(api.getScanPoints).mockReturnValueOnce(new Promise(resolve => {
+      finish = () => resolve({ schema_version: '1', scan_id: SCAN_ID, points: [fakePoint()], n_points: 1 });
+    }));
+  } else {
+    getAvg.mockReturnValueOnce(new Promise(resolve => { finish = () => resolve(fakeSpectrum(INTENSITY_STALE)); }));
+  }
+  appConfig.set({ tier: 'team', capabilities: { evidence_desk: false } } as import('../lib/types').ConfigResponse);
+  await flush();
+  const pointCalls = vi.mocked(api.getScanPoints).mock.calls.length;
+  const spectrumCalls = getAvg.mock.calls.length;
+  const annotationCalls = vi.mocked(api.getBadpixChannels).mock.calls.length;
+  if (ended === 'session') clearSessionState();
+  else { view.unmount(); processingState.set(null); }
+  finish(); await flush();
+  expect(get(processingState)).toBeNull();
+  expect(api.getScanPoints).toHaveBeenCalledTimes(pointCalls);
+  expect(getAvg).toHaveBeenCalledTimes(spectrumCalls);
+  expect(api.getBadpixChannels).toHaveBeenCalledTimes(annotationCalls);
 });

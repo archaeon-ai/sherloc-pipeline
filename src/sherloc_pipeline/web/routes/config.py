@@ -119,6 +119,7 @@ def get_config(request: Request, response: Response) -> ConfigResponse:
         access_mode=access_mode,
         tier="public" if access_mode == "public" else "team",
         capabilities=CapabilitiesConfig(
+            evidence_desk=policy.evidence_desk,
             references=policy.references.mode != "off",
             identification=policy.identification.enabled,
             experimental_candidates=policy.identification.experimental_candidates,

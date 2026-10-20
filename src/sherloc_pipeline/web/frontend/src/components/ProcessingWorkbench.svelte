@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { navigate } from '../lib/stores';
+  import { get } from 'svelte/store';
+  import { appConfig, navigate, sessionGeneration } from '../lib/stores';
+  import { evidenceGeneration, evidenceBoundary, setEvidenceContext } from '../lib/evidenceStore';
   import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
   import {
     getScan,
@@ -34,13 +36,24 @@
   import ProcessingHistory from './ProcessingHistory.svelte';
   import PeakTable from './PeakTable.svelte';
 
+  import EvidenceDesk from './EvidenceDesk.svelte';
   import RamanView from './RamanView.svelte';
-  import AciViewer from './AciViewer.svelte';
   import ExportMenu from './ExportMenu.svelte';
+  import AciViewer from './AciViewer.svelte';
 
   export let scanId: string;
   export let queryParams: Record<string, string> = {};
 
+  const mountedSession = sessionGeneration;
+  function requestEvidence(revalidate = false): number | null {
+    return revalidate || get(appConfig)?.capabilities?.evidence_desk === true ? evidenceGeneration : null;
+  }
+  function staleEvidence(generation: number | null): boolean {
+    return generation !== null && (mountedSession !== sessionGeneration || generation !== evidenceGeneration);
+  }
+  $: evidenceEnabled = $appConfig?.capabilities?.evidence_desk === true;
+  let evidenceContextKey = '';
+  let validatedEvidenceBoundary: number | null = null;
   let scan: ScanDetail | null = null;
   let points: ScanPoint[] = [];
   let spectrum: SpectrumResponse | null = null;
@@ -102,12 +115,14 @@
       .map(item => ({ ...item, position: positions.get(item.channel)! }));
   }
   let showBadpixOverlay = false;
+  $: exportBadpix = showBadpixOverlay && badpix.length > 0 ? badpix : null;
 
   // Drop older annotation requests during region transitions.
   let badpixRequestGen = 0;
 
-  async function loadBadpix(): Promise<void> {
-    if (destroyed) return;
+  async function loadBadpix(revalidate = false): Promise<void> {
+    const requestBoundary = requestEvidence(revalidate);
+    if (destroyed || staleEvidence(requestBoundary)) return;
     const gen = ++badpixRequestGen;
     // Region transition: clear immediately so the previous region's
     // annotations neither render nor export while the new region's list is
@@ -117,7 +132,7 @@
       const res = await getBadpixChannels('R123');
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely.
-      if (gen !== badpixRequestGen) return;
+      if (gen !== badpixRequestGen || (requestBoundary !== null && (destroyed || staleEvidence(requestBoundary)))) return;
       badpixCatalog = res.badpix;
     } catch {
       // Annotation layer is best-effort: a failed fetch must never break the
@@ -210,12 +225,13 @@
   $: mlAggregateView = despikeMethod === 'ml' && !mlPointView;
 
   // ML mask keyed off the fetched spectrum's served length (the ML trace is the
-  // fetched array, so the mask aligns to spectrum.wavenumber === currentWavenumber
-  // at the raw stage). Recomputed whenever the fetch lands. Built only on a
+  // fetched intensity array, including wavelength-only spectra). Recomputed
+  // whenever the fetch lands. Built only on a
   // point view (issue #12 — aggregate union markers are misleading).
   $: mlSpikeMask =
     despikeMethod === 'ml' && mlPointView
-      ? buildMlSpikeMask(spectrum?.masked_positions, spectrum?.wavenumber.length ?? 0)
+      ? buildMlSpikeMask(spectrum?.masked_positions,
+          (evidenceEnabled ? spectrum?.intensity.length : spectrum?.wavenumber.length) ?? 0)
       : null;
 
   // The effective mask + provenance handed to RamanView/ExportMenu, gated
@@ -244,16 +260,43 @@
         : null
   ) as 'ml' | 'modz' | null;
 
-  // --- Badpix export gating (issue #9) --------------------------------------
-  // The CSV badpix column is emitted iff the overlay toggle is ON (and the
-  // list is non-empty). This derived value is the single export authority,
-  // mirroring effectiveSpikeMask: null means no column, no provenance header.
-  // Pure read of toggle + fetched list — no write to user-mutated state (H1).
-  $: exportBadpix =
-    showBadpixOverlay && badpix.length > 0 ? badpix : null;
+  // Clear committed evidence synchronously at an access boundary. New operations
+  // capture the new generation; only operations crossing the boundary are stale.
+  let metadataRequestGen = 0;
+  let activeBoundary = evidenceGeneration;
+  const stopBoundary = evidenceBoundary.subscribe(generation => {
+    if (generation === activeBoundary) return;
+    activeBoundary = generation;
+    metadataRequestGen += 1;
+    spectrumRequestGen += 1;
+    badpixRequestGen += 1;
+    scan = null;
+    points = [];
+    evidenceContextKey = '';
+    validatedEvidenceBoundary = null;
+    selectionMode = 'average';
+    selectedIndices = [];
+    selectedPointIdx = null;
+    pointSelection.set({ mode: 'average' });
+    loading = true;
+    error = '';
+    spectrum = null;
+    rawSnapshot = null;
+    badpixCatalog = [];
+    processingState.set(null);
+    undoStack.set([]);
+    // Let config/session updates finish before starting one load in the new boundary.
+    void Promise.resolve().then(async () => {
+      if (destroyed || mountedSession !== sessionGeneration || generation !== evidenceGeneration) return;
+      await loadScan(true);
+      if (!destroyed && mountedSession === sessionGeneration && generation === evidenceGeneration && scan) await loadBadpix(true);
+    });
+  });
 
   onDestroy(() => {
+    stopBoundary();
     destroyed = true;
+    metadataRequestGen += 1;
     spectrumRequestGen += 1;
     badpixRequestGen += 1;
   });
@@ -265,21 +308,36 @@
     await loadBadpix();
   });
 
-  async function loadScan() {
+  async function loadScan(revalidate = false): Promise<void> {
+    const requestBoundary = requestEvidence();
+    const requestGuard = requestEvidence(revalidate);
+    const gen = ++metadataRequestGen;
+    const stale = () => destroyed || gen !== metadataRequestGen || staleEvidence(requestGuard);
     loading = true;
     error = '';
     try {
       const res = await getScan(scanId);
-      if (destroyed) return;
+      if (stale()) return;
+      // Preserve legacy assignment timing when Evidence desk is off.
+      if (requestBoundary === null) {
+        scan = res.scan;
+        applyDespikeDefault(scan.ml_mask_count ?? 0);
+      } else {
+        // Authorized metadata establishes the target lifecycle even if points fail.
+        const target = res.scan.target;
+        const identity = target?.trim() ? ['target', target] : ['scan', res.scan.id];
+        evidenceContextKey = JSON.stringify([mountedSession, requestBoundary, res.scan.sol_number, identity]);
+        setEvidenceContext(evidenceContextKey);
+      }
+      const ptRes = await getScanPoints(scanId);
+      if (stale()) return;
+      // Metadata and points belong to the same authorized load.
       scan = res.scan;
+      points = ptRes.points;
       // Apply ML-or-none default once, before the first loadSpectrum call.
       // Funnel through the named helper — never set despikeMethod in a $: block
-      // (FRONTEND_HAZARDS H1). The user can override via the despike selector;
-      // applyDespikeDefault is never called again after mount.
-      applyDespikeDefault(scan.ml_mask_count ?? 0);
-      const ptRes = await getScanPoints(scanId);
-      if (destroyed) return;
-      points = ptRes.points;
+      // (FRONTEND_HAZARDS H1). Revalidation uses the freshly authorized metadata.
+      if (requestBoundary !== null) applyDespikeDefault(scan.ml_mask_count ?? 0);
 
       // Validate deep links before fetching any spectrum; never fall back to
       // the scan average when a requested point is missing or malformed.
@@ -294,15 +352,16 @@
         pointIdx: selectedPointIdx ?? undefined,
       });
 
-      await loadSpectrum();
+      await loadSpectrum(revalidate);
     } catch (e) {
+      if (stale()) return;
       if (e instanceof Error) {
         error = e.message;
       } else {
         error = 'Failed to load scan';
       }
     } finally {
-      loading = false;
+      if (!stale()) loading = false;
     }
   }
 
@@ -313,8 +372,9 @@
   // raw response.
   let spectrumRequestGen = 0;
 
-  async function loadSpectrum() {
-    if (destroyed) return;
+  async function loadSpectrum(revalidate = false) {
+    const requestBoundary = requestEvidence(revalidate);
+    if (destroyed || staleEvidence(requestBoundary)) return;
     const gen = ++spectrumRequestGen;
     // The selection context this request is FOR (PR #13 review F1): captured
     // at entry, synchronously with the branch below that reads selectionMode,
@@ -363,18 +423,19 @@
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely (do not touch spectrum or the
       // processing state).
-      if (gen !== spectrumRequestGen) return;
+      if (gen !== spectrumRequestGen || (requestBoundary !== null && (destroyed || staleEvidence(requestBoundary)))) return;
       spectrum = result;
       // Commit-bound selection context (PR #13 review F1): recorded only here
       // and in the 404 arm below, in lockstep with the `spectrum` assignment,
       // so the ML marker/export gate keys on what is actually committed.
       committedSelectionMode = requestMode;
       initProcessingState(requestSelection);
+      if (requestBoundary !== null) validatedEvidenceBoundary = requestBoundary;
     } catch (e) {
       // Stale-failure guard (PR #7 review F5): if a newer request superseded
       // this one, its failure is irrelevant — neither surface an error UI
       // for an obsolete request nor clear a newer spectrum.
-      if (gen !== spectrumRequestGen) return;
+      if (gen !== spectrumRequestGen || (requestBoundary !== null && (destroyed || staleEvidence(requestBoundary)))) return;
       if (e instanceof ApiError && e.status === 404) {
         spectrum = null;
         rawSnapshot = null;
@@ -383,6 +444,8 @@
         // A committed "no spectrum" for this selection: record its mode so the
         // gate never inherits a stale context from the previous commit.
         committedSelectionMode = requestMode;
+        // An authorized empty selection still validates retained same-target pins.
+        if (requestBoundary !== null) validatedEvidenceBoundary = requestBoundary;
       } else {
         // Non-404 failure: the committed spectrum (and its recorded selection
         // context) remain those of the LAST successful commit — the displayed
@@ -399,6 +462,7 @@
       inputToken: ++rawSnapshotToken,
       stage: 'raw',
       trace: {
+        region: spectrum.region,
         provenance,
         source: { scan_id: spectrum.scan_id, sol: scan?.sol_number ?? null,
           target: scan?.target ?? null, scan_name: scan?.scan_name ?? null,
@@ -504,7 +568,7 @@
 
   // Processing chain update
   function onChainStateUpdate(e: CustomEvent<ProcessingSnapshot>) {
-    if (destroyed || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
+    if (destroyed || staleEvidence(requestEvidence()) || !rawSnapshot || e.detail.inputToken !== rawSnapshot.inputToken) return;
     const newState = { ...e.detail, trace: rawSnapshot?.trace };
     // Push current state to undo before updating
     if (currentState) {
@@ -543,7 +607,16 @@
     }
   }
 
-  function getPlotTitle(): string {
+  function getPlotTitle(snapshot: ProcessingSnapshot | null): string {
+    const source = snapshot?.trace?.source;
+    const selection = snapshot?.trace?.selection;
+    const base = `${source?.target ?? 'Unknown'} Sol ${source?.sol ?? ''} ${source?.scan_name ?? ''}`;
+    const indices = Array.isArray(selection?.indices) ? selection.indices : [];
+    if (selection?.mode === 'point') return `${base} — Point ${indices[0] ?? '?'}`;
+    if (selection?.mode === 'subset') return `${base} — ${indices.length} pts`;
+    return base;
+  }
+  function getLegacyPlotTitle(): string {
     const base = `${scan?.target ?? 'Unknown'} Sol ${scan?.sol_number ?? ''} ${scan?.scan_name ?? ''}`;
     if (selectionMode === 'point' && selectedPointIdx !== null) {
       return `${base} — Point ${selectedPointIdx}`;
@@ -561,17 +634,19 @@
     <button class="btn-link" on:click={() => navigate('#/')}>Scans</button>
     <span class="breadcrumb-sep">/</span>
     <span>{scan?.target ?? '...'} Sol {scan?.sol_number ?? '...'}</span>
-    <ExportMenu
-      trace={currentState?.trace ?? null}
-      stage={currentStage}
-      wavenumber={currentWavenumber}
-      intensity={currentIntensity}
-      artifacts={currentState?.artifacts ?? null}
-      spikeMask={effectiveSpikeMask}
-      spikeMethod={effectiveSpikeMethod}
-      badpix={exportBadpix}
-      {processingChain}
-    />
+    {#if !evidenceEnabled}
+      <ExportMenu
+        trace={currentState?.trace ?? null}
+        stage={currentStage}
+        wavenumber={currentWavenumber}
+        intensity={currentIntensity}
+        artifacts={currentState?.artifacts ?? null}
+        spikeMask={effectiveSpikeMask}
+        spikeMethod={effectiveSpikeMethod}
+        badpix={exportBadpix}
+        {processingChain}
+      />
+    {/if}
   </div>
 
   {#if error}
@@ -753,8 +828,10 @@
             </div>
           </div>
           <div class="card-body">
-            {#if currentWavenumber.length > 0}
-              <RamanView
+            {#if evidenceEnabled && validatedEvidenceBoundary === evidenceGeneration}
+              <EvidenceDesk
+                snapshot={currentState}
+                contextKey={evidenceContextKey}
                 wavenumber={currentWavenumber}
                 intensity={currentIntensity}
                 rawIntensity={rawSnapshot?.raman.intensity ?? []}
@@ -772,24 +849,59 @@
                 {residual}
                 showRaw={currentStage !== 'raw'}
                 showResidual={showFit && residual !== null}
-                title={getPlotTitle()}
+                title={getPlotTitle(currentState)}
                 height={480}
                 {selectionMode}
                 {selectedIndices}
                 {selectedPointIdx}
                 nPoints={scan?.n_points ?? 0}
                 {fitRange}
-                wavelength={spectrum?.wavelength ?? null}
+                wavelength={currentState?.trace?.wavelength ?? null}
                 region={selectedRegion}
                 {averagingMethod}
                 on:viewRangeChange={(e) => {
                   if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
                 }}
               />
-            {:else}
-              <div class="empty-state" style="padding: 60px">
-                No spectrum data available
-              </div>
+            {:else if !evidenceEnabled}
+              {#if currentWavenumber.length > 0}
+                <RamanView
+                  wavenumber={currentWavenumber}
+                  intensity={currentIntensity}
+                  rawIntensity={rawSnapshot?.raman.intensity ?? []}
+                  stage={currentStage}
+                  spikeMask={effectiveSpikeMask}
+                  spikeMethod={effectiveSpikeMethod}
+                  {badpix}
+                  bind:showBadpix={showBadpixOverlay}
+                  background={currentState?.artifacts?.background ?? null}
+                  backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
+                  baseline={baselineOverlay}
+                  baselineRange={appliedBaselineRange}
+                  {fitCurve}
+                  peaks={showFit ? fitPeaks : []}
+                  {residual}
+                  showRaw={currentStage !== 'raw'}
+                  showResidual={showFit && residual !== null}
+                  title={getLegacyPlotTitle()}
+                  height={480}
+                  {selectionMode}
+                  {selectedIndices}
+                  {selectedPointIdx}
+                  nPoints={scan?.n_points ?? 0}
+                  {fitRange}
+                  wavelength={spectrum?.wavelength ?? null}
+                  region={selectedRegion}
+                  {averagingMethod}
+                  on:viewRangeChange={(e) => {
+                    if (selectedRegion === 'R1') visibleBaselineRange = e.detail.range;
+                  }}
+                />
+              {:else}
+                <div class="empty-state" style="padding: 60px">
+                  No spectrum data available
+                </div>
+              {/if}
             {/if}
           </div>
         </div>

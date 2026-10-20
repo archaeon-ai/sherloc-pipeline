@@ -95,6 +95,7 @@ def approved_policy():
 
 
 @pytest.mark.parametrize("policy", [
+    {"evidence_desk": "false"}, {"evidence_desk": 1}, {"evidence_desks": True},
     {"referneces": {}}, {"references": {"mod": "off"}},
     {"identification": {"enabled": "false"}}, {"identification": {"enabled": 1}},
     {"identification": {"enabled": True}},
@@ -568,3 +569,23 @@ async def test_anonymous_access_mode_exposes_only_mode(engine, tmp_path, monkeyp
     finally:
         app.state.job_queue.shutdown()
         app.state.map_executor.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_evidence_capability_is_explicit_and_authenticated(engine, tmp_path, monkeypatch, enabled):
+    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps({"evidence_desk": enabled}))
+    app = create_app(engine=engine, config=fake_config(), access_mode="internal")
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
+            response = await client.get("/api/config")
+            assert response.status_code == 200
+            assert response.json()["capabilities"]["evidence_desk"] is enabled
+            assert "capabilities" not in (await client.get("/api/config/bootstrap")).json()
+    finally:
+        app.state.job_queue.shutdown()
+        app.state.map_executor.shutdown(wait=False)
+
+
+def test_evidence_capability_defaults_off():
+    assert load_feature_policy("internal").evidence_desk is False

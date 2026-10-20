@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
+  import type { EvidenceDomain, EvidenceTheme, EvidenceTrace } from '../lib/evidenceTypes';
+  import { comparisonDisplays, evidenceColor, nativeRenderTrace, evidenceExport, nativeFigureEvidence } from '../lib/evidenceStore';
   import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
@@ -41,13 +43,35 @@
   export let wavelength: number[] | null = null;
   export let region: string = 'R1';
 
-  // Use wavelength for x-axis on non-R1 regions
-  $: useWavelength = region !== 'R1' && wavelength !== null && wavelength.length > 0;
-  $: xData = useWavelength ? wavelength! : wavenumber;
-  $: xLabel = useWavelength ? 'Wavelength (nm)' : 'Raman Shift (cm\u207B\u00B9)';
+  export let evidenceDesk = false;
+  export let xDomain: EvidenceDomain | null = null;
+  export let traceIdentity = '';
+  export let processingTrace: EvidenceTrace | null = null;
+  export let evidenceMode = false;
+  export let primaryTrace: EvidenceTrace | null = null;
+  export let comparisonTraces: EvidenceTrace[] = [];
+  export let stacked = false;
+  export let theme: EvidenceTheme = 'light';
+  $: evidenceEnabled = evidenceDesk || !!processingTrace || evidenceMode || !!primaryTrace || comparisonTraces.length > 0 || xDomain !== null;
+  $: domain = (evidenceEnabled ? xDomain : null) ?? (region !== 'R1' && wavelength?.length ? 'emission_wavelength' : 'raman_shift');
+  $: useWavelength = domain === 'emission_wavelength';
+  $: xData = useWavelength ? (wavelength ?? []) : wavenumber;
+  $: ramanArtifacts = !evidenceEnabled || !useWavelength;
+  $: unitTrace = comparisonItems ? comparisonItems[0]?.trace : processingTrace;
+  $: recordedUnit = unitTrace
+    ? (useWavelength ? unitTrace.snapshot.trace.provenance.wavelength_unit : unitTrace.snapshot.trace.provenance.wavenumber_unit) ?? 'unknown unit'
+    : comparisonItems ? 'unknown unit' : useWavelength ? 'nm' : 'cm-1';
+  $: xUnit = recordedUnit === 'cm-1' ? 'cm\u207B\u00B9' : recordedUnit;
+  $: xLabel = `${useWavelength ? 'Wavelength' : 'Raman Shift'} (${xUnit})`;
+  $: comparisonItems = evidenceEnabled && (evidenceMode || primaryTrace || comparisonTraces.length)
+    ? comparisonDisplays(primaryTrace, comparisonTraces, domain, stacked) : null;
+  $: empty = evidenceEnabled ? (comparisonItems ? comparisonItems.length === 0 : xData.length === 0) : wavenumber.length === 0;
 
   let plotDiv: HTMLDivElement;
   let plotInitialized = false;
+  let destroyed = false;
+  let previousViewKey = '';
+  let figureEvidence: ReturnType<typeof evidenceExport> | null = null;
   let plotEventsBound = false;
 
   const dispatch = createEventDispatcher<{
@@ -119,13 +143,16 @@
   };
 
   onMount(async () => {
-    Plotly = await import('plotly.js-basic-dist-min');
+    const loaded = await import('plotly.js-basic-dist-min');
+    if (evidenceEnabled && destroyed) return;
+    Plotly = loaded;
     plotInitialized = true;
     renderPlot();
     bindPlotEvents();
   });
 
   onDestroy(() => {
+    destroyed = true;
     if (plotDiv && Plotly) {
       try {
         const div = plotDiv as PlotlyDiv;
@@ -144,13 +171,22 @@
   });
 
   function renderPlot() {
-    if (!Plotly || !plotDiv || wavenumber.length === 0) return;
+    if (!Plotly || !plotDiv || (evidenceEnabled ? destroyed : wavenumber.length === 0)) return;
+    const viewKey = evidenceEnabled ? JSON.stringify([domain, traceIdentity || xData, primaryTrace?.id, comparisonTraces.map(t => [t.id, t.visible]), stacked]) : '';
+    if (evidenceEnabled && previousViewKey !== viewKey) {
+      xMin = ''; xMax = ''; yMin = ''; yMax = '';
+      previousViewKey = viewKey;
+    }
+    if (evidenceMode || primaryTrace || comparisonTraces.length) { renderComparisons(viewKey); return; }
+    const coloredTrace = processingTrace ? evidenceColor(processingTrace, theme) : null;
+    const nativeDisplay = coloredTrace ? nativeRenderTrace(coloredTrace, domain) : null;
+    figureEvidence = coloredTrace ? nativeFigureEvidence(coloredTrace, domain) : null;
+    if (evidenceEnabled && xData.length === 0) { Plotly.react(plotDiv, [], {}, { responsive: true }); return; }
 
     // Preserve current axis ranges from interactive zoom/pan,
     // but only if the data length hasn't changed (same region).
     const curLayout = (plotDiv as unknown as { layout?: Record<string, unknown> }).layout;
-    const prevNChannels = curLayout?._nChannels as number | undefined;
-    const sameRegion = prevNChannels === xData.length;
+    const sameRegion = evidenceEnabled ? curLayout?._viewKey === viewKey : curLayout?._nChannels === xData.length;
     const prevXRange = sameRegion && curLayout?.xaxis
       ? (curLayout.xaxis as Record<string, unknown>).range as [number, number] | undefined
       : undefined;
@@ -158,26 +194,34 @@
       ? (curLayout.yaxis as Record<string, unknown>).range as [number, number] | undefined
       : undefined;
 
+    function nativeCoordinates(x: number[], y: number[], indices = x.map((_, i) => i)) {
+      if (!nativeDisplay || y.length !== x.length) return { x, y };
+      const plotX: (number | null)[] = [];
+      const plotY: (number | null)[] = [];
+      x.forEach((value, i) => {
+        if (nativeDisplay.breaks[indices[i]] || (i > 0 && indices[i] !== indices[i - 1] + 1)) { plotX.push(null); plotY.push(null); }
+        plotX.push(Number.isFinite(value) ? value : null);
+        plotY.push(Number.isFinite(y[i]) ? y[i] : null);
+      });
+      return { x: plotX, y: plotY };
+    }
+
     const traces: Plotly.Data[] = [];
 
     // Main trace: current processed spectrum
     traces.push({
-      x: xData,
-      y: intensity,
+      ...nativeCoordinates(xData, intensity),
       type: 'scatter',
       mode: 'lines',
       name: stage === 'raw' ? 'raw' : 'processed',
-      line: { color: '#1e293b', width: 1.4 },
-      hovertemplate: useWavelength
-        ? 'Wavelength: %{x:.1f} nm<br>Intensity: %{y:.1f}<extra></extra>'
-        : 'Raman Shift: %{x:.1f} cm\u207B\u00B9<br>Intensity: %{y:.1f}<extra></extra>',
+      line: { color: coloredTrace?.color ?? '#1e293b', width: 1.4 },
+      hovertemplate: `${useWavelength ? 'Wavelength' : 'Raman Shift'}: %{x:.1f} ${xUnit}<br>Intensity: %{y:.1f}<extra></extra>`,
     });
 
     // Raw overlay (faded)
     if (showRaw && showOverlayRaw && rawIntensity.length > 0 && stage !== 'raw') {
       traces.push({
-        x: xData,
-        y: rawIntensity,
+        ...nativeCoordinates(xData, rawIntensity),
         type: 'scatter',
         mode: 'lines',
         name: 'raw',
@@ -189,8 +233,7 @@
     // Background overlay (dashed gray)
     if (showOverlayBg && background && (stage === 'bg_subtracted' || stage === 'despiked')) {
       traces.push({
-        x: xData,
-        y: background,
+        ...nativeCoordinates(xData, background),
         type: 'scatter',
         mode: 'lines',
         name: 'background',
@@ -201,8 +244,7 @@
     // Background scaled overlay
     if (showOverlayBg && backgroundScaled && stage === 'bg_subtracted') {
       traces.push({
-        x: xData,
-        y: backgroundScaled,
+        ...nativeCoordinates(xData, backgroundScaled),
         type: 'scatter',
         mode: 'lines',
         name: 'bg (scaled)',
@@ -211,7 +253,7 @@
     }
 
     // Baseline overlay (dashed red)
-    if (showOverlayBaseline && baseline && (stage === 'baseline_corrected' || stage === 'raman_fitted')) {
+    if (ramanArtifacts && showOverlayBaseline && baseline && (stage === 'baseline_corrected' || stage === 'raman_fitted')) {
       const baselineIndices = baselineRange
         ? wavenumber
             .map((x, i) => ({ x, i }))
@@ -219,8 +261,7 @@
             .map(({ i }) => i)
         : wavenumber.map((_, i) => i);
       traces.push({
-        x: baselineIndices.map((i) => xData[i]),
-        y: baselineIndices.map((i) => baseline[i]),
+        ...nativeCoordinates(baselineIndices.map((i) => xData[i]), baselineIndices.map((i) => baseline[i]), baselineIndices),
         type: 'scatter',
         mode: 'lines',
         name: 'baseline',
@@ -229,22 +270,17 @@
     }
 
     // Fit curve (green) — only within the fitting range
-    if (showOverlayFit && fitCurve && stage === 'raman_fitted') {
+    if (ramanArtifacts && showOverlayFit && fitCurve && stage === 'raman_fitted') {
       let fitX = xData;
       let fitY = fitCurve;
+      let indices = xData.map((_, i) => i);
       if (fitRange) {
-        const indices: number[] = [];
-        for (let i = 0; i < wavenumber.length; i++) {
-          if (wavenumber[i] >= fitRange[0] && wavenumber[i] <= fitRange[1]) {
-            indices.push(i);
-          }
-        }
-        fitX = indices.map((i) => xData[i]);
-        fitY = indices.map((i) => fitCurve[i]);
+        indices = wavenumber.map((_, i) => i).filter(i => wavenumber[i] >= fitRange[0] && wavenumber[i] <= fitRange[1]);
+        fitX = indices.map(i => xData[i]);
+        fitY = indices.map(i => fitCurve[i]);
       }
       traces.push({
-        x: fitX,
-        y: fitY,
+        ...nativeCoordinates(fitX, fitY, indices),
         type: 'scatter',
         mode: 'lines',
         name: 'fit',
@@ -253,7 +289,7 @@
     }
 
     // Spike markers: red triangles at positions where spikeMask is true
-    if (showOverlaySpikes && spikeMask && spikeMask.length === wavenumber.length) {
+    if (showOverlaySpikes && spikeMask && spikeMask.length === (evidenceEnabled ? xData.length : wavenumber.length)) {
       const spikeX: number[] = [];
       const spikeY: number[] = [];
       for (let i = 0; i < spikeMask.length; i++) {
@@ -282,7 +318,7 @@
             color: '#dc2626',
             line: { color: '#991b1b', width: 1 },
           },
-          hovertemplate: `${hoverVerb} at %{x:.1f} cm\u207B\u00B9<br>Intensity: %{y:.1f}<extra></extra>`,
+          hovertemplate: `${hoverVerb} at %{x:.1f} ${xUnit}<br>Intensity: %{y:.1f}<extra></extra>`,
         });
       }
     }
@@ -319,7 +355,7 @@
             line: { color: '#0369a1', width: 1.5 },
           },
           hovertemplate:
-            'Known-noisy channel at %{x:.1f} cm\u207B\u00B9' +
+            `Known-noisy channel at %{x:.1f} ${xUnit}` +
             '<br>tier %{customdata[0]} \u00B7 source %{customdata[1]}<extra></extra>',
         });
       }
@@ -329,7 +365,7 @@
     // peak text annotations (gated by showOverlayPeakLabels, new in issue #18).
     // The two toggles are independent — operators can show labels without
     // the vertical-line clutter, or vice versa.
-    const peakElements = buildPeakElements(peaks, {
+    const peakElements = buildPeakElements(ramanArtifacts ? peaks : [], {
       showFit: showOverlayPeaks,
       showPeakLabels: showOverlayPeakLabels,
       shapeY1: 0.95,
@@ -341,7 +377,7 @@
     // Individual peak colors (cycle through for multiple peaks)
     const peakColors = ['#7c3aed', '#0891b2', '#c026d3', '#ea580c', '#4f46e5'];
 
-    for (let pi = 0; pi < (showOverlayPeaks ? peaks : []).length; pi++) {
+    for (let pi = 0; pi < (showOverlayPeaks && ramanArtifacts ? peaks : []).length; pi++) {
       const peak = peaks[pi];
       if (peak.center_cm1 === null) continue;
 
@@ -419,8 +455,10 @@
       });
     }
 
-    const mainLayout: Partial<Plotly.Layout> & { _nChannels?: number } = {
+    const dark = evidenceEnabled && (theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches));
+    const mainLayout: Partial<Plotly.Layout> & { _nChannels?: number; _viewKey?: string; meta?: typeof figureEvidence } = {
       _nChannels: xData.length,
+      ...(evidenceEnabled ? { _viewKey: viewKey, meta: figureEvidence } : {}),
       title: title ? { text: title, font: { size: 14 } } : undefined,
       xaxis: {
         title: { text: xLabel, font: { size: 12 } },
@@ -438,7 +476,7 @@
             : { autorange: true }),
       },
       yaxis: {
-        title: { text: 'Intensity (counts)', font: { size: 12 } },
+        title: { text: `Intensity (${processingTrace ? processingTrace.snapshot.trace.provenance.intensity_unit ?? 'unknown unit' : 'counts'})`, font: { size: 12 } },
         tickfont: { family: 'JetBrains Mono, monospace', size: 10 },
         gridcolor: '#f1f5f9',
         showgrid: showGridlines,
@@ -451,22 +489,22 @@
           : { autorange: true }),
       },
       margin: { l: 65, r: 20, t: title ? 40 : 20, b: 50 },
-      height: showResidual && residual ? height * 0.7 : height,
+      height: ramanArtifacts && showResidual && residual ? height * 0.7 : height,
       shapes,
       annotations,
       hovermode: 'x unified',
-      plot_bgcolor: '#ffffff',
-      paper_bgcolor: '#ffffff',
-      font: { family: 'Inter, system-ui, sans-serif' },
+      plot_bgcolor: dark ? '#0f172a' : '#ffffff',
+      paper_bgcolor: dark ? '#0f172a' : '#ffffff',
+      font: { family: 'Inter, system-ui, sans-serif', ...(evidenceEnabled ? { color: dark ? '#e2e8f0' : '#1e293b' } : {}) },
       showlegend: traces.length > 1,
       legend: {
         x: 1,
         y: 1,
         xanchor: 'right',
-        bgcolor: 'rgba(255,255,255,0.85)',
-        bordercolor: '#e2e8f0',
+        bgcolor: dark ? 'rgba(15,23,42,0.85)' : 'rgba(255,255,255,0.85)',
+        bordercolor: dark ? '#475569' : '#e2e8f0',
         borderwidth: 1,
-        font: { size: 11 },
+        font: { size: 11, ...(evidenceEnabled ? { color: dark ? '#e2e8f0' : '#1e293b' } : {}) },
       },
     };
 
@@ -484,11 +522,10 @@
       displaylogo: false,
     };
 
-    if (showResidual && showOverlayResidual && residual) {
+    if (ramanArtifacts && showResidual && showOverlayResidual && residual) {
       // Subplot: main spectrum + residual below
       const residualTrace: Plotly.Data = {
-        x: xData,
-        y: residual,
+        ...nativeCoordinates(xData, residual),
         type: 'scatter',
         mode: 'lines',
         name: 'residual',
@@ -535,8 +572,7 @@
           tickcolor: '#cbd5e1',
           domain: [0, 1],
           anchor: 'y2' as Plotly.YAxisName,
-          range: [640, 4200],
-          autorange: false,
+          ...(evidenceEnabled ? (_validRange(xMin, xMax) ? { range: [Number(xMin), Number(xMax)], autorange: false } : { autorange: true }) : { range: [640, 4200], autorange: false }),
         },
         yaxis2: {
           title: { text: 'Residual', font: { size: 12 } },
@@ -558,6 +594,36 @@
     bindPlotEvents();
   }
 
+  function renderComparisons(viewKey: string) {
+    if (!Plotly) return;
+    const displays = (comparisonItems ?? [])
+      .map(item => ({ ...item, trace: evidenceColor(item.trace, theme) }));
+    figureEvidence = evidenceExport(displays);
+    const traces: Plotly.Data[] = displays.map(item => {
+      const x: (number | null)[] = [];
+      const y: (number | null)[] = [];
+      item.x.forEach((value, i) => {
+        if (item.breaks[i] || !Number.isFinite(value) || !Number.isFinite(item.displayed[i])) {
+          x.push(null); y.push(null);
+        }
+        x.push(Number.isFinite(value) ? value : null);
+        y.push(Number.isFinite(item.displayed[i]) ? item.displayed[i] : null);
+      });
+      return { x, y, type: 'scatter', mode: 'lines', connectgaps: false,
+        name: item.trace.label, line: { color: item.trace.color, width: 1.4 } } as Plotly.Data;
+    });
+    const dark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    Plotly.react(plotDiv, traces, {
+      uirevision: viewKey, meta: figureEvidence, height,
+      xaxis: { title: { text: xLabel }, ...(_validRange(xMin, xMax) ? { range: [Number(xMin), Number(xMax)] } : { autorange: true }) },
+      yaxis: { title: { text: stacked ? 'Display intensity + labeled offset' : 'Display intensity' }, ...(_validRange(yMin, yMax) ? { range: [Number(yMin), Number(yMax)] } : { autorange: true }) },
+      paper_bgcolor: dark ? '#0f172a' : '#ffffff', plot_bgcolor: dark ? '#0f172a' : '#ffffff',
+      font: { color: dark ? '#e2e8f0' : '#1e293b' }, margin: { l: 65, r: 20, t: 20, b: 50 },
+      showlegend: true,
+    } as unknown as Plotly.Layout, { responsive: true, displayModeBar: false });
+    bindPlotEvents();
+  }
+
   function onXRangeInputChange() {
     renderPlot();
     if (_validRange(xMin, xMax)) {
@@ -569,8 +635,9 @@
     }
   }
 
-  function downloadAs(format: 'png' | 'svg') {
+  export function downloadAs(format: 'png' | 'svg') {
     if (!Plotly || !plotDiv) return;
+    const evidence = figureEvidence;
     Plotly.downloadImage(plotDiv, {
       format,
       filename: `sherloc_raman_${stage}`,
@@ -578,24 +645,31 @@
       width: 1000,
       scale: 2,
     } as Plotly.DownloadImgopts);
+    if (evidence) {
+      const url = URL.createObjectURL(new Blob([JSON.stringify(evidence, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url; link.download = `sherloc_evidence_${format}.provenance.json`; link.click();
+      URL.revokeObjectURL(url);
+    }
   }
 </script>
 
 <div class="raman-view">
   <div bind:this={plotDiv} class="plot-div"></div>
-  {#if wavenumber.length === 0}
+  {#if empty}
     <div class="plot-empty">No spectrum data loaded</div>
   {:else}
     <div class="axis-controls">
       <span class="axis-label">x:</span>
-      <input class="axis-input" type="number" bind:value={xMin} on:change={onXRangeInputChange} placeholder="640" />
+      <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'X minimum' : undefined} bind:value={xMin} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '280' : '640'} />
       <span class="axis-sep">-</span>
-      <input class="axis-input" type="number" bind:value={xMax} on:change={onXRangeInputChange} placeholder="4200" />
+      <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'X maximum' : undefined} bind:value={xMax} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '350' : '4200'} />
       <span class="axis-label" style="margin-left: 8px">y:</span>
-      <input class="axis-input" type="number" bind:value={yMin} on:change={renderPlot} placeholder="auto" />
+      <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'Y minimum' : undefined} bind:value={yMin} on:change={renderPlot} placeholder="auto" />
       <span class="axis-sep">-</span>
-      <input class="axis-input" type="number" bind:value={yMax} on:change={renderPlot} placeholder="auto" />
+      <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'Y maximum' : undefined} bind:value={yMax} on:change={renderPlot} placeholder="auto" />
     </div>
+    {#if !evidenceMode}
     <div class="overlay-toggles">
       <label class="toggle-label"><input type="checkbox" bind:checked={showGridlines} on:change={renderPlot} /> Grid</label>
       <label class="toggle-label"><input type="checkbox" bind:checked={showPointLabel} on:change={renderPlot} /> Point label</label>
@@ -641,6 +715,7 @@
       <button class="btn-export" on:click={() => downloadAs('png')} title="Download as PNG">PNG</button>
       <button class="btn-export" on:click={() => downloadAs('svg')} title="Download as SVG">SVG</button>
     </div>
+    {/if}
   {/if}
 </div>
 
