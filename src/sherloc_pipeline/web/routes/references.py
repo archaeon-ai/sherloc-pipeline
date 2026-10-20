@@ -18,6 +18,9 @@ from sherloc_pipeline.web.reference_storage import R2ReferenceStore, can_serve_t
 
 router = APIRouter(prefix="/api/references", tags=["references"])
 
+MAX_BINDING_MEMBERS = 10_000
+BINDING_QUERY_CHUNK = 500
+
 
 def require_references(request):
     policy = request.app.state.feature_policy
@@ -81,10 +84,21 @@ def identification_binding(request, policy, release):
     ids = [row.template_id for row in rows]
     if not ids or len(ids) > identify.max_templates or digest(ids) != policy.references.subset_id:
         return None
+    # Bound total authorization work before loading any member records.
+    if any(len(row.member_trace_ids) > 100 for row in rows) or sum(
+        len(row.member_trace_ids) for row in rows
+    ) > MAX_BINDING_MEMBERS:
+        return None
+    member_ids = sorted({identity for row in rows for identity in row.member_trace_ids})
+    members_by_id = {}
+    for start in range(0, len(member_ids), BINDING_QUERY_CHUNK):
+        members = request.state.db.query(ReferenceTraceORM).filter(
+            ReferenceTraceORM.release_id == release.release_id,
+            ReferenceTraceORM.trace_revision_id.in_(member_ids[start:start + BINDING_QUERY_CHUNK]),
+        ).all()
+        members_by_id.update((member.trace_revision_id, member) for member in members)
     for row in rows:
-        if len(row.member_trace_ids) > 100:
-            return None
-        members = [request.state.db.get(ReferenceTraceORM, identity) for identity in row.member_trace_ids]
+        members = [members_by_id.get(identity) for identity in row.member_trace_ids]
         if any(member is None for member in members) or not can_serve_template(row, members, release, policy, "team"):
             return None
     binding = identify.allowed_method_releases[0]

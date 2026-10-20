@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import numpy as np
 import pytest
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import Session
 
 from tests.unit.test_reference_release import snapshot  # noqa: F401
@@ -31,7 +31,7 @@ from sherloc_pipeline.web.feature_policy import FeaturePolicy
 
 
 @pytest.fixture
-def evidence_api(tmp_path, snapshot, monkeypatch):
+def evidence_api(tmp_path, snapshot, monkeypatch, request):
     root, manifest, serving = snapshot
     x = np.linspace(720., 1880., 581)
     y = np.exp(-((x - 1137.) / 19.) ** 2) + .7 * np.exp(-((x - 1573.) / 29.) ** 2) + .0002 * x
@@ -52,6 +52,16 @@ def evidence_api(tmp_path, snapshot, monkeypatch):
         file['traces'].append(extra)
     manifest['templates'][0]['recipe_sha256'] = load_recipe()[1]
     manifest['templates'][0]['members'].append({**manifest['templates'][0]['members'][0], 'trace_index': 1})
+    options = getattr(request, 'param', {})
+    for index in range(1, options.get('templates', 1)):
+        extra = copy.deepcopy(manifest['templates'][0])
+        extra['name'] = f'synthetic-template-{index}'
+        manifest['templates'].append(extra)
+    if options.get('unpermitted_template'):
+        extra = copy.deepcopy(manifest['templates'][0])
+        extra['name'] = 'synthetic-unpermitted-template'
+        extra['members'] = [{**extra['members'][0], 'trace_index': 2}]
+        manifest['templates'].append(extra)
     (root / 'snapshot.json').write_text(json.dumps(manifest))
     serving.write_text(json.dumps({'approved_trace_keys': [f'synthetic-0001:synthetic-file-1:{i}' for i in range(3)]}))
     database = tmp_path / 'synthetic.db'
@@ -61,15 +71,17 @@ def evidence_api(tmp_path, snapshot, monkeypatch):
     imported = import_release(root, database, objects, serving)
     with Session(engine) as session:
         release = session.get(ReferenceReleaseORM, imported.release_id)
-        template = session.query(ReferenceTemplateORM).one()
+        template = session.query(ReferenceTemplateORM).filter_by(name='synthetic-template').one()
+        template_ids = sorted(row.template_id for row in session.query(ReferenceTemplateORM).all()
+                              if row.name != 'synthetic-unpermitted-template')
         trace_ids = list(template.member_trace_ids)
         unknown = session.query(ReferenceTraceORM).filter_by(rights_known=False).one().trace_revision_id
         values = {'evidence_desk': True, 'references': {'mode': 'all_approved', 'release_id': release.release_id,
-                  'serving_policy_version': release.serving_policy_sha256, 'subset_id': digest([template.template_id])},
+                  'serving_policy_version': release.serving_policy_sha256, 'subset_id': digest(template_ids)},
                   'identification': {'enabled': True, 'experimental_candidates': True, 'allowed_method_releases': [
                       {'method_release_id': load_recipe()[1], 'reference_release_id': release.release_id,
-                       'reference_subset_id': digest([template.template_id])}]}}
-        binding = {**values['identification']['allowed_method_releases'][0], 'template_ids': [template.template_id]}
+                       'reference_subset_id': digest(template_ids)}]}}
+        binding = {**values['identification']['allowed_method_releases'][0], 'template_ids': template_ids}
         session.add(SolORM(sol_number=9999))
         scan = ScanORM(id='synthetic-scan', sol_number=9999, scan_name='Synthetic scan', target='Synthetic Target',
                        scan_id='ss__9999_0000000000_000rrs__synthetic', sclk_start=0, n_points=1,
@@ -342,44 +354,26 @@ def test_detached_source_matches_canonical_provenance(evidence_api, source_kind)
     assert result['selection']['excitation_evidence'] == source['provenance']['excitation_basis']
 
 
+@pytest.mark.parametrize('evidence_api', [{'templates': count} for count in (1, 10, 100)], indirect=True)
 def test_synthetic_budgets(evidence_api):
-    """Measure admitted work sizes; values are operational observations only."""
+    """Measure admitted work sizes; stage the complete synthetic catalog first."""
     import resource
 
     s = evidence_api
-    measurements = []
-    for count in (1, 10, 100):
-        with Session(s.engine) as session:
-            template = session.query(ReferenceTemplateORM).first()
-            while session.query(ReferenceTemplateORM).count() < count:
-                index = session.query(ReferenceTemplateORM).count()
-                metadata = copy.deepcopy(template.metadata_json)
-                metadata['name'] = f'synthetic-template-{index}'
-                session.add(ReferenceTemplateORM(template_id=digest(['synthetic-template', index]),
-                            release_id=template.release_id, name=metadata['name'], recipe_sha256=template.recipe_sha256,
-                            member_trace_ids=template.member_trace_ids, permitted_tiers=['team'], metadata_json=metadata))
-                session.flush()
-            ids = sorted(row[0] for row in session.query(ReferenceTemplateORM.template_id).all())
-            session.commit()
-        policy = s.app.state.feature_policy.model_dump()
-        policy['references']['subset_id'] = digest(ids)
-        policy['identification']['allowed_method_releases'][0]['reference_subset_id'] = digest(ids)
-        s.app.state.feature_policy = FeaturePolicy.model_validate(policy)
-        body = {**s.body, 'template_ids': ids, 'reference_subset_id': digest(ids)}
-        started = time.monotonic()
-        response = s.client.post('/api/identify', json=body)
-        cold = time.monotonic() - started
-        assert response.status_code == 200, response.text
-        started = time.monotonic()
-        cached = s.client.post('/api/identify', json=body)
-        warm = time.monotonic() - started
-        assert cached.json() == response.json()
-        measurements.append({'templates': count, 'member_evaluations': count * 2, 'native_points_per_trace': len(s.x),
-                             'cold_seconds': round(cold, 4), 'warm_seconds': round(warm, 4),
-                             'result_bytes': len(response.content), 'parent_peak_rss_kib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-                             'worker_peak_rss_kib': resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss})
-    print('SYNTHETIC_BUDGETS=' + json.dumps(measurements, sort_keys=True))
-
+    count = len(s.body['template_ids'])
+    started = time.monotonic()
+    response = s.client.post('/api/identify', json=s.body)
+    cold = time.monotonic() - started
+    assert response.status_code == 200, response.text
+    started = time.monotonic()
+    cached = s.client.post('/api/identify', json=s.body)
+    warm = time.monotonic() - started
+    assert cached.json() == response.json()
+    measurement = {'templates': count, 'member_evaluations': count * 2, 'native_points_per_trace': len(s.x),
+                   'cold_seconds': round(cold, 4), 'warm_seconds': round(warm, 4),
+                   'result_bytes': len(response.content), 'parent_peak_rss_kib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                   'worker_peak_rss_kib': resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss}
+    print('SYNTHETIC_BUDGETS=' + json.dumps(measurement, sort_keys=True))
 
 
 def test_stored_product_denial_without_metadata_alias(evidence_api, monkeypatch):
@@ -398,18 +392,9 @@ def test_stored_product_denial_without_metadata_alias(evidence_api, monkeypatch)
 
 
 
+@pytest.mark.parametrize('evidence_api', [{'unpermitted_template': True}], indirect=True)
 def test_pinned_subset_binding_ignores_unrelated_unpermitted_templates(evidence_api):
     s = evidence_api
-    with Session(s.engine) as session:
-        row = session.query(ReferenceTemplateORM).one()
-        metadata = copy.deepcopy(row.metadata_json)
-        metadata['name'] = 'synthetic-unpermitted-template'
-        metadata['members'][0]['trace_index'] = 2
-        metadata['members'] = metadata['members'][:1]
-        session.add(ReferenceTemplateORM(template_id='f' * 64, release_id=row.release_id,
-                    name=metadata['name'], recipe_sha256=row.recipe_sha256, member_trace_ids=[s.unknown],
-                    permitted_tiers=[], metadata_json=metadata))
-        session.commit()
     policy = s.app.state.feature_policy.model_dump()
     policy['references']['template_ids'] = s.binding['template_ids']
     s.app.state.feature_policy = FeaturePolicy.model_validate(policy)
@@ -426,3 +411,44 @@ def test_pinned_subset_binding_ignores_unrelated_unpermitted_templates(evidence_
 def test_explicit_subset_policy_requires_sorted_unique_matching_ids(ids):
     with pytest.raises(ValueError, match='exact pinned subset'):
         FeaturePolicy.model_validate({'references': {'template_ids': ids, 'subset_id': digest(['a' * 64])}})
+
+
+@pytest.mark.parametrize('evidence_api', [{'templates': 100}], indirect=True)
+def test_binding_bulk_authorization_has_bounded_query_count(evidence_api):
+    s = evidence_api
+    queries = []
+
+    def count_query(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith('SELECT'):
+            queries.append(statement)
+
+    event.listen(s.engine, 'before_cursor_execute', count_query)
+    try:
+        response = s.client.get('/api/references', params={'release_id': s.imported.release_id, 'limit': 1})
+    finally:
+        event.remove(s.engine, 'before_cursor_execute', count_query)
+    assert response.status_code == 200
+    assert response.json()['binding'] == s.binding
+    assert len(response.json()['binding']['template_ids']) == 100
+    assert len(queries) <= 4
+
+
+def test_binding_rejects_large_aggregate_before_loading_members(evidence_api):
+    from sherloc_pipeline.web.routes.references import identification_binding
+
+    s = evidence_api
+    ids = sorted(digest(['synthetic-template', index]) for index in range(10_000))
+    rows = [SimpleNamespace(template_id=identity, member_trace_ids=s.trace_ids * 50) for identity in ids]
+    db = Mock()
+    db.query.return_value.filter_by.return_value.order_by.return_value.limit.return_value.all.return_value = rows
+    policy = s.app.state.feature_policy
+    policy = policy.model_copy(update={
+        'references': policy.references.model_copy(update={'subset_id': digest(ids)}),
+        'identification': policy.identification.model_copy(update={'max_templates': 10_000}),
+    })
+    with Session(s.engine) as session:
+        release = session.get(ReferenceReleaseORM, s.imported.release_id)
+        request = SimpleNamespace(state=SimpleNamespace(db=db))
+        assert identification_binding(request, policy, release) is None
+    assert db.query.call_count == 1
+    db.get.assert_not_called()
