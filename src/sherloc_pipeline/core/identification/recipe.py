@@ -11,3 +11,10 @@ def load_recipe() -> tuple[MethodRecipe, str]:
         "recipes/raman-pearson-0.2.0.json",
     ).read_bytes()
     return MethodRecipe.model_validate_json(data), hashlib.sha256(data).hexdigest()
+
+
+def recipe_for_release(release_id):
+    recipe, identity = load_recipe()
+    if identity == release_id:
+        return recipe, identity
+    raise ValueError("method release is not a bundled frozen recipe")

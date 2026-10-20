@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from sherloc_pipeline.core.identification.recipe import recipe_for_release
 from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
 from sherloc_pipeline.models.references import Digest, ReferenceTrace
 from sherloc_pipeline.services.identification import MAX_NATIVE_POINTS, MAX_TOTAL_BYTES, load_reference
@@ -101,7 +102,19 @@ def identification_binding(request, policy, release):
         members = [members_by_id.get(identity) for identity in row.member_trace_ids]
         if any(member is None for member in members) or not can_serve_template(row, members, release, policy, "team"):
             return None
-    binding = identify.allowed_method_releases[0]
+    bindings = []
+    for binding in identify.allowed_method_releases:
+        if (binding.reference_release_id != release.release_id
+                or binding.reference_subset_id != policy.references.subset_id):
+            continue
+        try:
+            recipe_for_release(binding.method_release_id)
+        except ValueError:
+            continue
+        bindings.append(binding)
+    if len(bindings) != 1:
+        return None
+    binding = bindings[0]
     return {**binding.model_dump(mode="json"), "template_ids": ids}
 
 

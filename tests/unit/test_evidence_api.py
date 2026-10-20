@@ -538,3 +538,25 @@ def test_metadata_alias_cannot_hide_any_denied_persisted_identity(evidence_api, 
     assert response.headers['cache-control'] == 'private, no-store'
     worker.assert_not_called()
     store.assert_not_called()
+
+
+@pytest.mark.parametrize('matches', [0, 1, 2])
+def test_binding_requires_one_bundled_method_match(evidence_api, matches):
+    s = evidence_api
+    policy = s.app.state.feature_policy.model_dump()
+    # A stale method before the usable binding must never hide the usable one.
+    stale = {**s.binding, 'method_release_id': 'f' * 64}
+    stale.pop('template_ids')
+    usable = policy['identification']['allowed_method_releases'][0]
+    policy['identification']['allowed_method_releases'] = [stale] + [usable] * matches
+    s.app.state.feature_policy = FeaturePolicy.model_validate(policy)
+    response = s.client.get('/api/references', params={'release_id': s.imported.release_id})
+    assert response.status_code == 200
+    if matches == 1:
+        assert response.json()['binding'] == s.binding
+        body = {**s.body, **response.json()['binding']}
+        identified = s.client.post('/api/identify', json=body)
+        assert identified.status_code == 200, identified.text
+        assert identified.json()['status'] == 'candidate'
+    else:
+        assert response.json()['binding'] is None
