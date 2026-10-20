@@ -35,6 +35,17 @@ vi.mock('plotly.js-basic-dist-min', () => ({
 import RamanView from './RamanView.svelte';
 import type { Peak } from '../lib/types';
 
+it.each([false, true])('names the four axis inputs when the evidence desk is enabled (%s)', async evidenceDesk => {
+  const { getByRole, queryByRole } = render(RamanView, {
+    evidenceDesk, wavenumber: [800, 900, 1000], intensity: [1, 2, 3],
+  });
+  await flush();
+  for (const name of ['X minimum', 'X maximum', 'Y minimum', 'Y maximum']) {
+    if (evidenceDesk) expect(getByRole('spinbutton', { name })).toBeTruthy();
+    else expect(queryByRole('spinbutton', { name })).toBeNull();
+  }
+});
+
 function fakePeak(overrides: Partial<Peak> = {}): Peak {
   return {
     center_cm1: 1016,

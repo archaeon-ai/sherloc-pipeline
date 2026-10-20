@@ -661,13 +661,13 @@
   {:else}
     <div class="axis-controls">
       <span class="axis-label">x:</span>
-      <input class="axis-input" type="number" bind:value={xMin} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '280' : '640'} />
+      <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'X minimum' : undefined} bind:value={xMin} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '280' : '640'} />
       <span class="axis-sep">-</span>
-      <input class="axis-input" type="number" bind:value={xMax} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '350' : '4200'} />
+      <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'X maximum' : undefined} bind:value={xMax} on:change={onXRangeInputChange} placeholder={evidenceEnabled && useWavelength ? '350' : '4200'} />
       <span class="axis-label" style="margin-left: 8px">y:</span>
-      <input class="axis-input" type="number" bind:value={yMin} on:change={renderPlot} placeholder="auto" />
+      <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'Y minimum' : undefined} bind:value={yMin} on:change={renderPlot} placeholder="auto" />
       <span class="axis-sep">-</span>
-      <input class="axis-input" type="number" bind:value={yMax} on:change={renderPlot} placeholder="auto" />
+      <input class="axis-input" type="number" aria-label={evidenceEnabled ? 'Y maximum' : undefined} bind:value={yMax} on:change={renderPlot} placeholder="auto" />
     </div>
     {#if !evidenceMode}
     <div class="overlay-toggles">
