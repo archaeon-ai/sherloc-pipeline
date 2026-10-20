@@ -1,8 +1,10 @@
 """Analytic synthetic traces and identities only; no scientific data fixtures."""
 
+import copy
 import hashlib
 import io
 import json
+import math
 import socket
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -783,6 +785,48 @@ def pearson_golden_case(system, *, real_provenance=False):
     )
 
 
+# Stored float goldens are byte-stable on one host only: GitHub run 39451050642 (same
+# NumPy/SciPy, different hosted VM) drifted by at most 5e-12 absolute in evidence and
+# diagnostics, so those floats compare within these bounds (about 20x that drift).
+GOLDEN_RTOL = 1e-9
+GOLDEN_ATOL = 1e-10
+GOLDEN_FLOAT_SECTIONS = ("evidence", "diagnostics")
+
+
+def assert_matches_golden(actual, expected, path="", tolerant=False):
+    """Exact everywhere except floats under evidence/diagnostics, which use the golden tolerance."""
+    if not path:
+        assert type(actual) is type(expected) is dict and actual.keys() == expected.keys()
+        for key in expected:
+            assert_matches_golden(actual[key], expected[key], key, key in GOLDEN_FLOAT_SECTIONS)
+    elif isinstance(expected, dict):
+        assert type(actual) is dict and actual.keys() == expected.keys(), path
+        for key in expected:
+            assert_matches_golden(actual[key], expected[key], f"{path}.{key}", tolerant)
+    elif isinstance(expected, list):
+        assert type(actual) is list and len(actual) == len(expected), path
+        for index, (value, wanted) in enumerate(zip(actual, expected)):
+            assert_matches_golden(value, wanted, f"{path}[{index}]", tolerant)
+    elif tolerant and type(expected) is float:
+        assert type(actual) is float, path
+        assert math.isclose(actual, expected, rel_tol=GOLDEN_RTOL, abs_tol=GOLDEN_ATOL), path
+    else:
+        assert type(actual) is type(expected) and actual == expected, path
+
+
+def recomputed_result_digest(payload):
+    # The service hashes the payload before the model adds its schema_version and warnings defaults.
+    return digest({key: value for key, value in payload.items()
+                   if key not in ("result_digest", "schema_version", "warnings")})
+
+
+def assert_pearson_deterministic(system, real_provenance):
+    first = pearson_golden_case(system, real_provenance=real_provenance)
+    second = pearson_golden_case(system, real_provenance=real_provenance)
+    assert first.model_dump_json() == second.model_dump_json()
+    assert first.result_digest == second.result_digest == recomputed_result_digest(first.model_dump(mode="json"))
+
+
 def test_pearson_complete_payload_matches_pr7_golden(system):
     # Generated at pr7-integration f793393 from this same synthetic case.
     expected = {'schema_version': 'identification-1',
@@ -1124,11 +1168,31 @@ def test_pearson_complete_payload_matches_pr7_golden(system):
                                  'sse': 2.1616591791370403e-34}},
      'result_digest': '96bb27d1e3e162e412ab6cf73f150ed3f862a5f7a4033058fd8d5fda1ae8bbc4'}
     result = pearson_golden_case(system)
-    assert result.model_dump(mode="json") == expected
-    assert result.model_dump() == expected
-    assert json.loads(result.model_dump_json()) == expected
+    golden = {key: value for key, value in expected.items() if key != "result_digest"}
+    for dumped in (result.model_dump(mode="json"), result.model_dump(), json.loads(result.model_dump_json())):
+        assert dumped["result_digest"] == recomputed_result_digest(dumped)
+        assert_matches_golden({key: value for key, value in dumped.items() if key != "result_digest"}, golden)
+    assert_pearson_deterministic(system, real_provenance=False)
     # The response must retain its shape after the service cache round trip.
     assert type(result).model_validate(expected).model_dump(mode="json") == expected
+
+
+def test_pearson_golden_tolerance_is_not_vacuous(system):
+    actual = pearson_golden_case(system).model_dump(mode="json")
+    for section, key in (("diagnostics", "snr_proxy"), ("evidence", "prepared_trace")):
+        perturbed = copy.deepcopy(actual)
+        values = perturbed[section][key]
+        if isinstance(values, list):
+            index = max(range(len(values)), key=lambda i: abs(values[i]))
+            values[index] *= 1 + 1e-6
+        else:
+            perturbed[section][key] = values * (1 + 1e-6)
+        with pytest.raises(AssertionError):
+            assert_matches_golden(perturbed, actual)
+    flipped = copy.deepcopy(actual)
+    flipped["status"] = "abstained"
+    with pytest.raises(AssertionError):
+        assert_matches_golden(flipped, actual)
 
 
 def test_pearson_real_runtime_payload_matches_pr7_except_implementation_identity(system):
@@ -1157,6 +1221,8 @@ def test_pearson_real_runtime_payload_matches_pr7_except_implementation_identity
     for key in ("environment", "environment_sha256"):
         expected["method"][key] = actual["method"][key]
     expected["method"]["code_sha256"] = actual["method"]["code_sha256"]
-    expected["result_digest"] = actual["result_digest"]
-    assert actual == expected
-    assert json.loads(result.model_dump_json()) == expected
+    del expected["result_digest"]
+    for dumped in (actual, json.loads(result.model_dump_json())):
+        assert dumped["result_digest"] == recomputed_result_digest(dumped)
+        assert_matches_golden({key: value for key, value in dumped.items() if key != "result_digest"}, expected)
+    assert_pearson_deterministic(system, real_provenance=True)
