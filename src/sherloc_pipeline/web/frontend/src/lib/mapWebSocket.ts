@@ -105,10 +105,12 @@ export class MapWebSocket {
 
     const attempt = this.reconnects;
     ws.onopen = () => {
+      if (this.closedByClient || this.ws !== ws) return;
       if (attempt > 0) this.handlers.onReconnected?.(attempt);
     };
 
     ws.onmessage = (event: MessageEvent) => {
+      if (this.closedByClient || this.ws !== ws) return;
       try {
         const msg: WSServerMessage = JSON.parse(event.data);
         this.dispatch(msg);
@@ -118,6 +120,7 @@ export class MapWebSocket {
     };
 
     ws.onclose = (event: CloseEvent) => {
+      if (this.closedByClient || this.ws !== ws) return;
       this.handleClose(event?.code);
     };
 
@@ -227,7 +230,10 @@ export class MapWebSocket {
     this.closedByClient = true;
     this.cleanup();
     if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
       this.ws.onclose = null;
+      this.ws.onerror = null;
       this.ws.close();
       this.ws = null;
     }

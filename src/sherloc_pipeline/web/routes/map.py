@@ -61,7 +61,10 @@ def _get_session(request: Request) -> Session:
 
 def _get_data_access(request: Request) -> DataAccessService:
     access_mode = getattr(request.app.state, "access_mode", "internal")
-    return DataAccessService(access_mode=access_mode)
+    return DataAccessService(
+        access_mode=access_mode,
+        public_release_index=getattr(request.app.state, "public_release_index", None),
+    )
 
 
 def _build_point_set_payload(coords: list) -> dict:

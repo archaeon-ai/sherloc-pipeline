@@ -1400,6 +1400,9 @@ def _write_json_report(report: dict, dest: str, console: Console) -> None:
 @app.command("pds-ingest")
 def pds_ingest_cmd(
     ctx: typer.Context,
+    public_release_index: Optional[Path] = typer.Option(
+        None, "--public-release-index", help="Trusted local public-release index JSON",
+    ),
     sol: Optional[int] = typer.Option(
         None, "--sol",
         help="Single sol number to ingest"
@@ -1670,6 +1673,7 @@ def pds_ingest_cmd(
         service = PDSIngestionService(
             pds_db_path=pds_database,
             loupe_db_path=loupe_database,
+            public_release_index=public_release_index,
         )
 
         total_obs_ingested = 0
@@ -1863,6 +1867,31 @@ def pds_ingest_cmd(
         else:
             console.print(f"\n[red]PDS ingestion failed: {e}[/red]")
         sys.exit(1)
+
+
+@app.command("backfill-public-release")
+def backfill_public_release_cmd(
+    database: Path = typer.Option(..., "--database", exists=True, dir_okay=False),
+    release_index: Path = typer.Option(..., "--release-index", exists=True, dir_okay=False),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+):
+    """Apply a trusted local release index to an existing local PDS database."""
+    from sherloc_pipeline.database.connection import get_engine, get_session
+    from sherloc_pipeline.services.public_release import PublicReleaseIndex, backfill_public_release
+
+    index = PublicReleaseIndex(release_index)
+    engine = get_engine(database)
+    try:
+        with get_session(engine) as session:
+            issues: list[str] = []
+            count = backfill_public_release(session, index, issues=issues)
+            if dry_run:
+                session.rollback()
+        for issue in issues:
+            console.print(issue)
+        console.print(f"{'Would update' if dry_run else 'Updated'} {count} PDS scans")
+    finally:
+        engine.dispose()
 
 
 @app.command("pixl-ingest")

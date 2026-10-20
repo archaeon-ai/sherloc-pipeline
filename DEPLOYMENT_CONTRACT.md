@@ -68,6 +68,27 @@ Authoritative source: `src/sherloc_pipeline/web/config_check.py`. The
 validator runs at container boot (before the exact-target Alembic upgrade and the
 uvicorn launch) and exits 1 on any error.
 
+Validation also reads the optional `SHERLOC_FEATURE_POLICY` as a strict
+JSON object. Unknown fields, wrong types, invalid dependencies, malformed
+JSON, and unknown feature env keys fail startup. Unset means `{}` with
+references and identification off. A `public_release` block opts public
+instances into the strict release-index check: both a non-empty local
+`index_path` and a 64-character lowercase hex `index_sha256` are required.
+Incomplete blocks fail validation; public mode also rejects explicit null.
+In public mode, unreadable,
+malformed, duplicate-product/version, or digest-mismatched indexes also
+fail startup; list and direct access require the exact trusted
+product/version/source hash/release/index-digest tuple. Internal mode
+validates the policy but does not load the public index. Public mode
+requires `references.mode=off`.
+
+Without `public_release` (including when the variable is unset), public
+startup keeps the existing affirmative `pds4`-only list and detail gate.
+It logs one WARNING per startup containing
+`strict release-index check OFF (no index configured)`. A configured
+index suppresses that warning. The index path is never returned in
+public API responses.
+
 ### 5.1 Always required
 
 | Variable | Constraint |
@@ -127,6 +148,7 @@ mode, used for tests + the `contract-smoke` workflow.
 | `SHERLOC_LOG_LEVEL` | `INFO` | uvicorn + sherloc loggers |
 | `SHERLOC_CORS_ALLOWED_ORIGINS` | unset | CSV of allowed Origins for `/api/*`. Empty string disables CORS; unset leaves it unconfigured. |
 | `SHERLOC_FEATURE_PDS_BROWSER` | unset (= ENABLED) | Only literal `disabled` (case-insensitive) opts out |
+| `SHERLOC_FEATURE_POLICY` | unset (= `{}`, strict release-index check OFF) | Strict JSON object; references and identification default off. `public_release` opts public instances into a required local `index_path` + pinned `index_sha256`. Invalid policy or configured index fails startup; see §5. |
 | `AWS_REGION` | `auto` | Used by boto3 R2 client |
 
 ### 5.5 Retired — MUST NOT appear
@@ -285,7 +307,8 @@ defense-in-depth alongside the §6 filename invariant.
 Located under `tests/contract/`; picked up by the normal pytest
 invocation `pytest -m "not slow and not docker"` in `.github/workflows/ci.yml`.
 
-- `test_env_contract.py` — `config_check` validator surface (§5).
+- `test_env_contract.py` — `config_check` validator surface, including
+  optional feature policy and strict public release-index opt-in (§5).
 - `test_dockerfile_contract.py` — image shape (§2, §3).
 - `test_entrypoint_contract.py` — boot sequence (§7) + `PHASE_DATABASE_PATH`
   export line (§5.1).
@@ -330,7 +353,8 @@ Five cases:
   `ValueError` referencing `phase_pds.db`. This is the load-bearing
   safety rail for the two-tier deploy.
 - **D** (positive, public-mode compliant): `SHERLOC_ACCESS_MODE=public`
-  with `SHERLOC_DB=/data/phase_pds.db` — container reaches health 200.
+  with `SHERLOC_DB=/data/phase_pds.db` and no feature policy — container
+  reaches health 200; the strict release-index check defaults off.
 - **E** (negative, `PHASE_DATABASE_PATH` mismatch): `SHERLOC_DB` set,
   `PHASE_DATABASE_PATH` set differently — container exits non-zero with
   `differ` error.

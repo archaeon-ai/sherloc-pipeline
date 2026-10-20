@@ -232,7 +232,7 @@ async def test_aci_team_resolve_200(client, test_engine, r2_team_client):
     resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"] == "image/png"
-    assert "max-age=86400" in resp.headers["cache-control"]
+    assert resp.headers["cache-control"] == "private, no-store"
     assert resp.content[:4] == b"\x89PNG"
 
 

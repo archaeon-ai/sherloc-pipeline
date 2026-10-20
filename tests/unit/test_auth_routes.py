@@ -50,7 +50,10 @@ pytestmark = pytest.mark.httpx_mock(
 
 
 @pytest.fixture(autouse=True)
-def _reset():
+def _reset(monkeypatch, tmp_path):
+    from tests.unit.public_release_helpers import synthetic_index
+
+    synthetic_index(tmp_path, monkeypatch)
     _reset_jwks_cache_for_tests()
     _reset_validator_for_tests()
     yield
@@ -324,12 +327,12 @@ def test_auth0_signed_out_health_is_status_and_version_only(monkeypatch, tmp_pat
     assert "n_scans" not in resp.text and "path" not in resp.text
 
 
-def test_auth0_signed_out_bootstrap_carries_only_auth_and_features(monkeypatch, tmp_path):
+def test_auth0_signed_out_bootstrap_carries_only_auth(monkeypatch, tmp_path):
     _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode="public")
     with _build_app(tmp_path) as client:
         resp = client.get("/api/config/bootstrap")
     assert resp.status_code == 200
-    assert set(resp.json()) == {"schema_version", "auth", "features"}
+    assert set(resp.json()) == {"schema_version", "auth"}
 
 
 def test_auth0_signed_in_health_has_checks_but_no_db_path(

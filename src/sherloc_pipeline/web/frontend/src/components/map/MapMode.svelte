@@ -58,6 +58,7 @@
   let aciImage: HTMLImageElement | null = null;
   let colorizedAciImage: HTMLImageElement | null = null;
   let mapLoadGeneration = 0; // stale-load guard for rapid scan switches
+  let destroyed = false;
   let mapAuthRequired = false;
   let aciLoading = false;
   let brightness = 1.0;
@@ -203,16 +204,21 @@
       if (gen === mapLoadGeneration) aciLoading = false;
     }
 
+    if (gen !== mapLoadGeneration) return;
+
     // Fetch scan info for label. Auth-attaching via getScan() helper —
     // raw `fetch('/api/scans/...')` would skip Bearer and 401 under Auth0.
     try {
       const data = await getScan(scanId);
+      if (gen !== mapLoadGeneration) return;
       const scan = data.scan;
       scanLabel = `${scan.target ?? 'Unknown'} Sol ${scan.sol_number} ${scan.scan_name}`;
     } catch {
       // non-critical (incl. AuthRequiredError — the auth-required state is
       // already surfaced via the ACI fetch failure above)
     }
+
+    if (gen !== mapLoadGeneration) return;
 
     // Skip layer fetch on return — stores already have everything
     if (isReturning) return;
@@ -281,6 +287,10 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
+    mapLoadGeneration += 1;
+    sourceGeneration += 1;
+    pendingBuffer = [];
     ws?.close();
     stopFitPolling();
     // Persist local state to stores (don't reset — enables return)
@@ -630,7 +640,7 @@
 
   function flushPending(): void {
     flushScheduled = false;
-    if (pendingBuffer.length === 0) return;
+    if (destroyed || pendingBuffer.length === 0) return;
 
     const batch = pendingBuffer;
     pendingBuffer = [];
@@ -817,6 +827,7 @@
 
   /** Apply a liveness payload (WS heartbeat or REST poll) to the job store. */
   function applyLiveness(msg: MapJobLiveness): void {
+    if (destroyed) return;
     const status = msg.status;
     if (status === 'queued' || status === 'running') {
       fitProgress.noteServerCount(msg.fitted);
@@ -840,6 +851,7 @@
   }
 
   function logFit(line: string): void {
+    if (destroyed) return;
     mapLogEntries.update((logs) => [...logs.slice(-499), line]);
   }
 
@@ -873,9 +885,10 @@
    * bounded and can wrap).
    */
   async function recoverMissedResults(jobId: string): Promise<void> {
-    if (!jobId) return;
+    if (destroyed || !jobId) return;
     try {
       const data = await getMapJobResults(jobId);
+      if (destroyed) return;
       // A newer fit may have taken ownership of the layers while this
       // request was in flight; its points are not this job's to write.
       if (get(mapFitJob)?.jobId !== jobId) return;
@@ -898,6 +911,7 @@
         );
       }
     } catch (err) {
+      if (destroyed) return;
       // Say so rather than quietly reloading the database view, which
       // would look like recovery while showing a different run's peaks.
       console.warn('Map fit result recovery failed:', err);
@@ -993,6 +1007,7 @@
       let data: import('../../lib/api').MapFitResponse;
       try {
         data = await startMapFit(scanId, domains);
+        if (destroyed) return;
       } catch (err) {
         if (err instanceof AuthRequiredError) {
           mapAuthRequired = true;
@@ -1055,7 +1070,7 @@
             );
           },
           onLog: (msg) => {
-            mapLogEntries.update((logs) => [...logs.slice(-499), msg.message]);
+            logFit(msg.message);
           },
           onComplete: (msg) => {
             fitProgress.noteServerCount(msg.summary.total_points);
@@ -1078,7 +1093,7 @@
             mapFitJob.update((j) =>
               j ? { ...j, status: 'failed' } : j,
             );
-            mapLogEntries.update((logs) => [...logs, `ERROR: ${msg.error}`]);
+            logFit(`ERROR: ${msg.error}`);
             // Whatever the job fitted before it failed still stands.
             settleTerminalFit(data.job_id);
           },
@@ -1124,6 +1139,7 @@
         },
       });
     } catch (e) {
+      if (destroyed) return;
       // ApiError from startMapFit (non-2xx) or any other failure during
       // job-create / WS init. AuthRequiredError was already caught inline.
       const detail = (e as { detail?: string; message?: string })?.detail

@@ -22,6 +22,7 @@
 
 import { Auth0Client, createAuth0Client } from '@auth0/auth0-spa-js';
 import type { AuthConfig } from './types';
+import { clearSessionState } from './stores';
 
 export interface AuthSession {
   /** Returns an access token suitable for `Authorization: Bearer ...`,
@@ -125,8 +126,10 @@ export async function bootstrapAuth(cfg: AuthConfig): Promise<AuthSession> {
       session = await buildAuth0Session(cfg);
     } else if (cfg.auth_mode === 'cf-access') {
       session = buildPassThroughSession('cf-access');
-    } else {
+    } else if (cfg.auth_mode === 'dev') {
       session = buildPassThroughSession('dev');
+    } else {
+      throw new Error('Unknown authentication mode');
     }
   } finally {
     resolveBootstrap(session);
@@ -310,6 +313,7 @@ async function buildAuth0Session(cfg: AuthConfig): Promise<AuthSession> {
       });
     },
     async logout(): Promise<void> {
+      clearSessionState();
       await client.logout({
         logoutParams: { returnTo: window.location.origin },
       });
@@ -338,7 +342,7 @@ function buildPassThroughSession(mode: 'cf-access' | 'dev'): AuthSession {
       // dev mode has no login.
     },
     async logout(): Promise<void> {
-      // No-op for the same reason.
+      clearSessionState();
     },
     async isAuthenticated(): Promise<boolean> {
       return true;

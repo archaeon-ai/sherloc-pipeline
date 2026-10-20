@@ -7,10 +7,11 @@ import pytest
 
 from sherloc_pipeline.web import config_check
 from sherloc_pipeline.web.app import create_app
+from tests.unit.public_release_helpers import synthetic_index
 
 
 @pytest.fixture
-def clean_env(monkeypatch):
+def clean_env(monkeypatch, tmp_path):
     """Isolate the environment without loading config files or database fixtures."""
     for key in list(os.environ):
         if key.startswith(("SHERLOC_", "AWS_")) or key in ("PHASE_TIER", "PHASE_DATABASE_PATH"):
@@ -26,6 +27,7 @@ def clean_env(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "invented-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "invented-secret")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.invalid")
+    synthetic_index(tmp_path, monkeypatch)
     return monkeypatch
 
 

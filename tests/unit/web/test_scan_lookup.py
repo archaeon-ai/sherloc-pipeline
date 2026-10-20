@@ -9,10 +9,19 @@ from sqlalchemy.pool import StaticPool
 from sherloc_pipeline.database.connection import create_all_tables
 from sherloc_pipeline.database.models import ScanORM, SolORM
 from sherloc_pipeline.web.app import create_app
+from tests.unit.web.test_data_access import synthetic_release_metadata
+from tests.unit.public_release_helpers import synthetic_index
 
 
 @pytest.fixture
-def test_engine():
+def fake_config():
+    from tests.unit.test_tier_boundary import fake_config
+    return fake_config()
+
+
+@pytest.fixture
+def test_engine(tmp_path, monkeypatch):
+    release_index = synthetic_index(tmp_path, monkeypatch, [f"test-scan-{i}" for i in range(7)])
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -34,6 +43,8 @@ def test_engine():
             session.add(ScanORM(
                 id=f"00000000-0000-0000-0000-{index + 1:012d}",
                 scan_id=f"test-scan-{index}",
+                pds4_metadata=synthetic_release_metadata(f"test-scan-{index}", release_index),
+                n_channels=7, laser_wavelength_nm=211.0,
                 scan_name=name,
                 sol_number=sol,
                 target="Testrock",

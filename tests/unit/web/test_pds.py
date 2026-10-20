@@ -189,15 +189,15 @@ async def test_pds_download_force_reingest(client):
 
 
 @pytest.mark.asyncio
-async def test_pds_download_returns_403_in_public_mode(monkeypatch):
+async def test_pds_download_returns_403_in_public_mode(monkeypatch, tmp_path):
     """Public mode blocks PDS download endpoint with 403."""
     from httpx import ASGITransport, AsyncClient
     from tests.unit.web.test_data_access import _make_public_client
 
-    app, engine = _make_public_client(monkeypatch)
+    app, engine = _make_public_client(monkeypatch, tmp_path)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post("/api/pds/download", json={"sol": 100})
+        resp = await ac.post("/api/pds/download", json={"sol": 9999})
     assert resp.status_code == 403
 
 

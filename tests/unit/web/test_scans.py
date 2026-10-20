@@ -563,7 +563,7 @@ async def test_get_scan_colorized_probe_targets_base_aci_not_angle_range(
 
 @pytest.mark.asyncio
 async def test_get_scan_colorized_probe_skipped_when_access_denied(
-    test_engine, monkeypatch
+    test_engine, monkeypatch, tmp_path
 ):
     """In public mode, a Loupe scan-detail
     request must reject via validate_scan_access() BEFORE the
@@ -605,7 +605,9 @@ async def test_get_scan_colorized_probe_skipped_when_access_denied(
     _reset_validator_for_tests()
 
     from tests.unit.web.conftest import _FakeConfig
+    from tests.unit.public_release_helpers import synthetic_index
 
+    synthetic_index(tmp_path, monkeypatch)
     app = create_app(
         engine=test_engine, config=_FakeConfig(), access_mode="public"
     )

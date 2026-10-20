@@ -76,8 +76,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["images"])
 
-# Cache header for successfully served images (24 hours).
-_CACHE_CONTROL = "public, max-age=86400"
+# Every delivery must pass the current authentication and release gates.
+_CACHE_CONTROL = "private, no-store"
 
 # Directory for enhanced ACI image cache.
 _ENHANCED_CACHE_DIR = Path("/tmp/sherloc_aci_cache")
@@ -214,7 +214,10 @@ def _decode_vicar_bytes(bytes_data: bytes) -> np.ndarray:
 
 def _get_data_access(request: Request) -> DataAccessService:
     access_mode = getattr(request.app.state, "access_mode", "internal")
-    return DataAccessService(access_mode=access_mode)
+    return DataAccessService(
+        access_mode=access_mode,
+        public_release_index=getattr(request.app.state, "public_release_index", None),
+    )
 
 
 @router.get("/images/{scan_id}/aci")
@@ -236,7 +239,7 @@ def get_aci_image(
       Results cached at ``/tmp/sherloc_aci_cache/`` for 24h.
     - upscale: integer 1–5 (only used when ``enhanced=true``).
 
-    Returns: ``image/png`` bytes with 24h ``Cache-Control``.
+    Returns: ``image/png`` bytes without browser or shared caching.
     """
     # Route-level path-traversal guard on scan_id (spec §3.9.1).
     if not scan_id or _SCAN_ID_BANNED.search(scan_id):

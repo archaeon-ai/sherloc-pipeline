@@ -39,6 +39,8 @@
     currentHash.set(window.location.hash || '#/');
   }
 
+  let destroyed = false;
+
   onMount(async () => {
     window.addEventListener('hashchange', onHashChange);
     // Set initial hash
@@ -50,6 +52,7 @@
     // Fetch access mode
     try {
       const mode = await getAccessMode();
+      if (destroyed) return;
       accessMode.set(mode.access_mode);
       // In public mode default to PDS browser — UNLESS PDS is feature-hidden
       // (issue #21 prod gate). Then fall through to the default route (Scans).
@@ -63,11 +66,12 @@
     } catch {
       // ignore — default to internal
     } finally {
-      accessModeResolved.set(true);
+      if (!destroyed) accessModeResolved.set(true);
     }
   });
 
   onDestroy(() => {
+    destroyed = true;
     window.removeEventListener('hashchange', onHashChange);
   });
 </script>

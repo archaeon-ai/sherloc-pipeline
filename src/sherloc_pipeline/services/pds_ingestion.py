@@ -337,6 +337,7 @@ class PDSIngestionService:
         self,
         pds_db_path: Optional[Path] = None,
         loupe_db_path: Optional[Path] = None,
+        public_release_index: Optional[Path] = None,
     ):
         """Initialize the PDS ingestion service.
 
@@ -345,6 +346,11 @@ class PDSIngestionService:
             loupe_db_path: Optional path to phase.db for target name cross-reference.
                 If None, target names will not be resolved via SCLK lookup.
         """
+        from sherloc_pipeline.services.public_release import PublicReleaseIndex
+
+        self._public_release_index = (
+            PublicReleaseIndex(public_release_index) if public_release_index is not None else None
+        )
         if pds_db_path is None:
             pds_db_path = Path("./phase_pds.db")
 
@@ -639,6 +645,7 @@ class PDSIngestionService:
                 group, sol_dir, scan, points, session
             )
             stats.spectra_ingested += n_spectra
+            scan_orm.pds4_metadata = scan.pds4_metadata
 
             # Step 5b: ACI context image association (spec s11)
             context_images = self._build_context_images(group, sol_dir, scan)
@@ -704,6 +711,9 @@ class PDSIngestionService:
 
         # Build pds4_metadata JSON blob
         pds4_meta = metadata.to_pds4_metadata_dict()
+        # Release evidence requires the byte digest produced by spectral parsing.
+        pds4_meta.pop("public_release", None)
+        pds4_meta.pop("source_sha256", None)
 
         scan_name = f"pds_{group.sol:04d}_{group.sclk}_{group.obs_id}"
 
@@ -874,6 +884,9 @@ class PDSIngestionService:
                 session.add(spectrum_orm)
                 count += 1
 
+        scan.pds4_metadata = {**(scan.pds4_metadata or {}), "source_sha256": parsed.source_sha256}
+        if self._public_release_index is not None:
+            scan.pds4_metadata = self._public_release_index.apply(scan.scan_id, scan.pds4_metadata)
         return count
 
     def _build_context_images(

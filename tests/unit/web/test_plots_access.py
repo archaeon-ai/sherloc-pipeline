@@ -12,6 +12,8 @@ from httpx import ASGITransport, AsyncClient
 from sherloc_pipeline.core import calibration
 from sherloc_pipeline.database.models import ScanORM
 from sherloc_pipeline.web.routes import plots
+from tests.unit.web.test_data_access import synthetic_release_metadata
+from tests.unit.public_release_helpers import synthetic_index
 
 
 @pytest.fixture
@@ -31,7 +33,7 @@ def plot_stubs(monkeypatch):
     return SimpleNamespace(subplots=subplots, use=use, calibrate=calibrate, mask=mask)
 
 
-def _plot_app(access_mode, scan):
+def _plot_app(access_mode, scan, index=None):
     """Mount the real router with the same request/app state as the app factory."""
     session = MagicMock()
     query = MagicMock()
@@ -44,6 +46,7 @@ def _plot_app(access_mode, scan):
     session.query.side_effect = scan_query
     app = FastAPI()
     app.state.access_mode = access_mode
+    app.state.public_release_index = index
 
     @app.middleware("http")
     async def attach_session(request, call_next):
@@ -79,9 +82,13 @@ async def test_public_loupe_plot_is_forbidden_before_rendering(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("access_mode,data_source", [("public", "pds4"), ("internal", "loupe")])
-async def test_authorized_plot_still_renders(access_mode, data_source, plot_stubs):
-    scan = SimpleNamespace(data_source=data_source, target="Invented", scan_name="sample")
-    app, session = _plot_app(access_mode, scan)
+async def test_authorized_plot_still_renders(access_mode, data_source, plot_stubs, tmp_path, monkeypatch):
+    index = synthetic_index(tmp_path, monkeypatch, ["synthetic-product"])
+    scan = SimpleNamespace(
+        data_source=data_source, target="Invented", scan_name="sample",
+        scan_id="synthetic-product", pds4_metadata=synthetic_release_metadata("synthetic-product", index),
+    )
+    app, session = _plot_app(access_mode, scan, index)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/plots/invented-scan")
 

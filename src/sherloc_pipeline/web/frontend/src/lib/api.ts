@@ -28,6 +28,7 @@ import type {
 } from './types';
 
 import { bootstrapAuthReady, getSession } from './auth';
+import { clearSessionState, sessionGeneration, sessionRequests } from './stores';
 import type { DisplayPoint, MapJobResults, VoronoiGeometry } from './types/map';
 import type { MapJobStatus } from './mapProgress';
 
@@ -67,12 +68,21 @@ export class AuthRequiredError extends Error {
  *   - bootstrap settled with no session at all, OR
  *   - auth0 mode but isAuthenticated() === false.
  */
-async function ensureAuthenticated(): Promise<void> {
+async function ensureAuthenticated(generation: number): Promise<void> {
   await bootstrapAuthReady;
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   const session = getSession();
-  if (session === null) throw new AuthRequiredError();
-  if (session.mode === 'auth0' && !(await session.isAuthenticated())) {
+  if (session === null) {
+    clearSessionState();
     throw new AuthRequiredError();
+  }
+  if (session.mode === 'auth0') {
+    const authenticated = await session.isAuthenticated();
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    if (!authenticated) {
+      clearSessionState();
+      throw new AuthRequiredError();
+    }
   }
 }
 
@@ -88,28 +98,60 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(await authHeaders()),
-      ...init?.headers,
-    },
-  });
-  if (!res.ok) {
-    let errorClass = `HTTP ${res.status}`;
-    let detail: string | undefined;
-    try {
-      const body = await res.json();
-      errorClass = body.error || errorClass;
-      detail = body.detail;
-    } catch {
-      // response body was not JSON
-    }
-    throw new ApiError(res.status, errorClass, detail);
+async function withSessionRequest<T>(
+  generation: number,
+  request: (headers: Record<string, string>, signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  const headers = await authHeaders();
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  const controller = new AbortController();
+  sessionRequests.add(controller);
+  try {
+    return await request(headers, controller.signal);
+  } catch (error) {
+    if (generation !== sessionGeneration && !(error instanceof ApiError)) throw new AuthRequiredError();
+    throw error;
+  } finally {
+    sessionRequests.delete(controller);
   }
-  return res.json();
+}
+
+function invalidateSessionOnAuthFailure(res: Response): void {
+  if (res.status === 401 || (
+    res.status === 403 && res.headers.get('X-Sherloc-Auth-Failure') === 'authorization'
+  )) clearSessionState();
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit, generation = sessionGeneration): Promise<T> {
+  return withSessionRequest(generation, async (headers, signal) => {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers,
+        ...init?.headers,
+      },
+    });
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    if (!res.ok) {
+      invalidateSessionOnAuthFailure(res);
+      let errorClass = `HTTP ${res.status}`;
+      let detail: string | undefined;
+      try {
+        const body = await res.json();
+        errorClass = body.error || errorClass;
+        detail = body.detail;
+      } catch {
+        // response body was not JSON
+      }
+      throw new ApiError(res.status, errorClass, detail);
+    }
+    const data = await res.json();
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    return data;
+  });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,9 +206,11 @@ export async function getPointSpectrum(
   idx: number,
   params: SpectrumParams = {},
 ): Promise<SpectrumResponse> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   const query = buildQuery(params);
-  return fetchJson<SpectrumResponse>(`/spectra/${scanId}/point/${idx}${query}`);
+  return fetchJson<SpectrumResponse>(`/spectra/${scanId}/point/${idx}${query}`, undefined, generation);
 }
 
 export async function postSubsetAverage(
@@ -319,7 +363,9 @@ export async function fetchAciImage(
   scanId: string,
   opts: AciFetchOpts = {},
 ): Promise<HTMLImageElement> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   const params = new URLSearchParams();
   if (opts.colorized) params.set('colorized', 'true');
   if (opts.enhanced) params.set('enhanced', 'true');
@@ -327,23 +373,29 @@ export async function fetchAciImage(
   params.set('_v', '4');
   const url = `${API_BASE}/images/${encodeURIComponent(scanId)}/aci?${params.toString()}`;
 
-  const res = await fetch(url, { headers: await authHeaders() });
-  if (!res.ok) {
-    throw new ApiError(res.status, `HTTP ${res.status}`);
-  }
-  const blob = await res.blob();
-  const blobUrl = URL.createObjectURL(blob);
-  try {
-    const img = new Image();
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('Image decode failed'));
-      img.src = blobUrl;
-    });
-    return img;
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
+  return withSessionRequest(generation, async (headers, signal) => {
+    const res = await fetch(url, { headers, signal });
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    if (!res.ok) {
+      invalidateSessionOnAuthFailure(res);
+      throw new ApiError(res.status, `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    const blobUrl = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Image decode failed'));
+        img.src = blobUrl;
+      });
+      if (generation !== sessionGeneration) throw new AuthRequiredError();
+      return img;
+    } finally {
+      URL.revokeObjectURL(blobUrl);
+    }
+  });
 }
 
 // --- Map: layers ---
@@ -383,8 +435,10 @@ export interface MapLayersResponse {
  * Throws AuthRequiredError or ApiError per the same contract as `fetchAciImage`.
  */
 export async function getMapLayers(scanId: string): Promise<MapLayersResponse> {
-  await ensureAuthenticated();
-  return fetchJson<MapLayersResponse>(`/map/layers/${encodeURIComponent(scanId)}`);
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  return fetchJson<MapLayersResponse>(`/map/layers/${encodeURIComponent(scanId)}`, undefined, generation);
 }
 
 /**
@@ -417,13 +471,15 @@ export async function getMapData(
   valueType: string,
   classId?: string,
 ): Promise<MapDataResponse> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   const params = new URLSearchParams();
   params.set('domain', domain);
   params.set('value_type', valueType);
   if (classId) params.set('class_id', classId);
   return fetchJson<MapDataResponse>(
-    `/map/data/${encodeURIComponent(scanId)}?${params.toString()}`,
+    `/map/data/${encodeURIComponent(scanId)}?${params.toString()}`, undefined, generation,
   );
 }
 
@@ -444,11 +500,13 @@ export async function startMapFit(
   scanId: string,
   domains: string[],
 ): Promise<MapFitResponse> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   return fetchJson<MapFitResponse>(`/map/fit`, {
     method: 'POST',
     body: JSON.stringify({ scan_id: scanId, domains }),
-  });
+  }, generation);
 }
 
 /**
@@ -459,8 +517,10 @@ export async function startMapFit(
  * silent job is waiting its turn or genuinely slow (issue #6).
  */
 export async function getMapJobStatus(jobId: string): Promise<MapJobStatus> {
-  await ensureAuthenticated();
-  return fetchJson<MapJobStatus>(`/map/jobs/${encodeURIComponent(jobId)}`);
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  return fetchJson<MapJobStatus>(`/map/jobs/${encodeURIComponent(jobId)}`, undefined, generation);
 }
 
 /**
@@ -472,8 +532,10 @@ export async function getMapJobStatus(jobId: string): Promise<MapJobStatus> {
  * database — that returns an earlier pipeline run's peaks (issue #6).
  */
 export async function getMapJobResults(jobId: string): Promise<MapJobResults> {
-  await ensureAuthenticated();
-  return fetchJson<MapJobResults>(`/map/jobs/${encodeURIComponent(jobId)}/results`);
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  return fetchJson<MapJobResults>(`/map/jobs/${encodeURIComponent(jobId)}/results`, undefined, generation);
 }
 
 export interface JobStatus {
@@ -487,8 +549,10 @@ export interface JobStatus {
  * `lib/websocket.ts` which produced 401s under Auth0 Bearer-token mode.
  */
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
-  await ensureAuthenticated();
-  return fetchJson<JobStatus>(`/jobs/${encodeURIComponent(jobId)}`);
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
+  return fetchJson<JobStatus>(`/jobs/${encodeURIComponent(jobId)}`, undefined, generation);
 }
 
 /**
@@ -503,9 +567,11 @@ export async function postSpectraSubset<T = unknown>(
   scanId: string,
   body: unknown,
 ): Promise<T> {
-  await ensureAuthenticated();
+  const generation = sessionGeneration;
+  await ensureAuthenticated(generation);
+  if (generation !== sessionGeneration) throw new AuthRequiredError();
   return fetchJson<T>(`/spectra/${encodeURIComponent(scanId)}/subset`, {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, generation);
 }
