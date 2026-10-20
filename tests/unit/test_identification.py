@@ -1144,6 +1144,16 @@ def test_pearson_real_runtime_payload_matches_pr7_except_implementation_identity
     assert actual["method"]["code_identity_basis"] == "installed_source_bytes"
     assert actual["method"]["code_sha256"] != expected["method"]["code_sha256"]
     assert actual["result_digest"] != expected["result_digest"]
+    import platform
+
+    import scipy
+
+    from sherloc_pipeline.core.identification.provenance import fingerprint
+
+    host = {"python": platform.python_version(), "numpy": np.__version__, "scipy": scipy.__version__}
+    assert set(expected["method"]["environment"]) == set(host)
+    assert actual["method"]["environment"] == host
+    assert actual["method"]["environment_sha256"] == fingerprint(host)
     for key in ("environment", "environment_sha256"):
         expected["method"][key] = actual["method"][key]
     expected["method"]["code_sha256"] = actual["method"]["code_sha256"]
