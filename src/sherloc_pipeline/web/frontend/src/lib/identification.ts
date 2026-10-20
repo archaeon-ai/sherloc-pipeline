@@ -42,11 +42,49 @@ export interface IdentificationEvidence {
   ranking: {
     template_id: string;
     species_name: string;
-    support: number;
+    support: number | null;
+    retrieval_score?: number | null;
     trace_revision_ids: string[];
     citations: { trace_revision_id: string; citation_text: string | null; [key: string]: unknown }[];
   }[];
+  mixture?: {
+    support: number | null;
+    components: { template_id: string; species_name: string; coefficient: number; weight: number }[];
+    diagnostics: { converged: boolean; finite_solution: boolean };
+  } | null;
+  evidence?: {
+    grid: number[];
+    mask: boolean[];
+    prepared_trace: number[] | null;
+    inspection?: FitEvidence | null;
+    mixture_fit?: FitEvidence | null;
+  };
   [key: string]: unknown;
+}
+
+interface FitEvidence {
+  mask: boolean[];
+  prepared_trace?: (number | null)[];
+  fit: (number | null)[];
+  residual: (number | null)[];
+  converged?: boolean;
+}
+
+export function identificationPlot(result: IdentificationEvidence | null) {
+  const evidence = result?.evidence;
+  const mixture = result?.method.method_id === 'raman-mixture';
+  const fit = mixture ? evidence?.mixture_fit : evidence?.inspection;
+  if (!evidence || !fit || !evidence.prepared_trace) return null;
+  const size = evidence.grid.length;
+  if (![fit.mask, fit.fit, fit.residual, evidence.prepared_trace].every(values => values.length === size)) return null;
+  const masked = (values: (number | null)[]) => values.map((value, i) => fit.mask[i] && Number.isFinite(value) ? value : null);
+  const label = mixture ? 'Mixture fit' : 'Pearson inspection fit';
+  return { label, converged: mixture ? fit.converged === true : true, grid: evidence.grid,
+    traces: [
+      { name: 'Prepared source', y: masked(evidence.prepared_trace) },
+      { name: label, y: masked(fit.fit) },
+      { name: `${label} residual`, y: masked(fit.residual) },
+    ] };
 }
 
 export function evidenceCitation(citation: Record<string, unknown> | undefined): string {

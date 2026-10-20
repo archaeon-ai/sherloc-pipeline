@@ -44,7 +44,9 @@
   export let region: string = 'R1';
 
   import type { IdentificationEvidence } from '../lib/identification';
+  import { identificationPlot } from '../lib/identification';
   export let identification: IdentificationEvidence | null = null;
+  export let showIdentificationFit = false;
   export let evidenceDesk = false;
   export let xDomain: EvidenceDomain | null = null;
   export let traceIdentity = '';
@@ -174,6 +176,7 @@
 
   function renderPlot() {
     if (!Plotly || !plotDiv || (evidenceEnabled ? destroyed : wavenumber.length === 0)) return;
+    if (evidenceEnabled && showIdentificationFit && renderIdentificationFit()) return;
     const viewKey = evidenceEnabled ? JSON.stringify([domain, traceIdentity || xData, primaryTrace?.id, comparisonTraces.map(t => [t.id, t.visible]), stacked]) : '';
     if (evidenceEnabled && previousViewKey !== viewKey) {
       xMin = ''; xMax = ''; yMin = ''; yMax = '';
@@ -594,6 +597,28 @@
       Plotly.react(plotDiv, traces, mainLayout as Plotly.Layout, config);
     }
     bindPlotEvents();
+  }
+
+  function renderIdentificationFit() {
+    const plot = identificationPlot(identification);
+    if (!plot || !Plotly) return false;
+    figureEvidence = evidenceExport([], identification);
+    const traces = plot.traces.map((trace, index) => ({ x: plot.grid, y: trace.y, name: trace.name,
+      type: 'scatter', mode: 'lines', connectgaps: false,
+      ...(index === 2 ? { xaxis: 'x2', yaxis: 'y2' } : {}) }));
+    const dark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    Plotly.react(plotDiv, traces as Plotly.Data[], {
+      meta: figureEvidence, height, uirevision: identification?.result_digest,
+      title: { text: `${plot.label}${plot.converged ? '' : ' · not converged'}` },
+      xaxis: { title: { text: 'Raman Shift (cm⁻¹)' }, anchor: 'y' },
+      yaxis: { title: { text: 'Prepared intensity (unit L2)' }, domain: [0.35, 1] },
+      xaxis2: { matches: 'x', anchor: 'y2' },
+      yaxis2: { title: { text: `${plot.label} residual` }, domain: [0, 0.25] },
+      paper_bgcolor: dark ? '#0f172a' : '#ffffff', plot_bgcolor: dark ? '#0f172a' : '#ffffff',
+      font: { color: dark ? '#e2e8f0' : '#1e293b' },
+      showlegend: true,
+    } as Partial<Plotly.Layout>, { responsive: true, displayModeBar: false });
+    return true;
   }
 
   function renderComparisons(viewKey: string) {

@@ -165,3 +165,30 @@ describe('Identification evidence', () => {
     expect(JSON.parse(csv.split('\n')[0].slice('# provenance: '.length))).toEqual(exported);
   });
 });
+
+it.each([true, false])('shows mixture contributions, separate retrieval, and labeled prepared fit (converged=%s)', async converged => {
+  const mixtureResult = result({ status: converged ? 'candidate' : 'abstained', reasons: converged ? [] : ['fit_not_converged'],
+    method: { method_id: 'raman-mixture', release_id: method, support_min: .60, status: 'provisional' },
+    mixture: { support: .92, components: [{ template_id: 'e'.repeat(64), species_name: 'Syntheticite', coefficient: .8, weight: 1. }],
+      diagnostics: { converged, finite_solution: true } },
+    ranking: [{ template_id: 'e'.repeat(64), species_name: 'Syntheticite', support: null, retrieval_score: .95, trace_revision_ids: [], citations: [] }],
+    evidence: { grid: [810, 815, 820], mask: [true, false, true], prepared_trace: [.2, .3, .4], inspection: null,
+      mixture_fit: { mask: [true, false, true], fit: [.1, null, .3], residual: [.1, null, .1], converged } } });
+  api.identifyStoredPoint.mockResolvedValue(mixtureResult);
+  const { container } = render(EvidenceDesk, { snapshot: input(), contextKey: 'synthetic-context' });
+  expect(screen.queryByRole('option', { name: 'Mixture fit and residual' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Identify' })); await flush();
+  expect(container.textContent).toContain('Mixture support');
+  expect(container.textContent).toContain('retrieval score 0.950');
+  expect(container.textContent).toContain('contribution 1.000');
+  expect(container.textContent).toContain(converged ? 'Solver converged' : 'Fit not converged');
+  expect(container.textContent).not.toMatch(/probab|confiden|abundan|\d%/i);
+  await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'identification' } }); await flush();
+  const plotted = plot.react.mock.calls.at(-1)!;
+  expect(plotted[1].map((t: { name: string }) => t.name)).toEqual(['Prepared source', 'Mixture fit', 'Mixture fit residual']);
+  expect(plotted[1][0].y).toEqual([.2, null, .4]);
+  expect(plotted[1][1].y).toEqual([.1, null, .3]);
+  expect(plotted[2].yaxis.title.text).toBe('Prepared intensity (unit L2)');
+  expect(plotted[2].meta.identification).toEqual(mixtureResult);
+  expect(plotted[2].title.text).toBe(converged ? 'Mixture fit' : 'Mixture fit · not converged');
+});
