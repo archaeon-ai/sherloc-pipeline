@@ -171,6 +171,16 @@
       "path": "src/sherloc_pipeline/core/identification/recipes/raman-pearson-0.2.0.json",
       "category": "metadata",
       "description": "Frozen provisional Pearson identification recipe: method parameters only (grid, shifts, thresholds, baseline settings), no measured values"
+    },
+    {
+      "path": "src/sherloc_pipeline/core/identification/recipes/raman-mixture-0.1.0.json",
+      "category": "metadata",
+      "description": "Frozen provisional mixture identification recipe: method parameters only (grid, shifts, widths 0/10/20 cm-1, overlap measured on the eligible domain after exclusions, broadening and shifts, min_overlap 0.9), no measured values; SHA-256 92ec79146b8e4ae9fb0f221596c686d3e2c5da66f90ba0b38fd3232b93b17b5a"
+    },
+    {
+      "path": "tests/unit/pearson_runtime_pr7_golden.json",
+      "category": "synthetic",
+      "description": "Complete Pearson identification response to an invented request and invented reference records (synthetic product id, sol 9999), captured before the mixture method with real runtime provenance; no measured values"
     }
   ]
 }
