@@ -466,13 +466,13 @@ def _drop_photodiode(session, point_index):
     session.commit()
 
 
-def _run(session, config, results=None, logs=None):
+def _run(session, config, results=None, logs=None, point_indices=None):
     return MapFitService(config=config).run_map_fit(
         session=session,
         scan_id=SCAN_UUID,
         domains=["minerals"],
-        point_indices=None,
-        point_coords={i: (float(i), float(i)) for i in range(N_POINTS)},
+        point_indices=point_indices,
+        point_coords={i: (float(i), float(i)) for i in range(N_POINTS + 3)},
         on_point_fitted=(results.append if results is not None else lambda r: None),
         on_progress=lambda *a: None,
         on_log=(lambda idx, msg: logs.append((idx, msg))) if logs is not None else (lambda *a: None),
@@ -500,7 +500,7 @@ def test_the_opt_out_fits_unnormalized_points_and_records_each(fit_session):
     assert notes == {0: [], 1: [map_fitting.LASER_NORM_NOT_APPLIED], 2: []}
     assert (1, map_fitting.LASER_NORM_NOT_APPLIED) in logs
     prep = next(msg for idx, msg in logs if idx == -1 and msg.startswith("Preprocessing:"))
-    assert "laser_norm not applied to 1 pts (no photodiode)" in prep
+    assert "1 requested pts have no photodiode (fitted unnormalized)" in prep
     assert "background" not in prep
 
 
@@ -510,3 +510,76 @@ def test_every_point_with_photodiode_records_nothing(fit_session):
     assert summary.laser_norm_not_applied == []
     assert all(r.notes == [] for r in results)
     assert not any("not applied" in msg for _, msg in logs)
+
+
+def _add_point(session, i, photodiode, with_r1=True):
+    pt_id = str(uuid.UUID(f"00000000-0000-0000-0000-{910 + i:012d}"))
+    session.add(
+        ScanPointORM(
+            id=pt_id, scan_id=SCAN_UUID, point_index=i,
+            x_pixel=100.0 + i, y_pixel=200.0 + i, photodiode_mean=photodiode,
+        )
+    )
+    session.flush()
+    if with_r1:
+        session.add(
+            SpectrumORM(
+                id=str(uuid.UUID(f"00000000-0000-0000-0000-{950 + i:012d}")),
+                scan_point_id=pt_id, region="R1", spectrum_type="dark_subtracted",
+                processing_level="dark_subtracted", intensities=_spectrum_bytes(i),
+            )
+        )
+    session.commit()
+
+
+@pytest.fixture()
+def subset_session(fit_session):
+    """Points 0-2 as in fit_session, with point 1's photodiode dropped, plus:
+    3 has the scan's highest photodiode and 4 has none (both outside the
+    requested subset); 5 has no photodiode and no R1 spectrum."""
+    _drop_photodiode(fit_session, 1)
+    _add_point(fit_session, 3, 9000.0)
+    _add_point(fit_session, 4, None)
+    _add_point(fit_session, 5, None, with_r1=False)
+    return fit_session
+
+
+SUBSET = [0, 1, 5]
+
+
+def test_only_requested_points_need_photodiode(subset_session):
+    with pytest.raises(ValueError, match=r"2 of 3 have none \(points 1, 5\)"):
+        _run(subset_session, _CONFIG, point_indices=SUBSET)
+
+
+def test_the_opt_out_on_a_subset_keeps_the_scan_scale_and_notes_only_fitted_points(subset_session, monkeypatch):
+    seen = []
+    real = map_fitting._preprocess_r1_intensity
+
+    def spy(wavenumber_r1, intensity_r1, *args, **kwargs):
+        seen.append(np.array(intensity_r1, dtype=np.float64))
+        return real(wavenumber_r1, intensity_r1, *args, **kwargs)
+
+    monkeypatch.setattr(map_fitting, "_preprocess_r1_intensity", spy)
+    config = {**_CONFIG, "preprocessing": {"baseline": {}, "laser_normalization": {"allow_missing_photodiode": True}}}
+    results, logs = [], []
+    summary = _run(subset_session, config, results, logs, point_indices=SUBSET)
+
+    # Point 5 has no R1 spectrum, so nothing was fitted unnormalized there.
+    assert summary.laser_norm_not_applied == [1]
+    notes = {r.point_index: r.notes for r in results}
+    assert notes == {0: [], 1: [map_fitting.LASER_NORM_NOT_APPLIED], 5: []}
+    assert results[-1].results["minerals"].status == "missing"
+    assert [idx for idx, msg in logs if msg == map_fitting.LASER_NORM_NOT_APPLIED] == [1]
+
+    # The scale stays scan-wide: point 0 is scaled by the scan maximum
+    # (point 3, outside the subset); point 1 is left unnormalized.
+    wavelength, _ = calculate_loupe_wavelength_wavenumber(n_channels=N_CHANNELS)
+    r1_mask = get_region_wavelength_mask(wavelength, "R1")
+
+    def raw(i):
+        return np.frombuffer(zlib.decompress(_spectrum_bytes(i)), dtype=np.float32)[r1_mask].astype(np.float64)
+
+    assert len(seen) == 2
+    np.testing.assert_allclose(seen[0], raw(0) * (9000.0 / 4800.0), rtol=1e-5)
+    np.testing.assert_allclose(seen[1], raw(1), rtol=1e-6)

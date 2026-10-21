@@ -641,16 +641,17 @@ class PreprocessingService:
                         allow_missing=allow_missing_background,
                     )
                 except Exception as e:
+                    # allow_missing covers only a background that does not
+                    # resolve or read (the helper records that); a failure
+                    # while subtracting always fails the run.
                     logger.exception("Background subtraction failed")
-                    if not allow_missing_background:
-                        progress.update(task6, description="❌ Background subtraction failed")
-                        error = e if isinstance(e, PreprocessingError) else PreprocessingError(
-                            f"Background subtraction failed: {e}",
-                            exit_code=1,
-                            context={"working_dir": str(working_dir)},
-                        )
-                        raise enrich(error, sol=sol, target=target, scan=scan)
-                    bg_record = {"applied": False, "allow_missing": True, "reason": str(e)}
+                    progress.update(task6, description="❌ Background subtraction failed")
+                    error = e if isinstance(e, PreprocessingError) else PreprocessingError(
+                        f"Background subtraction failed: {e}",
+                        exit_code=1,
+                        context={"working_dir": str(working_dir)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan)
                 metadata["background_subtraction"] = bg_record
                 if bg_record["applied"]:
                     progress.update(task6, description="✅ Background subtraction completed")
@@ -1116,6 +1117,16 @@ class PreprocessingService:
             missing = f"background file not found: {background}"
         else:
             missing = None
+        bg_df = None
+        if missing is None:
+            try:
+                bg_df = pd.read_csv(str(background))
+                if bg_df.shape[1] < 2 or len(bg_df) == 0:
+                    raise ValueError("expected raman_shift and intensity columns with data")
+                if not all(pd.api.types.is_numeric_dtype(t) for t in bg_df.dtypes.iloc[:2]):
+                    raise ValueError("raman_shift and intensity must be numeric")
+            except Exception as e:
+                missing = f"background file unreadable: {background}: {e}"
         if missing is not None:
             if not allow_missing:
                 raise PreprocessingError(
@@ -1129,7 +1140,8 @@ class PreprocessingService:
             record: Dict[str, Any] = {"applied": False, "allow_missing": True, "reason": missing}
             background = None
         else:
-            record = {"applied": True, "file": str(background), "n_averages": 0}
+            # applied turns True only once every average is subtracted and written.
+            record = {"applied": False, "file": str(background), "n_averages": 0}
         
         # Report background path
         try:
@@ -1265,22 +1277,13 @@ class PreprocessingService:
             # Non-fatal; continue to optional background subtraction
             pass
         
-        # Optional background subtraction
+        # Background subtraction (background was resolved and read above)
         if background is not None:
-            try:
-                bg_path_coerced = Path(str(background))
-                if not bg_path_coerced.exists():
-                    raise FileNotFoundError(f"Background path not found: {bg_path_coerced}")
-                bg_df = pd.read_csv(str(bg_path_coerced))
-            except Exception as e:
-                logger.exception("Failed to open background file")
-                raise
-            
             # Expect columns: raman_shift/intensity
             x_bg = bg_df.iloc[:, 0].values
             y_bg = bg_df.iloc[:, 1].values
             y_bg_scaled = y_bg
-            
+
             # Scale background by pulses-per-point ratio
             try:
                 shots_per_spec = self._read_shots_per_spec(working_dir / "loupe.csv")
@@ -1292,27 +1295,12 @@ class PreprocessingService:
                 ppp_scale = 1.0
                 bg_title_suffix = ""
             record["ppp_scale"] = ppp_scale
-            
-            # Save a plot of the background
-            from sherloc_pipeline.visualization.preprocessing_plots import plot_average_single_series
-            import pathlib
-            # Next to the scan's other plots, never next to the background
-            # file (which may be packaged, read-only data).
-            bg_plot_path = ingestion.get_results_path(target=target, sol=sol, scan=scan) / "test_plots" / pathlib.Path(background).with_suffix('.png').name
-            bg_plot_path.parent.mkdir(parents=True, exist_ok=True)
-            plot_average_single_series(
-                x_axis=x_bg,
-                y_series=y_bg_scaled,
-                output_path=bg_plot_path,
-                title=f"Background spectrum: {pathlib.Path(background).name}{bg_title_suffix}",
-            )
-            
-            # Process each average kind
-            target_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan)
             test_plots_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan) / "test_plots"
-            
-            for avg_kind in ["mean", "trimmed_mean"]:
-                avg_path = ingestion.get_results_path(
+
+            # Statistical analysis writes both R1 averages; subtracting from
+            # only some of them would leave a run that looks complete.
+            avg_paths = {
+                avg_kind: ingestion.get_results_path(
                     target=target,
                     sol=sol,
                     scan=scan,
@@ -1320,70 +1308,124 @@ class PreprocessingService:
                     processing_level=f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}",
                     file_extension=".csv",
                 )
-                if not avg_path.exists():
-                    continue
-                
+                for avg_kind in ["mean", "trimmed_mean"]
+            }
+            absent = [str(path) for path in avg_paths.values() if not path.exists()]
+            if absent:
+                raise PreprocessingError(
+                    f"Background subtraction needs the R1 averages from statistical analysis; missing: {', '.join(absent)}",
+                    exit_code=1,
+                    context={"working_dir": str(working_dir)},
+                )
+
+            roi = (600.0, 700.0)
+            clip = (0.1, 5.0)
+            try:
+                pre_cfg = getattr(ingestion.config, 'preprocessing', None)
+                bs_cfg = None
+                if isinstance(pre_cfg, dict):
+                    bs_cfg = pre_cfg.get('background_subtraction', {}) or {}
+                else:
+                    bs_cfg = getattr(pre_cfg, 'background_subtraction', {}) or {}
+                    if not isinstance(bs_cfg, dict):
+                        bs_cfg = {}
+                cfg_ls = bs_cfg.get('laser_scale', {}) if isinstance(bs_cfg, dict) else {}
+                if isinstance(cfg_ls, dict):
+                    r = cfg_ls.get('roi')
+                    if isinstance(r, (list, tuple)) and len(r) == 2:
+                        roi = (float(r[0]), float(r[1]))
+                    c = cfg_ls.get('clip')
+                    if isinstance(c, (list, tuple)) and len(c) == 2:
+                        clip = (float(c[0]), float(c[1]))
+            except Exception:
+                pass
+
+            if bkg_laser_roi:
+                try:
+                    lo, hi = [float(v) for v in str(bkg_laser_roi).split(',')]
+                    roi = (lo, hi)
+                except Exception:
+                    logger.warning("Invalid --bkg-laser-roi, expected 'lo,hi'")
+
+            # Get keep windows from config
+            try:
+                pre_cfg2 = getattr(ingestion.config, 'preprocessing', None)
+                if isinstance(pre_cfg2, dict):
+                    bl_cfg2 = pre_cfg2.get('baseline', {}) or {}
+                else:
+                    bl_cfg2 = getattr(pre_cfg2, 'baseline', {}) or {}
+                    if not isinstance(bl_cfg2, dict):
+                        bl_cfg2 = {}
+                kw2 = bl_cfg2.get('keep_windows', [])
+                keep_windows = [tuple(map(float, w)) for w in kw2] if kw2 else [(600.0, 1130.0), (1300.0, 1720.0), (3000.0, 3800.0)]
+                keep_weight = float(bl_cfg2.get('keep_weight', 0.01))
+            except Exception:
+                keep_windows = [(600.0, 1130.0), (1300.0, 1720.0), (3000.0, 3800.0)]
+                keep_weight = 0.01
+
+            from sherloc_pipeline.visualization.preprocessing_plots import plot_average_single_series
+            import pathlib
+
+            # Compute every average before writing anything, so a failure
+            # leaves no partial background-subtracted output.
+            staged = []
+            for avg_kind, avg_path in avg_paths.items():
                 avg = pd.read_csv(avg_path)
                 x = avg.iloc[:, 0].values
                 y = avg["intensity"].values
-                
-                if x_bg is not None and y_bg is not None:
-                    # Interpolate background onto x
-                    roi = (600.0, 700.0)
-                    clip = (0.1, 5.0)
-                    try:
-                        pre_cfg = getattr(ingestion.config, 'preprocessing', None)
-                        bs_cfg = None
-                        if isinstance(pre_cfg, dict):
-                            bs_cfg = pre_cfg.get('background_subtraction', {}) or {}
-                        else:
-                            bs_cfg = getattr(pre_cfg, 'background_subtraction', {}) or {}
-                            if not isinstance(bs_cfg, dict):
-                                bs_cfg = {}
-                        cfg_ls = bs_cfg.get('laser_scale', {}) if isinstance(bs_cfg, dict) else {}
-                        if isinstance(cfg_ls, dict):
-                            r = cfg_ls.get('roi')
-                            if isinstance(r, (list, tuple)) and len(r) == 2:
-                                roi = (float(r[0]), float(r[1]))
-                            c = cfg_ls.get('clip')
-                            if isinstance(c, (list, tuple)) and len(c) == 2:
-                                clip = (float(c[0]), float(c[1]))
-                    except Exception:
-                        pass
-                    
-                    if bkg_laser_roi:
-                        try:
-                            lo, hi = [float(v) for v in str(bkg_laser_roi).split(',')]
-                            roi = (lo, hi)
-                        except Exception:
-                            logger.warning("Invalid --bkg-laser-roi, expected 'lo,hi'")
-                    
-                    amp_scan = self._compute_laser_peak_amplitude(x, y, roi=roi)
-                    amp_bg = self._compute_laser_peak_amplitude(x_bg, y_bg, roi=roi)
-                    
-                    # Method selection
-                    scale_method = (bkg_scale_method or 'ppp').lower()
-                    if scale_method not in ("laser", "ppp"):
-                        scale_method = "ppp"
-                    scale_used = ppp_scale
-                    method_used = "ppp"
-                    if scale_method == "laser":
-                        if amp_scan is not None and amp_bg is not None and amp_bg > 0:
-                            scale_used = float(amp_scan) / float(amp_bg)
-                            scale_used = max(clip[0], min(clip[1], scale_used))
-                            method_used = "laser"
-                        else:
-                            logger.warning("Laser scaling requested but amplitudes unavailable; using PPP")
-                    
-                    logger.info(f"Background scaling method={method_used} roi={roi} scale={scale_used:.4f} (amp_scan={amp_scan}, amp_bg={amp_bg}, ppp_scale={ppp_scale})")
-                    
-                    y_bg_interp = np.interp(x, x_bg, y_bg * scale_used)
-                    y_bkgsub = y - y_bg_interp
-                    
+
+                amp_scan = self._compute_laser_peak_amplitude(x, y, roi=roi)
+                amp_bg = self._compute_laser_peak_amplitude(x_bg, y_bg, roi=roi)
+
+                # Method selection
+                scale_method = (bkg_scale_method or 'ppp').lower()
+                if scale_method not in ("laser", "ppp"):
+                    scale_method = "ppp"
+                scale_used = ppp_scale
+                method_used = "ppp"
+                if scale_method == "laser":
+                    if amp_scan is not None and amp_bg is not None and amp_bg > 0:
+                        scale_used = float(amp_scan) / float(amp_bg)
+                        scale_used = max(clip[0], min(clip[1], scale_used))
+                        method_used = "laser"
+                    else:
+                        logger.warning("Laser scaling requested but amplitudes unavailable; using PPP")
+
+                logger.info(f"Background scaling method={method_used} roi={roi} scale={scale_used:.4f} (amp_scan={amp_scan}, amp_bg={amp_bg}, ppp_scale={ppp_scale})")
+
+                y_bg_interp = np.interp(x, x_bg, y_bg * scale_used)
+                y_bkgsub = y - y_bg_interp
+
+                # Baseline after background subtraction
+                weights = build_weight_vector_from_windows(
+                    x, keep_windows=keep_windows, default_weight=1.0, keep_weight=keep_weight
+                )
+                corr, base = _baseline_aspls_with_weights(pd.Series(y_bkgsub), blp, weights)
+                staged.append((avg_kind, avg, x, y, y_bg_interp, y_bkgsub, corr, scale_used, method_used))
+
+            written: List[Path] = []
+            try:
+                # Save a plot of the background next to the scan's other
+                # plots, never next to the background file (which may be
+                # packaged, read-only data).
+                bg_plot_path = test_plots_dir / pathlib.Path(background).with_suffix('.png').name
+                bg_plot_path.parent.mkdir(parents=True, exist_ok=True)
+                written.append(bg_plot_path)
+                plot_average_single_series(
+                    x_axis=x_bg,
+                    y_series=y_bg_scaled,
+                    output_path=bg_plot_path,
+                    title=f"Background spectrum: {pathlib.Path(background).name}{bg_title_suffix}",
+                )
+
+                for avg_kind, avg, x, y, y_bg_interp, y_bkgsub, corr, scale_used, method_used in staged:
+                    level = f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}"
+
                     # Comparative overlay
                     try:
                         y_bg_unscaled_interp = np.interp(x, x_bg, y_bg)
-                        cmp_path = test_plots_dir / f"{sol}_{target}_{scan}_R1_raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}_bkgsub_comparison.png"
+                        cmp_path = test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_comparison.png"
+                        written.append(cmp_path)
                         plot_average_bkgsub_comparison(
                             x_axis=x,
                             avg_raw=y,
@@ -1394,67 +1436,49 @@ class PreprocessingService:
                         )
                     except Exception as e:
                         logger.warning(f"failed to write bkgsub comparison overlay: {e}")
-                    
+
                     # Save background-subtracted (pre-baseline) average
                     bkgsub_out_path = ingestion.get_results_path(
                         target=target,
                         sol=sol,
                         scan=scan,
                         spectral_region="R1",
-                        processing_level=f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}_bkgsub",
+                        processing_level=f"{level}_bkgsub",
                         file_extension=".csv",
                     )
+                    written.append(bkgsub_out_path)
                     pd.DataFrame({avg.columns[0]: x, 'intensity': y_bkgsub}).to_csv(bkgsub_out_path, index=False)
-                    record["n_averages"] += 1
-                    
+
                     try:
                         self.console.print(f"[green]Wrote:[/green] {bkgsub_out_path}")
                     except Exception:
                         pass
-                    
-                    # Baseline after background subtraction
-                    try:
-                        pre_cfg2 = getattr(ingestion.config, 'preprocessing', None)
-                        if isinstance(pre_cfg2, dict):
-                            bl_cfg2 = pre_cfg2.get('baseline', {}) or {}
-                        else:
-                            bl_cfg2 = getattr(pre_cfg2, 'baseline', {}) or {}
-                            if not isinstance(bl_cfg2, dict):
-                                bl_cfg2 = {}
-                        kw2 = bl_cfg2.get('keep_windows', [])
-                        keep_windows = [tuple(map(float, w)) for w in kw2] if kw2 else [(600.0, 1130.0), (1300.0, 1720.0), (3000.0, 3800.0)]
-                        keep_weight = float(bl_cfg2.get('keep_weight', 0.01))
-                    except Exception:
-                        keep_windows = [(600.0, 1130.0), (1300.0, 1720.0), (3000.0, 3800.0)]
-                        keep_weight = 0.01
-                    
-                    weights = build_weight_vector_from_windows(
-                        x, keep_windows=keep_windows, default_weight=1.0, keep_weight=keep_weight
-                    )
-                    corr, base = _baseline_aspls_with_weights(pd.Series(y_bkgsub), blp, weights)
+
                     out = pd.DataFrame({avg.columns[0]: x, 'intensity': corr.values})
                     out_path = ingestion.get_results_path(
                         target=target,
                         sol=sol,
                         scan=scan,
                         spectral_region="R1",
-                        processing_level=f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}_bkgsub_baselined",
+                        processing_level=f"{level}_bkgsub_baselined",
                         file_extension=".csv",
                     )
+                    written.append(out_path)
                     out.to_csv(out_path, index=False)
-                    
+
                     # Individual plots
                     from matplotlib import pyplot as plt
-                    
+
                     # bkgsub only
                     bkgsub_png_path = ingestion.get_results_path(
                         target=target,
                         sol=sol,
                         scan=scan,
                         spectral_region="R1",
-                        processing_level=f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}_bkgsub",
+                        processing_level=f"{level}_bkgsub",
                         file_extension=".png",
                     )
+                    written.append(bkgsub_png_path)
                     plt.figure(figsize=(12, 6))
                     plt.plot(x, y_bkgsub, color="#7f7f7f", linewidth=1.5)
                     plt.xlabel("Raman Shift (cm⁻¹)")
@@ -1469,16 +1493,17 @@ class PreprocessingService:
                     bkgsub_png_path.parent.mkdir(parents=True, exist_ok=True)
                     plt.savefig(bkgsub_png_path, dpi=300, bbox_inches="tight")
                     plt.close()
-                    
+
                     # bkgsub + baseline
                     bkgsub_bl_png_path = ingestion.get_results_path(
                         target=target,
                         sol=sol,
                         scan=scan,
                         spectral_region="R1",
-                        processing_level=f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}_bkgsub_baselined",
+                        processing_level=f"{level}_bkgsub_baselined",
                         file_extension=".png",
                     )
+                    written.append(bkgsub_bl_png_path)
                     plt.figure(figsize=(12, 6))
                     plt.plot(x, corr.values, color="#2ca02c", linewidth=1.5)
                     plt.xlabel("Raman Shift (cm⁻¹)")
@@ -1493,10 +1518,10 @@ class PreprocessingService:
                     bkgsub_bl_png_path.parent.mkdir(parents=True, exist_ok=True)
                     plt.savefig(bkgsub_bl_png_path, dpi=300, bbox_inches="tight")
                     plt.close()
-                    
+
                     # Composite verification plot
-                    plot_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan) / "test_plots"
-                    plot_path = plot_dir / f"{sol}_{target}_{scan}_R1_raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}_bkgsub_baseline_test.png"
+                    plot_path = test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_baseline_test.png"
+                    written.append(plot_path)
                     plot_average_bkgsub_baseline(
                         x_axis=x,
                         avg_raw=avg['intensity'].values,
@@ -1506,6 +1531,15 @@ class PreprocessingService:
                         output_path=plot_path,
                         title=f"sol {sol} {target} {scan} R1 raw-n {trim_token if avg_kind == 'trimmed_mean' else 'mean'} bkgsub + baseline",
                     )
+            except Exception:
+                for path in written:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise
+            record["n_averages"] = len(staged)
+            record["applied"] = True
         return record
     
     def _read_shots_per_spec(self, loupe_csv: Path) -> Optional[float]:

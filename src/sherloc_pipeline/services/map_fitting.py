@@ -751,7 +751,7 @@ class MapFitService:
             if pd_map:
                 prep_parts.append(f"laser_norm(max_pd={max_pd:.0f}, {len(pd_map)} pts)")
             if no_photodiode:
-                prep_parts.append(f"laser_norm not applied to {len(no_photodiode)} pts (no photodiode)")
+                prep_parts.append(f"{len(no_photodiode)} requested pts have no photodiode (fitted unnormalized)")
             if bl_params is not None:
                 prep_parts.append(f"baseline(asPLS lam={bl_params.lam:.0e}, iters={bl_params.iters})")
             # Map mode fits single points, which are never background-subtracted.
@@ -763,6 +763,8 @@ class MapFitService:
                 pass
 
         no_photodiode_set = set(no_photodiode)
+        # Points actually fitted from an R1 spectrum without normalization.
+        laser_norm_not_applied: list[int] = []
         detections: dict[str, int] = {d: 0 for d in domains}
         last_progress_time = t_start
         fitted_count = 0
@@ -775,6 +777,7 @@ class MapFitService:
             point_index = sp.point_index
             coords = point_coords.get(point_index, (0.0, 0.0))
             domain_results: dict[str, DomainResult] = {}
+            notes: list[str] = []
 
             # Fit each requested Raman domain
             if sp.id in r1_spectra and raman_domains:
@@ -784,6 +787,9 @@ class MapFitService:
                 pd_val = pd_map.get(point_index)
                 if pd_val and max_pd > 0:
                     raw_intensity = raw_intensity * (max_pd / pd_val)
+                elif point_index in no_photodiode_set:
+                    notes.append(LASER_NORM_NOT_APPLIED)
+                    laser_norm_not_applied.append(point_index)
 
                 # Apply R1 wavelength mask
                 if len(raw_intensity) >= len(r1_mask):
@@ -854,7 +860,7 @@ class MapFitService:
                 x=coords[0],
                 y=coords[1],
                 results=domain_results,
-                notes=[LASER_NORM_NOT_APPLIED] if point_index in no_photodiode_set and raman_domains else [],
+                notes=notes,
             )
             if point_result.notes:
                 try:
@@ -922,5 +928,5 @@ class MapFitService:
             total_points=fitted_count,
             detections=detections,
             elapsed_s=round(elapsed_total, 2),
-            laser_norm_not_applied=sorted(no_photodiode_set),
+            laser_norm_not_applied=sorted(laser_norm_not_applied),
         )
