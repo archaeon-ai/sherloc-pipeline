@@ -1141,7 +1141,13 @@ class PreprocessingService:
             background = None
         else:
             # applied turns True only once every average is subtracted and written.
-            record = {"applied": False, "file": str(background), "n_averages": 0}
+            import hashlib
+            record = {
+                "applied": False,
+                "file": str(background),
+                "sha256": hashlib.sha256(Path(str(background)).read_bytes()).hexdigest(),
+                "n_averages": 0,
+            }
         
         # Report background path
         try:
@@ -1412,7 +1418,7 @@ class PreprocessingService:
                 # Save a plot of the background next to the scan's other
                 # plots, never next to the background file (which may be
                 # packaged, read-only data).
-                bg_plot_path = test_plots_dir / pathlib.Path(background).with_suffix('.png').name
+                bg_plot_path = test_plots_dir / f"{sol}_{target}_{scan}_R1_background.png"
                 bg_plot_path.parent.mkdir(parents=True, exist_ok=True)
                 bg_plot_path = stage(bg_plot_path)
                 plot_average_single_series(
@@ -1533,8 +1539,29 @@ class PreprocessingService:
                     except OSError:
                         pass
                 raise
-            for staged_path, final in staging:
-                staged_path.replace(final)
+            # Move the staged files into place, keeping the previous outputs
+            # until all moves succeed so a failure restores them.
+            backups: List[tuple] = []
+            committed: List[Path] = []
+            try:
+                for staged_path, final in staging:
+                    if final.exists():
+                        backup = final.with_name(f".backup-{final.name}")
+                        final.replace(backup)
+                        backups.append((backup, final))
+                    staged_path.replace(final)
+                    committed.append(final)
+            except Exception:
+                for final in committed:
+                    final.unlink(missing_ok=True)
+                for backup, final in backups:
+                    backup.replace(final)
+                for staged_path, _ in staging:
+                    staged_path.unlink(missing_ok=True)
+                raise
+            for backup, _ in backups:
+                backup.unlink(missing_ok=True)
+            for final in committed:
                 if final.suffix == ".csv":
                     try:
                         self.console.print(f"[green]Wrote:[/green] {final}")
@@ -1547,29 +1574,23 @@ class PreprocessingService:
             # outputs an earlier run left, so they are not collected as this
             # run's artifacts.
             removed = []
-            for path in self._bkgsub_output_paths(ingestion, target, sol, scan, trim_token):
-                if path.exists():
-                    path.unlink()
-                    removed.append(str(path))
+            for path in self._bkgsub_output_paths(ingestion, target, sol, scan):
+                path.unlink()
+                removed.append(str(path))
             if removed:
                 record["removed_stale"] = removed
         return record
 
     @staticmethod
-    def _bkgsub_output_paths(ingestion, target: str, sol: str, scan: str, trim_token: str) -> List[Path]:
-        """Every per-average output the background subtraction step writes."""
-        test_plots_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan) / "test_plots"
-        paths: List[Path] = []
-        for level in ("raw-n_mean", f"raw-n_{trim_token}"):
-            for suffix in ("bkgsub", "bkgsub_baselined"):
-                for ext in (".csv", ".png"):
-                    paths.append(ingestion.get_results_path(
-                        target=target, sol=sol, scan=scan, spectral_region="R1",
-                        processing_level=f"{level}_{suffix}", file_extension=ext,
-                    ))
-            paths.append(test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_comparison.png")
-            paths.append(test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_baseline_test.png")
-        return paths
+    def _bkgsub_output_paths(ingestion, target: str, sol: str, scan: str) -> List[Path]:
+        """Existing outputs of background subtraction for this scan: every
+        average's (any trim token) bkgsub files and plots, and the background plot."""
+        scan_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan)
+        prefix = f"{sol}_{target}_{scan}_R1_"
+        paths = set(scan_dir.glob(f"{prefix}raw-n_*_bkgsub*"))
+        paths.update((scan_dir / "test_plots").glob(f"{prefix}raw-n_*_bkgsub*"))
+        paths.add(scan_dir / "test_plots" / f"{prefix}background.png")
+        return sorted(path for path in paths if path.is_file())
     
     def _read_shots_per_spec(self, loupe_csv: Path) -> Optional[float]:
         """Read shots_per_spec from a loupe.csv file. Returns None if unavailable."""

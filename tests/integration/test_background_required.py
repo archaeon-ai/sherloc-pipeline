@@ -7,7 +7,9 @@ it used to fail to resolve (tests/conftest.py points the variable at the
 fixtures, so these tests set the relative form explicitly).
 """
 
+import hashlib
 import importlib.resources
+import re
 import shutil
 import tomllib
 from fnmatch import fnmatch
@@ -68,6 +70,7 @@ def test_averages_are_background_subtracted_with_the_default(tmp_path, fixtures_
     record = result.metadata["background_subtraction"]
     assert record["applied"] is True
     assert Path(record["file"]) == PACKAGED
+    assert record["sha256"] == hashlib.sha256(PACKAGED.read_bytes()).hexdigest()
     assert record["n_averages"] == 2  # mean and trimmed mean
     assert not any("Background subtraction" in w for w in result.warnings)
     assert list((tmp_path / "results").rglob("*_bkgsub.csv"))
@@ -145,7 +148,7 @@ def test_a_read_only_installed_default_is_used_and_left_untouched(tmp_path, fixt
         assert record["applied"] is True
         assert Path(record["file"]) == installed / "background" / DEFAULT_NAME
         assert sorted(p.name for p in (installed / "background").iterdir()) == [DEFAULT_NAME]
-        assert list((tmp_path / "results").rglob(f"test_plots/{Path(DEFAULT_NAME).stem}.png"))
+        assert list((tmp_path / "results").rglob("test_plots/*_R1_background.png"))
     finally:
         for d in (installed, installed / "background"):
             d.chmod(0o755)
@@ -187,7 +190,7 @@ def test_a_failure_after_the_first_average_leaves_no_bkgsub_output(tmp_path, fix
     assert len(calls) == 2  # The first average was staged before the failure.
     assert not list((tmp_path / "results").rglob("*_bkgsub*"))
     assert not list((tmp_path / "results").rglob(".staging-*"))
-    assert not list((tmp_path / "results").rglob(f"{Path(DEFAULT_NAME).stem}.png"))
+    assert not list((tmp_path / "results").rglob("*_R1_background.png"))
 
 
 def _outputs(results):
@@ -248,11 +251,59 @@ def test_an_opt_out_rerun_removes_the_previous_bkgsub_outputs(tmp_path, fixtures
     run(tmp_path, fixtures_path)
     before = _outputs(tmp_path / "results")
     assert before
+    record_plot = list((tmp_path / "results").rglob("test_plots/*_R1_background.png"))
+    assert len(record_plot) == 1
 
     monkeypatch.setitem(background_cfg, "default_file", "./data/background/synthetic-missing.csv")
     result = run(tmp_path, fixtures_path, allow_missing_background=True)
     record = result.metadata["background_subtraction"]
     assert record["applied"] is False
-    assert sorted(record["removed_stale"]) == sorted(str(p) for p in before)
+    background_plot = next((tmp_path / "results").rglob("test_plots/*_R1_background.png"), None)
+    assert background_plot is None
+    assert sorted(record["removed_stale"]) == sorted(
+        [str(p) for p in before] + [str(p) for p in record_plot]
+    )
     assert not list((tmp_path / "results").rglob("*_bkgsub*"))
     assert not any("_bkgsub" in str(a) for a in result.artifacts)
+
+
+def test_a_failed_move_into_place_restores_the_previous_outputs(tmp_path, fixtures_path, clean_cwd, background_cfg, monkeypatch):
+    monkeypatch.setitem(background_cfg, "default_file", f"./data/background/{DEFAULT_NAME}")
+    run(tmp_path, fixtures_path)
+    before = _outputs(tmp_path / "results")
+    assert before
+
+    real_replace = Path.replace
+    moves = []
+
+    def fail_on_third_move(self, target):
+        if self.name.startswith(".staging-"):
+            moves.append(self)
+            if len(moves) == 3:
+                raise OSError("synthetic replace failure")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_on_third_move)
+    with pytest.raises(PreprocessingError, match="synthetic replace failure"):
+        run(tmp_path, fixtures_path)
+    assert _outputs(tmp_path / "results") == before
+    assert not list((tmp_path / "results").rglob(".staging-*"))
+    assert not list((tmp_path / "results").rglob(".backup-*"))
+
+
+def test_an_opt_out_rerun_removes_outputs_of_every_trim_and_the_background_plot(tmp_path, fixtures_path, clean_cwd, background_cfg, monkeypatch):
+    monkeypatch.setitem(background_cfg, "default_file", f"./data/background/{DEFAULT_NAME}")
+    run(tmp_path, fixtures_path)
+    results = tmp_path / "results"
+    background_plot = next(results.rglob("test_plots/*_R1_background.png"))
+    # Outputs of an earlier run with another trim percentage.
+    current = next(results.rglob("*_R1_raw-n_*p_trim_mean_bkgsub.csv"))
+    other_trim = current.with_name(re.sub(r"\d+(\.\d+)?p_trim_mean", "8p_trim_mean", current.name))
+    assert other_trim != current
+    shutil.copy(current, other_trim)
+
+    monkeypatch.setitem(background_cfg, "default_file", "./data/background/synthetic-missing.csv")
+    result = run(tmp_path, fixtures_path, allow_missing_background=True)
+    removed = result.metadata["background_subtraction"]["removed_stale"]
+    assert str(other_trim) in removed and str(background_plot) in removed
+    assert not other_trim.exists() and not background_plot.exists()
