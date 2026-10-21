@@ -346,6 +346,11 @@ class DataIngestion:
             normalized_spectra = self.process_normalized_spectra(working_dir)
         
         file_counts = {'CSV': 0, 'PNG': 0}
+        # The averages written by this call, by region label and method.
+        # Callers use these exact paths: the trimmed-mean filename depends on
+        # the point count, so a results directory can also hold averages from
+        # earlier runs at other trim percentages.
+        self.average_paths: Dict[str, Dict[str, Path]] = {}
         
         # Process normalized spectra (laser-normalized becomes our downstream "raw-n")
         for region, spectra_df in normalized_spectra.items():
@@ -357,6 +362,7 @@ class DataIngestion:
             plots = self.plot_both_average_spectra(
                 spectra_df, target, sol, scan, region_label, "raw-n"
             )
+            self.average_paths[region_label] = files
             file_counts['CSV'] += len(files)
             file_counts['PNG'] += len(plots)
         

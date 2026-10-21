@@ -1156,27 +1156,24 @@ class PreprocessingService:
         except Exception:
             pass
         
-        # Resolve the actual trim-mean filename token for this scan
-        # (may differ from configured 2% due to dynamic trim on small scans)
-        _tm_matches = sorted(ingestion.get_results_path(target=target, sol=sol, scan=scan).glob(
-            f"{sol}_{target}_{scan}_R1_raw-n_*p_trim_mean.csv"
-        ))
-        _m = re.search(r'(\d+(?:\.\d+)?p_trim_mean)', _tm_matches[0].name) if _tm_matches else None
+        # The R1 averages this run's statistical analysis wrote. The trim
+        # token (e.g. 2p_trim_mean) depends on the point count, so the results
+        # directory may also hold averages of earlier runs at other trims;
+        # only the reported paths are used.
+        reported = (getattr(ingestion, "average_paths", None) or {}).get("R1") or {}
+        if set(reported) != {"mean", "trimmed_mean"}:
+            raise PreprocessingError(
+                "Background subtraction needs the R1 mean and trimmed mean from this run's "
+                f"statistical analysis; it reported: {sorted(reported) or 'none'}",
+                exit_code=1,
+                context={"working_dir": str(working_dir)},
+            )
+        avg_paths = {avg_kind: Path(reported[avg_kind]) for avg_kind in ["mean", "trimmed_mean"]}
+        _m = re.search(r'(\d+(?:\.\d+)?p_trim_mean)', avg_paths["trimmed_mean"].name)
         trim_token = _m.group(1) if _m else '2p_trim_mean'
 
-        # Statistical analysis writes both R1 averages. A missing one is an
-        # error with or without allow_missing, which is about the background.
-        avg_paths = {
-            avg_kind: ingestion.get_results_path(
-                target=target,
-                sol=sol,
-                scan=scan,
-                spectral_region="R1",
-                processing_level=f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}",
-                file_extension=".csv",
-            )
-            for avg_kind in ["mean", "trimmed_mean"]
-        }
+        # A missing average is an error with or without allow_missing, which
+        # is about the background.
         absent = [str(path) for path in avg_paths.values() if not path.exists()]
         if absent:
             raise PreprocessingError(
