@@ -263,6 +263,16 @@ class StaleArtifactError(RuntimeError):
     """
 
 
+def _fit_fluorescence_point(fit_fn, item):
+    """Fit one point's stitched R1-R3 with its own saturation threshold.
+
+    ``item`` is ``(r123, saturation_threshold)``. Module-level so the process
+    pool can pickle it.
+    """
+    r123, saturation_threshold = item
+    return fit_fn(r123, saturation_threshold=saturation_threshold)
+
+
 def _remove_stale_artifacts(paths: List[Path]) -> None:
     """Delete artifacts from an earlier run that this run did not regenerate.
 
@@ -3118,12 +3128,18 @@ class FittingService:
                             padded[offset:offset + len(raw)] = raw
                             region_arrays[region] = padded
 
+                    # Saturation is in detector counts: scale the threshold
+                    # with the counts so normalization cannot fake saturation.
+                    point_saturation = saturation_threshold
                     if laser_normalize:
                         region_arrays, scaled = fluor_inputs.apply_fluorescence_laser_normalization(
                             region_arrays, norm_factors.get(scan_point.id)
                         )
                         if scaled:
                             normalized_points.append(scan_point.id)
+                            point_saturation = fluor_inputs.scaled_saturation_threshold(
+                                saturation_threshold, norm_factors[scan_point.id]
+                            )
                         else:
                             no_photodiode_points.append(point_idx)
 
@@ -3134,6 +3150,7 @@ class FittingService:
                     fit_inputs.append({
                         'point_idx': point_idx,
                         'r123': r123,
+                        'saturation_threshold': point_saturation,
                         'link_spectrum_id': entry["link_spectrum_id"],
                         'scan_point_id': scan_point.id,
                     })
@@ -3173,7 +3190,6 @@ class FittingService:
                     max_peaks=max_peaks,
                     snr_threshold=snr_threshold,
                     min_fwhm_nm=min_fwhm_nm,
-                    saturation_threshold=saturation_threshold,
                     saturation_channel_limit=saturation_channel_limit,
                     strategy=strategy,
                 )
@@ -3184,9 +3200,9 @@ class FittingService:
                     len(fit_inputs),
                 )
 
-                r123_inputs = [inp['r123'] for inp in fit_inputs]
+                r123_inputs = [(inp['r123'], inp['saturation_threshold']) for inp in fit_inputs]
                 fit_results = self._run_parallel(
-                    _fit_fn, r123_inputs, n_workers,
+                    partial(_fit_fluorescence_point, _fit_fn), r123_inputs, n_workers,
                     f"Fluorescence {sol}/{target}/{scan}",
                 )
 
@@ -3287,7 +3303,7 @@ class FittingService:
                                 result=fit_result,
                                 output_png_path=str(png_path),
                                 xlim=(fit_range[0] - 5, fit_range[1] + 5),
-                                saturation_threshold=saturation_threshold,
+                                saturation_threshold=inp['saturation_threshold'],
                                 sol=sol, target=target, scan=scan, point=point_idx,
                             )
                             artifacts.append(png_path)

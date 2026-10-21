@@ -289,11 +289,100 @@ def test_map_mode_normalizes_a_subset_with_the_scan_maximum(db):
         subset = [sp for sp in all_points if sp.point_index in (0, 1)]
         whole = fluor_inputs.laser_normalization_factors(pds)
         raw = fluor_inputs.load_fluorescence_inputs(session, [sp.id for sp in subset])
-        parts, _notes = map_fitting._load_fluorescence_inputs(
+        parts, _notes, scales = map_fitting._load_fluorescence_inputs(
             session, subset, {"fluorescence_fitting": {"laser_normalize": True}}, scan_id)
         for sp in subset:
             np.testing.assert_allclose(
                 parts[sp.id]["R2"], raw[sp.id]["arrays"]["R2"] * whole[sp.id])
+            assert scales[sp.id] == pytest.approx(whole[sp.id])
+
+
+def test_scaled_saturation_threshold():
+    assert fluor_inputs.scaled_saturation_threshold(60000.0, None) == 60000.0
+    assert fluor_inputs.scaled_saturation_threshold(60000.0, 2.0) == 120000.0
+
+
+@pytest.mark.parametrize("laser_normalize", [True, False])
+def test_point_fit_scales_the_saturation_threshold_with_the_counts(
+    db, tmp_path, monkeypatch, laser_normalize
+):
+    """A band at 35,000 counts scaled by 2 is 70,000: not saturated (P1, #133)."""
+    import copy
+
+    from sherloc_pipeline.config import load_config
+    from sherloc_pipeline.core import fluor_fitting
+    from sherloc_pipeline.services.fitting import FittingService
+    from sherloc_pipeline.services.runtime import RuntimeContext
+
+    db_path, service = db
+    seen = []
+
+    def stub(wavelength, intensity, **kwargs):
+        seen.append(kwargs["saturation_threshold"])
+        return fluor_fitting.FluorFitResult(
+            peaks=[], r2=0.0, rss=0.0, aicc=float("inf"), n_peaks=0,
+            is_saturated=False, fit_skipped=True, n_saturated_channels=0,
+            n_masked_channels=0, warnings=["stub"],
+        )
+
+    monkeypatch.setattr(fluor_fitting, "fit_fluorescence_spectrum", stub)
+    cfg = copy.deepcopy(load_config())
+    cfg.fluorescence_fitting = dict(cfg.fluorescence_fitting or {})
+    cfg.fluorescence_fitting.update(
+        parallel_workers=1, laser_normalize=laser_normalize, saturation_threshold=60000.0)
+    context = RuntimeContext.bootstrap(
+        data_dir=tmp_path / "data", results_dir=tmp_path / "results", config=cfg
+    )
+    fitting = FittingService(context=context)
+    fitting._database_path = db_path
+    fitting.fit_fluorescence("0921", TARGET, "detail_1", generate_plots=False)
+
+    with get_session(service.engine) as session:
+        pds = dict(session.query(ScanPointORM.id, ScanPointORM.photodiode_mean))
+    factors = fluor_inputs.laser_normalization_factors(pds)
+    expected = sorted(
+        60000.0 * f if (laser_normalize and f is not None) else 60000.0
+        for f in factors.values()
+    )
+    assert sorted(seen) == pytest.approx(expected)
+    if laser_normalize:
+        assert max(seen) > 60000.0
+
+
+def test_map_fit_scales_the_saturation_threshold(monkeypatch):
+    from sherloc_pipeline.core import fluor_fitting
+    from sherloc_pipeline.services import map_fitting
+
+    seen = []
+
+    def stub(**kwargs):
+        seen.append(kwargs["saturation_threshold"])
+        raise RuntimeError("stop after recording")
+
+    monkeypatch.setattr(fluor_fitting, "fit_fluorescence_spectrum", stub)
+    parts = {reg: np.ones(2148, dtype=np.float64) for reg in ("R1", "R2", "R3")}
+    cfg = {"fluorescence_fitting": {"saturation_threshold": 60000.0}}
+    for scale in (1.0, 2.5):
+        map_fitting._fit_fluorescence_domain(
+            None, "sp", cfg, preloaded_parts=parts, saturation_scale=scale)
+    assert seen == [60000.0, 150000.0]
+
+
+@pytest.mark.parametrize("allow_despiked", [True, False])
+def test_a_database_without_the_mask_table_uses_the_measured_rows(db, allow_despiked):
+    """Pre-migration DBs have no cosmic_ray_masks table (P2, #133)."""
+    from sqlalchemy import text
+
+    db_path, service = db
+    _rebuild(db_path)
+    with get_session(service.engine) as session:
+        session.execute(text("DROP TABLE cosmic_ray_masks"))
+    with get_session(service.engine) as session:
+        points = _points(session)
+        chosen = fluor_inputs.load_fluorescence_inputs(
+            session, list(points.values()), allow_despiked=allow_despiked)
+        assert len(chosen) == len(points)
+        assert not any(c["despiked"] for c in chosen.values())
 
 
 def test_only_the_rows_this_run_wrote_are_used_when_ids_are_given(db):

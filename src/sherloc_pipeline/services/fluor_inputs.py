@@ -46,6 +46,13 @@ def _as_aware(value: Optional[datetime]) -> Optional[datetime]:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
+def _has_mask_table(session) -> bool:
+    """Whether the session's database has the cosmic_ray_masks table."""
+    from sqlalchemy import inspect
+
+    return inspect(session.connection()).has_table("cosmic_ray_masks")
+
+
 def select_stored_mask(masks: Sequence[Any]) -> Optional[Any]:
     """Newest stored mask wins, ties broken by method (the web toggle's rule)."""
     if not masks:
@@ -270,7 +277,12 @@ def load_fluorescence_inputs(
     parent_ids = [
         r.id for (pid, reg, t), r in rows.items() if t == PARENT_SPECTRUM_TYPE
     ]
-    masks = CRMaskService.get_masks_for_spectra(session, parent_ids)
+    # Masks only matter when despiked rows may be used. A database from before
+    # the cosmic_ray_masks migration has no stored masks: fall back to the
+    # measured rows instead of failing the lookup.
+    masks: Dict[str, List[Any]] = {}
+    if allow_despiked and parent_ids and _has_mask_table(session):
+        masks = CRMaskService.get_masks_for_spectra(session, parent_ids)
 
     out: Dict[str, Dict[str, Any]] = {}
     for pid in ids:
@@ -356,6 +368,16 @@ def apply_fluorescence_laser_normalization(
     if factor is None:
         return arrays, False
     return {reg: a * factor for reg, a in arrays.items()}, True
+
+
+def scaled_saturation_threshold(threshold: float, factor: Optional[float]) -> float:
+    """The saturation threshold for arrays scaled by ``factor``.
+
+    Saturation is a detector-count limit. Laser normalization multiplies the
+    counts by the point's factor, so the threshold is multiplied by the same
+    factor; otherwise an unsaturated band would read as saturated after scaling.
+    """
+    return threshold if factor is None else threshold * float(factor)
 
 
 def laser_normalize_enabled(config: Any) -> bool:

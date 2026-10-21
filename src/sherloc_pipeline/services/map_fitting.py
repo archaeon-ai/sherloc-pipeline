@@ -459,6 +459,7 @@ def _fit_fluorescence_domain(
     scan_point_id: str,
     config: dict,
     preloaded_parts: dict[str, np.ndarray] | None = None,
+    saturation_scale: float = 1.0,
 ) -> DomainResult:
     """Fit fluorescence for a single scan point using R2+R3 spectra.
 
@@ -468,6 +469,9 @@ def _fit_fluorescence_domain(
         config: Full pipeline config dict.
         preloaded_parts: ``{region: intensity}`` from a batched load; when
             supplied the per-point queries are skipped entirely.
+        saturation_scale: The laser-normalization factor applied to
+            ``preloaded_parts`` (1.0 when unscaled). The saturation threshold is
+            in detector counts, so it is scaled by the same factor.
 
     Returns:
         DomainResult with fitted fluorescence peaks.
@@ -475,6 +479,7 @@ def _fit_fluorescence_domain(
     from sherloc_pipeline.core.fluor_fitting import fit_fluorescence_spectrum
     from sherloc_pipeline.core.fluor_id import assign_fluor_group
     from sherloc_pipeline.core.r123_stitching import stitch_r123_spectrum
+    from sherloc_pipeline.services import fluor_inputs
 
     fluor_cfg = config.get("fluorescence_fitting", {})
 
@@ -523,7 +528,9 @@ def _fit_fluorescence_domain(
             snr_threshold=fluor_cfg.get("snr_threshold", 10.0),
             min_fwhm_nm=fluor_cfg.get("min_fwhm_nm", 8.0),
             noise_window=tuple(fluor_cfg.get("noise_window", [261.5, 262.3])),
-            saturation_threshold=fluor_cfg.get("saturation_threshold", 60000.0),
+            saturation_threshold=fluor_inputs.scaled_saturation_threshold(
+                float(fluor_cfg.get("saturation_threshold", 60000.0)), saturation_scale
+            ),
             saturation_channel_limit=fluor_cfg.get("saturation_channel_limit", 5),
             overlap_exclusion=tuple(fluor_cfg.get("overlap_exclusion", [337.4, 338.4])),
         )
@@ -568,14 +575,16 @@ FLUOR_LASER_NORM_NOT_APPLIED = "fluorescence laser_norm: not applied (no photodi
 
 def _load_fluorescence_inputs(
     session: Session, scan_points, config: dict, scan_id: str
-) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, list[str]]]:
+) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, list[str]], dict[str, float]]:
     """Fluorescence inputs for map mode, chosen and normalized as the point path does.
 
     The laser-normalization factors use the whole scan's maximum photodiode
     reading, as the point fitter and the Raman map path do, so fitting a subset
     of points scales them the same as fitting the full scan.
 
-    Returns ``({scan_point_id: {region: intensity}}, {scan_point_id: [notes]})``.
+    Returns ``({scan_point_id: {region: intensity}}, {scan_point_id: [notes]},
+    {scan_point_id: scale})``, where scale is the laser-normalization factor
+    applied to that point (1.0 when unscaled).
     A point absent from the first dict has no readable R1-R3 and reports a
     missing domain (services/fluor_inputs.py).
     """
@@ -592,6 +601,7 @@ def _load_fluorescence_inputs(
     ) if normalize else {}
     parts: dict[str, dict[str, np.ndarray]] = {}
     notes: dict[str, list[str]] = {}
+    scales: dict[str, float] = {}
     for sp_id, entry in chosen.items():
         arrays = entry["arrays"]
         point_notes = [] if entry["despiked"] else [FLUOR_NOT_DESPIKED]
@@ -599,11 +609,13 @@ def _load_fluorescence_inputs(
             arrays, scaled = fluor_inputs.apply_fluorescence_laser_normalization(
                 arrays, factors.get(sp_id)
             )
-            if not scaled:
+            if scaled:
+                scales[sp_id] = float(factors[sp_id])
+            else:
                 point_notes.append(FLUOR_LASER_NORM_NOT_APPLIED)
         parts[sp_id] = arrays
         notes[sp_id] = point_notes
-    return parts, notes
+    return parts, notes, scales
 
 
 def allow_missing_photodiode(config: dict) -> bool:
@@ -707,8 +719,9 @@ class MapFitService:
         # normalization stage (same choice as the point fitter).
         fluor_spectra: dict[str, dict[str, np.ndarray]] = {}
         fluor_notes: dict[str, list[str]] = {}
+        fluor_scales: dict[str, float] = {}
         if "fluorescence" in domains:
-            fluor_spectra, fluor_notes = _load_fluorescence_inputs(
+            fluor_spectra, fluor_notes, fluor_scales = _load_fluorescence_inputs(
                 session, scan_points, self.config, scan_id
             )
 
@@ -876,6 +889,7 @@ class MapFitService:
                         sp.id,
                         self.config,
                         preloaded_parts=fluor_spectra.get(sp.id, {}),
+                        saturation_scale=fluor_scales.get(sp.id, 1.0),
                     )
                 except Exception as exc:
                     logger.debug(
