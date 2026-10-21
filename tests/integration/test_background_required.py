@@ -307,3 +307,22 @@ def test_an_opt_out_rerun_removes_outputs_of_every_trim_and_the_background_plot(
     removed = result.metadata["background_subtraction"]["removed_stale"]
     assert str(other_trim) in removed and str(background_plot) in removed
     assert not other_trim.exists() and not background_plot.exists()
+
+
+def test_stale_output_cleanup_treats_names_literally(tmp_path):
+    class Ingestion:
+        def get_results_path(self, target, sol, scan):
+            return tmp_path
+
+    (tmp_path / "test_plots").mkdir()
+    prefix = "0921_Calibration[1]_detail_1_R1_"
+    stale = [
+        tmp_path / f"{prefix}raw-n_mean_bkgsub.csv",
+        tmp_path / "test_plots" / f"{prefix}raw-n_8p_trim_mean_bkgsub_comparison.png",
+        tmp_path / "test_plots" / f"{prefix}background.png",
+    ]
+    other_scan = tmp_path / "0921_Calibration1_detail_1_R1_raw-n_mean_bkgsub.csv"
+    for path in stale + [other_scan]:
+        path.write_text("synthetic")
+    found = PreprocessingService._bkgsub_output_paths(Ingestion(), "Calibration[1]", "0921", "detail_1")
+    assert found == sorted(stale)

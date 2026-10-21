@@ -1586,9 +1586,11 @@ class PreprocessingService:
         """Existing outputs of background subtraction for this scan: every
         average's (any trim token) bkgsub files and plots, and the background plot."""
         scan_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan)
+        import glob
         prefix = f"{sol}_{target}_{scan}_R1_"
-        paths = set(scan_dir.glob(f"{prefix}raw-n_*_bkgsub*"))
-        paths.update((scan_dir / "test_plots").glob(f"{prefix}raw-n_*_bkgsub*"))
+        pattern = f"{glob.escape(prefix)}raw-n_*_bkgsub*"
+        paths = set(scan_dir.glob(pattern))
+        paths.update((scan_dir / "test_plots").glob(pattern))
         paths.add(scan_dir / "test_plots" / f"{prefix}background.png")
         return sorted(path for path in paths if path.is_file())
     
