@@ -417,9 +417,13 @@ class PreprocessingService:
                         progress.update(task3a, description="✅ ML cosmic-ray despiking applied")
                     except PreprocessingError:
                         progress.update(task3a, description="❌ ML cosmic-ray despiking failed")
+                        # A failed run publishes no despiked R1 outputs.
+                        self._remove_despiked_r1_outputs(ingestion, target, sol, scan)
                         raise
                     except Exception as e:
                         progress.update(task3a, description="❌ ML cosmic-ray despiking failed")
+                        # A failed run publishes no despiked R1 outputs.
+                        self._remove_despiked_r1_outputs(ingestion, target, sol, scan)
                         error = PreprocessingError(
                             f"Failed to apply ML cosmic-ray despiking: {e}",
                             exit_code=1,
@@ -498,6 +502,8 @@ class PreprocessingService:
                         progress.update(task3a, description="✅ R1 despiking applied")
                     except Exception as e:
                         progress.update(task3a, description="❌ R1 despiking failed")
+                        # A failed run publishes no despiked R1 outputs.
+                        self._remove_despiked_r1_outputs(ingestion, target, sol, scan)
                         error = PreprocessingError(
                             f"Failed to apply R1 despiking: {e}",
                             exit_code=1,
@@ -601,6 +607,9 @@ class PreprocessingService:
                         progress.update(task4, description="✅ R1 baseline correction completed")
                     except Exception as e:
                         progress.update(task4, description="❌ R1 baseline correction failed")
+                        # Never leave a despiked/despiked_baselined pair from
+                        # different stages of a failed run.
+                        self._remove_despiked_r1_outputs(ingestion, target, sol, scan)
                         error = PreprocessingError(
                             f"Failed to apply R1 baseline correction: {e}",
                             exit_code=1,

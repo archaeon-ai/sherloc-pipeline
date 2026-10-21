@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from sherloc_pipeline.core.data_ingestion import DataIngestion
 from sherloc_pipeline.services.errors import PreprocessingError
 from sherloc_pipeline.services.fitting import FittingService
 from sherloc_pipeline.services.preprocessing import PreprocessingService
@@ -84,6 +85,46 @@ def test_a_failed_despike_leaves_no_despiked_outputs(tmp_path, fixtures_path, mo
     with pytest.raises(PreprocessingError, match="despiking"):
         _run(tmp_path, fixtures_path, "modz")
 
+    assert not any(path.exists() for path in paths)
+
+
+def test_a_failed_ml_despike_removes_the_despiked_csv_it_wrote(tmp_path, fixtures_path, monkeypatch):
+    paths = _plant_stale(tmp_path)
+    written = []
+    real_save = DataIngestion.save_spectral_data
+
+    def recording_save(self, *args, **kwargs):
+        out = real_save(self, *args, **kwargs)
+        written.append(kwargs.get("processing_level"))
+        return out
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic failure after the despiked write")
+
+    monkeypatch.setattr(DataIngestion, "save_spectral_data", recording_save)
+    monkeypatch.setattr(
+        "sherloc_pipeline.core.mask_application.apply_masks_to_fluorescence_frame", boom
+    )
+    with pytest.raises(PreprocessingError, match="ML cosmic-ray despiking"):
+        _run(tmp_path, fixtures_path, "ml")
+
+    assert "normalized_despiked" in written  # the failure came after the write
+    assert not any(path.exists() for path in paths)
+
+
+def test_a_failed_baseline_leaves_no_despiked_outputs(tmp_path, fixtures_path, monkeypatch):
+    paths = _plant_stale(tmp_path)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic baseline failure")
+
+    monkeypatch.setattr(
+        "sherloc_pipeline.core.preprocessing.baseline_r1_dataframe", boom
+    )
+    with pytest.raises(PreprocessingError, match="baseline correction"):
+        _run(tmp_path, fixtures_path, "modz")
+
+    # modz wrote a fresh despiked CSV before the baseline step failed.
     assert not any(path.exists() for path in paths)
 
 
