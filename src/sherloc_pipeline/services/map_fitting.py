@@ -18,6 +18,7 @@ import threading
 import time
 import zlib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -37,11 +38,11 @@ from sherloc_pipeline.core.hydration_veto import (
     rebuild_post_veto_fit,
 )
 from sherloc_pipeline.core.mineral_id import (
-    DEFAULT_RULES,
     MineralRule,
     assign_min_id,
     classify_hydration_band,
     classify_organic_band,
+    load_mineral_rules,
 )
 from sherloc_pipeline.core.preprocessing import (
     DespikeParams,
@@ -346,7 +347,13 @@ def _fit_raman_domain(
             "parsimony": fitting_cfg.get("parsimony", {}),
             "posthoc_filters": fitting_cfg.get("posthoc_filters", {}),
         }
-        assign_fn = lambda center: assign_min_id(center, DEFAULT_RULES)
+        # Same rule source as the batch and spatial paths (issue #125).
+        library_path = fitting_cfg.get("library_path")
+        mineral_rules = load_mineral_rules(
+            Path(library_path) if library_path else None,
+            inline_rules=fitting_cfg.get("mineral_rules"),
+        )
+        assign_fn = lambda center: assign_min_id(center, mineral_rules)
 
     elif domain == "organics":
         roi = tuple(fitting_cfg.get("organics_fit_range", [1250, 1850]))
