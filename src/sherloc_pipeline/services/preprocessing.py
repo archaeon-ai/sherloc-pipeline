@@ -378,7 +378,21 @@ class PreprocessingService:
                     raise enrich(error, sol=sol, target=target, scan=scan)
                 
                 # Step 4: Despiking (method-dispatched; "none" skips the
-                # step entirely — the former despike_r1=False behavior)
+                # step entirely — the former despike_r1=False behavior).
+                # Hydration and organics fit the despiked branch whenever it
+                # exists, so an earlier run's despiked files must not survive
+                # a run that does not rewrite them (despiking off, or a
+                # failure before both are written).
+                removed_despiked = self._remove_despiked_r1_outputs(
+                    ingestion, target, sol, scan
+                )
+                if removed_despiked:
+                    metadata["despike_removed_stale"] = removed_despiked
+                    if effective_despike_method == "none":
+                        warnings.append(
+                            "Despiking is off; removed despiked R1 outputs from an "
+                            f"earlier run: {', '.join(removed_despiked)}"
+                        )
                 if effective_despike_method == "ml":
                     task3a = progress.add_task("Applying ML cosmic-ray despiking...", total=None)
                     try:
@@ -1577,6 +1591,21 @@ class PreprocessingService:
             if removed:
                 record["removed_stale"] = removed
         return record
+
+    @staticmethod
+    def _remove_despiked_r1_outputs(ingestion, target: str, sol: str, scan: str) -> List[str]:
+        """Remove this scan's despiked R1 CSVs; return the removed file names."""
+        removed = []
+        for level in ("normalized_despiked", "normalized_despiked_baselined"):
+            path = ingestion.get_results_path(
+                target=target, sol=sol, scan=scan, spectral_region="R1",
+                processing_level=level, file_extension=".csv",
+            )
+            if path.exists():
+                path.unlink(missing_ok=True)
+                logger.info("Removed stale despiked output %s", path)
+                removed.append(path.name)
+        return removed
 
     @staticmethod
     def _bkgsub_output_paths(ingestion, target: str, sol: str, scan: str) -> List[Path]:
