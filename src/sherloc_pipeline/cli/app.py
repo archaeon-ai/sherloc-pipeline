@@ -94,6 +94,18 @@ def _apply_despike_method_override(despike_method: Optional[DespikeMethod]) -> N
     console.print(f"[cyan]Despike method override: {despike_method.value}[/cyan]")
 
 
+def _apply_allow_missing_background(allow: bool) -> None:
+    """--allow-missing-background: run without background subtraction on averages.
+
+    Sets preprocessing.background_subtraction.allow_missing on the shared
+    config singleton; the run then records that it was not applied.
+    """
+    if not allow:
+        return
+    get_config().preprocessing.setdefault('background_subtraction', {})['allow_missing'] = True
+    console.print("[yellow]Background subtraction may be skipped (--allow-missing-background); the run records it.[/yellow]")
+
+
 def _apply_trim_pct_override(trim_pct: Optional[float]) -> None:
     """Override config trim_mean_baseline_pct from CLI --trim-pct flag."""
     if trim_pct is None:
@@ -147,6 +159,12 @@ def full_pipeline(
         help="Cosmic-ray despike method: 'ml' (certified ML detector), "
              "'modz' (legacy rolling-median), or 'none'. Default: config.yaml (ml).",
     ),
+    allow_missing_background: bool = typer.Option(
+        False, "--allow-missing-background",
+        help="Run without background subtraction on averages when no background "
+             "spectrum resolves; the run records that it was not applied. "
+             "Default: config.yaml (false: a missing background is an error).",
+    ),
 ):
     """Run the complete SHERLOC processing pipeline.
 
@@ -171,6 +189,7 @@ def full_pipeline(
         _apply_trim_pct_override(trim_pct)
         _apply_model_selection_override(model_selection)
         _apply_despike_method_override(despike_method)
+        _apply_allow_missing_background(allow_missing_background)
         service = PipelineService(console=console)
         result = service.run_full_pipeline(
             sol=sol,
@@ -1017,6 +1036,12 @@ def process_new_cmd(
         help="Cosmic-ray despike method: 'ml' (certified ML detector), "
              "'modz' (legacy rolling-median), or 'none'. Default: config.yaml (ml).",
     ),
+    allow_missing_background: bool = typer.Option(
+        False, "--allow-missing-background",
+        help="Run without background subtraction on averages when no background "
+             "spectrum resolves; the run records that it was not applied. "
+             "Default: config.yaml (false: a missing background is an error).",
+    ),
 ):
     """Ingest and process a new sol: unzip -> ingest -> pipeline.
 
@@ -1067,6 +1092,7 @@ def process_new_cmd(
             _apply_trim_pct_override(trim_pct)
             _apply_model_selection_override(model_selection)
             _apply_despike_method_override(despike_method)
+            _apply_allow_missing_background(allow_missing_background)
         path = Path(path).absolute()
 
         if not path.exists():
@@ -2765,6 +2791,9 @@ def backfill_masks_cmd(
                             results_dir=eff_results_dir,
                             generate_plots=False,
                             despike_method="ml",
+                            # Masks only: background subtraction on averages
+                            # is not this command's output.
+                            allow_missing_background=True,
                         )
                         despike_md = (pre_result.metadata or {}).get("despike") or {}
                         if not despike_md.get("masks"):

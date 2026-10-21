@@ -643,11 +643,14 @@ def start_map_fit(request: Request, body: MapFitRequest) -> MapFitResponse:
                 # it (issue #6).
                 on_point_fitted.send_cancelled()  # type: ignore[attr-defined]
             elif ctx.set_status("complete"):
-                on_point_fitted.send_complete({  # type: ignore[attr-defined]
+                complete = {
                     "total_points": summary.total_points,
                     "detections": summary.detections,
                     "elapsed_s": summary.elapsed_s,
-                })
+                }
+                if summary.laser_norm_not_applied:
+                    complete["laser_norm_not_applied"] = summary.laser_norm_not_applied
+                on_point_fitted.send_complete(complete)  # type: ignore[attr-defined]
             else:
                 # A cancel landed in the gap between the check above and
                 # this write, so the job is already terminal as cancelled.

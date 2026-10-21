@@ -453,3 +453,60 @@ def test_skipping_an_unreadable_blob_is_opt_in(corrupt_r1_session):
     )
 
     assert sorted(loaded) == [_point_id(0), _point_id(2)]
+
+
+# ---------------------------------------------------------------------------
+# Laser normalization must not be skipped silently (issue #124)
+# ---------------------------------------------------------------------------
+
+
+def _drop_photodiode(session, point_index):
+    point = session.query(ScanPointORM).filter_by(scan_id=SCAN_UUID, point_index=point_index).one()
+    point.photodiode_mean = None
+    session.commit()
+
+
+def _run(session, config, results=None, logs=None):
+    return MapFitService(config=config).run_map_fit(
+        session=session,
+        scan_id=SCAN_UUID,
+        domains=["minerals"],
+        point_indices=None,
+        point_coords={i: (float(i), float(i)) for i in range(N_POINTS)},
+        on_point_fitted=(results.append if results is not None else lambda r: None),
+        on_progress=lambda *a: None,
+        on_log=(lambda idx, msg: logs.append((idx, msg))) if logs is not None else (lambda *a: None),
+        cancel_event=threading.Event(),
+    )
+
+
+def test_a_point_without_photodiode_stops_the_map_fit(fit_session):
+    _drop_photodiode(fit_session, 1)
+    results = []
+    with pytest.raises(ValueError, match="photodiode_mean > 0 for every requested point"):
+        _run(fit_session, _CONFIG, results)
+    assert results == []  # Raised before any point was fitted.
+
+
+def test_the_opt_out_fits_unnormalized_points_and_records_each(fit_session):
+    _drop_photodiode(fit_session, 1)
+    config = {**_CONFIG, "preprocessing": {"baseline": {}, "laser_normalization": {"allow_missing_photodiode": True}}}
+    results, logs = [], []
+    summary = _run(fit_session, config, results, logs)
+
+    assert summary.total_points == N_POINTS
+    assert summary.laser_norm_not_applied == [1]
+    notes = {r.point_index: r.notes for r in results}
+    assert notes == {0: [], 1: [map_fitting.LASER_NORM_NOT_APPLIED], 2: []}
+    assert (1, map_fitting.LASER_NORM_NOT_APPLIED) in logs
+    prep = next(msg for idx, msg in logs if idx == -1 and msg.startswith("Preprocessing:"))
+    assert "laser_norm not applied to 1 pts (no photodiode)" in prep
+    assert "background" not in prep
+
+
+def test_every_point_with_photodiode_records_nothing(fit_session):
+    results, logs = [], []
+    summary = _run(fit_session, _CONFIG, results, logs)
+    assert summary.laser_norm_not_applied == []
+    assert all(r.notes == [] for r in results)
+    assert not any("not applied" in msg for _, msg in logs)

@@ -100,6 +100,38 @@ def resolve_despike_method(cli_value: Optional[str], cfg) -> str:
     return DEFAULT_DESPIKE_METHOD
 
 
+def background_allow_missing(cfg: Any) -> bool:
+    """preprocessing.background_subtraction.allow_missing (default False)."""
+    pre = getattr(cfg, 'preprocessing', None)
+    bs = pre.get('background_subtraction', {}) if isinstance(pre, dict) else getattr(pre, 'background_subtraction', None)
+    value = bs.get('allow_missing', False) if isinstance(bs, dict) else getattr(bs, 'allow_missing', False)
+    return bool(value)
+
+
+def resolve_default_background(path: Path) -> Path:
+    """Resolve the configured default background spectrum.
+
+    Tried in order: the path as given (absolute, or relative to the current
+    directory); for a relative path, the packaged copy under
+    sherloc_pipeline/data/background/ (the shipped default), then the
+    repository root. An unresolved path is
+    returned unchanged; the caller refuses it.
+    """
+    if path.exists():
+        return path.resolve()
+    if path.is_absolute():
+        # An explicit absolute path is never swapped for the packaged copy.
+        return path
+    from importlib.resources import files
+    packaged = Path(str(files("sherloc_pipeline.data") / "background" / path.name))
+    if packaged.is_file():
+        return packaged
+    repo_root = Path(__file__).resolve().parents[3]
+    if (repo_root / path).exists():
+        return (repo_root / path).resolve()
+    return path
+
+
 class PreprocessingService:
     """Service for orchestrating SHERLOC scan preprocessing operations.
     
@@ -158,6 +190,7 @@ class PreprocessingService:
         background_file: Optional[Path] = None,
         bkg_scale_method: str = 'ppp',
         bkg_laser_roi: Optional[str] = None,
+        allow_missing_background: Optional[bool] = None,
     ) -> ServiceResult:
         """Process a single SHERLOC scan through the complete preprocessing pipeline.
         
@@ -194,6 +227,12 @@ class PreprocessingService:
                 If None, uses config default.
             bkg_scale_method: Background scaling method: "ppp" (default) or "laser"
             bkg_laser_roi: Override laser ROI as 'lo,hi' (e.g., '600,700')
+            allow_missing_background: Run without background subtraction when
+                no background spectrum resolves or it cannot be read. None
+                defers to preprocessing.background_subtraction.allow_missing
+                (default False: a missing background is an error). When
+                allowed, metadata["background_subtraction"] and the warnings
+                record that it was not applied.
         
         Returns:
             ServiceResult with summary, artifacts, warnings, and metadata
@@ -228,6 +267,8 @@ class PreprocessingService:
         # processing side effects (invalid values fail
         # at validation time, not mid-run).
         effective_despike_method = resolve_despike_method(despike_method, cfg)
+        if allow_missing_background is None:
+            allow_missing_background = background_allow_missing(cfg)
 
         try:
             # Resolve scan context (validates paths, finds working directory)
@@ -585,7 +626,7 @@ class PreprocessingService:
                 # Step 7: Background Subtraction on Averages
                 task6 = progress.add_task("Applying background subtraction on averages...", total=None)
                 try:
-                    self._process_background_subtraction(
+                    bg_record = self._process_background_subtraction(
                         ingestion=ingestion,
                         working_dir=working_dir,
                         sol=sol,
@@ -597,12 +638,26 @@ class PreprocessingService:
                         generate_plots=generate_plots,
                         despike_example_point=despike_example_point,
                         config=cfg,
+                        allow_missing=allow_missing_background,
                     )
-                    progress.update(task6, description="✅ Background subtraction completed")
                 except Exception as e:
                     logger.exception("Background subtraction failed")
-                    progress.update(task6, description=f"⚠️ Background subtraction skipped: {e}")
-                    warnings.append(f"Background subtraction skipped: {e}")
+                    if not allow_missing_background:
+                        progress.update(task6, description="❌ Background subtraction failed")
+                        error = e if isinstance(e, PreprocessingError) else PreprocessingError(
+                            f"Background subtraction failed: {e}",
+                            exit_code=1,
+                            context={"working_dir": str(working_dir)},
+                        )
+                        raise enrich(error, sol=sol, target=target, scan=scan)
+                    bg_record = {"applied": False, "allow_missing": True, "reason": str(e)}
+                metadata["background_subtraction"] = bg_record
+                if bg_record["applied"]:
+                    progress.update(task6, description="✅ Background subtraction completed")
+                else:
+                    reason = bg_record["reason"]
+                    progress.update(task6, description=f"⚠️ Background subtraction not applied (allow_missing): {reason}")
+                    warnings.append(f"Background subtraction not applied (allow_missing): {reason}")
             
             # Collect artifacts from results directory
             results_path = context.results_path
@@ -1014,8 +1069,14 @@ class PreprocessingService:
         despike_example_point: int,
         *,
         config: Optional[Any] = None,
-    ) -> None:
+        allow_missing: bool = False,
+    ) -> Dict[str, Any]:
         """Process background subtraction on averaged spectra.
+
+        Returns the run's background record: ``applied``, the ``file`` used,
+        the number of averages subtracted and the PPP scale. A background
+        that does not resolve raises PreprocessingError unless
+        ``allow_missing``; then the record says it was not applied and why.
         
         This is a private helper method that handles the complex background
         subtraction logic, including baseline-only processing and optional
@@ -1047,24 +1108,28 @@ class PreprocessingService:
                 bg_path = None
             
             if bg_path:
-                p = Path(str(bg_path))
-                try:
-                    if not p.is_absolute():
-                        if not p.exists():
-                            p_cwd = (Path.cwd() / p).resolve()
-                            if p_cwd.exists():
-                                p = p_cwd
-                            else:
-                                try:
-                                    repo_root = Path(__file__).resolve().parents[4]
-                                    p_repo = (repo_root / p).resolve()
-                                    if p_repo.exists():
-                                        p = p_repo
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
-                background = p
+                background = resolve_default_background(Path(str(bg_path)))
+
+        if background is None:
+            missing = "no background file given and preprocessing.background_subtraction.default_file is not set"
+        elif not Path(str(background)).is_file():
+            missing = f"background file not found: {background}"
+        else:
+            missing = None
+        if missing is not None:
+            if not allow_missing:
+                raise PreprocessingError(
+                    f"Background subtraction on averages needs a background spectrum: {missing}. "
+                    "Set preprocessing.background_subtraction.allow_missing (or pass "
+                    "--allow-missing-background) to run without it; the run then records "
+                    "that background subtraction was not applied.",
+                    exit_code=1,
+                    context={"background_file": bg_path},
+                )
+            record: Dict[str, Any] = {"applied": False, "allow_missing": True, "reason": missing}
+            background = None
+        else:
+            record = {"applied": True, "file": str(background), "n_averages": 0}
         
         # Report background path
         try:
@@ -1226,11 +1291,15 @@ class PreprocessingService:
             except Exception:
                 ppp_scale = 1.0
                 bg_title_suffix = ""
+            record["ppp_scale"] = ppp_scale
             
             # Save a plot of the background
             from sherloc_pipeline.visualization.preprocessing_plots import plot_average_single_series
             import pathlib
-            bg_plot_path = pathlib.Path(background).with_suffix('.png')
+            # Next to the scan's other plots, never next to the background
+            # file (which may be packaged, read-only data).
+            bg_plot_path = ingestion.get_results_path(target=target, sol=sol, scan=scan) / "test_plots" / pathlib.Path(background).with_suffix('.png').name
+            bg_plot_path.parent.mkdir(parents=True, exist_ok=True)
             plot_average_single_series(
                 x_axis=x_bg,
                 y_series=y_bg_scaled,
@@ -1336,6 +1405,7 @@ class PreprocessingService:
                         file_extension=".csv",
                     )
                     pd.DataFrame({avg.columns[0]: x, 'intensity': y_bkgsub}).to_csv(bkgsub_out_path, index=False)
+                    record["n_averages"] += 1
                     
                     try:
                         self.console.print(f"[green]Wrote:[/green] {bkgsub_out_path}")
@@ -1436,6 +1506,7 @@ class PreprocessingService:
                         output_path=plot_path,
                         title=f"sol {sol} {target} {scan} R1 raw-n {trim_token if avg_kind == 'trimmed_mean' else 'mean'} bkgsub + baseline",
                     )
+        return record
     
     def _read_shots_per_spec(self, loupe_csv: Path) -> Optional[float]:
         """Read shots_per_spec from a loupe.csv file. Returns None if unavailable."""
