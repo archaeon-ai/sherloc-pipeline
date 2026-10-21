@@ -18,7 +18,15 @@ from sherloc_pipeline.config import load_config
 from sherloc_pipeline.core.hydration_veto import HydrationVetoConfig
 from sherloc_pipeline.services import fitting as fitting_service
 from sherloc_pipeline.services import map_fitting
-from sherloc_pipeline.services.fitting import FittingService, _fit_point_hydration
+import pytest
+
+from sherloc_pipeline.services.errors import FittingError
+from sherloc_pipeline.services.fitting import (
+    FittingService,
+    _fit_point_hydration,
+    _fit_run_marker_path,
+    _read_fit_run_marker,
+)
 from sherloc_pipeline.services.runtime import RuntimeContext
 
 SOL = "0921"
@@ -95,6 +103,67 @@ def test_point_hydration_without_despiked_branch_is_unchanged(tmp_path):
     result = _run_hydration(tmp_path, base)
 
     assert result.metadata["total_accepted_peaks"] == 1
+
+
+def _marker_input(results_base):
+    marker = _fit_run_marker_path(
+        results_base / "hydration_fit", SOL, TARGET, SCAN, "R1", "hydration"
+    )
+    return _read_fit_run_marker(marker)["input"]
+
+
+def test_point_hydration_records_the_despiked_input(tmp_path):
+    x = _axis()
+    base = tmp_path / "results" / SCAN
+    _write_r1(base, "normalized", _noise(x), x)
+    _write_r1(base, "normalized_despiked", _noise(x), x)
+
+    result = _run_hydration(tmp_path, base)
+
+    name = f"{SOL}_{TARGET}_{SCAN}_R1_normalized_despiked.csv"
+    assert result.metadata["hydration_input"] == name
+    assert result.metadata["hydration_input_despiked"] is True
+    assert not any("No despiked" in w for w in result.warnings)
+    assert _marker_input(base) == {"file": name, "despiked": True}
+
+
+def test_point_hydration_without_despiked_branch_says_so(tmp_path):
+    x = _axis()
+    base = tmp_path / "results" / SCAN
+    _write_r1(base, "normalized", _noise(x), x)
+
+    result = _run_hydration(tmp_path, base)
+
+    name = f"{SOL}_{TARGET}_{SCAN}_R1_normalized.csv"
+    assert result.metadata["hydration_input"] == name
+    assert result.metadata["hydration_input_despiked"] is False
+    assert any("No despiked R1 branch found" in w for w in result.warnings)
+    assert _marker_input(base) == {"file": name, "despiked": False}
+
+
+def test_point_hydration_refuses_mismatched_axes(tmp_path):
+    x = _axis()
+    base = tmp_path / "results" / SCAN
+    _write_r1(base, "normalized", _noise(x), x)
+    _write_r1(base, "normalized_despiked", _noise(x), x + 1.0)
+
+    with pytest.raises(FittingError, match="different Raman-shift axes"):
+        _run_hydration(tmp_path, base)
+
+
+def test_point_hydration_warns_when_the_veto_lacks_a_raw_point(tmp_path):
+    x = _axis()
+    base = tmp_path / "results" / SCAN
+    _write_r1(base, "normalized", _noise(x), x)  # point 0 only
+    pd.DataFrame({"raman_shift": x, "0": _noise(x), "1": _noise(x, seed=2)}).to_csv(
+        base / f"{SOL}_{TARGET}_{SCAN}_R1_normalized_despiked.csv", index=False
+    )
+
+    result = _run_hydration(
+        tmp_path, base, hydration_cr_veto={"enabled": True, "action": "reject"}
+    )
+
+    assert any("lacks point(s) 1" in w for w in result.warnings)
 
 
 def test_point_hydration_baselined_fallback_prefers_its_despiked_branch(tmp_path):

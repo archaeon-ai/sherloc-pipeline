@@ -383,16 +383,24 @@ def _begin_fit_run(marker_path: Path, *, domain: str) -> None:
 
 
 def _write_fit_run_marker(
-    marker_path: Path, *, domain: str, points_fitted: int, accepted_peaks: int
+    marker_path: Path, *, domain: str, points_fitted: int, accepted_peaks: int,
+    fit_input: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Atomically record that this run completed, and what it accepted."""
-    _write_marker_payload(marker_path, {
+    """Atomically record that this run completed, and what it accepted.
+
+    ``fit_input`` optionally records which input the run fitted (e.g. the
+    hydration input file and whether it was the despiked branch).
+    """
+    payload = {
         "schema": RAMAN_RUN_MARKER_SCHEMA,
         "domain": domain,
         "status": RUN_MARKER_COMPLETED,
         "points_fitted": int(points_fitted),
         "accepted_peaks": int(accepted_peaks),
-    })
+    }
+    if fit_input is not None:
+        payload["input"] = dict(fit_input)
+    _write_marker_payload(marker_path, payload)
 
 
 def _read_fit_run_marker(marker_path: Path) -> Optional[Dict[str, Any]]:
@@ -1401,17 +1409,35 @@ class FittingService:
                 raise enrich(error, sol=sol, target=target, scan=scan)
 
             raw_df = None
+            input_warnings: List[str] = []
             if despiked_of[level_csv].exists():
                 input_csv = despiked_of[level_csv]
                 raw_df = pd.read_csv(level_csv)
                 self.console.print(f"[green]Hydration input: {input_csv.name} (despiked).[/green]")
             else:
                 input_csv = level_csv
+                input_warnings.append(
+                    f"No despiked R1 branch found; hydration fitted the non-despiked "
+                    f"{input_csv.name}."
+                )
                 self.console.print(f"[yellow]Hydration input: {input_csv.name} (no despiked branch found).[/yellow]")
+            # Provenance: which input this run fitted (returned in metadata and
+            # recorded in the run marker).
+            hydration_input = {"file": input_csv.name, "despiked": raw_df is not None}
 
             df = pd.read_csv(input_csv)
             x_col = 'raman_shift' if 'raman_shift' in df.columns else df.columns[0]
             x = df[x_col].to_numpy(float)
+            if raw_df is not None:
+                raw_x_col = 'raman_shift' if 'raman_shift' in raw_df.columns else raw_df.columns[0]
+                if not np.array_equal(raw_df[raw_x_col].to_numpy(float), x):
+                    error = FittingError(
+                        f"{input_csv.name} and {level_csv.name} have different Raman-shift "
+                        "axes; re-run process-scan so both come from the same run.",
+                        exit_code=1,
+                        context={"input_file": str(input_csv), "raw_file": str(level_csv)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan)
 
             # Hydration fitting config (Phua et al. 2024 aligned)
             oh_roi = tuple(fit_cfg.get('hydration_fit_range', [2800.0, 3900.0]))
@@ -1467,9 +1493,17 @@ class FittingService:
                 for col in point_cols
             ]
             if raw_df is not None:
+                unpaired = []
                 for item, col in zip(point_inputs, point_cols):
                     if col in raw_df.columns:
                         item['y_raw'] = raw_df[col].to_numpy(float)
+                    else:
+                        unpaired.append(col)
+                if unpaired and veto_cfg.enabled:
+                    input_warnings.append(
+                        f"{level_csv.name} lacks point(s) {', '.join(unpaired)}; the "
+                        "cosmic-ray veto scored the despiked spectrum for them."
+                    )
 
             # --- Phase 2: Parallel fitting + plotting + CSV writes ---
             from sherloc_pipeline.core.utils import resolve_parallel_workers
@@ -1494,7 +1528,7 @@ class FittingService:
 
             # --- Phase 3: Aggregate results ---
             artifacts: List[Path] = []
-            warnings: List[str] = []
+            warnings: List[str] = list(input_warnings)
             summary = []
             accepted_rows = []
 
@@ -1553,6 +1587,7 @@ class FittingService:
             _write_fit_run_marker(
                 run_marker, domain="hydration",
                 points_fitted=len(point_cols), accepted_peaks=len(accepted_rows),
+                fit_input=hydration_input,
             )
             artifacts.append(run_marker)
 
@@ -1564,6 +1599,8 @@ class FittingService:
                 "scan": scan,
                 "points_fitted": len(point_cols),
                 "total_accepted_peaks": len(accepted_rows),
+                "hydration_input": hydration_input["file"],
+                "hydration_input_despiked": hydration_input["despiked"],
             }
 
             return ServiceResult(
