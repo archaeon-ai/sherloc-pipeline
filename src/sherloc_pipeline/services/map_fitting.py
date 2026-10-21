@@ -89,6 +89,9 @@ class PointFitResult:
     x: float  # ACI pixel coordinate
     y: float  # ACI pixel coordinate
     results: dict[str, DomainResult]  # domain name -> DomainResult
+    # Processing steps not applied to this point, e.g. laser normalization
+    # without photodiode data (only with the allow_missing_photodiode opt-out).
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -98,6 +101,8 @@ class MapFitSummary:
     total_points: int
     detections: dict[str, int]  # domain -> count of points with detections
     elapsed_s: float
+    # Points fitted without laser normalization (allow_missing_photodiode opt-out).
+    laser_norm_not_applied: list[int] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +579,15 @@ def _fit_fluorescence_domain(
 # ---------------------------------------------------------------------------
 
 
+LASER_NORM_NOT_APPLIED = "laser_norm: not applied (no photodiode)"
+
+
+def allow_missing_photodiode(config: dict) -> bool:
+    """preprocessing.laser_normalization.allow_missing_photodiode (default False)."""
+    pre = config.get("preprocessing", {}) or {}
+    return bool((pre.get("laser_normalization", {}) or {}).get("allow_missing_photodiode", False))
+
+
 class MapFitService:
     """Orchestrates per-point spectral fitting for Map Mode.
 
@@ -693,6 +707,17 @@ class MapFitService:
             if pd_map:
                 max_pd = max(pd_map.values())
                 print(f"[map-fit] Laser normalization: {len(pd_map)} points, max_pd={max_pd:.1f}", flush=True)
+            no_photodiode = [sp.point_index for sp in scan_points if sp.point_index not in pd_map]
+            if no_photodiode and not allow_missing_photodiode(self.config):
+                shown = ", ".join(str(i) for i in no_photodiode[:10]) + (" ..." if len(no_photodiode) > 10 else "")
+                raise ValueError(
+                    f"Laser normalization needs photodiode_mean > 0 for every requested point; "
+                    f"{len(no_photodiode)} of {total} have none (points {shown}). Set "
+                    "preprocessing.laser_normalization.allow_missing_photodiode to fit them "
+                    "unnormalized; each such point then records it."
+                )
+        else:
+            no_photodiode = []
 
         # Baseline correction: asPLS params + weight vector
         bl_params: BaselineParams | None = None
@@ -725,18 +750,21 @@ class MapFitService:
             prep_parts = []
             if pd_map:
                 prep_parts.append(f"laser_norm(max_pd={max_pd:.0f}, {len(pd_map)} pts)")
+            if no_photodiode:
+                prep_parts.append(f"{len(no_photodiode)} requested pts have no photodiode (fitted unnormalized)")
             if bl_params is not None:
                 prep_parts.append(f"baseline(asPLS lam={bl_params.lam:.0e}, iters={bl_params.iters})")
-            if prep_parts:
-                prep_msg = f"Preprocessing: {', '.join(prep_parts)}"
-            else:
-                prep_msg = "Preprocessing: none (missing background/photodiode data)"
+            # Map mode fits single points, which are never background-subtracted.
+            prep_msg = f"Preprocessing: {', '.join(prep_parts)}"
             print(f"[map-fit] {prep_msg}", flush=True)
             try:
                 on_log(-1, prep_msg)
             except Exception:
                 pass
 
+        no_photodiode_set = set(no_photodiode)
+        # Points actually fitted from an R1 spectrum without normalization.
+        laser_norm_not_applied: list[int] = []
         detections: dict[str, int] = {d: 0 for d in domains}
         last_progress_time = t_start
         fitted_count = 0
@@ -749,6 +777,7 @@ class MapFitService:
             point_index = sp.point_index
             coords = point_coords.get(point_index, (0.0, 0.0))
             domain_results: dict[str, DomainResult] = {}
+            notes: list[str] = []
 
             # Fit each requested Raman domain
             if sp.id in r1_spectra and raman_domains:
@@ -758,6 +787,9 @@ class MapFitService:
                 pd_val = pd_map.get(point_index)
                 if pd_val and max_pd > 0:
                     raw_intensity = raw_intensity * (max_pd / pd_val)
+                elif point_index in no_photodiode_set:
+                    notes.append(LASER_NORM_NOT_APPLIED)
+                    laser_norm_not_applied.append(point_index)
 
                 # Apply R1 wavelength mask
                 if len(raw_intensity) >= len(r1_mask):
@@ -828,7 +860,13 @@ class MapFitService:
                 x=coords[0],
                 y=coords[1],
                 results=domain_results,
+                notes=notes,
             )
+            if point_result.notes:
+                try:
+                    on_log(point_index, LASER_NORM_NOT_APPLIED)
+                except Exception:
+                    pass
 
             try:
                 on_point_fitted(point_result)
@@ -890,4 +928,5 @@ class MapFitService:
             total_points=fitted_count,
             detections=detections,
             elapsed_s=round(elapsed_total, 2),
+            laser_norm_not_applied=sorted(laser_norm_not_applied),
         )

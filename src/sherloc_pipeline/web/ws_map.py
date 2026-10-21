@@ -655,6 +655,8 @@ def make_fitting_callbacks(
                 for domain, dr in result.results.items()
             },
         }
+        if result.notes:
+            payload["notes"] = list(result.notes)
         ctx.retain_result(payload)
         msg = {"type": "point_fitted", "seq": seq_counter[0], **payload}
         _enqueue(msg, point_fitted=True)

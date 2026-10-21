@@ -50,7 +50,9 @@ def test_direct_caller_fits_each_unique_domain_once_per_point(monkeypatch):
     original = domains.copy()
     results = []
     logs = []
-    summary = map_fitting.MapFitService(config={}).run_map_fit(
+    # No photodiode data, so laser normalization needs the explicit opt-out (#124).
+    config = {"preprocessing": {"laser_normalization": {"allow_missing_photodiode": True}}}
+    summary = map_fitting.MapFitService(config=config).run_map_fit(
         session=session,
         scan_id="synthetic-scan",
         domains=domains,

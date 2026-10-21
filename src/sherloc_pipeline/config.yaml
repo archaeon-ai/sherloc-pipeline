@@ -49,6 +49,10 @@ preprocessing:
     sulfate_guard_min_prominence: 100.0
     sulfate_guard_min_halfwidth: 15.0
     sulfate_guard_max_halfwidth: 25.0
+  laser_normalization:
+    # Map mode: a requested point without photodiode_mean > 0 stops the fit.
+    # true fits such points unnormalized and records it per point.
+    allow_missing_photodiode: false
   baseline:
     lam: 1000000.0
     asymmetric_coef: 0.01
@@ -62,6 +66,10 @@ preprocessing:
     keep_weight: 0.01
   background_subtraction:
     default_file: "./data/background/Arm_Stowed_post-anomaly_900ppp_trimmed_mean_1266.csv"
+    # A background that does not resolve or cannot be read stops the run.
+    # true runs without it and records "not applied" in metadata and warnings.
+    # CLI: --allow-missing-background.
+    allow_missing: false
     pulses_per_point: 900
     laser_scale:
       enabled: true
