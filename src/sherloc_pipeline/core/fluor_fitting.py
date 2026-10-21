@@ -305,6 +305,31 @@ def _hypothesis_fit(
     return best_params, best_aicc, best_rss, warnings
 
 
+def clip_cosmic_spikes(y_fit: np.ndarray) -> np.ndarray:
+    """Rolling-median sigma-clip that removes cosmic-ray spikes, in place.
+
+    Window is 11 channels (fewer for short inputs), the threshold 5 robust
+    sigma, at most 3 passes; flagged channels take the rolling median. The
+    window spans well under the narrowest allowed fluorescence band, so broad
+    bands pass through unchanged. Returns ``y_fit`` for convenience.
+    """
+    _window = min(11, max(3, y_fit.size // 10) | 1)  # odd, >=3
+    for _ in range(3):
+        rolling_med = pd.Series(y_fit).rolling(
+            window=_window, center=True, min_periods=1
+        ).median().values
+        residual = y_fit - rolling_med
+        mad = np.median(np.abs(residual))
+        robust_sigma = 1.4826 * mad if mad > 0 else np.std(residual)
+        if robust_sigma == 0 or not np.isfinite(robust_sigma):
+            break
+        spike_mask = np.abs(residual) > 5.0 * robust_sigma
+        if not np.any(spike_mask):
+            break
+        y_fit[spike_mask] = rolling_med[spike_mask]
+    return y_fit
+
+
 def fit_fluorescence_spectrum(
     wavelength: np.ndarray,
     intensity: np.ndarray,
@@ -396,20 +421,7 @@ def fit_fluorescence_spectrum(
         )
 
     # --- Despike: rolling-median sigma-clip to remove cosmic rays ---
-    _window = min(11, max(3, x_fit.size // 10) | 1)  # odd, >=3
-    for _ in range(3):
-        rolling_med = pd.Series(y_fit).rolling(
-            window=_window, center=True, min_periods=1
-        ).median().values
-        residual = y_fit - rolling_med
-        mad = np.median(np.abs(residual))
-        robust_sigma = 1.4826 * mad if mad > 0 else np.std(residual)
-        if robust_sigma == 0 or not np.isfinite(robust_sigma):
-            break
-        spike_mask = np.abs(residual) > 5.0 * robust_sigma
-        if not np.any(spike_mask):
-            break
-        y_fit[spike_mask] = rolling_med[spike_mask]
+    clip_cosmic_spikes(y_fit)
 
     # --- Noise estimation ---
     if noise_std is None:
