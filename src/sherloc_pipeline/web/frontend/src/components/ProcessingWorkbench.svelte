@@ -832,6 +832,7 @@
               <EvidenceDesk
                 snapshot={currentState}
                 contextKey={evidenceContextKey}
+                shotsPerPoint={scan?.shots_per_point ?? null}
                 wavenumber={currentWavenumber}
                 intensity={currentIntensity}
                 rawIntensity={rawSnapshot?.raman.intensity ?? []}

@@ -12,6 +12,15 @@ export interface EvidenceTrace {
   color: string;
   breaks: boolean[];
   annotations: Record<string, unknown>;
+  // Set only on a shared-chain output (see lib/sharedChain.ts).
+  derived?: {
+    derived_from: string;
+    shared_chain_id: string;
+    original_processing_chain: Record<string, unknown>[];
+    steps: unknown[];
+    scale_used: number | null;
+    reference_processing_state?: unknown;
+  };
 }
 
 export interface EvidenceDisplay {

@@ -260,7 +260,7 @@
     }
   }
 
-  function onBgApply(e: CustomEvent<{ subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; bgType: string; inputIntensity: number[] }>) {
+  function onBgApply(e: CustomEvent<{ subtracted: number[]; backgroundScaled: number[]; scaleUsed: number; scaleMode: 'auto' | 'manual'; bgType: string; inputIntensity: number[] }>) {
     const input = backgroundInput(chainNow());
     if (!bgEnabled || e.detail.inputIntensity !== input) return;
     afterBgIntensity = e.detail.subtracted;
@@ -268,7 +268,7 @@
     // Reset downstream
     afterBaselineIntensity = null;
     emitState('bg_subtracted', e.detail.subtracted, undefined,
-      backgroundStepRecord(e.detail.bgType, e.detail.scaleUsed));
+      backgroundStepRecord(e.detail.bgType, e.detail.scaleUsed, e.detail.scaleMode));
   }
 
   function onBgToggle(e: CustomEvent<{ enabled: boolean }>) {
