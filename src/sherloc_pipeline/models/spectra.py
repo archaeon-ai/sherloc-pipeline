@@ -99,6 +99,16 @@ class SpectrumType(str, Enum):
     DARK_SUB_DESPIKED = "dark_sub_despiked"
 
 
+#: Spectrum types that are instrument measurements (or their PDS processing
+#: level). Derived rows (dark_sub_despiked) are excluded from spectra counts.
+MEASURED_SPECTRUM_TYPES = (
+    SpectrumType.ACTIVE.value,
+    SpectrumType.DARK.value,
+    SpectrumType.DARK_SUBTRACTED.value,
+    SpectrumType.LASER_NORMALIZED.value,
+)
+
+
 class CoordinateFrame(str, Enum):
     """Coordinate frame for scan point positions.
 

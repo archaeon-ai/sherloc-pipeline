@@ -286,6 +286,52 @@ class TestPipelinePersistenceWiring:
             assert row.method == despike_meta["method"]
             assert row.model_sha256 == despike_meta["model_sha256"]
 
+    def test_despiked_rows_exist_before_fluorescence_fitting(
+        self,
+        tmp_path,
+        fixtures_path,
+        ingested_db,
+        stub_detector_factory,
+        quiet_heavy_stages,
+        monkeypatch,
+    ):
+        """The mask stage and the despiked-row stage run before fluorescence
+        fitting, so this run's fluorescence reads this run's despiked rows."""
+        from sherloc_pipeline.services.base import ServiceResult
+        from sherloc_pipeline.services.fitting import FittingService
+        from sherloc_pipeline.services.fluor_inputs import DESPIKED_SPECTRUM_TYPE
+        from sherloc_pipeline.services.preprocessing import (
+            PreprocessingService,
+        )
+
+        db_path, engine = ingested_db
+        monkeypatch.setenv("SHERLOC_DB_PATH", str(db_path))
+        monkeypatch.setattr(
+            PreprocessingService,
+            "_build_ml_detector",
+            lambda self: stub_detector_factory(),
+        )
+        seen = []
+
+        def spy(*args, **kwargs):
+            with get_session(engine) as session:
+                seen.append(
+                    session.query(SpectrumORM)
+                    .filter(SpectrumORM.spectrum_type == DESPIKED_SPECTRUM_TYPE)
+                    .count()
+                )
+            return ServiceResult(summary="stubbed", artifacts=[], warnings=[], metadata={})
+
+        monkeypatch.setattr(FittingService, "fit_fluorescence", spy)
+
+        result = self._run_pipeline(tmp_path, fixtures_path)
+
+        n_points = len(result.metadata["preprocessing"]["despike"]["masks"])
+        assert seen == [3 * n_points]
+        inputs = result.metadata["fluorescence_inputs"]
+        assert inputs["rebuilt"] is True
+        assert inputs["despiked_rows_written"] == 3 * n_points
+
     def test_run_full_pipeline_skips_persistence_without_db(
         self,
         tmp_path,

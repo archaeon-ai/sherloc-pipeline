@@ -38,14 +38,6 @@ PARENT_SPECTRUM_TYPE = "dark_subtracted"
 DESPIKED_PROCESSING_LEVEL = "ml_despiked"
 REGIONS: Tuple[str, ...] = ("R1", "R2", "R3")
 
-#: Spectrum types that are instrument measurements (or their PDS processing
-#: level). Derived rows such as ``dark_sub_despiked`` are excluded from counts.
-MEASURED_SPECTRUM_TYPES: Tuple[str, ...] = (
-    "active",
-    "dark",
-    "dark_subtracted",
-    "laser_normalized",
-)
 
 
 def _as_aware(value: Optional[datetime]) -> Optional[datetime]:
@@ -163,6 +155,59 @@ def rebuild_despiked_rows(session, scan_id: str, config: Any) -> Dict[str, int]:
         "despiked_rows_written": written,
         "regions_without_mask": no_mask,
     }
+
+
+def _find_scan_id(session, sol: str, target: str, scan: str) -> Optional[str]:
+    """The scan's row id, matching target with spaces or underscores (as fit_fluorescence)."""
+    from sherloc_pipeline.database.models import ScanORM
+
+    for name in dict.fromkeys((target.replace("_", " "), target)):
+        row = session.query(ScanORM.id).filter_by(
+            sol_number=int(sol), target=name, scan_name=scan
+        ).first()
+        if row is not None:
+            return row[0]
+    return None
+
+
+def refresh_despiked_rows_for_scan(
+    database_path, sol: str, target: str, scan: str, config: Any, rebuild: bool
+) -> Dict[str, Any]:
+    """Clear a scan's despiked rows and, when ``rebuild``, rebuild them from its masks.
+
+    Called by the full pipeline on every run with a database, right after the
+    mask stage: ``rebuild`` is true only when this run persisted ML masks, so a
+    run that despiked with another method (or not at all) leaves no despiked
+    rows behind. If the rebuild fails, a separate delete-only transaction still
+    clears the rows, so fluorescence falls back to its measured input rather
+    than reading a stale set; the error is then re-raised for the caller to
+    report.
+    """
+    from sherloc_pipeline.database.connection import get_engine, get_session
+    from sherloc_pipeline.database.models import ScanPointORM
+
+    engine = get_engine(database_path)
+    try:
+        with get_session(engine) as session:
+            scan_id = _find_scan_id(session, sol, target, scan)
+            if scan_id is None:
+                return {"scan_found": False}
+            if rebuild:
+                counts = rebuild_despiked_rows(session, scan_id, config)
+            else:
+                point_ids = [pid for (pid,) in session.query(ScanPointORM.id).filter(
+                    ScanPointORM.scan_id == scan_id)]
+                counts = {"despiked_rows_removed": delete_despiked_rows(session, point_ids),
+                          "despiked_rows_written": 0}
+            return {"scan_found": True, "rebuilt": rebuild, **counts}
+    except Exception:
+        with get_session(engine) as session:
+            scan_id = _find_scan_id(session, sol, target, scan)
+            if scan_id is not None:
+                point_ids = [pid for (pid,) in session.query(ScanPointORM.id).filter(
+                    ScanPointORM.scan_id == scan_id)]
+                delete_despiked_rows(session, point_ids)
+        raise
 
 
 def load_fluorescence_inputs(

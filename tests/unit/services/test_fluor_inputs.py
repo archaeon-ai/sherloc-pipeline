@@ -1,0 +1,232 @@
+"""ML-despiked fluorescence inputs: building, choosing, freshness, normalization, counts.
+
+Uses the committed sol_0921 fixture workspace ingested into a temporary DB, with
+synthetic stored masks.
+"""
+
+import zlib
+from datetime import datetime, timedelta, timezone
+
+import numpy as np
+import pytest
+
+from sherloc_pipeline.database.connection import get_session
+from sherloc_pipeline.database.models import (
+    CosmicRayMaskORM,
+    ScanORM,
+    ScanPointORM,
+    SpectrumORM,
+)
+from sherloc_pipeline.services import fluor_inputs
+from sherloc_pipeline.services.cr_masks import CRMaskService
+from sherloc_pipeline.services.ingestion import IngestionService
+from sherloc_pipeline.services.pds_ingestion import PDSIngestionService
+
+WORKSPACE_REL = (
+    "loupe/sol_0921/detail_1/SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
+)
+TARGET = "Fluor_Inputs"
+PROVENANCE = {
+    "method": "ml_v1.3_tau_matched",
+    "model_sha256": "ab" * 32,
+    "tau": {"R1": 0.3, "R2": 0.27, "R3": 0.27},
+    "ort_version": "1.26.0",
+}
+#: Masks for points 0-2 only; point 1 R1 is an empty (checked, nothing flagged) mask.
+MASKS = {
+    "0": {"R1": [60, 100], "R2": [600, 1200], "R3": [1700]},
+    "1": {"R1": [], "R2": [800], "R3": []},
+    "2": {"R1": [52], "R2": [], "R3": [2139]},
+}
+
+
+def _metadata():
+    n_flagged = {}
+    for regions in MASKS.values():
+        for region, channels in regions.items():
+            n_flagged[region] = n_flagged.get(region, 0) + len(channels)
+    return {**PROVENANCE, "n_flagged": n_flagged, "masks": MASKS}
+
+
+class _Config:
+    preprocessing = {"despike": {"interpolation_method": "linear"}}
+    fluorescence_fitting = {"laser_normalize": True}
+
+
+@pytest.fixture
+def db(tmp_path, fixtures_path):
+    db_path = tmp_path / "phase.db"
+    service = IngestionService(
+        database_path=db_path, include_spectra=True, ingestion_mode="all_regions"
+    )
+    service.ingest_workspace(fixtures_path / WORKSPACE_REL)
+    with get_session(service.engine) as session:
+        session.query(ScanORM).first().target = TARGET.replace("_", " ")
+    CRMaskService().persist_masks(
+        sol="0921", target=TARGET, scan="detail_1",
+        despike_metadata=_metadata(), database_path=db_path,
+    )
+    return db_path, service
+
+
+def _points(session):
+    rows = session.query(ScanPointORM).order_by(ScanPointORM.point_index).all()
+    return {p.point_index: p.id for p in rows}
+
+
+def _decode(blob):
+    return np.frombuffer(zlib.decompress(blob), dtype=np.float32)
+
+
+def _rebuild(db_path):
+    return fluor_inputs.refresh_despiked_rows_for_scan(
+        db_path, "0921", TARGET, "detail_1", _Config(), rebuild=True
+    )
+
+
+def test_rebuild_writes_one_row_per_masked_region(db):
+    db_path, service = db
+    result = _rebuild(db_path)
+
+    assert result["despiked_rows_written"] == 9
+    with get_session(service.engine) as session:
+        points = _points(session)
+        rows = session.query(SpectrumORM).filter(
+            SpectrumORM.spectrum_type == fluor_inputs.DESPIKED_SPECTRUM_TYPE
+        ).all()
+        assert {(r.scan_point_id, r.region) for r in rows} == {
+            (points[i], reg) for i in range(3) for reg in ("R1", "R2", "R3")
+        }
+        # An empty mask leaves the spectrum as it was.
+        r1 = {r.spectrum_type: r for r in session.query(SpectrumORM).filter(
+            SpectrumORM.scan_point_id == points[1], SpectrumORM.region == "R1")}
+        np.testing.assert_array_equal(
+            _decode(r1[fluor_inputs.DESPIKED_SPECTRUM_TYPE].intensities),
+            _decode(r1["dark_subtracted"].intensities),
+        )
+        # No masks or peaks attach to the derived rows.
+        ids = [r.id for r in rows]
+        assert session.query(CosmicRayMaskORM).filter(
+            CosmicRayMaskORM.spectrum_id.in_(ids)).count() == 0
+
+
+def test_points_with_current_rows_use_them_and_the_rest_fall_back(db):
+    db_path, service = db
+    _rebuild(db_path)
+    with get_session(service.engine) as session:
+        points = _points(session)
+        chosen = fluor_inputs.load_fluorescence_inputs(session, list(points.values()))
+        assert [chosen[points[i]]["despiked"] for i in range(4)] == [True, True, True, False]
+        r2 = session.query(SpectrumORM).filter(
+            SpectrumORM.scan_point_id == points[0], SpectrumORM.region == "R2",
+            SpectrumORM.spectrum_type == "dark_subtracted").one()
+        assert chosen[points[0]]["link_spectrum_id"] == r2.id
+
+
+def test_a_mask_newer_than_the_rows_makes_them_stale(db):
+    db_path, service = db
+    _rebuild(db_path)
+    with get_session(service.engine) as session:
+        points = _points(session)
+        parent = session.query(SpectrumORM).filter(
+            SpectrumORM.scan_point_id == points[0], SpectrumORM.region == "R3",
+            SpectrumORM.spectrum_type == "dark_subtracted").one()
+        mask = session.query(CosmicRayMaskORM).filter(
+            CosmicRayMaskORM.spectrum_id == parent.id).one()
+        mask.created_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    with get_session(service.engine) as session:
+        chosen = fluor_inputs.load_fluorescence_inputs(session, [points[0], points[1]])
+        assert chosen[points[0]]["despiked"] is False
+        assert chosen[points[1]]["despiked"] is True
+
+
+def test_a_refresh_without_rebuild_removes_the_rows(db):
+    db_path, service = db
+    _rebuild(db_path)
+    result = fluor_inputs.refresh_despiked_rows_for_scan(
+        db_path, "0921", TARGET, "detail_1", _Config(), rebuild=False
+    )
+    assert result["despiked_rows_removed"] == 9
+    with get_session(service.engine) as session:
+        assert session.query(SpectrumORM).filter(
+            SpectrumORM.spectrum_type == fluor_inputs.DESPIKED_SPECTRUM_TYPE).count() == 0
+
+
+def test_an_unknown_scan_is_reported_not_raised(db):
+    db_path, _service = db
+    result = fluor_inputs.refresh_despiked_rows_for_scan(
+        db_path, "0921", TARGET, "detail_9", _Config(), rebuild=True
+    )
+    assert result == {"scan_found": False}
+
+
+def test_counts_exclude_the_derived_rows(db):
+    db_path, service = db
+    pds = PDSIngestionService(pds_db_path=db_path)
+    before = (service.get_database_stats()["spectra"], pds.get_database_stats()["spectra"],
+              pds.validate_database()["spectra_by_region"])
+    _rebuild(db_path)
+    after = (service.get_database_stats()["spectra"], pds.get_database_stats()["spectra"],
+             pds.validate_database()["spectra_by_region"])
+    assert after == before
+
+
+def test_laser_normalization_stage():
+    factors = fluor_inputs.laser_normalization_factors({"a": 50.0, "b": 100.0, "c": None, "d": 0.0})
+    assert factors == {"a": 2.0, "b": 1.0, "c": None, "d": None}
+
+    arrays = {"R1": np.ones(3), "R2": np.full(3, 2.0), "R3": np.zeros(3)}
+    scaled, applied = fluor_inputs.apply_fluorescence_laser_normalization(arrays, 2.0)
+    assert applied is True
+    np.testing.assert_array_equal(scaled["R2"], np.full(3, 4.0))
+    same, applied = fluor_inputs.apply_fluorescence_laser_normalization(arrays, None)
+    assert applied is False and same is arrays
+
+
+def test_laser_normalize_reads_the_packaged_default_when_absent():
+    assert fluor_inputs.laser_normalize_enabled({"fluorescence_fitting": {}}) is True
+    assert fluor_inputs.laser_normalize_enabled(
+        {"fluorescence_fitting": {"laser_normalize": False}}) is False
+
+
+@pytest.mark.parametrize("laser_normalize", [True, False])
+def test_fit_fluorescence_records_its_input(db, tmp_path, monkeypatch, laser_normalize):
+    import copy
+
+    from sherloc_pipeline.config import load_config
+    from sherloc_pipeline.core import fluor_fitting
+    from sherloc_pipeline.services.fitting import FittingService
+    from sherloc_pipeline.services.runtime import RuntimeContext
+
+    db_path, service = db
+    _rebuild(db_path)
+
+    def stub(wavelength, intensity, **kwargs):
+        return fluor_fitting.FluorFitResult(
+            peaks=[], r2=0.0, rss=0.0, aicc=float("inf"), n_peaks=0,
+            is_saturated=False, fit_skipped=True, n_saturated_channels=0,
+            n_masked_channels=0, warnings=["stub"],
+        )
+
+    monkeypatch.setattr(fluor_fitting, "fit_fluorescence_spectrum", stub)
+    cfg = copy.deepcopy(load_config())
+    cfg.fluorescence_fitting = dict(cfg.fluorescence_fitting or {})
+    cfg.fluorescence_fitting.update(parallel_workers=1, laser_normalize=laser_normalize)
+    context = RuntimeContext.bootstrap(
+        data_dir=tmp_path / "data", results_dir=tmp_path / "results", config=cfg
+    )
+    fitting = FittingService(context=context)
+    fitting._database_path = db_path
+
+    result = fitting.fit_fluorescence("0921", TARGET, "detail_1", generate_plots=False)
+
+    meta = result.metadata["input"]
+    with get_session(service.engine) as session:
+        n_points = session.query(ScanPointORM).count()
+        with_pd = session.query(ScanPointORM).filter(ScanPointORM.photodiode_mean > 0).count()
+    assert meta["points_despiked"] == 3
+    assert meta["points_fallback"] == n_points - 3
+    assert meta["input_spectrum_type"] == "mixed"
+    assert meta["laser_normalize"] is laser_normalize
+    assert meta["points_laser_normalized"] == (with_pd if laser_normalize else 0)
+    assert any("non-despiked input" in w for w in result.warnings)
