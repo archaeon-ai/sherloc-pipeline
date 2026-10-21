@@ -450,8 +450,9 @@ the scan. A per-point scale commutes with the masked interpolation, so masking
 then scaling equals masking the normalized spectrum. Points without a photodiode
 reading are not scaled and are counted. The stage is a single function
 (`apply_fluorescence_laser_normalization`) behind
-`fluorescence_fitting.laser_normalize`. The flag is explicitly `true` in
-`config.yaml`, pending the domain owner's confirmation; `false` restores the
+`fluorescence_fitting.laser_normalize`. The flag is explicitly `false` in
+`config.yaml`: normalization is switched on with the fluorescence re-fit sweep,
+so all stored fits change units together. Until then fits use the
 un-normalized input.
 
 **In-fitter clip.** `fit_fluorescence_spectrum` still applies its rolling-median

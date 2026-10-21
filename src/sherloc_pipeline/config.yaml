@@ -263,9 +263,10 @@ fluorescence_fitting:
 
   # Laser normalization of the fluorescence input: each point's R1-R3 spectrum
   # is scaled by max photodiode / point photodiode (the Loupe convention) after
-  # the ML-despiked input is chosen. Ruled 2026-10-21; awaiting Ken's explicit
-  # confirmation. Set false to fit un-normalized (the earlier behavior).
-  laser_normalize: true
+  # the ML-despiked input is chosen. OFF until it is switched on with the
+  # fluorescence re-fit sweep, so all stored fits change units together
+  # (domain owner, 2026-10-21).
+  laser_normalize: false
 
 # Spatial mapping parameters
 spatial:

@@ -184,9 +184,9 @@ def test_laser_normalization_stage():
 
 
 def test_laser_normalize_reads_the_packaged_default_when_absent():
-    assert fluor_inputs.laser_normalize_enabled({"fluorescence_fitting": {}}) is True
+    assert fluor_inputs.laser_normalize_enabled({"fluorescence_fitting": {}}) is False
     assert fluor_inputs.laser_normalize_enabled(
-        {"fluorescence_fitting": {"laser_normalize": False}}) is False
+        {"fluorescence_fitting": {"laser_normalize": True}}) is True
 
 
 @pytest.mark.parametrize("laser_normalize", [True, False])
