@@ -124,14 +124,14 @@ def process_laser_normalization(
     full_dark_sub = pd.read_csv(dark_sub_file, dtype=str, low_memory=False)
     logger.info(f"Dark-subtracted spectra: {len(full_dark_sub)} rows, {len(full_dark_sub.columns)} columns")
 
-    # Split into R1, R2, R3 regions (matching Loupe's logic)
-    # R1: skiprows=0, nrows=nSpectra (rows 1 to N)
-    # R2: skiprows=1+nSpectra, nrows=nSpectra (rows N+1 to 2N)
-    # R3: skiprows=2*(1+nSpectra), nrows=nSpectra (rows 2N+1 to 3N)
-
+    # Split into R1, R2, R3 regions (matching Loupe's logic: each region is
+    # preceded by its own header row). pandas takes the first header as the
+    # column names, so the R2 and R3 headers sit at iloc[n] and iloc[2n+1];
+    # the same layout core/data_ingestion.py reads.
+    check_section_headers(full_dark_sub, n_spectra, dark_sub_file)
     R1 = full_dark_sub.iloc[0:n_spectra].copy()
-    R2 = full_dark_sub.iloc[n_spectra:2*n_spectra].copy()
-    R3 = full_dark_sub.iloc[2*n_spectra:3*n_spectra].copy()
+    R2 = full_dark_sub.iloc[n_spectra+1:2*n_spectra+1].copy()
+    R3 = full_dark_sub.iloc[2*n_spectra+2:3*n_spectra+2].copy()
 
     logger.info(f"Split into regions: R1={len(R1)} rows, R2={len(R2)} rows, R3={len(R3)} rows")
 
@@ -199,6 +199,23 @@ def process_laser_normalization(
     logger.info("Laser normalization completed successfully")
 
 
+
+
+def check_section_headers(dark_sub: pd.DataFrame, n_spectra: int, source: Path) -> None:
+    """Raise unless the R2 and R3 section headers are where the region split expects them."""
+    expected = {"R1": None, "R2": n_spectra, "R3": 2 * n_spectra + 1}
+    found = {"R1": str(dark_sub.columns[0]) if len(dark_sub.columns) else ""}
+    for region in ("R2", "R3"):
+        row = expected[region]
+        found[region] = str(dark_sub.iat[row, 0]) if row < len(dark_sub) else "<missing>"
+    bad = [r for r in expected if not found[r].startswith(f"{r}_Channel")]
+    if bad or len(dark_sub) != 3 * n_spectra + 2:
+        raise ValueError(
+            f"{source}: section header rows not where expected for n_spectra={n_spectra} "
+            f"(want {3 * n_spectra + 2} rows after the first header with R2/R3 headers at "
+            f"{expected['R2']}/{expected['R3']}; got {len(dark_sub)} rows, "
+            f"headers {', '.join(f'{r}={found[r][:16]!r}' for r in expected)})"
+        )
 
 
 def update_loupe_csv_processing_flag(working_dir: Path, processing_flag: str) -> None:
