@@ -1150,6 +1150,35 @@ class PreprocessingService:
         except Exception:
             pass
         
+        # Resolve the actual trim-mean filename token for this scan
+        # (may differ from configured 2% due to dynamic trim on small scans)
+        _tm_matches = sorted(ingestion.get_results_path(target=target, sol=sol, scan=scan).glob(
+            f"{sol}_{target}_{scan}_R1_raw-n_*p_trim_mean.csv"
+        ))
+        _m = re.search(r'(\d+(?:\.\d+)?p_trim_mean)', _tm_matches[0].name) if _tm_matches else None
+        trim_token = _m.group(1) if _m else '2p_trim_mean'
+
+        # Statistical analysis writes both R1 averages. A missing one is an
+        # error with or without allow_missing, which is about the background.
+        avg_paths = {
+            avg_kind: ingestion.get_results_path(
+                target=target,
+                sol=sol,
+                scan=scan,
+                spectral_region="R1",
+                processing_level=f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}",
+                file_extension=".csv",
+            )
+            for avg_kind in ["mean", "trimmed_mean"]
+        }
+        absent = [str(path) for path in avg_paths.values() if not path.exists()]
+        if absent:
+            raise PreprocessingError(
+                f"Background subtraction needs the R1 averages from statistical analysis; missing: {', '.join(absent)}",
+                exit_code=1,
+                context={"working_dir": str(working_dir)},
+            )
+        
         # Always baseline the R1 averaged spectra
         try:
             target_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan)
@@ -1183,19 +1212,6 @@ class PreprocessingService:
             from sherloc_pipeline.core.baseline import BaselineParams
             
             blp = BaselineParams(lam=lam2, asymmetric_coef=asym2, iters=it2, diff_order=diff2, tol=tol2)
-
-            # Resolve the actual trim-mean filename token for this scan
-            # (may differ from configured 2% due to dynamic trim on small scans)
-            import re as _re_mod
-            _scan_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan)
-            _tm_matches = sorted(_scan_dir.glob(
-                f"{sol}_{target}_{scan}_R1_raw-n_*p_trim_mean.csv"
-            ))
-            if _tm_matches:
-                _m = _re_mod.search(r'(\d+(?:\.\d+)?p_trim_mean)', _tm_matches[0].name)
-                trim_token = _m.group(1) if _m else '2p_trim_mean'
-            else:
-                trim_token = '2p_trim_mean'
 
             for avg_kind in ["mean", "trimmed_mean"]:
                 avg_path = ingestion.get_results_path(
@@ -1297,27 +1313,6 @@ class PreprocessingService:
             record["ppp_scale"] = ppp_scale
             test_plots_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan) / "test_plots"
 
-            # Statistical analysis writes both R1 averages; subtracting from
-            # only some of them would leave a run that looks complete.
-            avg_paths = {
-                avg_kind: ingestion.get_results_path(
-                    target=target,
-                    sol=sol,
-                    scan=scan,
-                    spectral_region="R1",
-                    processing_level=f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}",
-                    file_extension=".csv",
-                )
-                for avg_kind in ["mean", "trimmed_mean"]
-            }
-            absent = [str(path) for path in avg_paths.values() if not path.exists()]
-            if absent:
-                raise PreprocessingError(
-                    f"Background subtraction needs the R1 averages from statistical analysis; missing: {', '.join(absent)}",
-                    exit_code=1,
-                    context={"working_dir": str(working_dir)},
-                )
-
             roi = (600.0, 700.0)
             clip = (0.1, 5.0)
             try:
@@ -1403,14 +1398,23 @@ class PreprocessingService:
                 corr, base = _baseline_aspls_with_weights(pd.Series(y_bkgsub), blp, weights)
                 staged.append((avg_kind, avg, x, y, y_bg_interp, y_bkgsub, corr, scale_used, method_used))
 
-            written: List[Path] = []
+            # Outputs go to staging names next to their destinations and replace
+            # them only after every write succeeds, so a failure leaves the
+            # previous run's outputs as they were.
+            staging: List[tuple] = []
+
+            def stage(final: Path) -> Path:
+                staged_path = final.with_name(f".staging-{final.name}")
+                staging.append((staged_path, final))
+                return staged_path
+
             try:
                 # Save a plot of the background next to the scan's other
                 # plots, never next to the background file (which may be
                 # packaged, read-only data).
                 bg_plot_path = test_plots_dir / pathlib.Path(background).with_suffix('.png').name
                 bg_plot_path.parent.mkdir(parents=True, exist_ok=True)
-                written.append(bg_plot_path)
+                bg_plot_path = stage(bg_plot_path)
                 plot_average_single_series(
                     x_axis=x_bg,
                     y_series=y_bg_scaled,
@@ -1422,20 +1426,16 @@ class PreprocessingService:
                     level = f"raw-n_{trim_token if avg_kind == 'trimmed_mean' else 'mean'}"
 
                     # Comparative overlay
-                    try:
-                        y_bg_unscaled_interp = np.interp(x, x_bg, y_bg)
-                        cmp_path = test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_comparison.png"
-                        written.append(cmp_path)
-                        plot_average_bkgsub_comparison(
-                            x_axis=x,
-                            avg_raw=y,
-                            bg_unscaled_interp=y_bg_unscaled_interp,
-                            scale_used=scale_used,
-                            output_path=cmp_path,
-                            title=f"bkgsub comparison: scaled (s={scale_used:.3f}, {method_used}) vs unscaled",
-                        )
-                    except Exception as e:
-                        logger.warning(f"failed to write bkgsub comparison overlay: {e}")
+                    y_bg_unscaled_interp = np.interp(x, x_bg, y_bg)
+                    cmp_path = stage(test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_comparison.png")
+                    plot_average_bkgsub_comparison(
+                        x_axis=x,
+                        avg_raw=y,
+                        bg_unscaled_interp=y_bg_unscaled_interp,
+                        scale_used=scale_used,
+                        output_path=cmp_path,
+                        title=f"bkgsub comparison: scaled (s={scale_used:.3f}, {method_used}) vs unscaled",
+                    )
 
                     # Save background-subtracted (pre-baseline) average
                     bkgsub_out_path = ingestion.get_results_path(
@@ -1446,13 +1446,8 @@ class PreprocessingService:
                         processing_level=f"{level}_bkgsub",
                         file_extension=".csv",
                     )
-                    written.append(bkgsub_out_path)
+                    bkgsub_out_path = stage(bkgsub_out_path)
                     pd.DataFrame({avg.columns[0]: x, 'intensity': y_bkgsub}).to_csv(bkgsub_out_path, index=False)
-
-                    try:
-                        self.console.print(f"[green]Wrote:[/green] {bkgsub_out_path}")
-                    except Exception:
-                        pass
 
                     out = pd.DataFrame({avg.columns[0]: x, 'intensity': corr.values})
                     out_path = ingestion.get_results_path(
@@ -1463,7 +1458,7 @@ class PreprocessingService:
                         processing_level=f"{level}_bkgsub_baselined",
                         file_extension=".csv",
                     )
-                    written.append(out_path)
+                    out_path = stage(out_path)
                     out.to_csv(out_path, index=False)
 
                     # Individual plots
@@ -1478,7 +1473,7 @@ class PreprocessingService:
                         processing_level=f"{level}_bkgsub",
                         file_extension=".png",
                     )
-                    written.append(bkgsub_png_path)
+                    bkgsub_png_path = stage(bkgsub_png_path)
                     plt.figure(figsize=(12, 6))
                     plt.plot(x, y_bkgsub, color="#7f7f7f", linewidth=1.5)
                     plt.xlabel("Raman Shift (cm⁻¹)")
@@ -1503,7 +1498,7 @@ class PreprocessingService:
                         processing_level=f"{level}_bkgsub_baselined",
                         file_extension=".png",
                     )
-                    written.append(bkgsub_bl_png_path)
+                    bkgsub_bl_png_path = stage(bkgsub_bl_png_path)
                     plt.figure(figsize=(12, 6))
                     plt.plot(x, corr.values, color="#2ca02c", linewidth=1.5)
                     plt.xlabel("Raman Shift (cm⁻¹)")
@@ -1521,7 +1516,7 @@ class PreprocessingService:
 
                     # Composite verification plot
                     plot_path = test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_baseline_test.png"
-                    written.append(plot_path)
+                    plot_path = stage(plot_path)
                     plot_average_bkgsub_baseline(
                         x_axis=x,
                         avg_raw=avg['intensity'].values,
@@ -1532,15 +1527,49 @@ class PreprocessingService:
                         title=f"sol {sol} {target} {scan} R1 raw-n {trim_token if avg_kind == 'trimmed_mean' else 'mean'} bkgsub + baseline",
                     )
             except Exception:
-                for path in written:
+                for staged_path, _ in staging:
                     try:
-                        path.unlink(missing_ok=True)
+                        staged_path.unlink(missing_ok=True)
                     except OSError:
                         pass
                 raise
+            for staged_path, final in staging:
+                staged_path.replace(final)
+                if final.suffix == ".csv":
+                    try:
+                        self.console.print(f"[green]Wrote:[/green] {final}")
+                    except Exception:
+                        pass
             record["n_averages"] = len(staged)
             record["applied"] = True
+        else:
+            # Not applied (allow_missing): remove background-subtracted
+            # outputs an earlier run left, so they are not collected as this
+            # run's artifacts.
+            removed = []
+            for path in self._bkgsub_output_paths(ingestion, target, sol, scan, trim_token):
+                if path.exists():
+                    path.unlink()
+                    removed.append(str(path))
+            if removed:
+                record["removed_stale"] = removed
         return record
+
+    @staticmethod
+    def _bkgsub_output_paths(ingestion, target: str, sol: str, scan: str, trim_token: str) -> List[Path]:
+        """Every per-average output the background subtraction step writes."""
+        test_plots_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan) / "test_plots"
+        paths: List[Path] = []
+        for level in ("raw-n_mean", f"raw-n_{trim_token}"):
+            for suffix in ("bkgsub", "bkgsub_baselined"):
+                for ext in (".csv", ".png"):
+                    paths.append(ingestion.get_results_path(
+                        target=target, sol=sol, scan=scan, spectral_region="R1",
+                        processing_level=f"{level}_{suffix}", file_extension=ext,
+                    ))
+            paths.append(test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_comparison.png")
+            paths.append(test_plots_dir / f"{sol}_{target}_{scan}_R1_{level}_bkgsub_baseline_test.png")
+        return paths
     
     def _read_shots_per_spec(self, loupe_csv: Path) -> Optional[float]:
         """Read shots_per_spec from a loupe.csv file. Returns None if unavailable."""

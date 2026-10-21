@@ -184,6 +184,75 @@ def test_a_failure_after_the_first_average_leaves_no_bkgsub_output(tmp_path, fix
     monkeypatch.setitem(background_cfg, "default_file", f"./data/background/{DEFAULT_NAME}")
     with pytest.raises(PreprocessingError, match="synthetic plot failure"):
         run(tmp_path, fixtures_path, allow_missing_background=allow_missing)
-    assert len(calls) == 2  # The first average was fully written before the failure.
+    assert len(calls) == 2  # The first average was staged before the failure.
     assert not list((tmp_path / "results").rglob("*_bkgsub*"))
+    assert not list((tmp_path / "results").rglob(".staging-*"))
     assert not list((tmp_path / "results").rglob(f"{Path(DEFAULT_NAME).stem}.png"))
+
+
+def _outputs(results):
+    return {p: p.read_bytes() for p in sorted(results.rglob("*_bkgsub*"))}
+
+
+def test_a_missing_average_stops_the_run_even_without_a_background(tmp_path, fixtures_path, clean_cwd, background_cfg, monkeypatch):
+    real = DataIngestion.generate_statistical_analysis
+
+    def without_trimmed_mean(self, *args, **kwargs):
+        out = real(self, *args, **kwargs)
+        for path in (tmp_path / "results").rglob("*_R1_raw-n_*p_trim_mean.csv"):
+            path.unlink()
+        return out
+
+    monkeypatch.setattr(DataIngestion, "generate_statistical_analysis", without_trimmed_mean)
+    monkeypatch.setitem(background_cfg, "default_file", "./data/background/synthetic-missing.csv")
+    with pytest.raises(PreprocessingError, match="needs the R1 averages"):
+        run(tmp_path, fixtures_path, allow_missing_background=True)
+
+
+def test_a_comparison_plot_failure_stops_the_run(tmp_path, fixtures_path, clean_cwd, background_cfg, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic comparison failure")
+
+    monkeypatch.setattr(preprocessing_plots, "plot_average_bkgsub_comparison", fail)
+    monkeypatch.setitem(background_cfg, "default_file", f"./data/background/{DEFAULT_NAME}")
+    with pytest.raises(PreprocessingError, match="synthetic comparison failure"):
+        run(tmp_path, fixtures_path)
+    assert not list((tmp_path / "results").rglob("*_bkgsub*"))
+    assert not list((tmp_path / "results").rglob(".staging-*"))
+
+
+def test_a_failed_rerun_leaves_the_previous_outputs_unchanged(tmp_path, fixtures_path, clean_cwd, background_cfg, monkeypatch):
+    monkeypatch.setitem(background_cfg, "default_file", f"./data/background/{DEFAULT_NAME}")
+    run(tmp_path, fixtures_path)
+    before = _outputs(tmp_path / "results")
+    assert before
+
+    real = preprocessing_plots.plot_average_bkgsub_baseline
+    calls = []
+
+    def fail_on_second(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("synthetic plot failure")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(preprocessing_plots, "plot_average_bkgsub_baseline", fail_on_second)
+    with pytest.raises(PreprocessingError, match="synthetic plot failure"):
+        run(tmp_path, fixtures_path)
+    assert _outputs(tmp_path / "results") == before
+    assert not list((tmp_path / "results").rglob(".staging-*"))
+
+
+def test_an_opt_out_rerun_removes_the_previous_bkgsub_outputs(tmp_path, fixtures_path, clean_cwd, background_cfg, monkeypatch):
+    monkeypatch.setitem(background_cfg, "default_file", f"./data/background/{DEFAULT_NAME}")
+    run(tmp_path, fixtures_path)
+    before = _outputs(tmp_path / "results")
+    assert before
+
+    monkeypatch.setitem(background_cfg, "default_file", "./data/background/synthetic-missing.csv")
+    result = run(tmp_path, fixtures_path, allow_missing_background=True)
+    record = result.metadata["background_subtraction"]
+    assert record["applied"] is False
+    assert sorted(record["removed_stale"]) == sorted(str(p) for p in before)
+    assert not list((tmp_path / "results").rglob("*_bkgsub*"))
+    assert not any("_bkgsub" in str(a) for a in result.artifacts)
