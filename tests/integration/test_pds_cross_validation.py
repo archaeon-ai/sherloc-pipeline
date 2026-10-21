@@ -238,7 +238,9 @@ class TestSpectralShapeComparison:
     """Compare spectral shapes between PDS (laser_normalized) and Loupe (dark_subtracted).
 
     Expected differences per spec s15:
-    - PDS spectra are laser_normalized (dark_subtracted / photodiode_intensity)
+    - PDS spectra are laser_normalized: dark_subtracted x max(pd) / pd_i per point, i.e.
+      "normalized to the maximum laser energy" (SHERLOC RDR SIS, JPL D-104819 v1.12,
+      section 4.4.5 p. 34; Table 3 p. 23), the same formula as Loupe's laser normalization
     - Loupe spectra are dark_subtracted
     - These are different processing levels, so absolute values differ
     - BUT spectral shapes should be highly correlated (same underlying signal)
@@ -295,8 +297,8 @@ class TestSpectralShapeComparison:
 
         Detail scans have moderate-to-strong Raman signal. Correlation varies
         with SNR — detail_1 (SNR~9.5) correlates higher than detail_2 (SNR~5.0).
-        Threshold 0.90 captures both. Laser normalization (dividing by photodiode)
-        preserves spectral shape since it's a per-shot scalar operation.
+        Threshold 0.90 captures both. Laser normalization (x max(pd) / pd_i)
+        preserves spectral shape since it's a per-point scalar operation.
         """
         detail_matches = [m for m in matched_scans if m[3] == 100]
         assert len(detail_matches) >= 1, "No detail scans found in matches"
@@ -384,7 +386,7 @@ class TestSpectralShapeComparison:
     def test_absolute_values_differ(self, pds_engine, loupe_engine, matched_scans):
         """PDS and Loupe spectra have different absolute values (different processing).
 
-        PDS = laser_normalized (dark_subtracted / photodiode), Loupe = dark_subtracted.
+        PDS = laser_normalized (dark_subtracted x max(pd) / pd_i), Loupe = dark_subtracted.
         They should NOT be identical (that would indicate a bug).
         """
         detail_matches = [m for m in matched_scans if m[3] == 100]
@@ -460,10 +462,11 @@ class TestExpectedDifferences:
     def test_spectrum_type_differs(self, pds_engine, loupe_engine, matched_scans):
         """PDS stores laser_normalized only; Loupe stores active, dark, dark_subtracted.
 
-        PDS provides laser-normalized spectra (dark_subtracted / photodiode).
+        PDS provides laser-normalized spectra (dark_subtracted x max(pd) / pd_i, scaled
+        to the scan's maximum laser energy; RDR SIS D-104819 v1.12 section 4.4.5).
         Loupe provides three types per point: active (raw CCD), dark (dark frame),
-        and dark_subtracted (active - dark). Laser normalization further divides
-        by photodiode intensity to correct shot-to-shot laser variation.
+        and dark_subtracted (active - dark). Laser normalization corrects the
+        point-to-point laser variation.
         """
         pds_id, loupe_id, sclk, _ = matched_scans[1]  # detail_1
 
