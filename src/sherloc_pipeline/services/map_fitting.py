@@ -237,32 +237,42 @@ def _load_point_spectra_multi(
     return result
 
 
+# Domains fitted on the non-despiked spectrum: sharp mineral peaks can be hit
+# by despiking (Ken's ruling, 2026-10-21). Organics and hydration (broad, hard
+# to confuse with cosmic rays) are fitted on the despiked spectrum, matching
+# the point pipeline.
+_NON_DESPIKED_DOMAINS = frozenset({"minerals"})
+
+
 def _preprocess_r1_intensity(
     wavenumber_r1: np.ndarray,
     intensity_r1: np.ndarray,
     baseline_params: BaselineParams | None = None,
     baseline_weights: np.ndarray | None = None,
     despike_params: DespikeParams | None = None,
+    despike: bool = True,
 ) -> np.ndarray:
-    """Despike + baseline-correct one point's R1 intensity.
+    """Despike (when ``despike``) + baseline-correct one point's R1 intensity.
 
-    Both steps depend only on the point's spectrum (not on the fitting
-    domain), so the result is shared across minerals/organics/hydration
-    instead of being recomputed once per domain.
+    Both steps depend only on the point's spectrum and on whether the domain
+    is despiked (see ``_NON_DESPIKED_DOMAINS``), so callers fitting several
+    domains compute it once per variant instead of once per domain.
 
     ``despike_params`` must come from
     :func:`core.preprocessing.despike_params_from_config` so map mode despikes
     with the same parameters as the CLI pipeline; ``None`` falls back to the
     dataclass defaults for callers with no config in hand.
     """
-    try:
-        despike_params = despike_params or DespikeParams()
-        series = pd.Series(intensity_r1, index=wavenumber_r1)
-        despiked, _ = despike_r1_spectrum(series, despike_params, raman_shift=wavenumber_r1)
-        y = despiked.values.astype(np.float64)
-    except Exception:
-        # If despiking fails, use raw intensity
-        y = intensity_r1.astype(np.float64)
+    y = intensity_r1.astype(np.float64)
+    if despike:
+        try:
+            despike_params = despike_params or DespikeParams()
+            series = pd.Series(intensity_r1, index=wavenumber_r1)
+            despiked, _ = despike_r1_spectrum(series, despike_params, raman_shift=wavenumber_r1)
+            y = despiked.values.astype(np.float64)
+        except Exception:
+            # If despiking fails, use raw intensity
+            pass
 
     if baseline_params is not None:
         try:
@@ -301,8 +311,9 @@ def _fit_raman_domain(
         baseline_params: asPLS baseline parameters (or None to skip).
         baseline_weights: Weight vector for asPLS (protect peak windows).
         preprocessed: When True, ``intensity_r1`` has already been
-            despiked + baseline-corrected by ``_preprocess_r1_intensity``
-            and both steps are skipped here. Callers fitting several
+            prepared by ``_preprocess_r1_intensity`` with the variant this
+            domain needs (despiked unless in ``_NON_DESPIKED_DOMAINS``) and
+            both steps are skipped here. Callers fitting several
             domains for the same point should preprocess once.
         raw_intensity_r1: The pre-despike intensity for this point. Only used
             by the hydration cosmic-ray veto (issue #38), which needs the
@@ -323,6 +334,7 @@ def _fit_raman_domain(
         y = _preprocess_r1_intensity(
             wavenumber_r1, intensity_r1, baseline_params, baseline_weights,
             despike_params=despike_params,
+            despike=domain not in _NON_DESPIKED_DOMAINS,
         )
 
     # Build domain-specific config
@@ -804,21 +816,25 @@ class MapFitService:
                 else:
                     intensity_r1 = raw_intensity
 
-                # Despike + asPLS baseline once per point. These depend
-                # only on the spectrum, so recomputing them inside each
-                # domain repeated the most expensive preprocessing step
-                # once per selected Raman domain (3x for the default
-                # minerals+organics+hydration selection).
-                try:
-                    prepped_r1 = _preprocess_r1_intensity(
-                        wavenumber_r1, intensity_r1, bl_params, bl_weights,
-                        despike_params=despike_params,
-                    )
-                except Exception:
-                    logger.debug("Preprocessing failed for point %d", point_index)
-                    prepped_r1 = intensity_r1.astype(np.float64)
-
+                # Despike + asPLS baseline once per point per variant
+                # (despiked for organics/hydration, not for minerals; see
+                # _NON_DESPIKED_DOMAINS). Recomputing inside each domain
+                # repeated the most expensive preprocessing step once per
+                # selected Raman domain.
+                prepped_by_variant: dict[bool, np.ndarray] = {}
                 for domain in raman_domains:
+                    despike = domain not in _NON_DESPIKED_DOMAINS
+                    if despike not in prepped_by_variant:
+                        try:
+                            prepped_by_variant[despike] = _preprocess_r1_intensity(
+                                wavenumber_r1, intensity_r1, bl_params, bl_weights,
+                                despike_params=despike_params,
+                                despike=despike,
+                            )
+                        except Exception:
+                            logger.debug("Preprocessing failed for point %d", point_index)
+                            prepped_by_variant[despike] = intensity_r1.astype(np.float64)
+                    prepped_r1 = prepped_by_variant[despike]
                     try:
                         result = _fit_raman_domain(
                             wavenumber_r1, prepped_r1, self.config, domain,
