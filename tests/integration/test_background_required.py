@@ -326,3 +326,25 @@ def test_stale_output_cleanup_treats_names_literally(tmp_path):
         path.write_text("synthetic")
     found = PreprocessingService._bkgsub_output_paths(Ingestion(), "Calibration[1]", "0921", "detail_1")
     assert found == sorted(stale)
+
+
+def test_a_rerun_at_another_trim_uses_this_runs_trimmed_mean(tmp_path, fixtures_path, clean_cwd, background_cfg, monkeypatch):
+    monkeypatch.setitem(background_cfg, "default_file", f"./data/background/{DEFAULT_NAME}")
+    results = tmp_path / "results"
+
+    def trim_tokens(pattern):
+        return {re.search(r"_(\d+(?:\.\d+)?p_trim_mean)[_.]", p.name).group(1) for p in results.rglob(pattern)}
+
+    # An earlier run at a 10% trim leaves its averages in the scan directory;
+    # its token sorts before the default 2% one.
+    monkeypatch.setitem(get_config().preprocessing, "trim_mean_baseline_pct", 0.10)
+    run(tmp_path, fixtures_path)
+    (earlier,) = trim_tokens("*_R1_raw-n_*p_trim_mean_bkgsub.csv")
+
+    monkeypatch.setitem(get_config().preprocessing, "trim_mean_baseline_pct", 0.02)
+    result = run(tmp_path, fixtures_path)
+    current = trim_tokens("*_R1_raw-n_*p_trim_mean.csv") - {earlier}
+    assert len(current) == 1 and sorted([earlier, *current])[0] == earlier
+    (current,) = current
+    assert result.metadata["background_subtraction"]["applied"] is True
+    assert trim_tokens("*_R1_raw-n_*p_trim_mean_bkgsub.csv") == {earlier, current}
