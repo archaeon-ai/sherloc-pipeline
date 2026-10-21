@@ -89,11 +89,14 @@ class SpectrumType(str, Enum):
     - dark: Dark frame (no laser)
     - dark_subtracted: Active minus dark
     - laser_normalized: Laser-power-normalized spectrum (PDS processing level)
+    - dark_sub_despiked: Dark-subtracted with the stored ML cosmic-ray mask
+      applied (derived; fluorescence fit input, services/fluor_inputs.py)
     """
     ACTIVE = "active"
     DARK = "dark"
     DARK_SUBTRACTED = "dark_subtracted"
     LASER_NORMALIZED = "laser_normalized"
+    DARK_SUB_DESPIKED = "dark_sub_despiked"
 
 
 class CoordinateFrame(str, Enum):

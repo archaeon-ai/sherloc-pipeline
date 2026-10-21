@@ -156,8 +156,9 @@ def _load_point_spectra(
             would present damaged Raman data as an ordinary gap in the map,
             with only a server-side warning to say otherwise. Only a caller
             that already reports an unreadable spectrum as a per-point
-            outcome passes True -- currently just
-            ``_load_point_spectra_multi``, see there.
+            outcome passes True. (Fluorescence inputs are loaded by
+            ``services.fluor_inputs.load_fluorescence_inputs``, which skips
+            an unreadable point the same way.)
 
     Returns:
         {scan_point_id: intensity_array} for each point that has a spectrum.
@@ -196,44 +197,6 @@ def _load_point_spectra(
             )
             continue
         result[s.scan_point_id] = data
-    return result
-
-
-def _load_point_spectra_multi(
-    session: Session,
-    scan_point_ids: list[str],
-    regions: tuple[str, ...] = ("R1", "R2", "R3"),
-) -> dict[str, dict[str, np.ndarray]]:
-    """Batch-load several detector regions for many scan points at once.
-
-    Fluorescence fitting needs R1+R2+R3 per point. Issuing three
-    single-row queries per point costs 3N round trips on a scan with N
-    points; one batched query per region keeps large scans (>500 points)
-    from spending most of their wall clock in SQLAlchemy.
-
-    Unreadable blobs are skipped here, and only here, because that is what
-    this path did before it was batched: fluorescence loaded its regions
-    per point, inside ``run_map_fit``'s per-point ``except``, so a blob
-    that would not decode cost that point its fluorescence result and
-    nothing else. Batching must not turn that into a failed scan -- nor
-    into a stricter failure than the code it replaced. The R1 load feeding
-    the Raman domains keeps the opposite default: it never tolerated a
-    corrupt spectrum, and folding one into a "missing" point there would
-    hide damaged data inside an ordinary gap in the map.
-
-    Returns:
-        {scan_point_id: {region: intensity_array}} — a point whose region
-        is absent or unreadable simply lacks that key, which
-        ``_fit_fluorescence_domain`` reports as a missing domain for that
-        point alone.
-    """
-    result: dict[str, dict[str, np.ndarray]] = {}
-    for region in regions:
-        loaded = _load_point_spectra(
-            session, scan_point_ids, region=region, skip_unreadable=True
-        )
-        for sp_id, arr in loaded.items():
-            result.setdefault(sp_id, {})[region] = arr
     return result
 
 
@@ -599,6 +562,40 @@ def _fit_fluorescence_domain(
 
 
 LASER_NORM_NOT_APPLIED = "laser_norm: not applied (no photodiode)"
+FLUOR_NOT_DESPIKED = "fluorescence: fitted non-despiked input (no current ML-despiked rows)"
+FLUOR_LASER_NORM_NOT_APPLIED = "fluorescence laser_norm: not applied (no photodiode)"
+
+
+def _load_fluorescence_inputs(
+    session: Session, scan_points, config: dict
+) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, list[str]]]:
+    """Fluorescence inputs for map mode, chosen and normalized as the point path does.
+
+    Returns ``({scan_point_id: {region: intensity}}, {scan_point_id: [notes]})``.
+    A point absent from the first dict has no readable R1-R3 and reports a
+    missing domain (services/fluor_inputs.py).
+    """
+    from sherloc_pipeline.services import fluor_inputs
+
+    chosen = fluor_inputs.load_fluorescence_inputs(session, [sp.id for sp in scan_points])
+    normalize = fluor_inputs.laser_normalize_enabled(config)
+    factors = fluor_inputs.laser_normalization_factors(
+        {sp.id: getattr(sp, "photodiode_mean", None) for sp in scan_points}
+    ) if normalize else {}
+    parts: dict[str, dict[str, np.ndarray]] = {}
+    notes: dict[str, list[str]] = {}
+    for sp_id, entry in chosen.items():
+        arrays = entry["arrays"]
+        point_notes = [] if entry["despiked"] else [FLUOR_NOT_DESPIKED]
+        if normalize:
+            arrays, scaled = fluor_inputs.apply_fluorescence_laser_normalization(
+                arrays, factors.get(sp_id)
+            )
+            if not scaled:
+                point_notes.append(FLUOR_LASER_NORM_NOT_APPLIED)
+        parts[sp_id] = arrays
+        notes[sp_id] = point_notes
+    return parts, notes
 
 
 def allow_missing_photodiode(config: dict) -> bool:
@@ -697,11 +694,15 @@ class MapFitService:
         if raman_domains:
             r1_spectra = _load_point_spectra(session, sp_ids, region="R1")
 
-        # Same batching for fluorescence: R1+R2+R3 in three queries total
-        # rather than three queries per point.
+        # Fluorescence inputs for every point in one batch: the ML-despiked
+        # R1-R3 rows when current, else the measured rows, then the laser
+        # normalization stage (same choice as the point fitter).
         fluor_spectra: dict[str, dict[str, np.ndarray]] = {}
+        fluor_notes: dict[str, list[str]] = {}
         if "fluorescence" in domains:
-            fluor_spectra = _load_point_spectra_multi(session, sp_ids)
+            fluor_spectra, fluor_notes = _load_fluorescence_inputs(
+                session, scan_points, self.config
+            )
 
         # Calibration: compute once
         wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
@@ -874,6 +875,7 @@ class MapFitService:
                     )
                     fluor_result = DomainResult(status="missing")
                 domain_results["fluorescence"] = fluor_result
+                notes.extend(fluor_notes.get(sp.id, []))
                 if fluor_result.status == "measured":
                     detections["fluorescence"] += 1
 

@@ -261,6 +261,12 @@ fluorescence_fitting:
   # Uses shared resolve_parallel_workers() utility (see also fitting.parallel_workers).
   parallel_workers: 0
 
+  # Laser normalization of the fluorescence input: each point's R1-R3 spectrum
+  # is scaled by max photodiode / point photodiode (the Loupe convention) after
+  # the ML-despiked input is chosen. Ruled 2026-10-21; awaiting Ken's explicit
+  # confirmation. Set false to fit un-normalized (the earlier behavior).
+  laser_normalize: true
+
 # Spatial mapping parameters
 spatial:
   laser_center: [809.0, 664.0]

@@ -3063,31 +3063,30 @@ class FittingService:
                 artifacts: List[Path] = []
 
                 # --- Phase 1: Prepare fitting inputs (sequential, DB reads) ---
+                # Input: the stored-ML-despiked R1-R3 rows when current for all
+                # three regions, else today's dark_subtracted/active rows
+                # (services/fluor_inputs.py). Then the laser-normalization stage.
+                from sherloc_pipeline.services import fluor_inputs
+
+                chosen = fluor_inputs.load_fluorescence_inputs(
+                    session, [sp.id for sp in scan_points]
+                )
+                laser_normalize = fluor_inputs.laser_normalize_enabled(self.context.config)
+                norm_factors = fluor_inputs.laser_normalization_factors(
+                    {sp.id: sp.photodiode_mean for sp in scan_points}
+                ) if laser_normalize else {}
+                normalized_points: List[str] = []
+                no_photodiode_points: List[int] = []
+
                 fit_inputs: List[Dict[str, Any]] = []
                 for scan_point in scan_points:
                     point_idx = scan_point.point_index
 
-                    # Query R1, R2, R3 spectra (prefer dark_subtracted, fallback active).
-                    # Despiking for fluorescence happens inside
-                    # fit_fluorescence_spectrum (rolling-median clip before the
-                    # fit), consistent with Ken's ruling (2026-10-21).
-                    region_spectra = {}
-                    for region in ("R1", "R2", "R3"):
-                        for spec_type in ("dark_subtracted", "active"):
-                            spec = session.query(SpectrumORM).filter_by(
-                                scan_point_id=scan_point.id,
-                                region=region,
-                                spectrum_type=spec_type,
-                            ).first()
-                            if spec is not None:
-                                region_spectra[region] = spec
-                                break
-
+                    entry = chosen.get(scan_point.id)
                     # Skip point if any region missing (per spec §3.2)
-                    missing = [r for r in ("R1", "R2", "R3") if r not in region_spectra]
-                    if missing:
+                    if entry is None:
                         warnings_list.append(
-                            f"Missing {', '.join(missing)} for point {point_idx}, skipping"
+                            f"Missing R1/R2/R3 for point {point_idx}, skipping"
                         )
                         points_skipped += 1
                         summary_rows.append({
@@ -3097,16 +3096,10 @@ class FittingService:
                         })
                         continue
 
-                    # Link peaks to R2 spectrum per spec §6.3
-                    link_spectrum = region_spectra["R2"]
-
-                    # Decompress each region to 2148-channel array and stitch
+                    # Decompressed region to 2148-channel array
                     region_arrays = {}
                     for region in ("R1", "R2", "R3"):
-                        raw = np.frombuffer(
-                            zlib.decompress(region_spectra[region].intensities),
-                            dtype=np.float32,
-                        )
+                        raw = entry["arrays"][region]
                         if len(raw) == N_CHANNELS_FULL:
                             region_arrays[region] = raw.astype(np.float64)
                         else:
@@ -3116,6 +3109,15 @@ class FittingService:
                             padded[offset:offset + len(raw)] = raw
                             region_arrays[region] = padded
 
+                    if laser_normalize:
+                        region_arrays, scaled = fluor_inputs.apply_fluorescence_laser_normalization(
+                            region_arrays, norm_factors.get(scan_point.id)
+                        )
+                        if scaled:
+                            normalized_points.append(scan_point.id)
+                        else:
+                            no_photodiode_points.append(point_idx)
+
                     r123 = stitch_r123_spectrum(
                         region_arrays["R1"], region_arrays["R2"], region_arrays["R3"]
                     )
@@ -3123,9 +3125,25 @@ class FittingService:
                     fit_inputs.append({
                         'point_idx': point_idx,
                         'r123': r123,
-                        'link_spectrum_id': link_spectrum.id,
+                        'link_spectrum_id': entry["link_spectrum_id"],
                         'scan_point_id': scan_point.id,
                     })
+
+                input_meta = fluor_inputs.summarize_inputs(
+                    chosen, normalized_points, len(scan_points)
+                )
+                input_meta["laser_normalize"] = laser_normalize
+                if input_meta["points_fallback"]:
+                    warnings_list.append(
+                        f"{input_meta['points_fallback']} point(s) fitted on the non-despiked "
+                        "input: no current ML-despiked R1-R3 rows (run the despiked backfill "
+                        "or reprocess with ML despiking)."
+                    )
+                if no_photodiode_points:
+                    warnings_list.append(
+                        f"Laser normalization not applied to {len(no_photodiode_points)} "
+                        "point(s) without a photodiode mean."
+                    )
 
                 # --- Phase 2: Parallel fitting (CPU-bound, no DB) ---
                 # Per-point fluorescence fitting is embarrassingly parallel:
@@ -3305,6 +3323,7 @@ class FittingService:
                     "snr_threshold": snr_threshold,
                     "plots_generated": len([a for a in artifacts if str(a).endswith('.png')]),
                     "output_dir": str(fluor_dir) if fluor_dir else None,
+                    "input": input_meta,
                 }
 
                 return ServiceResult(

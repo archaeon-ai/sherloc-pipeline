@@ -354,14 +354,15 @@ def fluor_session(fit_session):
 
 
 def test_batch_load_skips_an_unreadable_blob_rather_than_raising(fluor_session):
-    loaded = map_fitting._load_point_spectra_multi(
+    from sherloc_pipeline.services.fluor_inputs import load_fluorescence_inputs
+
+    loaded = load_fluorescence_inputs(
         fluor_session, [_point_id(i) for i in range(N_POINTS)]
     )
 
-    # Only the affected point loses the region it could not decode.
-    assert set(loaded[_point_id(0)]) == {"R1", "R2", "R3"}
-    assert set(loaded[_point_id(1)]) == {"R1", "R3"}
-    assert set(loaded[_point_id(2)]) == {"R1", "R2", "R3"}
+    # Only the affected point is dropped; the others keep all three regions.
+    assert set(loaded) == {_point_id(0), _point_id(2)}
+    assert set(loaded[_point_id(0)]["arrays"]) == {"R1", "R2", "R3"}
 
 
 def test_one_corrupt_spectrum_costs_its_own_point_not_the_whole_scan(fluor_session):
