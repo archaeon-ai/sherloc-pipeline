@@ -2931,6 +2931,7 @@ class FittingService:
         results_dir: Optional[Path] = None,
         generate_plots: bool = True,
         use_despiked_inputs: bool = True,
+        despiked_row_ids: Optional[List[str]] = None,
     ) -> ServiceResult:
         """Fit fluorescence spectra for a scan and persist peaks to database.
 
@@ -2965,6 +2966,8 @@ class FittingService:
             use_despiked_inputs: If False, fit the measured rows even where
                 despiked rows exist (the pipeline passes False when it could
                 not refresh them this run).
+            despiked_row_ids: If given, only these despiked rows may be used
+                (the pipeline passes the rows its own refresh wrote).
 
         Returns:
             ServiceResult with summary and metadata including peak counts.
@@ -3075,6 +3078,7 @@ class FittingService:
                 chosen = fluor_inputs.load_fluorescence_inputs(
                     session, [sp.id for sp in scan_points],
                     allow_despiked=use_despiked_inputs,
+                    allowed_despiked_ids=despiked_row_ids,
                 )
                 laser_normalize = fluor_inputs.laser_normalize_enabled(self.context.config)
                 norm_factors = fluor_inputs.laser_normalization_factors(

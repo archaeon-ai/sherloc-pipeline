@@ -68,10 +68,10 @@ def writers_on(db_path: Path, proc_root: Path = Path("/proc")) -> List[int]:
     """PIDs of SHERLOC CLI processes that write ``db_path``.
 
     A process counts when its command line runs the SHERLOC CLI with a writing
-    subcommand and it may target this file: an argument or ``SHERLOC_DB_PATH``
-    resolving (against the process's working directory) to it, or, when it
-    names no database, the implicit ``./phase.db`` / ``./sherloc.db`` in its
-    working directory. A writer whose working directory cannot be read counts
+    subcommand and it may target this file: any argument (including the value
+    of an ``--option=value``) or ``SHERLOC_DB_PATH`` resolving, against the
+    process's working directory, to it, or the implicit ``./phase.db`` /
+    ``./sherloc.db`` in its working directory (always considered). A writer whose working directory cannot be read counts
     (fail closed). Without a readable ``proc_root`` nothing can be verified, so
     this raises ``BackfillRefused``.
     """
@@ -97,7 +97,12 @@ def writers_on(db_path: Path, proc_root: Path = Path("/proc")) -> List[int]:
         except OSError:
             pids.append(int(entry.name))  # cannot tell where it writes: assume here
             continue
-        named = [cwd / a for a in args if not a.startswith("-")]
+        tokens = []
+        for a in args:
+            tokens.append(a)
+            if "=" in a:
+                tokens.append(a.split("=", 1)[1])
+        named = [cwd / a for a in tokens]
         env_db = None
         try:
             for item in (entry / "environ").read_bytes().split(b"\0"):
@@ -106,8 +111,7 @@ def writers_on(db_path: Path, proc_root: Path = Path("/proc")) -> List[int]:
         except OSError:
             pass
         candidates = named + ([env_db] if env_db else [])
-        if not any(str(a).endswith(".db") for a in args) and env_db is None:
-            candidates += [cwd / name for name in IMPLICIT_DB_NAMES]
+        candidates += [cwd / name for name in IMPLICIT_DB_NAMES]
         if any(_same_file(c, db_path) for c in candidates):
             pids.append(int(entry.name))
     return pids

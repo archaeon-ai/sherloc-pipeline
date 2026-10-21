@@ -46,7 +46,13 @@ def source(tmp_path, fixtures_path):
 
 
 def _md5(path):
-    return hashlib.md5(path.read_bytes()).hexdigest()
+    """Digest of the database's logical content.
+
+    A file-byte hash is not stable here: closing another connection can
+    checkpoint the WAL into the main file without any change in content.
+    """
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+        return hashlib.md5("\n".join(conn.iterdump()).encode()).hexdigest()
 
 
 def _despiked(path):
@@ -157,3 +163,12 @@ def test_cli_dry_run_and_copy(source, tmp_path):
     ])
     assert ok.exit_code == 0, ok.output
     assert _despiked(tmp_path / "c.db") == 6
+
+
+def test_writer_detection_handles_equals_form_and_unrelated_db_args(source, tmp_path):
+    proc, here = tmp_path / "proc2", source.parent
+    _fake_proc(proc, 201, ["sherloc", "ingest", "x", f"--database={source}"], tmp_path)
+    # An unrelated .db argument must not hide the implicit ./phase.db default.
+    _fake_proc(proc, 202, ["sherloc", "reclassify-scan-types", "--snapshot", "backup.db"], here)
+
+    assert sorted(fluor_backfill.writers_on(source, proc_root=proc)) == [201, 202]

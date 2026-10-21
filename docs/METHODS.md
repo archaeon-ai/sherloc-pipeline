@@ -423,7 +423,7 @@ certified detection window are replaced by interpolation
 (`preprocessing.despike.interpolation_method`, default linear). This is the same
 replacement the web stored-mask toggle uses. The result is stored as its own
 `spectra` row with `spectrum_type = "dark_sub_despiked"` and processing level
-`ml_despiked`. No baseline is subtracted. Peaks and masks never attach to these
+`despiked`. No baseline is subtracted. Peaks and masks never attach to these
 rows: fluorescence peaks stay linked to the point's measured R2 spectrum.
 
 **When the rows are built.**

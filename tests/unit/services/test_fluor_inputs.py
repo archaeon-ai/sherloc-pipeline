@@ -294,3 +294,17 @@ def test_map_mode_normalizes_a_subset_with_the_scan_maximum(db):
         for sp in subset:
             np.testing.assert_allclose(
                 parts[sp.id]["R2"], raw[sp.id]["arrays"]["R2"] * whole[sp.id])
+
+
+def test_only_the_rows_this_run_wrote_are_used_when_ids_are_given(db):
+    db_path, service = db
+    first = _rebuild(db_path)
+    with get_session(service.engine) as session:
+        points = _points(session)
+        mine = fluor_inputs.load_fluorescence_inputs(
+            session, [points[0]], allowed_despiked_ids=first["row_ids"])
+        assert mine[points[0]]["despiked"] is True
+        # Another run's ids (here: none of this point's rows) are not accepted.
+        other = fluor_inputs.load_fluorescence_inputs(
+            session, [points[0]], allowed_despiked_ids=["not-a-row"])
+        assert other[points[0]]["despiked"] is False

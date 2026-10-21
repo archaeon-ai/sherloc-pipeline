@@ -727,6 +727,7 @@ class PipelineService:
         # whose mask stage failed, fits fluorescence on the measured input
         # (with a warning) instead of on a stale set.
         fluor_inputs_ok = True
+        despiked_row_ids: list = []
         if db_path.exists():
             with capture_stage("fluorescence_inputs") as (stage_artifacts, stage_warnings, stage_extra):
                 try:
@@ -749,6 +750,7 @@ class PipelineService:
                     stage_warnings.append(warning)
                     stage_extra["exception"] = str(exc)
                 else:
+                    despiked_row_ids = inputs_result.pop("row_ids", [])
                     stage_extra.update(inputs_result)
                     metadata["fluorescence_inputs"] = inputs_result
 
@@ -766,6 +768,7 @@ class PipelineService:
                         data_dir=resolved_data_dir,
                         results_dir=resolved_results_dir,
                         use_despiked_inputs=fluor_inputs_ok,
+                        despiked_row_ids=despiked_row_ids,
                     )
                 except Exception as exc:
                     self.logger.warning("Fluorescence fitting skipped: %s", exc)

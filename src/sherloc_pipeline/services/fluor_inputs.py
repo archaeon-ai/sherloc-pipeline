@@ -141,6 +141,7 @@ def rebuild_despiked_rows(
     interp = interpolation_method(config)
 
     written = no_mask = 0
+    row_ids: List[str] = []
     for (point_id, region), parent in parents.items():
         if run_masks is not None:
             channels = (run_masks.get(point_index[point_id]) or {}).get(region)
@@ -153,8 +154,10 @@ def rebuild_despiked_rows(
         values = apply_stored_mask_to_array(
             _decode(parent.intensities).astype(float), channels, windows[region], interp,
         )
+        row_id = str(uuid4())
+        row_ids.append(row_id)
         session.add(SpectrumORM(
-            id=str(uuid4()),
+            id=row_id,
             scan_point_id=point_id,
             region=region,
             spectrum_type=DESPIKED_SPECTRUM_TYPE,
@@ -170,6 +173,7 @@ def rebuild_despiked_rows(
         "despiked_rows_removed": int(removed),
         "despiked_rows_written": written,
         "regions_without_mask": no_mask,
+        "row_ids": row_ids,
     }
 
 
@@ -228,7 +232,8 @@ def refresh_despiked_rows_for_scan(
 
 
 def load_fluorescence_inputs(
-    session, scan_point_ids: Sequence[str], allow_despiked: bool = True
+    session, scan_point_ids: Sequence[str], allow_despiked: bool = True,
+    allowed_despiked_ids: Optional[Iterable[str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Choose each point's R1-R3 fluorescence input.
 
@@ -239,8 +244,11 @@ def load_fluorescence_inputs(
     (dark_subtracted, else active) for all three regions. Peaks always link to
     the point's measured R2 row. Points missing a region are omitted.
     ``allow_despiked=False`` forces the measured rows (used when this run could
-    not refresh the despiked rows).
+    not refresh the despiked rows). ``allowed_despiked_ids`` restricts the
+    despiked rows to those ids: the pipeline passes the rows its own refresh
+    wrote, so a concurrent run for the same scan cannot substitute its rows.
     """
+    allowed = None if allowed_despiked_ids is None else set(allowed_despiked_ids)
     from sherloc_pipeline.database.models import SpectrumORM
     from sherloc_pipeline.services.cr_masks import CRMaskService
 
@@ -278,7 +286,7 @@ def load_fluorescence_inputs(
         for reg in (REGIONS if allow_despiked else ()):
             row = rows.get((pid, reg, DESPIKED_SPECTRUM_TYPE))
             parent = rows.get((pid, reg, PARENT_SPECTRUM_TYPE))
-            if row is None or parent is None:
+            if row is None or parent is None or (allowed is not None and row.id not in allowed):
                 break
             mask = select_stored_mask(masks.get(parent.id, []))
             built = _as_aware(row.created_at)
