@@ -2,6 +2,7 @@
   import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
   import type { EvidenceDomain, EvidenceTheme, EvidenceTrace } from '../lib/evidenceTypes';
   import { comparisonDisplays, evidenceColor, nativeRenderTrace, evidenceExport, nativeFigureEvidence } from '../lib/evidenceStore';
+  import type { SharedEvidence } from '../lib/evidenceStore';
   import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
@@ -54,6 +55,7 @@
   export let evidenceMode = false;
   export let primaryTrace: EvidenceTrace | null = null;
   export let comparisonTraces: EvidenceTrace[] = [];
+  export let sharedEvidence: SharedEvidence | null = null;
   export let stacked = false;
   export let theme: EvidenceTheme = 'light';
   $: evidenceEnabled = evidenceDesk || !!processingTrace || evidenceMode || !!primaryTrace || comparisonTraces.length > 0 || xDomain !== null;
@@ -627,7 +629,7 @@
     if (!Plotly) return;
     const displays = (comparisonItems ?? [])
       .map(item => ({ ...item, trace: evidenceColor(item.trace, theme) }));
-    figureEvidence = evidenceExport(displays, identification);
+    figureEvidence = evidenceExport(displays, identification, sharedEvidence);
     const traces: Plotly.Data[] = displays.map(item => {
       const x: (number | null)[] = [];
       const y: (number | null)[] = [];

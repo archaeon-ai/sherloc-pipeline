@@ -271,6 +271,39 @@ describe('ProcessingChain — UI state tracks applied spectrum state (issue #34)
     expect(card.querySelector('.step-error')).toBeNull();
   });
 
+  it('records the background scale mode the request was made with', async () => {
+    // The same scale value in both modes: only the recorded mode tells them apart.
+    const postBackgroundSpy = vi.spyOn(api, 'postBackground').mockResolvedValue({
+      schema_version: '1',
+      subtracted: [4, 5, 6, 5, 4],
+      background_scaled: [6, 7, 9, 8, 7],
+      scale_used: 1.0,
+      bg_type: 'as',
+    });
+    const stateUpdate = vi.fn();
+    const { container, component } = render(ProcessingChain, {
+      props: { wavenumber: WAVENUMBER_A, intensity: INTENSITY_A },
+    });
+    component.$on('stateUpdate', (e) => stateUpdate(e.detail));
+    await expandBackgroundPanel(container);
+    await fireEvent.click(getBgRadio(container, 'as'));
+    await new Promise((r) => setTimeout(r, 0));
+    await tick();
+    expect(postBackgroundSpy.mock.calls.at(-1)![0].scale).toBe('auto');
+    expect(stateUpdate.mock.calls.at(-1)![0].processingChain).toEqual([
+      { step: 'bg_subtract', bg_type: 'as', scale_mode: 'auto', scale_used: 1.0 },
+    ]);
+
+    const card = getStepCard(container, '2. Background');
+    await fireEvent.click(card.querySelector<HTMLInputElement>('.checkbox-label input[type="checkbox"]')!);
+    await new Promise((r) => setTimeout(r, 350));
+    await tick();
+    expect(postBackgroundSpy.mock.calls.at(-1)![0].scale).toBe(1.0);
+    expect(stateUpdate.mock.calls.at(-1)![0].processingChain).toEqual([
+      { step: 'bg_subtract', bg_type: 'as', scale_mode: 'manual', scale_used: 1.0 },
+    ]);
+  });
+
   it('resets Baseline checkbox and Background radio when raw input props change', async () => {
     vi.spyOn(api, 'postBaseline').mockResolvedValue({
       schema_version: '1',

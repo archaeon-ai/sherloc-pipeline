@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { EvidenceDisplay } from '../lib/evidenceTypes';
   import { evidenceCsv, evidenceExport } from '../lib/evidenceStore';
+  import type { SharedEvidence } from '../lib/evidenceStore';
   import type { ExportTrace, ProcessingArtifacts } from '../lib/types';
 
   import type { IdentificationEvidence } from '../lib/identification';
@@ -8,6 +9,7 @@
   export let evidenceDesk = false;
   export let evidenceMode = false;
   export let evidenceDisplays: EvidenceDisplay[] = [];
+  export let evidenceShared: SharedEvidence | null = null;
   export let exportFigure: ((format: 'png' | 'svg') => void) | null = null;
   export let trace: ExportTrace | null = null;
   export let scanId: string = '';
@@ -125,7 +127,7 @@
   // --- CSV generation ---
 
   function buildCsvContent(): string {
-    if (evidenceMode) return evidenceCsv(evidenceDisplays, identification);
+    if (evidenceMode) return evidenceCsv(evidenceDisplays, identification, evidenceShared);
     const provenance = buildProvenanceJson();
     const lines: string[] = [];
 
@@ -295,7 +297,7 @@
   }
 
   function copyProvenance() {
-    const json = JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays, identification) : buildProvenanceJson(), null, 2);
+    const json = JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays, identification, evidenceShared) : buildProvenanceJson(), null, 2);
     navigator.clipboard.writeText(json).catch(() => {
       // Fallback: select text in the pre element
       const el = document.querySelector('.provenance-json');
@@ -362,7 +364,7 @@
         <button class="btn-secondary btn-sm" on:click={closeProvenance}>Close</button>
       </div>
       <div class="modal-body">
-        <pre class="provenance-json">{JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays, identification) : buildProvenanceJson(), null, 2)}</pre>
+        <pre class="provenance-json">{JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays, identification, evidenceShared) : buildProvenanceJson(), null, 2)}</pre>
       </div>
       <div class="modal-footer">
         <button class="btn-primary btn-sm" on:click={copyProvenance}>
