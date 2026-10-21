@@ -51,10 +51,11 @@ def _write_r1(results_base: Path, level: str, y: np.ndarray, x: np.ndarray) -> N
     pd.DataFrame({"raman_shift": x, "0": y}).to_csv(path, index=False)
 
 
-def _run_hydration(tmp_path, results_base):
+def _run_hydration(tmp_path, results_base, **fitting_overrides):
     cfg = copy.deepcopy(load_config())
     cfg.fitting = dict(cfg.fitting or {})
     cfg.fitting["parallel_workers"] = 1
+    cfg.fitting.update(fitting_overrides)
     context = RuntimeContext.bootstrap(
         data_dir=tmp_path / "data", results_dir=tmp_path / "results", config=cfg
     )
@@ -94,6 +95,42 @@ def test_point_hydration_without_despiked_branch_is_unchanged(tmp_path):
     result = _run_hydration(tmp_path, base)
 
     assert result.metadata["total_accepted_peaks"] == 1
+
+
+def test_point_hydration_baselined_fallback_prefers_its_despiked_branch(tmp_path):
+    x = _axis()
+    clean = _noise(x)
+    base = tmp_path / "results" / SCAN
+    _write_r1(base, "normalized_baselined", _with_spike(x, clean, 3300.0), x)
+    _write_r1(base, "normalized_despiked_baselined", clean, x)
+
+    result = _run_hydration(tmp_path, base, hydration_use_prebaseline=False)
+
+    assert result.metadata["total_accepted_peaks"] == 0
+
+
+def test_point_hydration_veto_receives_the_non_despiked_column(tmp_path, monkeypatch):
+    x = _axis()
+    raw = _with_spike(x, _noise(x, seed=5), 3300.0)
+    base = tmp_path / "results" / SCAN
+    _write_r1(base, "normalized", raw, x)
+    # A spike the despiker missed, so the fit has a candidate to veto.
+    _write_r1(base, "normalized_despiked", _with_spike(x, _noise(x), 3300.0), x)
+    seen = []
+    real = fitting_service.despike_for_veto
+
+    def spy(x_arr, y_arr, params):
+        seen.append(np.asarray(y_arr))
+        return real(x_arr, y_arr, params)
+
+    monkeypatch.setattr(fitting_service, "despike_for_veto", spy)
+    _run_hydration(
+        tmp_path, base, hydration_cr_veto={"enabled": True, "action": "reject"}
+    )
+
+    assert len(seen) == 1
+    written = pd.read_csv(base / f"{SOL}_{TARGET}_{SCAN}_R1_normalized.csv")["0"]
+    np.testing.assert_allclose(seen[0], written.to_numpy(float))
 
 
 def test_hydration_veto_scores_the_non_despiked_spectrum(tmp_path, monkeypatch):

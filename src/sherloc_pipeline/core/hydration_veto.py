@@ -1,14 +1,16 @@
 """Cosmic-ray veto for hydration (OH-stretch) peak fits.
 
-Hydration fitting runs on the *non-despiked* spectrum by design (published-method
-fidelity), so a cosmic ray inside the 2800-3900 cm-1 window can pass the R2 and
+Hydration fitting reads the despiked branch when preprocessing produced one
+(the domain owner's ruling, 2026-10-21); without it the fit sees the
+non-despiked spectrum. A cosmic ray the despiker missed (or any spike when no
+despiked branch exists) inside the 2800-3900 cm-1 window can pass the R2 and
 F-test gates and be reported as an OH-stretch feature with its FWHM pinned
 against the lower bound.
 
 Two independent signals are provided here:
 
-**Mask veto** — run the existing classical despiker on the same spectrum that was
-fit and reject/flag a candidate whose centre falls on masked spike bins, or whose
+**Mask veto** — run the existing classical despiker on the non-despiked spectrum
+and reject/flag a candidate whose centre falls on masked spike bins, or whose
 raw-to-despiked amplitude drop at the centre exceeds a ratio threshold. The spike
 mask returned by :func:`despike_r1_spectrum` is the input; it is normally
 discarded at call sites.
@@ -175,7 +177,8 @@ def despike_for_veto(
 
     Args:
         x: Raman shift axis (cm-1).
-        y: Intensity, as it was handed to the fitter (non-despiked).
+        y: Non-despiked intensity for the fitted points (the fitter's input
+            when no despiked branch was used).
         params: Classical despiker parameters; defaults to :class:`DespikeParams`.
 
     Returns:
@@ -214,7 +217,8 @@ def evaluate_hydration_peak(
         fwhm_cm1: Fitted peak FWHM, used for the bound-pinning test and to size
             the local reference window.
         x: Raman shift axis covering the fitted spectrum.
-        y_raw: The intensity that was fit (non-despiked).
+        y_raw: Non-despiked intensity (the fit itself may have used the
+            despiked branch).
         y_despiked: Output of :func:`despike_for_veto` on the same array.
         spike_mask: Spike mask from :func:`despike_for_veto`.
         config: Threshold configuration.

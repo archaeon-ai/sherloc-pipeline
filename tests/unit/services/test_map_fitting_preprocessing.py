@@ -102,7 +102,11 @@ def r1_arrays():
 
 @pytest.mark.parametrize("domain", ["minerals", "organics", "hydration"])
 def test_preprocessed_input_matches_inline_preprocessing(r1_arrays, domain):
-    """Hoisting despike+baseline out of the domain fit changes nothing."""
+    """Hoisting despike+baseline out of the domain fit changes nothing.
+
+    The hoisted input uses the same variant as the domain: minerals are not
+    despiked, organics and hydration are.
+    """
     wavenumber_r1, intensity_r1, bl_params, bl_weights = r1_arrays
 
     inline = _fit_raman_domain(
@@ -114,7 +118,10 @@ def test_preprocessed_input_matches_inline_preprocessing(r1_arrays, domain):
         baseline_weights=bl_weights,
     )
 
-    prepped = _preprocess_r1_intensity(wavenumber_r1, intensity_r1, bl_params, bl_weights)
+    prepped = _preprocess_r1_intensity(
+        wavenumber_r1, intensity_r1, bl_params, bl_weights,
+        despike=domain not in map_fitting._NON_DESPIKED_DOMAINS,
+    )
     hoisted = _fit_raman_domain(
         wavenumber_r1,
         prepped,
