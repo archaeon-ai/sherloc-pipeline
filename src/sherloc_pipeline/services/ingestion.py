@@ -54,7 +54,7 @@ from sherloc_pipeline.models.ingestion import (
     SpectrumType,
 )
 from sherloc_pipeline.models.spectra import (
-    ProcessingLevel, Sol, DataSource, TargetType, classify_target_type,
+    MEASURED_SPECTRUM_TYPES, ProcessingLevel, Sol, DataSource, TargetType, classify_target_type,
 )
 from sherloc_pipeline.services.base import ServiceResult
 from sherloc_pipeline.services.errors import SherlocServiceError
@@ -654,7 +654,9 @@ class IngestionService:
                 "sols": session.query(SolORM).count(),
                 "scans": session.query(ScanORM).count(),
                 "scan_points": session.query(ScanPointORM).count(),
-                "spectra": session.query(SpectrumORM).count(),
+                "spectra": session.query(SpectrumORM)
+                .filter(SpectrumORM.spectrum_type.in_(MEASURED_SPECTRUM_TYPES))
+                .count(),
                 "instrument_states": session.query(InstrumentStateORM).count(),
                 "ccd_configurations": session.query(CCDConfigurationORM).count(),
                 "scanner_calibrations": session.query(ScannerCalibrationORM).count(),

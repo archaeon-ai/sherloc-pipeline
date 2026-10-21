@@ -306,8 +306,9 @@ one uncovered contributor in the R123 summation view (147 overlap channels + 60
 edge channels). The fluorescence full-plane sum (R2 + R3 across all 2148
 channels) carries an uncovered contributor at **every** channel (2148).
 
-Note that `services/fitting.py` and `services/map_fitting.py` R123 consumers
-do **not** receive ML-despiked data in v1.
+The fluorescence fitters (`services/fitting.py` `fit_fluorescence` and
+`services/map_fitting.py` map mode) receive ML-despiked R1–R3 input through
+stored masks; see §2.2.3. Other R123 consumers do not.
 
 #### Characterized behavior summary
 
@@ -407,6 +408,65 @@ attribution source — a detector characterization over the mission spectral
 corpus, the published mission bad-pixel table (Jakubek et al. 2025), or both.
 
 ---
+
+### 2.2.3 Fluorescence Fit Input: ML-Despiked R1–R3 with Laser Normalization
+
+Fluorescence is fitted on the dark-subtracted R1, R2 and R3 spectra with the
+stored ML cosmic-ray masks applied, and is then laser-normalized. This follows
+the domain owner's ruling of 2026-10-21: despiked input for organics, hydration
+and fluorescence (broad features, hard to confuse with cosmic rays), and
+non-despiked input for minerals.
+
+**Despiked rows.** For each scan point and region, the dark-subtracted spectrum
+takes its newest stored mask (§2.2.1). The flagged channels inside the region's
+certified detection window are replaced by interpolation
+(`preprocessing.despike.interpolation_method`, default linear). This is the same
+replacement the web stored-mask toggle uses. The result is stored as its own
+`spectra` row with `spectrum_type = "dark_sub_despiked"` and processing level
+`despiked`. No baseline is subtracted. Peaks and masks never attach to these
+rows: fluorescence peaks stay linked to the point's measured R2 spectrum.
+
+**When the rows are built.**
+- In `run_full_pipeline`, mask persistence runs before fluorescence fitting.
+  Every run with a database then clears the scan's despiked rows, and rebuilds
+  them only from masks persisted by that run. A run despiked another way (or
+  not at all), or one whose mask stage failed, therefore leaves no despiked
+  rows.
+- For scans processed before this change, `sherloc backfill-fluor-inputs`
+  builds the rows from the masks already stored.
+
+**Which input a fit uses.** A point is fitted on its despiked rows only when all
+three regions have one that is newer than both its dark-subtracted parent and
+the parent's newest stored mask. Otherwise it is fitted on the measured
+dark-subtracted (else active) spectra, and the fit says so:
+- the result metadata (`input`) records `points_despiked` and `points_fallback`;
+- a warning is raised when any point falls back;
+- map mode adds a per-point note.
+
+**Laser normalization.** After the input is chosen, each point's R1–R3 spectra
+are scaled by `max_pd / pd_i`, the Loupe convention (`core/laser_normalization.py`).
+Here `pd_i` is the point's mean photodiode reading and `max_pd` the largest in
+the scan. A per-point scale commutes with the masked interpolation, so masking
+then scaling equals masking the normalized spectrum. Points without a photodiode
+reading are not scaled and are counted. The stage is a single function
+(`apply_fluorescence_laser_normalization`) behind
+`fluorescence_fitting.laser_normalize`. The flag is explicitly `false` in
+`config.yaml`: normalization is switched on with the fluorescence re-fit sweep,
+so all stored fits change units together. Until then fits use the
+un-normalized input.
+
+**In-fitter clip.** `fit_fluorescence_spectrum` still applies its rolling-median
+clip (`clip_cosmic_spikes`), now as a backstop for spikes the stored masks did
+not cover. It preserves 7–8 nm bands and the 304/325 nm doublet
+(`tests/unit/core/test_fluor_clip.py`). On strong bands its noise estimate runs
+low, so it can replace a few flat-region channels at noise level.
+
+**Counts and exposure.**
+- Spectra counts (ingestion statistics, PDS validation, `/api/health`) count
+  measured types only.
+- The derived type is not offered as a data source in the web UI or API.
+- Downstream, the PHASE ingest reads `spectrum_type = 'dark_subtracted'` only,
+  so the derived rows do not reach PHASE products.
 
 ### 2.3 Baseline Correction
 

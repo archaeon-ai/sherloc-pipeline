@@ -2881,6 +2881,78 @@ def backfill_masks_cmd(
         sys.exit(1)
 
 
+@app.command("backfill-fluor-inputs")
+def backfill_fluor_inputs_cmd(
+    source_db: Path = typer.Option(
+        ..., "--source-db", help="Database whose stored ML masks are used"
+    ),
+    out_db: Optional[Path] = typer.Option(
+        None, "--out-db",
+        help="New file: the source is copied here (SQLite backup) and the copy is backfilled",
+    ),
+    in_place: bool = typer.Option(
+        False, "--in-place", help="Write the source database itself (needs --allow-live)"
+    ),
+    allow_live: bool = typer.Option(
+        False, "--allow-live",
+        help="Confirms an in-place write; reserved for the operator's go on a live database",
+    ),
+    sol: Optional[int] = typer.Option(None, "--sol", help="Limit to one sol"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List the scan count only"),
+):
+    """Build ML-despiked fluorescence input rows from stored masks.
+
+    For every scan with stored ML cosmic-ray masks, writes one
+    ``dark_sub_despiked`` row per (point, region) whose dark-subtracted
+    spectrum has a mask (docs/METHODS.md §2.2.3). No reprocessing and no
+    re-fit: run fit-fluor afterwards to fit on the new input.
+
+    Fails closed. By default the source is never written: it is copied to
+    --out-db and the copy is backfilled. In place needs --in-place and
+    --allow-live, and is refused while another backfill holds the lock or a
+    SHERLOC process that writes the database is running against it.
+
+    Examples:
+        sherloc backfill-fluor-inputs --source-db phase.db --out-db /scratch/phase-fluor.db
+        sherloc backfill-fluor-inputs --source-db phase.db --out-db copy.db --sol 921
+        sherloc backfill-fluor-inputs --source-db phase.db --dry-run
+    """
+    from sherloc_pipeline.config import load_config
+    from sherloc_pipeline.services import fluor_backfill
+
+    try:
+        if dry_run:
+            scans = fluor_backfill.scans_with_masks(source_db, sol)
+            console.print(f"{len(scans)} scan(s) with stored masks in {source_db}")
+            raise typer.Exit(code=0)
+
+        def progress(scan_sol, target, scan, counts):
+            console.print(
+                f"  {scan_sol:04d} {target} {scan}: "
+                f"{counts['despiked_rows_written']} row(s) written"
+            )
+
+        result = fluor_backfill.backfill(
+            source_db, load_config(), out=out_db, in_place=in_place,
+            allow_live=allow_live, sol=sol, on_scan=progress,
+        )
+    except fluor_backfill.BackfillRefused as exc:
+        console.print(f"[red]Refused: {exc}[/red]")
+        raise typer.Exit(code=2)
+
+    console.print(
+        f"[green]{result.scans} scan(s), {result.rows_written} row(s) written, "
+        f"{result.rows_removed} replaced, {result.regions_without_mask} region(s) "
+        f"without a mask; database {result.database}[/green]"
+    )
+    for scan_sol, target, scan, error in result.failed_scans:
+        console.print(f"[yellow]  failed: {scan_sol:04d} {target} {scan}: {error}[/yellow]")
+    if result.stopped:
+        console.print(f"[red]Stopped early ({result.stopped}); the scans above are committed.[/red]")
+        raise typer.Exit(code=2)
+    raise typer.Exit(code=1 if result.failed_scans else 0)
+
+
 @app.command("extract-training")
 def extract_training_cmd(
     ctx: typer.Context,

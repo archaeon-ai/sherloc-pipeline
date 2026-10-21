@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import func
 
 from sherloc_pipeline.database.models import ScanORM, SpectrumORM
+from sherloc_pipeline.models.spectra import MEASURED_SPECTRUM_TYPES
 from sherloc_pipeline.web.schemas import API_SCHEMA_VERSION, HealthCheck, HealthResponse
 
 router = APIRouter(prefix="/api", tags=["health"])
@@ -54,7 +55,12 @@ def health(request: Request) -> HealthResponse:
     try:
         session = request.state.db
         n_scans = session.query(func.count(ScanORM.id)).scalar() or 0
-        n_spectra = session.query(func.count(SpectrumORM.id)).scalar() or 0
+        n_spectra = (
+            session.query(func.count(SpectrumORM.id))
+            .filter(SpectrumORM.spectrum_type.in_(MEASURED_SPECTRUM_TYPES))
+            .scalar()
+            or 0
+        )
         checks["database"] = HealthCheck(
             status="ok",
             n_scans=n_scans,

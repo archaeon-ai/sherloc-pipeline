@@ -22,7 +22,7 @@ def test_direct_caller_fits_each_unique_domain_once_per_point(monkeypatch):
         map_fitting, "_load_point_spectra", Mock(return_value=arrays)
     )
     monkeypatch.setattr(
-        map_fitting, "_load_point_spectra_multi", Mock(return_value={})
+        map_fitting, "_load_fluorescence_inputs", Mock(return_value=({}, {}, {}))
     )
     monkeypatch.setattr(
         map_fitting, "calculate_loupe_wavelength_wavenumber",

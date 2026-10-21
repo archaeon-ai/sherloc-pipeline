@@ -40,6 +40,7 @@ from sherloc_pipeline.database import (
 )
 from sherloc_pipeline.models.context import ContextImage, ImageType
 from sherloc_pipeline.models.spectra import (
+    MEASURED_SPECTRUM_TYPES,
     CoordinateFrame,
     DataSource,
     ProcessingLevel,
@@ -1045,7 +1046,9 @@ class PDSIngestionService:
                 "sols": session.query(SolORM).count(),
                 "scans": session.query(ScanORM).count(),
                 "scan_points": session.query(ScanPointORM).count(),
-                "spectra": session.query(SpectrumORM).count(),
+                "spectra": session.query(SpectrumORM)
+                .filter(SpectrumORM.spectrum_type.in_(MEASURED_SPECTRUM_TYPES))
+                .count(),
                 "context_images": session.query(ContextImageORM).count(),
             }
 
@@ -1070,13 +1073,16 @@ class PDSIngestionService:
                 "sols": session.query(SolORM).count(),
                 "scans": session.query(ScanORM).count(),
                 "scan_points": session.query(ScanPointORM).count(),
-                "spectra": session.query(SpectrumORM).count(),
+                "spectra": session.query(SpectrumORM)
+                .filter(SpectrumORM.spectrum_type.in_(MEASURED_SPECTRUM_TYPES))
+                .count(),
                 "context_images": session.query(ContextImageORM).count(),
             }
 
             # --- Spectra by region ---
             region_rows = (
                 session.query(SpectrumORM.region, func.count(SpectrumORM.id))
+                .filter(SpectrumORM.spectrum_type.in_(MEASURED_SPECTRUM_TYPES))
                 .group_by(SpectrumORM.region)
                 .all()
             )

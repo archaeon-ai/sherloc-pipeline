@@ -670,9 +670,91 @@ class PipelineService:
                     fitting_metadata["hydration"] = hydration_result.metadata
                     stage_extra["hydration"] = hydration_result.metadata
 
-        # Step 3/7 - Fluorescence Fitting + Persistence (non-fatal) ---------------
         db_path_str = os.environ.get("SHERLOC_DB_PATH", "./phase.db")
         db_path = Path(db_path_str)
+        # Cosmic-Ray Mask Persistence (non-fatal, DB-gated) -----------------------
+        # Mirrors the Raman-persistence precedent below: if the DB exists and
+        # the despike step recorded ml masks, persist them; on error warn and
+        # continue; with no DB, debug-log the skip (spec §4.5). Runs before
+        # fluorescence fitting, which reads the despiked rows built from these
+        # masks (services/fluor_inputs.py).
+        cr_masks_persisted = False
+        despike_metadata = (metadata.get("preprocessing") or {}).get("despike") or {}
+        if despike_metadata.get("masks"):
+            if db_path.exists():
+                self.console.print("[bold cyan]Cosmic-Ray Mask Persistence[/bold cyan]")
+                cr_mask_metadata: Dict[str, Any] = {}
+                with capture_stage("cr_mask_persistence") as (stage_artifacts, stage_warnings, stage_extra):
+                    try:
+                        from sherloc_pipeline.services.cr_masks import CRMaskService
+
+                        cr_service = CRMaskService(console=self.console)
+                        cr_result = cr_service.persist_masks(
+                            sol=sol,
+                            target=target,
+                            scan=scan,
+                            despike_metadata=despike_metadata,
+                            database_path=db_path,
+                        )
+                    except Exception as exc:
+                        self.logger.warning("CR mask persistence skipped: %s", exc)
+                        warning = f"CR mask persistence skipped: {exc}"
+                        warnings.append(warning)
+                        stage_warnings.append(warning)
+                        stage_extra["exception"] = str(exc)
+                    else:
+                        cr_masks_persisted = True
+                        if cr_result.warnings:
+                            warnings.extend(cr_result.warnings)
+                            stage_warnings.extend(cr_result.warnings)
+                        cr_mask_metadata = cr_result.metadata or {}
+                        stage_extra.update(cr_mask_metadata)
+                        self.console.print(
+                            f"  [green]CR masks: persisted "
+                            f"{cr_mask_metadata.get('masks_inserted', 0)} masks "
+                            f"({cr_mask_metadata.get('regions_skipped', 0)} skipped)[/green]"
+                        )
+                metadata["cr_masks"] = cr_mask_metadata
+            else:
+                self.logger.debug(
+                    "CR mask persistence skipped: database not found at %s", db_path
+                )
+
+
+        # Fluorescence inputs: ML-despiked R1-R3 rows (non-fatal, DB-gated) ------
+        # Every run clears this scan's despiked rows and rebuilds them only from
+        # masks persisted by this run, so a run that despiked another way, or
+        # whose mask stage failed, fits fluorescence on the measured input
+        # (with a warning) instead of on a stale set.
+        fluor_inputs_ok = True
+        despiked_row_ids: list = []
+        if db_path.exists():
+            with capture_stage("fluorescence_inputs") as (stage_artifacts, stage_warnings, stage_extra):
+                try:
+                    from sherloc_pipeline.services.fluor_inputs import (
+                        refresh_despiked_rows_for_scan,
+                    )
+
+                    inputs_result = refresh_despiked_rows_for_scan(
+                        db_path, sol, target, scan, run_context.config,
+                        rebuild=cr_masks_persisted,
+                        run_masks=despike_metadata.get("masks") if cr_masks_persisted else None,
+                    )
+                except Exception as exc:
+                    # Rows may survive if even the cleanup failed: this run's
+                    # fluorescence must not read them.
+                    fluor_inputs_ok = False
+                    self.logger.warning("Despiked fluorescence inputs not built: %s", exc)
+                    warning = f"Despiked fluorescence inputs not built: {exc}"
+                    warnings.append(warning)
+                    stage_warnings.append(warning)
+                    stage_extra["exception"] = str(exc)
+                else:
+                    despiked_row_ids = inputs_result.pop("row_ids", [])
+                    stage_extra.update(inputs_result)
+                    metadata["fluorescence_inputs"] = inputs_result
+
+        # Step 3/7 - Fluorescence Fitting + Persistence (non-fatal) ---------------
         fluor_metadata: Dict[str, Any] = {}
         if db_path.exists():
             self.console.print("[bold cyan]Step 3/7: Fluorescence Fitting + Persistence[/bold cyan]")
@@ -685,6 +767,8 @@ class PipelineService:
                         scan=scan,
                         data_dir=resolved_data_dir,
                         results_dir=resolved_results_dir,
+                        use_despiked_inputs=fluor_inputs_ok,
+                        despiked_row_ids=despiked_row_ids,
                     )
                 except Exception as exc:
                     self.logger.warning("Fluorescence fitting skipped: %s", exc)
@@ -744,50 +828,6 @@ class PipelineService:
             self.logger.debug("Raman persistence skipped: database not found at %s", db_path)
 
         metadata["fitting"] = fitting_metadata
-
-        # Cosmic-Ray Mask Persistence (non-fatal, DB-gated) -----------------------
-        # Mirrors the Raman-persistence precedent above: if the DB exists and
-        # the despike step recorded ml masks, persist them; on error warn and
-        # continue; with no DB, debug-log the skip (spec §4.5).
-        despike_metadata = (metadata.get("preprocessing") or {}).get("despike") or {}
-        if despike_metadata.get("masks"):
-            if db_path.exists():
-                self.console.print("[bold cyan]Cosmic-Ray Mask Persistence[/bold cyan]")
-                cr_mask_metadata: Dict[str, Any] = {}
-                with capture_stage("cr_mask_persistence") as (stage_artifacts, stage_warnings, stage_extra):
-                    try:
-                        from sherloc_pipeline.services.cr_masks import CRMaskService
-
-                        cr_service = CRMaskService(console=self.console)
-                        cr_result = cr_service.persist_masks(
-                            sol=sol,
-                            target=target,
-                            scan=scan,
-                            despike_metadata=despike_metadata,
-                            database_path=db_path,
-                        )
-                    except Exception as exc:
-                        self.logger.warning("CR mask persistence skipped: %s", exc)
-                        warning = f"CR mask persistence skipped: {exc}"
-                        warnings.append(warning)
-                        stage_warnings.append(warning)
-                        stage_extra["exception"] = str(exc)
-                    else:
-                        if cr_result.warnings:
-                            warnings.extend(cr_result.warnings)
-                            stage_warnings.extend(cr_result.warnings)
-                        cr_mask_metadata = cr_result.metadata or {}
-                        stage_extra.update(cr_mask_metadata)
-                        self.console.print(
-                            f"  [green]CR masks: persisted "
-                            f"{cr_mask_metadata.get('masks_inserted', 0)} masks "
-                            f"({cr_mask_metadata.get('regions_skipped', 0)} skipped)[/green]"
-                        )
-                metadata["cr_masks"] = cr_mask_metadata
-            else:
-                self.logger.debug(
-                    "CR mask persistence skipped: database not found at %s", db_path
-                )
 
         # Review aggregation (non-fatal) -----------------------------------------
         review_service = ReviewService(console=self.console, context=run_context)
