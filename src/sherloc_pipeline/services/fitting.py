@@ -2930,6 +2930,7 @@ class FittingService:
         data_dir: Optional[Path] = None,
         results_dir: Optional[Path] = None,
         generate_plots: bool = True,
+        use_despiked_inputs: bool = True,
     ) -> ServiceResult:
         """Fit fluorescence spectra for a scan and persist peaks to database.
 
@@ -2961,6 +2962,9 @@ class FittingService:
             results_dir: Results directory for plot/CSV output.
             generate_plots: If True (default), emit per-point fit plots and
                 scan-level summary CSVs. Set False for faster parameter tuning.
+            use_despiked_inputs: If False, fit the measured rows even where
+                despiked rows exist (the pipeline passes False when it could
+                not refresh them this run).
 
         Returns:
             ServiceResult with summary and metadata including peak counts.
@@ -3069,7 +3073,8 @@ class FittingService:
                 from sherloc_pipeline.services import fluor_inputs
 
                 chosen = fluor_inputs.load_fluorescence_inputs(
-                    session, [sp.id for sp in scan_points]
+                    session, [sp.id for sp in scan_points],
+                    allow_despiked=use_despiked_inputs,
                 )
                 laser_normalize = fluor_inputs.laser_normalize_enabled(self.context.config)
                 norm_factors = fluor_inputs.laser_normalization_factors(

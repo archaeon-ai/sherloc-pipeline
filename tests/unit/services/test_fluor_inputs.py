@@ -230,3 +230,67 @@ def test_fit_fluorescence_records_its_input(db, tmp_path, monkeypatch, laser_nor
     assert meta["laser_normalize"] is laser_normalize
     assert meta["points_laser_normalized"] == (with_pd if laser_normalize else 0)
     assert any("non-despiked input" in w for w in result.warnings)
+
+
+def test_a_row_no_newer_than_its_mask_is_stale(db):
+    db_path, service = db
+    _rebuild(db_path)
+    with get_session(service.engine) as session:
+        points = _points(session)
+        parent = session.query(SpectrumORM).filter(
+            SpectrumORM.scan_point_id == points[0], SpectrumORM.region == "R2",
+            SpectrumORM.spectrum_type == "dark_subtracted").one()
+        row = session.query(SpectrumORM).filter(
+            SpectrumORM.scan_point_id == points[0], SpectrumORM.region == "R2",
+            SpectrumORM.spectrum_type == fluor_inputs.DESPIKED_SPECTRUM_TYPE).one()
+        mask = session.query(CosmicRayMaskORM).filter(
+            CosmicRayMaskORM.spectrum_id == parent.id).one()
+        mask.created_at = row.created_at  # equal, not older
+    with get_session(service.engine) as session:
+        chosen = fluor_inputs.load_fluorescence_inputs(session, [points[0]])
+        assert chosen[points[0]]["despiked"] is False
+
+
+def test_the_pipeline_rebuild_uses_only_this_runs_masks(db):
+    """A stored mask from an earlier run never builds a row the run did not produce."""
+    db_path, service = db
+    result = fluor_inputs.refresh_despiked_rows_for_scan(
+        db_path, "0921", TARGET, "detail_1", _Config(), rebuild=True,
+        run_masks={"0": {"R1": [60], "R2": [600], "R3": [1700]}},  # point 0 only
+    )
+    assert result["despiked_rows_written"] == 3
+    with get_session(service.engine) as session:
+        points = _points(session)
+        chosen = fluor_inputs.load_fluorescence_inputs(session, [points[0], points[1]])
+        # Points 1 and 2 have stored masks from the fixture's earlier persist,
+        # but this run did not produce them: no rows, so they fall back.
+        assert chosen[points[0]]["despiked"] is True
+        assert chosen[points[1]]["despiked"] is False
+
+
+def test_allow_despiked_false_forces_the_measured_rows(db):
+    db_path, service = db
+    _rebuild(db_path)
+    with get_session(service.engine) as session:
+        points = _points(session)
+        chosen = fluor_inputs.load_fluorescence_inputs(
+            session, [points[0]], allow_despiked=False)
+        assert chosen[points[0]]["despiked"] is False
+
+
+def test_map_mode_normalizes_a_subset_with_the_scan_maximum(db):
+    from sherloc_pipeline.services import map_fitting
+
+    db_path, service = db
+    with get_session(service.engine) as session:
+        scan_id = session.query(ScanORM).first().id
+        all_points = session.query(ScanPointORM).all()
+        pds = {sp.id: sp.photodiode_mean for sp in all_points}
+        subset = [sp for sp in all_points if sp.point_index in (0, 1)]
+        whole = fluor_inputs.laser_normalization_factors(pds)
+        raw = fluor_inputs.load_fluorescence_inputs(session, [sp.id for sp in subset])
+        parts, _notes = map_fitting._load_fluorescence_inputs(
+            session, subset, {"fluorescence_fitting": {"laser_normalize": True}}, scan_id)
+        for sp in subset:
+            np.testing.assert_allclose(
+                parts[sp.id]["R2"], raw[sp.id]["arrays"]["R2"] * whole[sp.id])

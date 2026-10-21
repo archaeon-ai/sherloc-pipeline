@@ -96,21 +96,37 @@ def test_in_place_is_refused_while_a_writer_runs(source, monkeypatch):
     assert _despiked(source) == 0
 
 
-def test_writer_detection_matches_the_db_by_arg_or_environment(source, tmp_path):
-    proc = tmp_path / "proc"
-    for pid, argv, env in (
-        ("101", ["python", "-m", "sherloc_pipeline.cli.app", "full-pipeline", "0921"],
-         f"SHERLOC_DB_PATH={source}"),
-        ("102", ["sherloc", "ingest", "x", "--database", str(source)], ""),
-        ("103", ["sherloc", "serve", "--database", str(source)], ""),  # not a writer
-        ("104", ["sherloc", "ingest", "--database", str(tmp_path / "other.db")], ""),
-    ):
-        (proc / pid).mkdir(parents=True)
-        (proc / pid / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
-        (proc / pid / "environ").write_bytes(env.encode() + b"\0")
-    (tmp_path / "other.db").write_bytes(b"")
+def _fake_proc(root, pid, argv, cwd, env=""):
+    d = root / str(pid)
+    d.mkdir(parents=True)
+    (d / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
+    (d / "environ").write_bytes(env.encode() + b"\0")
+    if cwd is not None:
+        (d / "cwd").symlink_to(cwd)
 
-    assert sorted(fluor_backfill.writers_on(source, proc_root=proc)) == [101, 102]
+
+def test_writer_detection_resolves_args_env_and_the_implicit_default(source, tmp_path):
+    proc, here, elsewhere = tmp_path / "proc", source.parent, tmp_path / "other"
+    elsewhere.mkdir()
+    (elsewhere / "phase.db").write_bytes(b"")
+    _fake_proc(proc, 101, ["python", "-m", "sherloc_pipeline.cli.app", "full-pipeline", "0921"],
+               elsewhere, env=f"SHERLOC_DB_PATH={source}")
+    _fake_proc(proc, 102, ["sherloc", "ingest", "x", "--database", source.name], here)
+    _fake_proc(proc, 103, ["sherloc", "full-pipeline", "0921", "T", "detail_1"], here)  # implicit ./phase.db
+    _fake_proc(proc, 104, ["sherloc", "serve", "--database", str(source)], here)  # not a writer
+    _fake_proc(proc, 105, ["sherloc", "full-pipeline", "0921", "T", "detail_1"], elsewhere)  # other phase.db
+    _fake_proc(proc, 106, ["sherloc", "ingest", "x"], None)  # cwd unreadable: counted
+
+    assert sorted(fluor_backfill.writers_on(source, proc_root=proc)) == [101, 102, 103, 106]
+
+
+def test_in_place_is_refused_without_proc(source, tmp_path, monkeypatch):
+    real = fluor_backfill.writers_on
+    monkeypatch.setattr(
+        fluor_backfill, "writers_on", lambda path: real(path, proc_root=tmp_path / "no-proc")
+    )
+    with pytest.raises(fluor_backfill.BackfillRefused, match="cannot inspect"):
+        fluor_backfill.backfill(source, _Config(), in_place=True, allow_live=True)
 
 
 def test_a_busy_database_stops_the_backfill(source, monkeypatch):
@@ -118,12 +134,12 @@ def test_a_busy_database_stops_the_backfill(source, monkeypatch):
     holder = sqlite3.connect(source, isolation_level=None)
     holder.execute("BEGIN IMMEDIATE")
     try:
-        with pytest.raises(fluor_backfill.BackfillRefused, match="busy"):
-            fluor_backfill.backfill(source, _Config(), in_place=True, allow_live=True)
+        result = fluor_backfill.backfill(source, _Config(), in_place=True, allow_live=True)
     finally:
         holder.execute("ROLLBACK")
         holder.close()
-    assert _despiked(source) == 0
+    assert result.stopped and "busy" in result.stopped
+    assert result.scans == 0 and _despiked(source) == 0
 
 
 def test_cli_dry_run_and_copy(source, tmp_path):

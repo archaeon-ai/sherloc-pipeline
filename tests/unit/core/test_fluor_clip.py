@@ -17,6 +17,8 @@ from sherloc_pipeline.core.calibration import calculate_loupe_wavelength_wavenum
 from sherloc_pipeline.core.fluor_fitting import clip_cosmic_spikes
 
 FIT_RANGE = (276.0, 357.0)
+# np.trapezoid is NumPy >= 2.0; np.trapz before it.
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
 NOISE = 2.0
 
 
@@ -40,8 +42,8 @@ def _assert_band_preserved(x, before, after, centre, fwhm):
     inside = np.abs(x - centre) <= fwhm
     assert np.max(np.abs(after - before)) <= 5.0 * NOISE
     assert np.max(after[inside]) == pytest.approx(np.max(before[inside]), abs=3.0 * NOISE)
-    area_before = np.trapezoid(before[inside] - 100.0, x[inside])
-    area_after = np.trapezoid(after[inside] - 100.0, x[inside])
+    area_before = _trapezoid(before[inside] - 100.0, x[inside])
+    area_after = _trapezoid(after[inside] - 100.0, x[inside])
     assert area_after == pytest.approx(area_before, rel=0.01)
 
 

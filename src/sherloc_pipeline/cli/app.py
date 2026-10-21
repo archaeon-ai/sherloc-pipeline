@@ -2947,6 +2947,9 @@ def backfill_fluor_inputs_cmd(
     )
     for scan_sol, target, scan, error in result.failed_scans:
         console.print(f"[yellow]  failed: {scan_sol:04d} {target} {scan}: {error}[/yellow]")
+    if result.stopped:
+        console.print(f"[red]Stopped early ({result.stopped}); the scans above are committed.[/red]")
+        raise typer.Exit(code=2)
     raise typer.Exit(code=1 if result.failed_scans else 0)
 
 

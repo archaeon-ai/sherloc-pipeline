@@ -567,9 +567,13 @@ FLUOR_LASER_NORM_NOT_APPLIED = "fluorescence laser_norm: not applied (no photodi
 
 
 def _load_fluorescence_inputs(
-    session: Session, scan_points, config: dict
+    session: Session, scan_points, config: dict, scan_id: str
 ) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, list[str]]]:
     """Fluorescence inputs for map mode, chosen and normalized as the point path does.
+
+    The laser-normalization factors use the whole scan's maximum photodiode
+    reading, as the point fitter and the Raman map path do, so fitting a subset
+    of points scales them the same as fitting the full scan.
 
     Returns ``({scan_point_id: {region: intensity}}, {scan_point_id: [notes]})``.
     A point absent from the first dict has no readable R1-R3 and reports a
@@ -580,7 +584,11 @@ def _load_fluorescence_inputs(
     chosen = fluor_inputs.load_fluorescence_inputs(session, [sp.id for sp in scan_points])
     normalize = fluor_inputs.laser_normalize_enabled(config)
     factors = fluor_inputs.laser_normalization_factors(
-        {sp.id: getattr(sp, "photodiode_mean", None) for sp in scan_points}
+        dict(
+            session.query(ScanPointORM.id, ScanPointORM.photodiode_mean)
+            .filter(ScanPointORM.scan_id == scan_id)
+            .all()
+        )
     ) if normalize else {}
     parts: dict[str, dict[str, np.ndarray]] = {}
     notes: dict[str, list[str]] = {}
@@ -701,7 +709,7 @@ class MapFitService:
         fluor_notes: dict[str, list[str]] = {}
         if "fluorescence" in domains:
             fluor_spectra, fluor_notes = _load_fluorescence_inputs(
-                session, scan_points, self.config
+                session, scan_points, self.config, scan_id
             )
 
         # Calibration: compute once
@@ -887,9 +895,9 @@ class MapFitService:
                 results=domain_results,
                 notes=notes,
             )
-            if point_result.notes:
+            for note in point_result.notes:
                 try:
-                    on_log(point_index, LASER_NORM_NOT_APPLIED)
+                    on_log(point_index, note)
                 except Exception:
                     pass
 

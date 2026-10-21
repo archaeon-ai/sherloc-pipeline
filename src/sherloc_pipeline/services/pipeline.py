@@ -726,6 +726,7 @@ class PipelineService:
         # masks persisted by this run, so a run that despiked another way, or
         # whose mask stage failed, fits fluorescence on the measured input
         # (with a warning) instead of on a stale set.
+        fluor_inputs_ok = True
         if db_path.exists():
             with capture_stage("fluorescence_inputs") as (stage_artifacts, stage_warnings, stage_extra):
                 try:
@@ -736,8 +737,12 @@ class PipelineService:
                     inputs_result = refresh_despiked_rows_for_scan(
                         db_path, sol, target, scan, run_context.config,
                         rebuild=cr_masks_persisted,
+                        run_masks=despike_metadata.get("masks") if cr_masks_persisted else None,
                     )
                 except Exception as exc:
+                    # Rows may survive if even the cleanup failed: this run's
+                    # fluorescence must not read them.
+                    fluor_inputs_ok = False
                     self.logger.warning("Despiked fluorescence inputs not built: %s", exc)
                     warning = f"Despiked fluorescence inputs not built: {exc}"
                     warnings.append(warning)
@@ -760,6 +765,7 @@ class PipelineService:
                         scan=scan,
                         data_dir=resolved_data_dir,
                         results_dir=resolved_results_dir,
+                        use_despiked_inputs=fluor_inputs_ok,
                     )
                 except Exception as exc:
                     self.logger.warning("Fluorescence fitting skipped: %s", exc)

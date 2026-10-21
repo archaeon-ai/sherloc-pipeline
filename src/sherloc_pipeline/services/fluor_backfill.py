@@ -12,8 +12,9 @@ already have stored ML cosmic-ray masks, without reprocessing. Fails closed:
   (pipeline runs, reclassification, ingest, fitting, persistence, backfills)
   is running against the same file. Reclassification also checks that
   ``spectra`` is unchanged across its own run.
-- Each scan is one ``BEGIN IMMEDIATE`` transaction with a short busy timeout,
-  so it stops rather than waiting on another writer.
+- Each scan is one ``BEGIN IMMEDIATE`` transaction with a short busy timeout.
+  If the database turns busy part-way, the run stops there and reports the
+  scans already committed (``BackfillResult.stopped``) instead of waiting.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ BUSY_TIMEOUT_MS = 5000
 
 
 class BackfillRefused(RuntimeError):
-    """The backfill would be unsafe to run; nothing was written."""
+    """Refused before writing anything (preflight); nothing was written."""
 
 
 @dataclass
@@ -48,6 +49,8 @@ class BackfillResult:
     rows_removed: int = 0
     regions_without_mask: int = 0
     failed_scans: List[Tuple[int, str, str, str]] = field(default_factory=list)
+    #: Set when the run stopped early (database busy); scans before it committed.
+    stopped: Optional[str] = None
 
 
 def _same_file(a: Path, b: Path) -> bool:
@@ -57,17 +60,29 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
+#: Database paths the CLI uses when a writer names none (relative to its cwd).
+IMPLICIT_DB_NAMES = ("phase.db", "sherloc.db")
+
+
 def writers_on(db_path: Path, proc_root: Path = Path("/proc")) -> List[int]:
     """PIDs of SHERLOC CLI processes that write ``db_path``.
 
     A process counts when its command line runs the SHERLOC CLI with a writing
-    subcommand, and it targets this file, either by an argument naming it or
-    by ``SHERLOC_DB_PATH`` in its environment. Processes that cannot be
-    inspected are skipped.
+    subcommand and it may target this file: an argument or ``SHERLOC_DB_PATH``
+    resolving (against the process's working directory) to it, or, when it
+    names no database, the implicit ``./phase.db`` / ``./sherloc.db`` in its
+    working directory. A writer whose working directory cannot be read counts
+    (fail closed). Without a readable ``proc_root`` nothing can be verified, so
+    this raises ``BackfillRefused``.
     """
+    if not proc_root.is_dir():
+        raise BackfillRefused(
+            f"cannot inspect running processes ({proc_root} unavailable); "
+            "refusing an in-place write"
+        )
     pids = []
     me = os.getpid()
-    for entry in proc_root.iterdir() if proc_root.exists() else []:
+    for entry in proc_root.iterdir():
         if not entry.name.isdigit() or int(entry.name) == me:
             continue
         try:
@@ -75,18 +90,25 @@ def writers_on(db_path: Path, proc_root: Path = Path("/proc")) -> List[int]:
         except OSError:
             continue
         args = [a.decode(errors="replace") for a in argv if a]
-        joined = " ".join(args)
-        if "sherloc" not in joined or not any(cmd in args for cmd in WRITER_COMMANDS):
+        if "sherloc" not in " ".join(args) or not any(cmd in args for cmd in WRITER_COMMANDS):
             continue
-        targets = [Path(a) for a in args if a.endswith(".db")]
         try:
-            env = (entry / "environ").read_bytes().split(b"\0")
-            for item in env:
+            cwd = Path(os.readlink(entry / "cwd"))
+        except OSError:
+            pids.append(int(entry.name))  # cannot tell where it writes: assume here
+            continue
+        named = [cwd / a for a in args if not a.startswith("-")]
+        env_db = None
+        try:
+            for item in (entry / "environ").read_bytes().split(b"\0"):
                 if item.startswith(b"SHERLOC_DB_PATH="):
-                    targets.append(Path(item.split(b"=", 1)[1].decode(errors="replace")))
+                    env_db = cwd / item.split(b"=", 1)[1].decode(errors="replace")
         except OSError:
             pass
-        if any(_same_file(t, db_path) for t in targets):
+        candidates = named + ([env_db] if env_db else [])
+        if not any(str(a).endswith(".db") for a in args) and env_db is None:
+            candidates += [cwd / name for name in IMPLICIT_DB_NAMES]
+        if any(_same_file(c, db_path) for c in candidates):
             pids.append(int(entry.name))
     return pids
 
@@ -201,7 +223,10 @@ def backfill(
                     counts = rebuild_despiked_rows(session, scan_id, config)
             except (OperationalError, sqlite3.OperationalError) as exc:
                 if "locked" in str(exc) or "busy" in str(exc):
-                    raise BackfillRefused(f"database busy: {exc}") from exc
+                    result.stopped = (
+                        f"database busy at {scan_sol:04d} {target_name} {scan_name}: {exc}"
+                    )
+                    break
                 result.failed_scans.append((scan_sol, target_name, scan_name, str(exc)))
                 continue
             except Exception as exc:  # one scan's failure does not stop the rest

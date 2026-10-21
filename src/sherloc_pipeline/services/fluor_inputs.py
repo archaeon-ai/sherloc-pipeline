@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 DESPIKED_SPECTRUM_TYPE = "dark_sub_despiked"
 PARENT_SPECTRUM_TYPE = "dark_subtracted"
-DESPIKED_PROCESSING_LEVEL = "ml_despiked"
+DESPIKED_PROCESSING_LEVEL = "despiked"  # models.spectra.ProcessingLevel.DESPIKED
 REGIONS: Tuple[str, ...] = ("R1", "R2", "R3")
 
 
@@ -93,23 +93,33 @@ def delete_despiked_rows(session, scan_point_ids: Iterable[str]) -> int:
     )
 
 
-def rebuild_despiked_rows(session, scan_id: str, config: Any) -> Dict[str, int]:
-    """Replace a scan's despiked rows from its stored masks.
+def rebuild_despiked_rows(
+    session, scan_id: str, config: Any,
+    run_masks: Optional[Dict[Any, Dict[str, Sequence[int]]]] = None,
+) -> Dict[str, int]:
+    """Replace a scan's despiked rows.
 
-    Deletes the scan's existing despiked rows first, then writes one row per
-    (point, region) whose dark-subtracted parent has a stored mask. A parent
-    without a stored mask gets no despiked row, so readers fall back for that
-    point. Returns counts for metadata.
+    Deletes the scan's existing despiked rows first. With ``run_masks`` (the
+    pipeline passes this run's ``{point_index: {region: channels}}``), a row is
+    written only for each (point, region) in it, from those channels; a
+    stored mask from an earlier run is never used. Without it (the backfill),
+    each dark-subtracted parent's newest stored mask is used. A parent without
+    a mask gets no row, so readers fall back for that point. Returns counts
+    for metadata.
     """
     from sherloc_pipeline.core.mask_application import apply_stored_mask_to_array
     from sherloc_pipeline.database.models import ScanPointORM, SpectrumORM
     from sherloc_pipeline.ml_despike.manifest import DEFAULT_MANIFEST
     from sherloc_pipeline.services.cr_masks import CRMaskService
 
-    point_ids = [
-        pid for (pid,) in session.query(ScanPointORM.id).filter(ScanPointORM.scan_id == scan_id)
-    ]
+    point_index = {
+        pid: int(idx) for pid, idx in session.query(ScanPointORM.id, ScanPointORM.point_index)
+        .filter(ScanPointORM.scan_id == scan_id)
+    }
+    point_ids = list(point_index)
     removed = delete_despiked_rows(session, point_ids)
+    if run_masks is not None:
+        run_masks = {int(k): v for k, v in run_masks.items()}
 
     parents: Dict[Tuple[str, str], Any] = {}
     for row in (
@@ -123,19 +133,25 @@ def rebuild_despiked_rows(session, scan_id: str, config: Any) -> Dict[str, int]:
     ):
         parents.setdefault((row.scan_point_id, row.region), row)
 
-    masks = CRMaskService.get_masks_for_spectra(session, [p.id for p in parents.values()])
+    masks = (
+        {} if run_masks is not None
+        else CRMaskService.get_masks_for_spectra(session, [p.id for p in parents.values()])
+    )
     windows = DEFAULT_MANIFEST.region_windows
     interp = interpolation_method(config)
 
     written = no_mask = 0
     for (point_id, region), parent in parents.items():
-        mask = select_stored_mask(masks.get(parent.id, []))
-        if mask is None:
+        if run_masks is not None:
+            channels = (run_masks.get(point_index[point_id]) or {}).get(region)
+        else:
+            mask = select_stored_mask(masks.get(parent.id, []))
+            channels = None if mask is None else mask.channel_indices
+        if channels is None:
             no_mask += 1
             continue
         values = apply_stored_mask_to_array(
-            _decode(parent.intensities).astype(float), mask.channel_indices,
-            windows[region], interp,
+            _decode(parent.intensities).astype(float), channels, windows[region], interp,
         )
         session.add(SpectrumORM(
             id=str(uuid4()),
@@ -171,7 +187,8 @@ def _find_scan_id(session, sol: str, target: str, scan: str) -> Optional[str]:
 
 
 def refresh_despiked_rows_for_scan(
-    database_path, sol: str, target: str, scan: str, config: Any, rebuild: bool
+    database_path, sol: str, target: str, scan: str, config: Any, rebuild: bool,
+    run_masks: Optional[Dict[Any, Dict[str, Sequence[int]]]] = None,
 ) -> Dict[str, Any]:
     """Clear a scan's despiked rows and, when ``rebuild``, rebuild them from its masks.
 
@@ -193,7 +210,7 @@ def refresh_despiked_rows_for_scan(
             if scan_id is None:
                 return {"scan_found": False}
             if rebuild:
-                counts = rebuild_despiked_rows(session, scan_id, config)
+                counts = rebuild_despiked_rows(session, scan_id, config, run_masks=run_masks)
             else:
                 point_ids = [pid for (pid,) in session.query(ScanPointORM.id).filter(
                     ScanPointORM.scan_id == scan_id)]
@@ -211,7 +228,7 @@ def refresh_despiked_rows_for_scan(
 
 
 def load_fluorescence_inputs(
-    session, scan_point_ids: Sequence[str]
+    session, scan_point_ids: Sequence[str], allow_despiked: bool = True
 ) -> Dict[str, Dict[str, Any]]:
     """Choose each point's R1-R3 fluorescence input.
 
@@ -221,6 +238,8 @@ def load_fluorescence_inputs(
     parent's newest stored mask; otherwise it uses today's input
     (dark_subtracted, else active) for all three regions. Peaks always link to
     the point's measured R2 row. Points missing a region are omitted.
+    ``allow_despiked=False`` forces the measured rows (used when this run could
+    not refresh the despiked rows).
     """
     from sherloc_pipeline.database.models import SpectrumORM
     from sherloc_pipeline.services.cr_masks import CRMaskService
@@ -256,7 +275,7 @@ def load_fluorescence_inputs(
             continue
 
         despiked = {}
-        for reg in REGIONS:
+        for reg in (REGIONS if allow_despiked else ()):
             row = rows.get((pid, reg, DESPIKED_SPECTRUM_TYPE))
             parent = rows.get((pid, reg, PARENT_SPECTRUM_TYPE))
             if row is None or parent is None:
@@ -269,7 +288,8 @@ def load_fluorescence_inputs(
                     _as_aware(getattr(mask, "created_at", None)),
                 ) if t is not None
             )
-            if mask is None or built is None or built < newest_input:
+            # Strictly newer than its parent and the parent's newest mask.
+            if mask is None or built is None or built <= newest_input:
                 break
             despiked[reg] = row
 
