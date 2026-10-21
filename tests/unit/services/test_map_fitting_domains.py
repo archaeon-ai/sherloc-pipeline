@@ -69,7 +69,11 @@ def test_direct_caller_fits_each_unique_domain_once_per_point(monkeypatch):
         "organics", "minerals", "hydration",
     ]
     assert [call.args[1] for call in fluor_fit.call_args_list] == [p.id for p in points]
-    assert preprocess.call_count == len(points)
+    # Once per point per variant: despiked (organics, hydration) and
+    # non-despiked (minerals).
+    assert [call.kwargs["despike"] for call in preprocess.call_args_list] == [
+        True, False,
+    ] * len(points)
     assert summary.total_points == len(points)
     assert summary.detections == {
         "organics": 2, "minerals": 2, "hydration": 2, "fluorescence": 2,

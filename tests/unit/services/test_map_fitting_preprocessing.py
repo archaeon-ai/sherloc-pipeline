@@ -8,7 +8,8 @@ part of why big scans appear to hang.
 
 The hoist is only safe if it is behaviour-preserving, so these tests pin
 both halves: identical fit results, and one preprocessing pass per point
-regardless of how many Raman domains are selected.
+regardless of how many Raman domains are selected (one per variant:
+minerals are fitted non-despiked, organics and hydration despiked).
 """
 
 from __future__ import annotations
@@ -101,7 +102,11 @@ def r1_arrays():
 
 @pytest.mark.parametrize("domain", ["minerals", "organics", "hydration"])
 def test_preprocessed_input_matches_inline_preprocessing(r1_arrays, domain):
-    """Hoisting despike+baseline out of the domain fit changes nothing."""
+    """Hoisting despike+baseline out of the domain fit changes nothing.
+
+    The hoisted input uses the same variant as the domain: minerals are not
+    despiked, organics and hydration are.
+    """
     wavenumber_r1, intensity_r1, bl_params, bl_weights = r1_arrays
 
     inline = _fit_raman_domain(
@@ -113,7 +118,10 @@ def test_preprocessed_input_matches_inline_preprocessing(r1_arrays, domain):
         baseline_weights=bl_weights,
     )
 
-    prepped = _preprocess_r1_intensity(wavenumber_r1, intensity_r1, bl_params, bl_weights)
+    prepped = _preprocess_r1_intensity(
+        wavenumber_r1, intensity_r1, bl_params, bl_weights,
+        despike=domain not in map_fitting._NON_DESPIKED_DOMAINS,
+    )
     hoisted = _fit_raman_domain(
         wavenumber_r1,
         prepped,
@@ -223,8 +231,9 @@ def test_preprocessing_runs_once_per_point_across_domains(fit_session, monkeypat
     )
 
     assert summary.total_points == N_POINTS
-    # Once per point — previously once per (point, domain) = 9.
-    assert calls["n"] == N_POINTS
+    # Once per point per variant (despiked for organics/hydration, not for
+    # minerals) — previously once per (point, domain) = 9.
+    assert calls["n"] == 2 * N_POINTS
 
 
 def test_run_map_fit_logs_scan_scale_before_fitting(fit_session):

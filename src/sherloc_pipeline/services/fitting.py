@@ -383,16 +383,24 @@ def _begin_fit_run(marker_path: Path, *, domain: str) -> None:
 
 
 def _write_fit_run_marker(
-    marker_path: Path, *, domain: str, points_fitted: int, accepted_peaks: int
+    marker_path: Path, *, domain: str, points_fitted: int, accepted_peaks: int,
+    fit_input: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Atomically record that this run completed, and what it accepted."""
-    _write_marker_payload(marker_path, {
+    """Atomically record that this run completed, and what it accepted.
+
+    ``fit_input`` optionally records which input the run fitted (e.g. the
+    hydration input file and whether it was the despiked branch).
+    """
+    payload = {
         "schema": RAMAN_RUN_MARKER_SCHEMA,
         "domain": domain,
         "status": RUN_MARKER_COMPLETED,
         "points_fitted": int(points_fitted),
         "accepted_peaks": int(accepted_peaks),
-    })
+    }
+    if fit_input is not None:
+        payload["input"] = dict(fit_input)
+    _write_marker_payload(marker_path, payload)
 
 
 def _read_fit_run_marker(marker_path: Path) -> Optional[Dict[str, Any]]:
@@ -464,6 +472,9 @@ def _fit_point_hydration(
 
     point_idx = point_data['point_idx']
     y_full = point_data['y']
+    # The veto needs the spectrum the despiker has not cleaned; when the fit
+    # input is the despiked branch, the caller passes the original as y_raw.
+    y_veto = point_data.get('y_raw', y_full)
     out_path = Path(out_dir)
     artifacts: List[Path] = []
     warnings: List[str] = []
@@ -540,17 +551,17 @@ def _fit_point_hydration(
             continue
         accepted_peaks.append(p)
 
-    # Cosmic-ray veto (issue #38), feature-flagged and default OFF. The fit
-    # itself stays on the non-despiked spectrum for published-method fidelity;
-    # the despiker runs here only to supply the spike mask.
+    # Cosmic-ray veto (issue #38), feature-flagged and default OFF. It scores
+    # candidates against the non-despiked spectrum; the despiker runs here
+    # only to supply the spike mask.
     veto_by_peak: Dict[int, HydrationVetoResult] = {}
     if veto_cfg is not None and veto_cfg.enabled and accepted_peaks:
-        y_desp, spike_mask = despike_for_veto(x, y_full, despike_params)
+        y_desp, spike_mask = despike_for_veto(x, y_veto, despike_params)
         surviving = []
         vetoed_ids = set()
         for p in accepted_peaks:
             verdict = evaluate_hydration_peak(
-                p.m_cm1, p.fwhm, x, y_full, y_desp, spike_mask, veto_cfg
+                p.m_cm1, p.fwhm, x, y_veto, y_desp, spike_mask, veto_cfg
             )
             veto_by_peak[id(p)] = verdict
             if verdict.vetoed:
@@ -982,7 +993,10 @@ class FittingService:
             )
             _begin_fit_run(run_marker, domain="minerals")
 
-            # Expect normalized baselined CSV for region
+            # Expect normalized baselined CSV for region. Deliberately the
+            # non-despiked branch: sharp mineral peaks can be hit by despiking
+            # (Ken's ruling, 2026-10-21). Organics, hydration and fluorescence
+            # read despiked input.
             input_csv = base / f"{sol}_{target}_{scan}_{region}_normalized_baselined.csv"
             if not input_csv.exists():
                 error = FittingError(
@@ -1282,12 +1296,15 @@ class FittingService:
         Per-point work (baseline + fit + plot + CSV) runs in parallel via
         ``_fit_point_hydration`` workers. See ``fitting.parallel_workers`` config.
 
-        Uses R1_normalized.csv (laser-normalized, background-subtracted, NO asPLS
-        baseline) with a linear endpoint baseline over the hydration window.
-        The fit itself is never despiked — cosmic ray rejection relies on quality
-        gates (R² ≥ 0.25, FWHM ≥ 50 cm⁻¹, F-test significance), plus the
-        optional ``fitting.hydration_cr_veto`` (issue #38, default OFF), which
-        runs the despiker only to harvest its spike mask.
+        Uses R1_normalized_despiked.csv when preprocessing despiked R1, else
+        R1_normalized.csv (laser-normalized, background-subtracted, NO asPLS
+        baseline), with a linear endpoint baseline over the hydration window.
+        Broad O-H bands are hard to confuse with cosmic rays, so the fit reads
+        the despiked branch (Ken's ruling, 2026-10-21; minerals stay
+        non-despiked). Quality gates (R² ≥ 0.25, FWHM ≥ 50 cm⁻¹, F-test
+        significance) still apply, plus the optional
+        ``fitting.hydration_cr_veto`` (issue #38, default OFF), which scores
+        candidates against the non-despiked spectrum.
 
         Idempotent under a configuration change: per-point artifacts and the
         accepted-peaks summary are removed when a re-run no longer produces
@@ -1362,20 +1379,27 @@ class FittingService:
 
             fit_cfg = copy.deepcopy(cfg.fitting or {})
 
-            # Select input: prefer pre-baseline (R1_normalized.csv) per audit findings
+            # Select input: prefer pre-baseline (R1_normalized.csv) per audit
+            # findings, and within each level prefer the despiked branch when
+            # preprocessing produced it (Ken's ruling, 2026-10-21: despiked for
+            # organics, hydration and fluorescence; minerals stay non-despiked).
             use_prebaseline = bool(fit_cfg.get('hydration_use_prebaseline', True))
             input_csv_norm = base / f"{sol}_{target}_{scan}_R1_normalized.csv"
             input_csv_bl = base / f"{sol}_{target}_{scan}_R1_normalized_baselined.csv"
+            despiked_of = {
+                input_csv_norm: base / f"{sol}_{target}_{scan}_R1_normalized_despiked.csv",
+                input_csv_bl: base / f"{sol}_{target}_{scan}_R1_normalized_despiked_baselined.csv",
+            }
 
             if use_prebaseline and input_csv_norm.exists():
-                input_csv = input_csv_norm
-                self.console.print("[green]Using R1_normalized.csv (pre-baseline) for hydration fitting.[/green]")
+                level_csv = input_csv_norm
+                self.console.print("[green]Using R1_normalized (pre-baseline) for hydration fitting.[/green]")
             elif input_csv_bl.exists():
-                input_csv = input_csv_bl
-                self.console.print("[yellow]Falling back to R1_normalized_baselined.csv for hydration.[/yellow]")
+                level_csv = input_csv_bl
+                self.console.print("[yellow]Falling back to R1_normalized_baselined for hydration.[/yellow]")
             elif input_csv_norm.exists():
-                input_csv = input_csv_norm
-                self.console.print("[green]Using R1_normalized.csv for hydration fitting.[/green]")
+                level_csv = input_csv_norm
+                self.console.print("[green]Using R1_normalized for hydration fitting.[/green]")
             else:
                 error = FittingError(
                     f"Missing input: {input_csv_norm} (or {input_csv_bl}). Run process-scan first.",
@@ -1384,9 +1408,36 @@ class FittingService:
                 )
                 raise enrich(error, sol=sol, target=target, scan=scan)
 
+            raw_df = None
+            input_warnings: List[str] = []
+            if despiked_of[level_csv].exists():
+                input_csv = despiked_of[level_csv]
+                raw_df = pd.read_csv(level_csv)
+                self.console.print(f"[green]Hydration input: {input_csv.name} (despiked).[/green]")
+            else:
+                input_csv = level_csv
+                input_warnings.append(
+                    f"No despiked R1 branch found; hydration fitted the non-despiked "
+                    f"{input_csv.name}."
+                )
+                self.console.print(f"[yellow]Hydration input: {input_csv.name} (no despiked branch found).[/yellow]")
+            # Provenance: which input this run fitted (returned in metadata and
+            # recorded in the run marker).
+            hydration_input = {"file": input_csv.name, "despiked": raw_df is not None}
+
             df = pd.read_csv(input_csv)
             x_col = 'raman_shift' if 'raman_shift' in df.columns else df.columns[0]
             x = df[x_col].to_numpy(float)
+            if raw_df is not None:
+                raw_x_col = 'raman_shift' if 'raman_shift' in raw_df.columns else raw_df.columns[0]
+                if not np.array_equal(raw_df[raw_x_col].to_numpy(float), x):
+                    error = FittingError(
+                        f"{input_csv.name} and {level_csv.name} have different Raman-shift "
+                        "axes; re-run process-scan so both come from the same run.",
+                        exit_code=1,
+                        context={"input_file": str(input_csv), "raw_file": str(level_csv)},
+                    )
+                    raise enrich(error, sol=sol, target=target, scan=scan)
 
             # Hydration fitting config (Phua et al. 2024 aligned)
             oh_roi = tuple(fit_cfg.get('hydration_fit_range', [2800.0, 3900.0]))
@@ -1441,6 +1492,18 @@ class FittingService:
                 {'point_idx': int(col), 'y': df[col].to_numpy(float)}
                 for col in point_cols
             ]
+            if raw_df is not None:
+                unpaired = []
+                for item, col in zip(point_inputs, point_cols):
+                    if col in raw_df.columns:
+                        item['y_raw'] = raw_df[col].to_numpy(float)
+                    else:
+                        unpaired.append(col)
+                if unpaired and veto_cfg.enabled:
+                    input_warnings.append(
+                        f"{level_csv.name} lacks point(s) {', '.join(unpaired)}; the "
+                        "cosmic-ray veto scored the despiked spectrum for them."
+                    )
 
             # --- Phase 2: Parallel fitting + plotting + CSV writes ---
             from sherloc_pipeline.core.utils import resolve_parallel_workers
@@ -1465,7 +1528,7 @@ class FittingService:
 
             # --- Phase 3: Aggregate results ---
             artifacts: List[Path] = []
-            warnings: List[str] = []
+            warnings: List[str] = list(input_warnings)
             summary = []
             accepted_rows = []
 
@@ -1524,6 +1587,7 @@ class FittingService:
             _write_fit_run_marker(
                 run_marker, domain="hydration",
                 points_fitted=len(point_cols), accepted_peaks=len(accepted_rows),
+                fit_input=hydration_input,
             )
             artifacts.append(run_marker)
 
@@ -1535,6 +1599,8 @@ class FittingService:
                 "scan": scan,
                 "points_fitted": len(point_cols),
                 "total_accepted_peaks": len(accepted_rows),
+                "hydration_input": hydration_input["file"],
+                "hydration_input_despiked": hydration_input["despiked"],
             }
 
             return ServiceResult(
@@ -3001,7 +3067,10 @@ class FittingService:
                 for scan_point in scan_points:
                     point_idx = scan_point.point_index
 
-                    # Query R1, R2, R3 spectra (prefer dark_subtracted, fallback active)
+                    # Query R1, R2, R3 spectra (prefer dark_subtracted, fallback active).
+                    # Despiking for fluorescence happens inside
+                    # fit_fluorescence_spectrum (rolling-median clip before the
+                    # fit), consistent with Ken's ruling (2026-10-21).
                     region_spectra = {}
                     for region in ("R1", "R2", "R3"):
                         for spec_type in ("dark_subtracted", "active"):

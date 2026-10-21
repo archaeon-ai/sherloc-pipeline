@@ -292,7 +292,10 @@ class PreprocessingService:
         self.console.print(f"[bold blue]SHERLOC Pipeline - Single Scan Processing[/bold blue]")
         self.console.print(f"[yellow]Sol: {sol}, Target: {target}, Scan: {scan}[/yellow]")
         self.console.print(f"[blue]Data directory: {context.base_data_dir}[/blue]")
-        
+
+        # Set once the despike step starts: from then on a failed run must not
+        # publish despiked R1 outputs, which hydration and organics would fit.
+        despike_ingestion = None
         try:
             # Import here to avoid circular imports
             from sherloc_pipeline.core.data_ingestion import DataIngestion
@@ -378,7 +381,22 @@ class PreprocessingService:
                     raise enrich(error, sol=sol, target=target, scan=scan)
                 
                 # Step 4: Despiking (method-dispatched; "none" skips the
-                # step entirely — the former despike_r1=False behavior)
+                # step entirely — the former despike_r1=False behavior).
+                # Hydration and organics fit the despiked branch whenever it
+                # exists, so an earlier run's despiked files must not survive
+                # a run that does not rewrite them (despiking off). If this run
+                # fails later, the outer handlers remove what it wrote.
+                despike_ingestion = ingestion
+                removed_despiked = self._remove_despiked_r1_outputs(
+                    ingestion, target, sol, scan
+                )
+                if removed_despiked:
+                    metadata["despike_removed_stale"] = removed_despiked
+                    if effective_despike_method == "none":
+                        warnings.append(
+                            "Despiking is off; removed despiked R1 outputs from an "
+                            f"earlier run: {', '.join(removed_despiked)}"
+                        )
                 if effective_despike_method == "ml":
                     task3a = progress.add_task("Applying ML cosmic-ray despiking...", total=None)
                     try:
@@ -684,8 +702,10 @@ class PreprocessingService:
             
         except PreprocessingError:
             # Re-raise PreprocessingError as-is (already enriched)
+            self._discard_failed_run_despiked(despike_ingestion, target, sol, scan)
             raise
         except Exception as e:
+            self._discard_failed_run_despiked(despike_ingestion, target, sol, scan)
             error = PreprocessingError(
                 f"Unexpected error during preprocessing: {e}",
                 exit_code=1,
@@ -1577,6 +1597,31 @@ class PreprocessingService:
             if removed:
                 record["removed_stale"] = removed
         return record
+
+    @classmethod
+    def _discard_failed_run_despiked(cls, ingestion, target: str, sol: str, scan: str) -> None:
+        """After a failure past the despike step, remove its despiked R1 outputs."""
+        if ingestion is None:
+            return
+        try:
+            cls._remove_despiked_r1_outputs(ingestion, target, sol, scan)
+        except OSError:
+            logger.exception("Could not remove despiked outputs of a failed run")
+
+    @staticmethod
+    def _remove_despiked_r1_outputs(ingestion, target: str, sol: str, scan: str) -> List[str]:
+        """Remove this scan's despiked R1 CSVs; return the removed file names."""
+        removed = []
+        for level in ("normalized_despiked", "normalized_despiked_baselined"):
+            path = ingestion.get_results_path(
+                target=target, sol=sol, scan=scan, spectral_region="R1",
+                processing_level=level, file_extension=".csv",
+            )
+            if path.exists():
+                path.unlink(missing_ok=True)
+                logger.info("Removed stale despiked output %s", path)
+                removed.append(path.name)
+        return removed
 
     @staticmethod
     def _bkgsub_output_paths(ingestion, target: str, sol: str, scan: str) -> List[Path]:
