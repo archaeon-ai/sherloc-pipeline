@@ -292,7 +292,10 @@ class PreprocessingService:
         self.console.print(f"[bold blue]SHERLOC Pipeline - Single Scan Processing[/bold blue]")
         self.console.print(f"[yellow]Sol: {sol}, Target: {target}, Scan: {scan}[/yellow]")
         self.console.print(f"[blue]Data directory: {context.base_data_dir}[/blue]")
-        
+
+        # Set once the despike step starts: from then on a failed run must not
+        # publish despiked R1 outputs, which hydration and organics would fit.
+        despike_ingestion = None
         try:
             # Import here to avoid circular imports
             from sherloc_pipeline.core.data_ingestion import DataIngestion
@@ -381,8 +384,9 @@ class PreprocessingService:
                 # step entirely — the former despike_r1=False behavior).
                 # Hydration and organics fit the despiked branch whenever it
                 # exists, so an earlier run's despiked files must not survive
-                # a run that does not rewrite them (despiking off, or a
-                # failure before both are written).
+                # a run that does not rewrite them (despiking off). If this run
+                # fails later, the outer handlers remove what it wrote.
+                despike_ingestion = ingestion
                 removed_despiked = self._remove_despiked_r1_outputs(
                     ingestion, target, sol, scan
                 )
@@ -417,13 +421,9 @@ class PreprocessingService:
                         progress.update(task3a, description="✅ ML cosmic-ray despiking applied")
                     except PreprocessingError:
                         progress.update(task3a, description="❌ ML cosmic-ray despiking failed")
-                        # A failed run publishes no despiked R1 outputs.
-                        self._remove_despiked_r1_outputs(ingestion, target, sol, scan)
                         raise
                     except Exception as e:
                         progress.update(task3a, description="❌ ML cosmic-ray despiking failed")
-                        # A failed run publishes no despiked R1 outputs.
-                        self._remove_despiked_r1_outputs(ingestion, target, sol, scan)
                         error = PreprocessingError(
                             f"Failed to apply ML cosmic-ray despiking: {e}",
                             exit_code=1,
@@ -502,8 +502,6 @@ class PreprocessingService:
                         progress.update(task3a, description="✅ R1 despiking applied")
                     except Exception as e:
                         progress.update(task3a, description="❌ R1 despiking failed")
-                        # A failed run publishes no despiked R1 outputs.
-                        self._remove_despiked_r1_outputs(ingestion, target, sol, scan)
                         error = PreprocessingError(
                             f"Failed to apply R1 despiking: {e}",
                             exit_code=1,
@@ -607,9 +605,6 @@ class PreprocessingService:
                         progress.update(task4, description="✅ R1 baseline correction completed")
                     except Exception as e:
                         progress.update(task4, description="❌ R1 baseline correction failed")
-                        # Never leave a despiked/despiked_baselined pair from
-                        # different stages of a failed run.
-                        self._remove_despiked_r1_outputs(ingestion, target, sol, scan)
                         error = PreprocessingError(
                             f"Failed to apply R1 baseline correction: {e}",
                             exit_code=1,
@@ -707,8 +702,10 @@ class PreprocessingService:
             
         except PreprocessingError:
             # Re-raise PreprocessingError as-is (already enriched)
+            self._discard_failed_run_despiked(despike_ingestion, target, sol, scan)
             raise
         except Exception as e:
+            self._discard_failed_run_despiked(despike_ingestion, target, sol, scan)
             error = PreprocessingError(
                 f"Unexpected error during preprocessing: {e}",
                 exit_code=1,
@@ -1600,6 +1597,16 @@ class PreprocessingService:
             if removed:
                 record["removed_stale"] = removed
         return record
+
+    @classmethod
+    def _discard_failed_run_despiked(cls, ingestion, target: str, sol: str, scan: str) -> None:
+        """After a failure past the despike step, remove its despiked R1 outputs."""
+        if ingestion is None:
+            return
+        try:
+            cls._remove_despiked_r1_outputs(ingestion, target, sol, scan)
+        except OSError:
+            logger.exception("Could not remove despiked outputs of a failed run")
 
     @staticmethod
     def _remove_despiked_r1_outputs(ingestion, target: str, sol: str, scan: str) -> List[str]:

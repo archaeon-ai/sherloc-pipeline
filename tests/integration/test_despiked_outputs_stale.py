@@ -42,11 +42,11 @@ def _plant_stale(tmp_path):
     return paths
 
 
-def _run(tmp_path, fixtures_path, despike_method):
+def _run(tmp_path, fixtures_path, despike_method, **kwargs):
     return PreprocessingService().run_scan(
         sol=SOL, target=TARGET, scan=SCAN,
         data_dir=fixtures_path / "loupe", results_dir=tmp_path / "results",
-        generate_plots=False, despike_method=despike_method,
+        generate_plots=False, despike_method=despike_method, **kwargs,
     )
 
 
@@ -125,6 +125,20 @@ def test_a_failed_baseline_leaves_no_despiked_outputs(tmp_path, fixtures_path, m
         _run(tmp_path, fixtures_path, "modz")
 
     # modz wrote a fresh despiked CSV before the baseline step failed.
+    assert not any(path.exists() for path in paths)
+
+
+def test_a_failure_after_despiking_leaves_no_despiked_outputs(tmp_path, fixtures_path, monkeypatch):
+    paths = _plant_stale(tmp_path)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic statistical-analysis failure")
+
+    monkeypatch.setattr(DataIngestion, "generate_statistical_analysis", boom)
+    with pytest.raises(PreprocessingError):
+        _run(tmp_path, fixtures_path, "modz", baseline_r1=False)
+
+    # Despiking succeeded and wrote a fresh CSV; the run then failed.
     assert not any(path.exists() for path in paths)
 
 
