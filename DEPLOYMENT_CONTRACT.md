@@ -147,9 +147,25 @@ mode, used for tests + the `contract-smoke` workflow.
 | `SHERLOC_AUTH_REALM` | `m2020-phase` | WWW-Authenticate realm |
 | `SHERLOC_LOG_LEVEL` | `INFO` | uvicorn + sherloc loggers |
 | `SHERLOC_CORS_ALLOWED_ORIGINS` | unset | CSV of allowed Origins for `/api/*`. Empty string disables CORS; unset leaves it unconfigured. |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Optional uvicorn proxy trust setting; comma-separated peer addresses or CIDR networks. See below for public deployments behind a reverse proxy. |
 | `SHERLOC_FEATURE_PDS_BROWSER` | unset (= ENABLED) | Only literal `disabled` (case-insensitive) opts out |
 | `SHERLOC_FEATURE_POLICY` | unset (= `{}`, strict release-index check OFF) | Strict JSON object; references and identification default off. `public_release` opts public instances into a required local `index_path` + pinned `index_sha256`. Invalid policy or configured index fails startup; see §5. |
 | `AWS_REGION` | `auto` | Used by boto3 R2 client |
+
+For the public tier behind a reverse proxy, set `FORWARDED_ALLOW_IPS` to only
+the proxy's peer address as seen by uvicorn, or the Docker bridge network
+through which that proxy connects. uvicorn's proxy-header middleware is enabled
+by default and reads this variable directly; trusted `X-Forwarded-For` headers
+then populate `request.client.host`. The app does not parse forwarded headers.
+Never use `*` on a port others can reach: untrusted clients could spoof their
+address and evade the limiter. Keep the application port reachable only by the
+proxy and restrict access from other bridge peers when trusting a bridge CIDR.
+
+Public `/api/process/` calls allow 60 requests per client per 60 seconds.
+Without the matching proxy trust setting, proxied visitors share the proxy's
+bucket. A 429 includes `Retry-After`, rounded up to the seconds until the oldest
+request expires (at least 1). The Workbench shows a temporary notice and retries
+once after that delay, capped at 60 seconds; internal mode has no limiter.
 
 ### 5.5 Retired — MUST NOT appear
 

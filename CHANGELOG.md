@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Public Workbench processing allows 60 requests per minute per client, with an
+  accurate `Retry-After` delay and one automatic retry shown as a temporary
+  "Server busy" notice. Reverse-proxy deployments must set uvicorn's
+  `FORWARDED_ALLOW_IPS` to the trusted proxy peer or bridge network so visitors
+  receive separate buckets; internal mode is unchanged.
+
 ## [5.7.4] - 2026-10-18
 
 ### Security
