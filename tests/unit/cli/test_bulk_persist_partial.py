@@ -1,4 +1,4 @@
-"""Bulk persist totals count rows committed before an unreadable-CSV error (#61)."""
+"""Bulk totals count rows committed before an unreadable CSV or spectrum error."""
 
 import importlib
 import json
@@ -63,3 +63,34 @@ def test_other_errors_add_no_peaks(bulk, monkeypatch):
     monkeypatch.setattr(FittingService, "persist_raman_peaks", fail)
     _, result = bulk("persist-peaks", "--domain", "minerals", "--all")
     assert result["total_peaks"] == 0
+
+
+@pytest.fixture
+def fluor_bulk(bulk, monkeypatch):
+    def fit(self, sol, target, scan, **kw):
+        if scan == "scan_2":
+            raise FittingError(
+                "Persisted 2 fluorescence peaks, but could not read spectra",
+                exit_code=1,
+                context={"peaks_inserted": 2, "unreadable_spectra": [
+                    {"point_index": 1, "exception_type": "error"},
+                ]},
+            )
+        return ServiceResult(summary="ok", metadata={"peaks_inserted": 3})
+
+    monkeypatch.setattr(FittingService, "fit_fluorescence", fit)
+    return bulk
+
+
+def test_fit_fluor_all_counts_partially_committed_rows(fluor_bulk):
+    exit_code, result = fluor_bulk("fit-fluor", "--all", "--no-plots")
+    assert exit_code == 1
+    assert result["total_peaks"] == 5
+    assert len(result["errors"]) == 1
+
+
+def test_fluor_backfill_counts_partially_committed_rows(fluor_bulk):
+    exit_code, result = fluor_bulk("backfill", "--domains", "fluorescence")
+    assert exit_code == 1
+    assert result["total_peaks"] == 5
+    assert result["domain_stats"]["fluorescence"] == {"peaks": 5, "errors": 1}

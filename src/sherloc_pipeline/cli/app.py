@@ -2307,9 +2307,11 @@ def fit_fluor_cmd(
 
 
 def _committed_peaks(exc: Exception) -> int:
-    """Peaks a partially successful persist committed before raising (issue #61)."""
+    """Peaks committed before raising for unreadable Raman CSVs or fluorescence spectra."""
     context = getattr(exc, "context", None) or {}
-    return context.get("peaks_inserted", 0) if "unreadable_peak_csvs" in context else 0
+    return context.get("peaks_inserted", 0) if (
+        "unreadable_peak_csvs" in context or "unreadable_spectra" in context
+    ) else 0
 
 
 @app.command("persist-peaks")

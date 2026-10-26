@@ -754,7 +754,7 @@ class PipelineService:
                     stage_extra.update(inputs_result)
                     metadata["fluorescence_inputs"] = inputs_result
 
-        # Step 3/7 - Fluorescence Fitting + Persistence (non-fatal) ---------------
+        # Step 3/7 - Fluorescence Fitting + Persistence (unreadable spectra are fatal) --
         fluor_metadata: Dict[str, Any] = {}
         if db_path.exists():
             self.console.print("[bold cyan]Step 3/7: Fluorescence Fitting + Persistence[/bold cyan]")
@@ -771,6 +771,8 @@ class PipelineService:
                         despiked_row_ids=despiked_row_ids,
                     )
                 except Exception as exc:
+                    if isinstance(exc, FittingError) and exc.context.get("unreadable_spectra"):
+                        raise
                     self.logger.warning("Fluorescence fitting skipped: %s", exc)
                     warning = f"Fluorescence fitting skipped: {exc}"
                     warnings.append(warning)
