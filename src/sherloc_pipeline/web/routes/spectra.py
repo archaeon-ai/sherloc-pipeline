@@ -29,6 +29,7 @@ from sherloc_pipeline.core.preprocessing import (
     despike_r1_spectrum,
 )
 from sherloc_pipeline.database.models import ScanORM, ScanPointORM, SpectrumORM
+from sherloc_pipeline.models.spectra import resolve_spectrum_type as _resolve_spectrum_type
 from sherloc_pipeline.services.cr_masks import PARENT_SPECTRUM_TYPE, CRMaskService
 from sherloc_pipeline.services.spectrum_axes import resolve_spectrum_axes
 from sherloc_pipeline.services.spectrum_provenance import build_spectrum_provenance
@@ -232,21 +233,6 @@ def _despike_region_array(sel, selected_channels, channel_indices, window, inter
         pd.Series(np.asarray(sel, dtype=float)), row_mask, interp
     ).to_numpy(copy=True)
     return out, sorted(applied)
-
-# Loupe stores dark-subtracted spectra; PDS stores laser-normalized.
-_SPECTRUM_TYPE_BY_SOURCE = {
-    "loupe": "dark_subtracted",
-    "pds4": "laser_normalized",
-}
-
-
-def _resolve_spectrum_type(scan: ScanORM) -> str:
-    """Return the appropriate spectrum_type filter for a scan's data source."""
-    return _SPECTRUM_TYPE_BY_SOURCE.get(
-        getattr(scan, "data_source", None) or "loupe",
-        "dark_subtracted",
-    )
-
 
 def _get_session(request: Request) -> Session:
     return request.state.db

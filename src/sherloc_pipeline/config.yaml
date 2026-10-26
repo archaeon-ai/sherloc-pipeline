@@ -50,7 +50,7 @@ preprocessing:
     sulfate_guard_min_halfwidth: 15.0
     sulfate_guard_max_halfwidth: 25.0
   laser_normalization:
-    # Map mode: a requested point without photodiode_mean > 0 stops the fit.
+    # Loupe map input: a requested point without photodiode_mean > 0 stops the fit.
     # true fits such points unnormalized and records it per point.
     allow_missing_photodiode: false
   baseline:

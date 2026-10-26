@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { navigate } from '../../lib/stores';
+  import { accessMode, navigate } from '../../lib/stores';
   import MapCanvas from './MapCanvas.svelte';
   import FitControls from './FitControls.svelte';
   import MapControls from './MapControls.svelte';
@@ -953,9 +953,9 @@
    * streaming, so the ones missed are fetched from the server's retention
    * store once the job reaches a terminal status.
    */
-  function startFitPolling(jobId: string): void {
+  function startFitPolling(jobId: string, disconnected = true): void {
     if (!jobId || fitPoller) return;
-    logFit('Fit stream disconnected — falling back to status polling.');
+    if (disconnected) logFit('Fit stream disconnected — falling back to status polling.');
     fitPoller = new MapJobPoller(jobId, getMapJobStatus, {
       onStatus: (s) => applyLiveness(s),
       onTerminal: (s) => {
@@ -1030,6 +1030,12 @@
       lastHeartbeatNote = '';
       fitProgress.reset();
       stopFitPolling();
+
+      // Public mode refuses WebSockets before the handshake completes.
+      if (get(accessMode) === 'public') {
+        startFitPolling(data.job_id, false);
+        return;
+      }
 
       // Connect WebSocket
       ws = new MapWebSocket(data.ws_url, {

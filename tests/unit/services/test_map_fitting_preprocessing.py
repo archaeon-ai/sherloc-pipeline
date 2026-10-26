@@ -490,6 +490,39 @@ def _run(session, config, results=None, logs=None, point_indices=None):
     )
 
 
+def test_loupe_uses_dark_subtracted_and_applies_laser_normalization(fit_session, monkeypatch):
+    """Normalized decoys must not replace Loupe's measured R1 spectra."""
+    points = fit_session.query(ScanPointORM).order_by(ScanPointORM.point_index).all()
+    for point, photodiode in zip(points, (1200.0, 4800.0, 2400.0)):
+        point.photodiode_mean = photodiode
+        fit_session.add(SpectrumORM(
+            id=str(uuid.uuid4()), scan_point_id=point.id, region="R1",
+            spectrum_type="laser_normalized", processing_level="normalized",
+            intensities=zlib.compress(np.full(N_CHANNELS, 9999, dtype=np.float32).tobytes()),
+        ))
+    fit_session.commit()
+    seen = []
+    real = map_fitting._preprocess_r1_intensity
+
+    def spy(x, y, *args, **kwargs):
+        seen.append(y.copy())
+        return real(x, y, *args, **kwargs)
+
+    monkeypatch.setattr(map_fitting, "_preprocess_r1_intensity", spy)
+    results = []
+    summary = _run(fit_session, _CONFIG, results)
+
+    wavelength, _ = calculate_loupe_wavelength_wavenumber(n_channels=N_CHANNELS)
+    mask = get_region_wavelength_mask(wavelength, "R1")
+    assert len(seen) == N_POINTS
+    for i, factor in enumerate((4.0, 1.0, 2.0)):
+        raw = np.frombuffer(zlib.decompress(_spectrum_bytes(i)), dtype=np.float32)
+        np.testing.assert_allclose(seen[i], raw[mask] * factor)
+    assert summary.total_points == N_POINTS
+    assert summary.laser_norm_not_applied == []
+    assert all(point.notes == [] for point in results)
+
+
 def test_a_point_without_photodiode_stops_the_map_fit(fit_session):
     _drop_photodiode(fit_session, 1)
     results = []
