@@ -3008,7 +3008,8 @@ class FittingService:
             ServiceResult with summary and metadata including peak counts.
 
         Raises:
-            FittingError: If database not configured, scan not found, or fitting fails.
+            FittingError: If database not configured, scan not found, fitting fails,
+                or stored spectra are unreadable (readable points commit first).
         """
         from sherloc_pipeline.core.data_ingestion import normalize_target_name
         target = normalize_target_name(target)
@@ -3110,10 +3111,12 @@ class FittingService:
                 # (services/fluor_inputs.py). Then the laser-normalization stage.
                 from sherloc_pipeline.services import fluor_inputs
 
+                unreadable_points: Dict[str, str] = {}
                 chosen = fluor_inputs.load_fluorescence_inputs(
                     session, [sp.id for sp in scan_points],
                     allow_despiked=use_despiked_inputs,
                     allowed_despiked_ids=despiked_row_ids,
+                    unreadable_spectra=unreadable_points,
                 )
                 laser_normalize = fluor_inputs.laser_normalize_enabled(self.context.config)
                 norm_factors = fluor_inputs.laser_normalization_factors(
@@ -3336,13 +3339,9 @@ class FittingService:
                             logger.warning(f"Failed to generate fluor plot for point {point_idx}: {e}")
 
                 # Persist via shared helper (idempotent domain-filtered delete+insert)
-                scan_point_ids = [sp.id for sp in scan_points]
+                scan_point_ids = [sp.id for sp in scan_points if sp.id not in unreadable_points]
                 inserted = self._write_peaks_to_db(
                     session, all_peaks, scan_point_ids, "fluorescence"
-                )
-
-                self.console.print(
-                    f"[bold green]Persisted {inserted} fluorescence peaks to database[/bold green]"
                 )
 
                 # Write scan-level CSVs
@@ -3375,16 +3374,36 @@ class FittingService:
                     "output_dir": str(fluor_dir) if fluor_dir else None,
                     "input": input_meta,
                 }
+                unreadable_spectra = [
+                    {"point_index": sp.point_index, "exception_type": unreadable_points[sp.id]}
+                    for sp in scan_points if sp.id in unreadable_points
+                ]
 
-                return ServiceResult(
-                    summary=(
-                        f"Fitted fluorescence for {points_fitted}/{len(scan_points)} points, "
-                        f"{inserted} peaks persisted"
-                    ),
-                    artifacts=artifacts,
-                    warnings=warnings_list,
-                    metadata=metadata,
+            # get_session commits on exit; raising inside it would roll back valid points.
+            if unreadable_spectra:
+                points = ", ".join(
+                    f"point {item['point_index']} ({item['exception_type']})"
+                    for item in unreadable_spectra
                 )
+                raise FittingError(
+                    f"Persisted {inserted} fluorescence peaks, but could not read spectra: {points}. "
+                    "Their previously persisted fluorescence peaks were kept.",
+                    exit_code=1,
+                    context={**metadata, "unreadable_spectra": unreadable_spectra},
+                )
+
+            self.console.print(
+                f"[bold green]Persisted {inserted} fluorescence peaks to database[/bold green]"
+            )
+            return ServiceResult(
+                summary=(
+                    f"Fitted fluorescence for {points_fitted}/{len(scan_points)} points, "
+                    f"{inserted} peaks persisted"
+                ),
+                artifacts=artifacts,
+                warnings=warnings_list,
+                metadata=metadata,
+            )
 
         except FittingError:
             raise

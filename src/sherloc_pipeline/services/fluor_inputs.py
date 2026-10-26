@@ -242,6 +242,7 @@ def load_fluorescence_inputs(
     session, scan_point_ids: Sequence[str], allow_despiked: bool = True,
     allowed_despiked_ids: Optional[Iterable[str]] = None,
     *, spectrum_type: str = PARENT_SPECTRUM_TYPE,
+    unreadable_spectra: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Choose each point's R1-R3 fluorescence input.
 
@@ -257,6 +258,8 @@ def load_fluorescence_inputs(
     wrote, so a concurrent run for the same scan cannot substitute its rows.
     For ``laser_normalized`` PDS input, use those measured rows directly;
     the ML-despiked rows and active fallback belong only to Loupe input.
+    If given, ``unreadable_spectra`` receives skipped point ids and exception
+    class names. A readable measured fallback is not reported as unreadable.
     """
     if spectrum_type == "laser_normalized":
         allow_despiked = False
@@ -330,14 +333,18 @@ def load_fluorescence_inputs(
             }
         except (zlib.error, ValueError) as exc:
             if not use_despiked:
-                logger.warning("Unreadable spectrum for scan point %s: %s", pid, exc)
+                if unreadable_spectra is not None:
+                    unreadable_spectra[pid] = type(exc).__name__
+                logger.warning("Unreadable spectrum for scan point %s: %s", pid, type(exc).__name__)
                 continue
             # A bad despiked blob falls back to the measured rows.
             try:
                 arrays = {reg: _decode(measured[reg].intensities).astype(np.float64)
                           for reg in REGIONS}
             except (zlib.error, ValueError) as exc2:
-                logger.warning("Unreadable spectrum for scan point %s: %s", pid, exc2)
+                if unreadable_spectra is not None:
+                    unreadable_spectra[pid] = type(exc2).__name__
+                logger.warning("Unreadable spectrum for scan point %s: %s", pid, type(exc2).__name__)
                 continue
             use_despiked = False
         out[pid] = {
