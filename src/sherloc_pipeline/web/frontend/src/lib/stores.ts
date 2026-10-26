@@ -23,6 +23,9 @@ export const scienceAuthorized = writable(false);
 export let sessionGeneration = 0;
 export const sessionRequests = new Set<AbortController>();
 
+// --- Transient processing notice ---
+export const processingNotice = writable<{ message: string } | null>(null);
+
 // --- Route ---
 export const currentHash = writable(window.location.hash || '#/');
 
@@ -78,6 +81,7 @@ export function clearSessionState(): void {
   sessionGeneration += 1;
   for (const controller of sessionRequests) controller.abort();
   sessionRequests.clear();
+  processingNotice.set(null);
   if (configValue?.capabilities?.evidence_desk === true) clearEvidence();
   scienceAuthorized.set(false);
   appConfig.set(null);

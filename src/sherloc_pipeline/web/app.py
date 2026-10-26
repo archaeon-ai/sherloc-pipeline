@@ -1,13 +1,14 @@
 """FastAPI application factory for the SHERLOC Web API."""
 
 import logging
+import math
 import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Callable, Dict, Optional, Union
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,19 +22,29 @@ from sherloc_pipeline.web.ws_map import MapJobRegistry
 
 logger = logging.getLogger(__name__)
 
+PUBLIC_PROCESS_RATE_LIMIT = 60
+
 
 class _RateLimiter:
     """Simple sliding-window rate limiter per IP."""
 
-    def __init__(self, max_requests: int = 10, window_seconds: int = 60):
+    def __init__(
+        self,
+        max_requests: int = PUBLIC_PROCESS_RATE_LIMIT,
+        window_seconds: int = 60,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self._max = max_requests
         self._window = window_seconds
+        self._clock = clock
         self._requests: Dict[str, list] = {}
         self._lock = threading.Lock()
 
-    def is_allowed(self, ip: str) -> bool:
-        now = time.time()
+    def retry_after(self, ip: str) -> int:
+        """Record an allowed request (0), or return seconds until a slot opens."""
         with self._lock:
+            now = self._clock()
             # Lazy eviction of stale IPs
             stale_ips = [k for k, v in self._requests.items() if v and now - v[-1] > 300]
             for k in stale_ips:
@@ -42,9 +53,9 @@ class _RateLimiter:
             times = self._requests.setdefault(ip, [])
             times[:] = [t for t in times if now - t < self._window]
             if len(times) >= self._max:
-                return False
+                return max(1, math.ceil(times[0] + self._window - now))
             times.append(now)
-            return True
+            return 0
 
 
 # Ten thousand 64-character template IDs plus bounded metadata fit in 1 MiB.
@@ -246,7 +257,7 @@ def create_app(
     # Register BEFORE db_session_middleware so it executes first (FastAPI middleware
     # runs in reverse registration order).
     if access_mode == "public":
-        _rate_limiter = _RateLimiter(max_requests=10, window_seconds=60)
+        _rate_limiter = _RateLimiter(max_requests=PUBLIC_PROCESS_RATE_LIMIT, window_seconds=60)
 
         @app.middleware("http")
         async def public_guards_middleware(request: Request, call_next):
@@ -264,8 +275,10 @@ def create_app(
 
             # Rate limit on processing endpoints
             if request.url.path.startswith("/api/process/"):
+                # uvicorn rewrites the peer only when FORWARDED_ALLOW_IPS trusts it.
                 client_ip = request.client.host if request.client else "unknown"
-                if not _rate_limiter.is_allowed(client_ip):
+                retry_after = _rate_limiter.retry_after(client_ip)
+                if retry_after:
                     return JSONResponse(
                         status_code=429,
                         content={
@@ -273,7 +286,7 @@ def create_app(
                             "error": "rate_limited",
                             "detail": "Too many requests. Try again later.",
                         },
-                        headers={"Retry-After": "60"},
+                        headers={"Retry-After": str(retry_after)},
                     )
 
             return await call_next(request)

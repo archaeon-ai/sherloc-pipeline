@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { appConfig, navigate, sessionGeneration } from '../lib/stores';
+  import { appConfig, navigate, processingNotice, sessionGeneration } from '../lib/stores';
   import { evidenceGeneration, evidenceBoundary, setEvidenceContext } from '../lib/evidenceStore';
   import { parseLinkSelection, validateLinkSelection } from '../lib/scanLink';
   import {
@@ -649,6 +649,10 @@
     {/if}
   </div>
 
+  {#if $processingNotice}
+    <div class="processing-notice" role="status">{$processingNotice.message}</div>
+  {/if}
+
   {#if error}
     <div class="error-message">{error}</div>
   {/if}
@@ -1014,6 +1018,15 @@
 </div>
 
 <style>
+  .processing-notice {
+    background: var(--color-info-light);
+    color: var(--color-info);
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+  }
+
   .breadcrumb {
     display: flex;
     align-items: center;
