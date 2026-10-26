@@ -12,7 +12,9 @@ import uuid
 import pytest
 import pandas as pd
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
+from typer.testing import CliRunner
 
 from sherloc_pipeline.database.connection import get_engine, get_session, create_all_tables
 from sherloc_pipeline.database.models import (
@@ -26,6 +28,7 @@ from sherloc_pipeline.services.fitting import (
     _write_fit_run_marker,
 )
 from sherloc_pipeline.services.errors import FittingError
+from sherloc_pipeline.services.base import ServiceResult
 
 
 def _write_marker(fit_dir: Path, *, points_fitted: int = 3, accepted_peaks: int = 1) -> None:
@@ -235,6 +238,233 @@ def _call_persist_raman(service, results_base, domain):
         return service.persist_raman_peaks(
             sol="0851", target="Lake_Haiyaha", scan="detail_1", domain=domain,
         )
+
+
+# ---------------------------------------------------------------------------
+# Unreadable peak CSVs must preserve the affected points' persisted rows.
+# ---------------------------------------------------------------------------
+
+def _snapshot_peak_rows(database_path):
+    """Read every peak column through a separate engine to check committed rows."""
+    engine = get_engine(database_path)
+    try:
+        with get_session(engine) as session:
+            rows = {}
+            for peak, point_index in session.query(FittedPeakORM, ScanPointORM.point_index).join(
+                SpectrumORM, FittedPeakORM.spectrum_id == SpectrumORM.id
+            ).join(ScanPointORM, SpectrumORM.scan_point_id == ScanPointORM.id).order_by(
+                FittedPeakORM.id
+            ):
+                rows.setdefault(point_index, []).append({
+                    column.name: getattr(peak, column.name)
+                    for column in FittedPeakORM.__table__.columns
+                })
+            return rows
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def point_count():
+    return 3
+
+
+@pytest.fixture(params=["minerals", "organics", "hydration"])
+def synthetic_peak_run(tmp_path, request, point_count):
+    """Generated CSVs and prior peaks for entirely invented scan points."""
+    assert not any(tmp_path.resolve().is_relative_to(root) for root in (
+        Path("/data"), Path("/nas"),
+    ))
+    domain = request.param
+    database_path = tmp_path / "synthetic.db"
+    engine = get_engine(database_path)
+    create_all_tables(engine)
+    fit_dir = tmp_path / f"{domain}_fit"
+    fit_dir.mkdir()
+    prefix = "87654_Synthetic_CSV_synthetic_scan_R1"
+    suffix = {
+        "minerals": "fit_peaks",
+        "organics": "organics_dg_peaks",
+        "hydration": "hydration_peaks",
+    }[domain]
+    center = {"minerals": 1143.0, "organics": 1473.0, "hydration": 3437.0}[domain]
+    csv_paths = []
+    new_centers = [center + 7 * point for point in range(point_count)]
+
+    with get_session(engine) as session:
+        session.add(SolORM(sol_number=87654, data_source="loupe"))
+        session.flush()
+        scan_id = str(uuid.uuid4())
+        session.add(ScanORM(
+            id=scan_id, sol_number=87654, target="Synthetic CSV",
+            target_type="mars_target",
+            scan_name="synthetic_scan", scan_id="synthetic_csv_run",
+            sclk_start=0, n_points=point_count, n_channels=1,
+        ))
+        session.flush()
+        for point in range(point_count):
+            point_id = str(uuid.uuid4())
+            session.add(ScanPointORM(id=point_id, scan_id=scan_id, point_index=point))
+            session.flush()
+            spectrum_id = str(uuid.uuid4())
+            session.add(SpectrumORM(
+                id=spectrum_id, scan_point_id=point_id, region="R1",
+                spectrum_type="dark_subtracted", processing_level="raw", intensities=b"\x00",
+            ))
+            session.flush()
+            for offset in (17, 29):
+                session.add(FittedPeakORM(
+                    id=str(uuid.uuid4()), spectrum_id=spectrum_id,
+                    fit_modality=domain, center_cm1=center - offset,
+                    amplitude=41.0, fwhm_cm1=67.0, snr=13.0,
+                ))
+            csv_path = fit_dir / f"{prefix}_point{point}_{suffix}.csv"
+            pd.DataFrame([{
+                "center_cm1": new_centers[point], "amplitude_a": 73.0,
+                "fwhm_cm1": 83.0, "snr": 19.0,
+            }]).to_csv(csv_path, index=False)
+            csv_paths.append(csv_path)
+
+    _write_fit_run_marker(
+        _fit_run_marker_path(
+            fit_dir, "87654", "Synthetic_CSV", "synthetic_scan", "R1", domain,
+        ),
+        domain=domain, points_fitted=point_count, accepted_peaks=point_count,
+    )
+    yield SimpleNamespace(
+        engine=engine, database_path=database_path, base=tmp_path, domain=domain,
+        csv_paths=csv_paths, new_centers=new_centers,
+        previous=_snapshot_peak_rows(database_path),
+    )
+    engine.dispose()
+
+
+def _persist_synthetic_run(run, console=None):
+    service = _make_service(run.engine)
+    if console is not None:
+        service.console = console
+    mock_ctx = MagicMock(base_data_dir=run.base, results_dir=run.base)
+    mock_di = MagicMock()
+    mock_di.get_results_path.return_value = run.base
+    with patch("sherloc_pipeline.services.fitting.resolve_scan_context", return_value=mock_ctx), \
+         patch("sherloc_pipeline.core.data_ingestion.DataIngestion", return_value=mock_di):
+        return service.persist_raman_peaks(
+            sol="87654", target="Synthetic_CSV", scan="synthetic_scan", domain=run.domain,
+        )
+
+
+class TestUnreadablePeakCSVs:
+    @pytest.mark.parametrize("failure", ["corrupt", "permission"])
+    def test_unreadable_point_preserved_valid_points_committed(
+        self, synthetic_peak_run, failure, monkeypatch, caplog
+    ):
+        run = synthetic_peak_run
+        unreadable = run.csv_paths[1]
+        if failure == "corrupt":
+            unreadable.write_bytes(b"\xff\xfe\x00synthetic-private-contents")
+            exception_type = "UnicodeDecodeError"
+        else:
+            read_csv = pd.read_csv
+
+            def deny_one_csv(path, *args, **kwargs):
+                if Path(path) == unreadable:
+                    raise PermissionError("synthetic-private-contents")
+                return read_csv(path, *args, **kwargs)
+
+            monkeypatch.setattr(pd, "read_csv", deny_one_csv)
+            exception_type = "PermissionError"
+
+        with pytest.raises(FittingError) as exc_info:
+            _persist_synthetic_run(run)
+
+        error = exc_info.value
+        assert error.exit_code == 1
+        assert error.context["peaks_inserted"] == 2
+        assert error.context["unreadable_peak_csvs"] == [{
+            "point_index": 1, "file_name": unreadable.name, "exception_type": exception_type,
+        }]
+        assert unreadable.name in str(error)
+        assert "previously persisted peaks were kept" in str(error)
+        assert "synthetic-private-contents" not in str(error.context) + str(error) + caplog.text
+
+        rows = _snapshot_peak_rows(run.database_path)
+        assert rows[1] == run.previous[1]
+        for point in (0, 2):
+            assert len(rows[point]) == 1
+            assert rows[point][0]["id"] not in {row["id"] for row in run.previous[point]}
+            assert rows[point][0]["center_cm1"] == run.new_centers[point]
+            assert rows[point][0]["amplitude"] == 73.0
+
+    def test_all_valid_csvs_replace_prior_peaks(self, synthetic_peak_run):
+        run = synthetic_peak_run
+        result = _persist_synthetic_run(run)
+        assert result.metadata["peaks_inserted"] == 3
+        rows = _snapshot_peak_rows(run.database_path)
+        for point in range(3):
+            assert len(rows[point]) == 1
+            assert rows[point][0]["id"] not in {row["id"] for row in run.previous[point]}
+            assert rows[point][0]["center_cm1"] == run.new_centers[point]
+
+    @pytest.mark.parametrize("synthetic_peak_run", ["minerals", "hydration"], indirect=True)
+    def test_unreadable_point_with_readable_duplicate_is_preserved(self, synthetic_peak_run):
+        run = synthetic_peak_run
+        unreadable = run.csv_paths[1]
+        duplicate = unreadable.with_name(f"duplicate_{unreadable.name}")
+        duplicate.write_bytes(unreadable.read_bytes())
+        unreadable.write_bytes(b"\xff\xfe\x00")
+        with pytest.raises(FittingError) as exc_info:
+            _persist_synthetic_run(run)
+        assert exc_info.value.context["peaks_inserted"] == 2
+        assert _snapshot_peak_rows(run.database_path)[1] == run.previous[1]
+
+    @pytest.mark.parametrize("point_count", [1])
+    def test_only_csv_unreadable_preserves_all_prior_peaks(self, synthetic_peak_run):
+        run = synthetic_peak_run
+        run.csv_paths[0].write_bytes(b"\xff\xfe\x00")
+        with pytest.raises(FittingError) as exc_info:
+            _persist_synthetic_run(run)
+        assert exc_info.value.exit_code == 1
+        assert exc_info.value.context["peaks_inserted"] == 0
+        assert _snapshot_peak_rows(run.database_path) == run.previous
+
+    def test_process_new_exits_one_for_unreadable_peak_csv(self, synthetic_peak_run, monkeypatch):
+        from sherloc_pipeline.cli.app import app
+
+        run = synthetic_peak_run
+        run.csv_paths[1].write_bytes(b"\xff\xfe\x00")
+        sol_dir = run.base / "sol_87654"
+        sol_dir.mkdir()
+        monkeypatch.setenv("SHERLOC_DB_PATH", str(run.database_path))
+        fitted = ServiceResult(summary="Synthetic fitting completed")
+        fitting = MagicMock()
+        for method in ("fit_minerals", "fit_organics", "fit_hydration", "fit_fluorescence"):
+            getattr(fitting, method).return_value = fitted
+
+        def persist(**kwargs):
+            if kwargs["domain"] == run.domain:
+                return _persist_synthetic_run(run, console=fitting_factory.call_args.kwargs["console"])
+            return ServiceResult(summary="Synthetic persistence completed")
+
+        fitting.persist_raman_peaks.side_effect = persist
+        with patch("sherloc_pipeline.services.pipeline.FittingService", return_value=fitting) as fitting_factory, \
+             patch("sherloc_pipeline.services.pipeline.PreprocessingService") as preprocessing, \
+             patch("sherloc_pipeline.services.pipeline.DataIngestion") as ingestion, \
+             patch("sherloc_pipeline.services.pipeline.archive_existing_results", return_value=None), \
+             patch("sherloc_pipeline.services.fluor_inputs.refresh_despiked_rows_for_scan", return_value={}):
+            preprocessing.return_value.run_scan.return_value = fitted
+            ingestion.return_value.get_results_path.return_value = run.base
+            result = CliRunner().invoke(app, [
+                "--json", "process-new", str(sol_dir), "--skip-ingest",
+                "--database", str(run.database_path), "--data-dir", str(run.base),
+                "--results-dir", str(run.base),
+            ])
+
+        assert result.exit_code == 1, result.output
+        errors = json.loads(result.stdout)["result"]["errors"]
+        assert len(errors) == 1
+        assert run.csv_paths[1].name in errors[0]
+        assert "previously persisted peaks were kept" in errors[0]
+        assert _snapshot_peak_rows(run.database_path)[1] == run.previous[1]
 
 
 # ---------------------------------------------------------------------------

@@ -2226,6 +2226,7 @@ def fit_fluor_cmd(
                         )
                         total_peaks += (result.metadata or {}).get("peaks_inserted", 0)
                     except Exception as e:
+                        total_peaks += _committed_peaks(e)
                         errors.append(f"Sol {sol_num} {tgt} {scn}: {e}")
                     progress.advance(task)
 
@@ -2303,6 +2304,12 @@ def fit_fluor_cmd(
         else:
             console.print(f"\n[red]Fluorescence fitting failed: {e}[/red]")
         sys.exit(1)
+
+
+def _committed_peaks(exc: Exception) -> int:
+    """Peaks a partially successful persist committed before raising (issue #61)."""
+    context = getattr(exc, "context", None) or {}
+    return context.get("peaks_inserted", 0) if "unreadable_peak_csvs" in context else 0
 
 
 @app.command("persist-peaks")
@@ -2392,6 +2399,7 @@ def persist_peaks_cmd(
                         )
                         total_peaks += (result.metadata or {}).get("peaks_inserted", 0)
                     except Exception as e:
+                        total_peaks += _committed_peaks(e)
                         errors.append(f"Sol {sol_num} {tgt} {scn}: {e}")
                     progress.advance(task)
 
@@ -2587,6 +2595,7 @@ def backfill_cmd(
                             )
                             domain_peaks += (result.metadata or {}).get("peaks_inserted", 0)
                     except Exception as e:
+                        domain_peaks += _committed_peaks(e)
                         domain_errors.append(f"Sol {sol_num} {tgt} {scn}: {e}")
                     progress.advance(task)
 

@@ -2514,7 +2514,8 @@ class FittingService:
         Other domains' peaks are preserved. A fit that ran and accepted nothing
         (the domain's scan-level summary is present but no per-point peak CSVs
         are) is a zero result: the domain's existing rows are cleared and 0 is
-        reported. Only a domain that was never fitted raises.
+        reported. Unreadable per-point CSVs preserve their points' existing rows;
+        unaffected points' writes commit before a FittingError is raised.
 
         Args:
             sol: Sol number (e.g., "0921")
@@ -2530,7 +2531,8 @@ class FittingService:
 
         Raises:
             FittingError: If domain is invalid, database not configured, scan not
-                found, the domain was never fitted, or persistence fails
+                found, the domain was never fitted, or persistence fails. Unreadable
+                peak CSVs raise after unaffected points' writes have committed.
         """
         from sherloc_pipeline.core.data_ingestion import normalize_target_name
         target = normalize_target_name(target)
@@ -2778,6 +2780,7 @@ class FittingService:
                 assigner = raman_assigners[domain]
                 all_peaks = []
                 warnings_list: List[str] = []
+                unreadable_peak_csvs: List[Dict[str, Any]] = []
                 total_reviewable = 0
 
                 for csv_path, point_idx in peak_csvs:
@@ -2798,7 +2801,11 @@ class FittingService:
                     try:
                         peaks_df = pd.read_csv(csv_path)
                     except Exception as e:
-                        logger.warning(f"Failed to read {csv_path}: {e}")
+                        unreadable_peak_csvs.append({
+                            "point_index": point_idx,
+                            "file_name": csv_path.name,
+                            "exception_type": type(e).__name__,
+                        })
                         continue
 
                     # Filter to reviewable peaks: SNR >= min_snr AND FWHM >= reviewable_fwhm_min_cm1
@@ -2859,12 +2866,14 @@ class FittingService:
                     )
 
                 # Write to DB via shared helper (handles idempotent delete+insert)
-                scan_point_ids = [sp.id for sp in scan_points]
+                unreadable_points = {item["point_index"] for item in unreadable_peak_csvs}
+                scan_point_ids = [
+                    sp.id for sp in scan_points if sp.point_index not in unreadable_points
+                ]
+                # A point with multiple discovered CSVs is preserved as a whole.
+                unreadable_spectra = {point_to_spectrum[point] for point in unreadable_points}
+                all_peaks = [peak for peak in all_peaks if peak.spectrum_id not in unreadable_spectra]
                 inserted = self._write_peaks_to_db(session, all_peaks, scan_point_ids, domain)
-
-                self.console.print(
-                    f"[bold green]Persisted {inserted} {domain} peaks to database[/bold green]"
-                )
 
                 metadata = {
                     "sol": sol,
@@ -2880,12 +2889,28 @@ class FittingService:
                     "fwhm_min_threshold": fwhm_min,
                 }
 
-                return ServiceResult(
-                    summary=f"Persisted {inserted} {domain} peaks for scan {sol}/{target}/{scan}",
-                    artifacts=[],
-                    warnings=warnings_list,
-                    metadata=metadata,
+            # get_session commits on exit; raising inside it would roll back valid points.
+            if unreadable_peak_csvs:
+                files = ", ".join(
+                    f"{item['file_name']} (point {item['point_index']}, {item['exception_type']})"
+                    for item in unreadable_peak_csvs
                 )
+                raise FittingError(
+                    f"Persisted {inserted} {domain} peaks, but could not read peak CSVs: {files}. "
+                    "Their points' previously persisted peaks were kept.",
+                    exit_code=1,
+                    context={**metadata, "unreadable_peak_csvs": unreadable_peak_csvs},
+                )
+
+            self.console.print(
+                f"[bold green]Persisted {inserted} {domain} peaks to database[/bold green]"
+            )
+            return ServiceResult(
+                summary=f"Persisted {inserted} {domain} peaks for scan {sol}/{target}/{scan}",
+                artifacts=[],
+                warnings=warnings_list,
+                metadata=metadata,
+            )
 
         except FittingError:
             raise
