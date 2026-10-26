@@ -20,7 +20,7 @@ import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
 import { clearEvidence, pinnedTraces } from '../lib/evidenceStore';
-import { accessMode, appConfig, scienceAuthorized, currentHash, sessionGeneration, clearSessionState } from '../lib/stores';
+import { accessMode, appConfig, scienceAuthorized, currentHash, sessionGeneration, clearSessionState, processingNotice } from '../lib/stores';
 import type { BadpixResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
@@ -239,6 +239,7 @@ let getAvg: MockInstance<[scanId: string, params?: SpectrumParams], Promise<Spec
 let originalGetContext: typeof HTMLCanvasElement.prototype.getContext;
 
 beforeEach(() => {
+  processingNotice.set(null);
   appConfig.set({ tier: 'team', capabilities: { evidence_desk: true } } as import('../lib/types').ConfigResponse);
   clearEvidence();
   vi.restoreAllMocks();
@@ -281,6 +282,19 @@ beforeEach(() => {
 
 afterEach(() => {
   HTMLCanvasElement.prototype.getContext = originalGetContext;
+  processingNotice.set(null);
+});
+
+it('shows a temporary retry notice as a status beside the error area', async () => {
+  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+  await flush();
+  processingNotice.set({ message: 'Server busy, retrying in 5 s' });
+  await tick();
+  expect(screen.getByRole('status')).toHaveTextContent('Server busy, retrying in 5 s');
+  expect(container.querySelector('.error-message')).toBeNull();
+  processingNotice.set(null);
+  await tick();
+  expect(screen.queryByRole('status')).toBeNull();
 });
 
 describe('ProcessingWorkbench deep links', () => {

@@ -28,7 +28,7 @@ import type {
 } from './types';
 
 import { bootstrapAuthReady, getSession } from './auth';
-import { clearSessionState, sessionGeneration, sessionRequests } from './stores';
+import { clearSessionState, processingNotice, sessionGeneration, sessionRequests } from './stores';
 import type { DisplayPoint, MapJobResults, VoronoiGeometry } from './types/map';
 import type { MapJobStatus } from './mapProgress';
 
@@ -125,7 +125,7 @@ function invalidateSessionOnAuthFailure(res: Response): void {
 
 async function fetchJson<T>(path: string, init?: RequestInit, generation = sessionGeneration): Promise<T> {
   return withSessionRequest(generation, async (headers, signal) => {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const request = () => fetch(`${API_BASE}${path}`, {
       ...init,
       signal,
       headers: {
@@ -134,6 +134,23 @@ async function fetchJson<T>(path: string, init?: RequestInit, generation = sessi
         ...init?.headers,
       },
     });
+    let res = await request();
+    if (generation !== sessionGeneration) throw new AuthRequiredError();
+    if (res.status === 429 && path.startsWith('/process/')) {
+      const retryAfter = res.headers.get('Retry-After');
+      const seconds = retryAfter?.trim() ? Number(retryAfter) : NaN;
+      const delay = Number.isFinite(seconds) && seconds >= 0
+        ? Math.min(60, Math.max(1, Math.ceil(seconds))) : 5;
+      const notice = { message: `Server busy, retrying in ${delay} s` };
+      processingNotice.set(notice);
+      try {
+        await new Promise<void>(resolve => setTimeout(resolve, delay * 1000));
+        if (generation !== sessionGeneration) throw new AuthRequiredError();
+        res = await request();
+      } finally {
+        processingNotice.update(current => current === notice ? null : current);
+      }
+    }
     if (generation !== sessionGeneration) throw new AuthRequiredError();
     if (!res.ok) {
       invalidateSessionOnAuthFailure(res);
