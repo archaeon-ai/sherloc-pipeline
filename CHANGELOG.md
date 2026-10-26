@@ -29,6 +29,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reporting success. Bulk `persist-peaks --all` and `backfill` totals include
   the peaks committed before the error (#139, fixes #61).
 
+### Also in this release
+Recorded after the v5.7.5 tag; the tag itself is unchanged. These merged
+between v5.7.4 and v5.7.5 but were missing from the entry above.
+
+- Serving policy: a fail-closed tier and feature-policy boundary (#110); the
+  policy models and serving checks move below `web` (#112).
+- Reference release catalog and offline importer (#111). It adds migration
+  `a13c4e5f6071`, the new head; a deployment creates the catalog only when
+  `SHERLOC_ALEMBIC_TARGET` selects that revision (DEPLOYMENT_CONTRACT §7).
+  Each reference trace records its source processing state from the
+  manifest (#121).
+- Identification, all disabled by default: a frozen provisional Pearson
+  engine (#113), an optional provisional mixture method (#116), and spawned
+  workers moved out of the services package (#117), with deadline tests
+  measured from worker readiness (#118).
+- Evidence desk, disabled by default: pinned pipeline comparisons (#114), the
+  reference and identification API (#115), and the primary trace's
+  processing chain applied to every desk trace (#122). Processing-chain input
+  routing and step records move into `lib/processingChainRun` (#120).
+- Processing fixes: repeated section headers are skipped when splitting
+  laser-normalized regions (#126); a missing background or missing
+  photodiode data now stops processing (#127); background is subtracted from
+  this run's trimmed mean (#128); map mode honors the configured
+  `mineral_rules` (#129).
+- Fitting: hydration fits on the despiked branch while minerals stay
+  non-despiked in map mode (#130); fluorescence fits on the persisted
+  ML-despiked, laser-normalized R1-R3 (#133). The PDS laser-normalization
+  formula is documented as max(pd)/pd_i (#134).
+
 ## [5.7.4] - 2026-10-18
 
 ### Security
