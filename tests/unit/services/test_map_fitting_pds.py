@@ -21,10 +21,21 @@ from sherloc_pipeline.services import map_fitting
 
 N_CHANNELS = 2148
 N_POINTS = 2
+# A PDS product's embedded axis, deliberately off the Loupe calibration so a fit
+# on the Loupe axis would misplace every peak (~125 cm-1 at R1).
+PDS_AXIS_SHIFT_NM = 0.8
+EXCITATION_NM = 248.6
+RAMAN_PEAKS = {"minerals": 1000.0, "organics": 1600.0, "hydration": 3400.0}
+FLUOR_CENTER_NM = 306.0
 
 
 def _encode(values):
     return zlib.compress(np.asarray(values, dtype=np.float32).tobytes())
+
+
+def pds_wavelength():
+    loupe, _ = calculate_loupe_wavelength_wavenumber(n_channels=N_CHANNELS)
+    return loupe + PDS_AXIS_SHIFT_NM
 
 
 @pytest.fixture()
@@ -41,10 +52,12 @@ def pds_scan():
         id=str(uuid.uuid4()), sol_number=938, scan_name="detail_1",
         scan_id="synthetic-pds-map", sclk_start=740000000, sclk_stop=740001000,
         n_points=N_POINTS, n_channels=N_CHANNELS, data_source="pds4",
+        laser_wavelength_nm=EXCITATION_NM,
     )
     session.add(scan)
     session.flush()
-    wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=N_CHANNELS)
+    wavelength = pds_wavelength()
+    wavenumber = 1e7 * (1 / EXCITATION_NM - 1 / wavelength)
     for i in range(N_POINTS):
         point = ScanPointORM(
             id=str(uuid.uuid4()), scan_id=scan.id, point_index=i,
@@ -54,10 +67,10 @@ def pds_scan():
         session.flush()
         rng = np.random.RandomState(i)
         raman = 10.0 + 0.01 * np.arange(N_CHANNELS)
-        for center, sigma, amplitude in ((1000, 20, 100), (1600, 40, 80), (3400, 70, 120)):
+        for center, sigma, amplitude in zip(RAMAN_PEAKS.values(), (20, 40, 70), (100, 80, 120)):
             raman += amplitude * np.exp(-0.5 * ((wavenumber - center) / sigma) ** 2)
         raman += rng.normal(0, 0.15, N_CHANNELS)
-        fluor = 10.0 + 400.0 * np.exp(-0.5 * ((wavelength - 306.0) / 10.0) ** 2)
+        fluor = 10.0 + 400.0 * np.exp(-0.5 * ((wavelength - FLUOR_CENTER_NM) / 10.0) ** 2)
         fluor += rng.normal(0, 0.15, N_CHANNELS)
         for region in ("R1", "R2", "R3"):
             session.add(SpectrumORM(
@@ -95,6 +108,12 @@ def test_pds_map_fits_without_photodiode(pds_scan, domains):
         for domain in domains:
             assert point.results[domain].status == "measured"
             assert point.results[domain].peaks
+            if domain == "fluorescence":
+                centers = [p["center_nm"] for p in point.results[domain].peaks]
+                assert min(abs(c - FLUOR_CENTER_NM) for c in centers) < 0.3, centers
+            else:
+                centers = [p["center_cm1"] for p in point.results[domain].peaks]
+                assert min(abs(c - RAMAN_PEAKS[domain]) for c in centers) < 5.0, centers
         assert point.notes == ([FLUOR_NOT_DESPIKED] if "fluorescence" in domains else [])
 
 
@@ -118,8 +137,7 @@ def test_pds_map_keeps_upstream_normalization_with_photodiodes(pds_scan, monkeyp
         on_progress=lambda *a: None, on_log=lambda *a: None, cancel_event=threading.Event(),
     )
 
-    wavelength, _ = calculate_loupe_wavelength_wavenumber(n_channels=N_CHANNELS)
-    r1_mask = map_fitting.get_region_wavelength_mask(wavelength, "R1")
+    r1_mask = map_fitting.get_region_wavelength_mask(pds_wavelength(), "R1")
     assert preprocess.call_count == N_POINTS
     assert fluor_fit.call_count == N_POINTS
     for i, point in enumerate(points):
@@ -142,4 +160,5 @@ def test_pds_fluorescence_fallback_uses_normalized_rows(pds_scan):
         session, point.id, {}, spectrum_type="laser_normalized"
     )
     assert result.status == "measured"
-    assert result.peaks
+    centers = [p["center_nm"] for p in result.peaks]
+    assert min(abs(c - FLUOR_CENTER_NM) for c in centers) < 0.3, centers

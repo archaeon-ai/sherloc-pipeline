@@ -52,6 +52,7 @@ from sherloc_pipeline.core.preprocessing import (
 )
 from sherloc_pipeline.database.models import ScanORM, ScanPointORM, SpectrumORM
 from sherloc_pipeline.models.spectra import resolve_spectrum_type
+from sherloc_pipeline.services.spectrum_axes import resolve_spectrum_axes
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,44 @@ def _load_point_spectra(
             continue
         result[s.scan_point_id] = data
     return result
+
+
+def _resolve_map_axes(session, scan, scan_point_ids, spectrum_type, regions):
+    """Stored axes shared by these points' rows (services/spectrum_axes.py).
+
+    Returns None when no point has every region, so those points report
+    missing as before. Rows on differing axes raise, failing the job rather
+    than fitting on a guessed axis.
+    """
+    rows = (
+        session.query(SpectrumORM)
+        .filter(
+            SpectrumORM.scan_point_id.in_(scan_point_ids),
+            SpectrumORM.region.in_(regions),
+            SpectrumORM.spectrum_type == spectrum_type,
+        )
+        .all()
+    )
+    by_point: dict[str, list] = {}
+    for row in rows:
+        by_point.setdefault(row.scan_point_id, []).append(row)
+    complete = [r for point_rows in by_point.values() if len(point_rows) == len(regions) for r in point_rows]
+    if not complete:
+        return None
+    return resolve_spectrum_axes(scan, complete, "R123" if len(regions) == 3 else regions[0])
+
+
+def _fallback_fluor_wavelength(session, scan_point_id, spectrum_type):
+    """Full-readout wavelength axis for a fluorescence fit called on its own."""
+    if spectrum_type == "laser_normalized":
+        point = session.get(ScanPointORM, scan_point_id)
+        scan = session.get(ScanORM, point.scan_id) if point is not None else None
+        if scan is not None:
+            axes = _resolve_map_axes(session, scan, [scan_point_id], spectrum_type, ("R1", "R2", "R3"))
+            if axes is not None:
+                return axes.wavelength
+    wavelength, _ = calculate_loupe_wavelength_wavenumber(n_channels=2148)
+    return wavelength
 
 
 # Domains fitted on the non-despiked spectrum: sharp mineral peaks can be hit
@@ -464,6 +503,7 @@ def _fit_fluorescence_domain(
     preloaded_parts: dict[str, np.ndarray] | None = None,
     saturation_scale: float = 1.0,
     *, spectrum_type: str = "dark_subtracted",
+    wavelength: np.ndarray | None = None,
 ) -> DomainResult:
     """Fit fluorescence for a single scan point using R2+R3 spectra.
 
@@ -477,6 +517,7 @@ def _fit_fluorescence_domain(
             ``preloaded_parts`` (1.0 when unscaled). The saturation threshold is
             in detector counts, so it is scaled by the same factor.
         spectrum_type: Measured representation for the per-point fallback.
+        wavelength: Full-readout axis; None resolves it from the point's rows.
 
     Returns:
         DomainResult with fitted fluorescence peaks.
@@ -515,8 +556,9 @@ def _fit_fluorescence_domain(
     except ValueError:
         return DomainResult(status="missing")
 
-    # Get calibration for full 2148-channel spectrum
-    wavelength, _ = calculate_loupe_wavelength_wavenumber(n_channels=2148)
+    # Full 2148-channel axis: the caller's (PDS embedded), else Loupe calibration
+    if wavelength is None:
+        wavelength = _fallback_fluor_wavelength(session, scan_point_id, spectrum_type)
 
     # Extract fluorescence range (R2+R3 region)
     # fit_fluorescence_spectrum handles the range internally, but we need
@@ -736,9 +778,21 @@ class MapFitService:
                 session, scan_points, self.config, scan_id, spectrum_type=spectrum_type
             )
 
-        # Calibration: compute once
+        # Calibration: compute once. PDS rows carry their product's own
+        # wavelength array, which the point view uses; fit on that axis too.
         wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
         r1_mask = get_region_wavelength_mask(wavelength, "R1")
+        fluor_wavelength = wavelength
+        if spectrum_type == "laser_normalized":
+            scan = session.get(ScanORM, scan_id)
+            if raman_domains:
+                axes = _resolve_map_axes(session, scan, sp_ids, spectrum_type, ("R1",))
+                if axes is not None:
+                    wavelength, wavenumber, r1_mask = axes.wavelength, axes.wavenumber, axes.mask
+            if "fluorescence" in domains:
+                axes = _resolve_map_axes(session, scan, sp_ids, spectrum_type, ("R1", "R2", "R3"))
+                if axes is not None:
+                    fluor_wavelength = axes.wavelength
         wavenumber_r1 = wavenumber[r1_mask]
 
         # --- Preprocessing setup (laser norm, background, baseline) ---
@@ -905,6 +959,7 @@ class MapFitService:
                         preloaded_parts=fluor_spectra.get(sp.id, {}),
                         saturation_scale=fluor_scales.get(sp.id, 1.0),
                         spectrum_type=spectrum_type,
+                        wavelength=fluor_wavelength,
                     )
                 except Exception as exc:
                     logger.debug(
