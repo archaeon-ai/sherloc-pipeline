@@ -27,6 +27,7 @@ import { render, fireEvent, screen, waitFor } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import MapMode from './MapMode.svelte';
 import * as api from '../../lib/api';
+import { accessMode } from '../../lib/stores';
 import {
   mapDisplayMode,
   mapFitJob,
@@ -157,6 +158,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   wsMock.handlers = null;
   wsMock.closed = false;
+  accessMode.set('internal');
   resetMapState();
 
   // jsdom has no 2D context; MapCanvas already no-ops on a null one, but
@@ -192,6 +194,32 @@ beforeEach(() => {
 
 afterEach(() => {
   resetMapState();
+});
+
+it('starts status polling as soon as the socket hands off', async () => {
+  vi.spyOn(api, 'getMapJobStatus').mockResolvedValue({
+    job_id: JOB_ID, status: 'running', fitted: 0, total: 3, results_available: false,
+  });
+  const handlers = await startFit();
+  handlers.onDisconnect();
+
+  await waitFor(() => expect(api.getMapJobStatus).toHaveBeenCalledWith(JOB_ID));
+  expect(get(mapLogEntries)).toContain('Fit stream disconnected — falling back to status polling.');
+});
+
+it('starts public map jobs with polling without opening a WebSocket', async () => {
+  accessMode.set('public');
+  vi.spyOn(api, 'getMapJobStatus').mockResolvedValue({
+    job_id: JOB_ID, status: 'running', fitted: 0, total: 3, results_available: false,
+  });
+  render(MapMode, { props: { scanId: SCAN_ID } });
+  await waitFor(() => expect(screen.getByText('3 points')).toBeInTheDocument());
+  await fireEvent.click(screen.getByText('Start Fitting'));
+
+  await waitFor(() => expect(api.getMapJobStatus).toHaveBeenCalledWith(JOB_ID));
+  expect(wsMock.handlers).toBeNull();
+  await waitFor(() => expect(get(mapFitJob)?.status).toBe('running'));
+  expect(get(mapLogEntries)).not.toContain('Fit stream disconnected — falling back to status polling.');
 });
 
 describe('MapMode — persisted display mode initialization (issue #37)', () => {
