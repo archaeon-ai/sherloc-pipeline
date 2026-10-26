@@ -11,6 +11,7 @@ Tests the core domain models defined in models/spectra.py:
 import json
 import uuid
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -27,6 +28,20 @@ from sherloc_pipeline.models import (
     Spectrum,
     ModelRegistry,
 )
+from sherloc_pipeline.models.spectra import resolve_spectrum_type
+
+
+@pytest.mark.parametrize("scan,expected", [
+    (SimpleNamespace(data_source="loupe"), "dark_subtracted"),
+    (SimpleNamespace(data_source="pds4"), "laser_normalized"),
+    (SimpleNamespace(data_source=DataSource.PDS4), "laser_normalized"),
+    (SimpleNamespace(data_source=None), "dark_subtracted"),
+    (SimpleNamespace(data_source=""), "dark_subtracted"),
+    (SimpleNamespace(data_source="unknown"), "dark_subtracted"),
+    (SimpleNamespace(), "dark_subtracted"),
+])
+def test_resolve_spectrum_type(scan, expected):
+    assert resolve_spectrum_type(scan) == expected
 
 
 class TestDataSource:

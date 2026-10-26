@@ -241,6 +241,7 @@ def refresh_despiked_rows_for_scan(
 def load_fluorescence_inputs(
     session, scan_point_ids: Sequence[str], allow_despiked: bool = True,
     allowed_despiked_ids: Optional[Iterable[str]] = None,
+    *, spectrum_type: str = PARENT_SPECTRUM_TYPE,
 ) -> Dict[str, Dict[str, Any]]:
     """Choose each point's R1-R3 fluorescence input.
 
@@ -254,7 +255,14 @@ def load_fluorescence_inputs(
     not refresh the despiked rows). ``allowed_despiked_ids`` restricts the
     despiked rows to those ids: the pipeline passes the rows its own refresh
     wrote, so a concurrent run for the same scan cannot substitute its rows.
+    For ``laser_normalized`` PDS input, use those measured rows directly;
+    the ML-despiked rows and active fallback belong only to Loupe input.
     """
+    if spectrum_type == "laser_normalized":
+        allow_despiked = False
+        spectrum_types = (spectrum_type,)
+    else:
+        spectrum_types = (DESPIKED_SPECTRUM_TYPE, PARENT_SPECTRUM_TYPE, "active")
     allowed = None if allowed_despiked_ids is None else set(allowed_despiked_ids)
     from sherloc_pipeline.database.models import SpectrumORM
     from sherloc_pipeline.services.cr_masks import CRMaskService
@@ -266,9 +274,7 @@ def load_fluorescence_inputs(
         .filter(
             SpectrumORM.scan_point_id.in_(ids),
             SpectrumORM.region.in_(REGIONS),
-            SpectrumORM.spectrum_type.in_(
-                (DESPIKED_SPECTRUM_TYPE, PARENT_SPECTRUM_TYPE, "active")
-            ),
+            SpectrumORM.spectrum_type.in_(spectrum_types),
         )
         .order_by(SpectrumORM.created_at)
     ):
@@ -288,7 +294,9 @@ def load_fluorescence_inputs(
     for pid in ids:
         measured = {}
         for reg in REGIONS:
-            row = rows.get((pid, reg, PARENT_SPECTRUM_TYPE)) or rows.get((pid, reg, "active"))
+            row = rows.get((pid, reg, spectrum_type))
+            if row is None and spectrum_type == PARENT_SPECTRUM_TYPE:
+                row = rows.get((pid, reg, "active"))
             if row is not None:
                 measured[reg] = row
         if len(measured) != len(REGIONS):

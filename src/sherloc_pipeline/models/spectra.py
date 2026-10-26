@@ -109,6 +109,25 @@ MEASURED_SPECTRUM_TYPES = (
 )
 
 
+# Loupe stores dark-subtracted spectra; PDS stores laser-normalized.
+_SPECTRUM_TYPE_BY_SOURCE = {
+    "loupe": "dark_subtracted",
+    "pds4": "laser_normalized",
+}
+
+
+def resolve_spectrum_type(scan: Any) -> str:
+    """Return the measured spectrum type for a scan's data source.
+
+    Legacy scans without a data source, and unknown sources, retain the
+    Loupe default. Accepts both domain models and database scan records.
+    """
+    return _SPECTRUM_TYPE_BY_SOURCE.get(
+        getattr(scan, "data_source", None) or "loupe",
+        "dark_subtracted",
+    )
+
+
 class CoordinateFrame(str, Enum):
     """Coordinate frame for scan point positions.
 

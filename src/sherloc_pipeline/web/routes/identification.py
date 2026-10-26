@@ -12,12 +12,13 @@ from sqlalchemy.orm import load_only
 from sherloc_pipeline.database.models import ScanORM, ScanPointORM, SpectrumORM
 from sherloc_pipeline.models.identification import IdentificationModel, IdentificationRequest, PointSelection
 from sherloc_pipeline.models.references import Digest
+from sherloc_pipeline.models.spectra import resolve_spectrum_type
 from sherloc_pipeline.services.identification import IdentificationService, MAX_NATIVE_POINTS, deny_source
 from sherloc_pipeline.services.identification_runtime import ExecutionFailed, WorkRejected, run_process
 from sherloc_pipeline.services.identification_source import prepare_stored_point
 from sherloc_pipeline.web.data_access import DataAccessService
 from sherloc_pipeline.web.routes.references import reference_store, require_references, reject_query
-from sherloc_pipeline.web.routes.spectra import _resolve_spectrum_type, _wavelength_filter_info
+from sherloc_pipeline.web.routes.spectra import _wavelength_filter_info
 
 router = APIRouter(prefix="/api", tags=["identification"])
 
@@ -94,7 +95,7 @@ def identify(request: Request, body: IdentifyBody):
         DataAccessService(request.app.state.access_mode).validate_scan_access(scan)
         if scan.n_channels > MAX_NATIVE_POINTS:
             raise WorkRejected("source point limit exceeded")
-        if body.selection.index >= scan.n_points or body.spectrum_type != _resolve_spectrum_type(scan):
+        if body.selection.index >= scan.n_points or body.spectrum_type != resolve_spectrum_type(scan):
             raise HTTPException(422, "Unsupported stored selection")
         metadata = (scan.pds4_metadata if scan.data_source == "pds4" else scan.loupe_metadata) or {}
         # PDS4 scans persist the logical identifier; its last segment is the product ID.

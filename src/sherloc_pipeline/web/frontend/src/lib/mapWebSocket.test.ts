@@ -171,6 +171,21 @@ describe('MapWebSocket reconnect', () => {
     expect(handlers.onReconnecting).not.toHaveBeenCalled();
   });
 
+  it('hands off to polling immediately when public mode closes with 4003', async () => {
+    const handlers = makeHandlers();
+    const client = new MapWebSocket('/ws/map/mf_public', handlers, 5, 10);
+
+    FakeWebSocket.instances[0].drop(4003);
+    // MapMode's onDisconnect starts status polling. No reconnect delay.
+    expect(handlers.onDisconnect).toHaveBeenCalledTimes(1);
+    expect(handlers.onReconnecting).not.toHaveBeenCalled();
+    expect(client.isReconnecting).toBe(false);
+    await settleReconnects();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(handlers.onDisconnect).toHaveBeenCalledTimes(1);
+    client.close();
+  });
+
   it('does not retry a refusal the server will only repeat', async () => {
     const handlers = makeHandlers();
     new MapWebSocket('/ws/map/mf_gone', handlers, 5, 10);

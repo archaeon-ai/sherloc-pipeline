@@ -3,7 +3,7 @@ import { render, waitFor, fireEvent, screen } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import MapMode from './MapMode.svelte';
 import * as api from '../../lib/api';
-import { clearSessionState } from '../../lib/stores';
+import { accessMode, clearSessionState } from '../../lib/stores';
 import { mapPointSet, mapLogEntries, resetMapState } from '../../lib/stores/mapStore';
 
 const socket = vi.hoisted(() => ({ handlers: null as import('../../lib/mapWebSocket').MapWSHandlers | null }));
@@ -15,6 +15,7 @@ vi.mock('../../lib/mapWebSocket', () => ({
 }));
 
 beforeEach(() => {
+  accessMode.set('internal');
   socket.handlers = null;
   resetMapState();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
