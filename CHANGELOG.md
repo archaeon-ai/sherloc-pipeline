@@ -7,12 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.5] - 2026-10-26
+
 ### Fixed
 - Public Workbench processing allows 60 requests per minute per client, with an
   accurate `Retry-After` delay and one automatic retry shown as a temporary
   "Server busy" notice. Reverse-proxy deployments must set uvicorn's
   `FORWARDED_ALLOW_IPS` to the trusted proxy peer or bridge network so visitors
-  receive separate buckets; internal mode is unchanged.
+  receive separate buckets; internal mode is unchanged (#137).
+- **Map mode works on PDS scans.** Map fitting reads a PDS scan's own
+  laser-normalized spectra instead of looking only for dark-subtracted ones, so
+  points no longer come back "missing" (fluorescence) or fail the whole job for
+  lack of photodiode readings (Raman). PDS input is not re-normalized, and both
+  map-fit paths use the product's embedded wavelength axis and the scan's
+  excitation, as the point view does. Loupe scans are unchanged. In public mode,
+  map jobs go straight to status polling (#138).
+- **An unreadable peak CSV no longer deletes persisted peaks.** When a
+  per-point Raman peak CSV cannot be read, `persist-peaks` (and `process-new`)
+  keep that point's previously persisted peaks, still replace the other points'
+  peaks, and then fail with exit 1 naming the unreadable files instead of
+  reporting success. Bulk `persist-peaks --all` and `backfill` totals include
+  the peaks committed before the error (#139, fixes #61).
 
 ## [5.7.4] - 2026-10-18
 
