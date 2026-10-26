@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Set
 from rich.console import Console
 
 from .base import ServiceResult
-from .errors import PipelineRunError, SherlocServiceError, enrich
+from .errors import FittingError, PipelineRunError, SherlocServiceError, enrich
 from .fitting import FittingService
 from .handoff import HandoffService
 from .preprocessing import PreprocessingService
@@ -790,7 +790,7 @@ class PipelineService:
         else:
             self.logger.debug("Fluorescence fitting skipped: database not found at %s", db_path)
 
-        # Step 4/7 - Raman Peak Persistence (non-fatal) --------------------------
+        # Step 4/7 - Raman Peak Persistence (unreadable peak CSVs are fatal) -----
         persistence_metadata: Dict[str, Any] = {}
         if db_path.exists():
             self.console.print("[bold cyan]Step 4/7: Raman Peak Persistence[/bold cyan]")
@@ -807,6 +807,8 @@ class PipelineService:
                             results_dir=resolved_results_dir,
                         )
                     except Exception as exc:
+                        if isinstance(exc, FittingError) and exc.context.get("unreadable_peak_csvs"):
+                            raise
                         self.logger.warning("Raman persistence (%s) skipped: %s", domain, exc)
                         warning = f"Raman persistence ({domain}) skipped: {exc}"
                         warnings.append(warning)
