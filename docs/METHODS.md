@@ -462,7 +462,8 @@ not cover. It preserves 7–8 nm bands and the 304/325 nm doublet
 low, so it can replace a few flat-region channels at noise level.
 
 **Counts and exposure.**
-- Spectra counts (ingestion statistics, PDS validation, `/api/health`) count
+- Spectra counts (ingestion statistics, PDS validation, authenticated
+  `/api/health`) count
   measured types only.
 - The derived type is not offered as a data source in the web UI or API.
 - Downstream, the PHASE ingest reads `spectrum_type = 'dark_subtracted'` only,

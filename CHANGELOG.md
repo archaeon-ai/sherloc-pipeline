@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [5.7.6] - 2026-10-27
 
+### Security
+- **Anonymous `/api/health` no longer counts the scans and spectra tables.**
+  An unauthenticated call (container healthchecks, load balancers, the VPS
+  sync and verify-deploy scripts) now answers from a one-row `SELECT 1`
+  ping: `status` still reports a dead database as `error`, and the body is
+  status and version only, as before. The full spectra count on every
+  anonymous call took 9–16 s on the live stores, kept the public container
+  marked unhealthy (5 s healthcheck timeout) and let any visitor load the
+  public host cheaply. Authenticated health keeps its counts. No index, no
+  migration (#153).
+
 ### Removed
 - **The `/api/user/*` routes are retired** on both the team and public apps:
   preferences, classification profiles (including export and import) and
