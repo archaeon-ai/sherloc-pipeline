@@ -5,8 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import func, text
 
-from sherloc_pipeline.database.models import ScanORM, SpectrumORM
-from sherloc_pipeline.models.spectra import MEASURED_SPECTRUM_TYPES
+from sherloc_pipeline.database.models import ScanORM
 from sherloc_pipeline.web.schemas import API_SCHEMA_VERSION, HealthCheck, HealthResponse
 
 router = APIRouter(prefix="/api", tags=["health"])
@@ -40,8 +39,10 @@ def health(request: Request) -> HealthResponse:
     """System health check.
 
     An anonymous caller gets status and version only. The per-check detail
-    (counts, queue depth, config hash) needs an authenticated request; the
-    database path is never returned.
+    (queue depth, config hash) needs an authenticated request; the database
+    path is never returned. The database check is a one-row ping for every
+    caller; only the internal tier adds `n_scans` (the scans table is small),
+    which the team DB-refresh runbooks read. No caller counts spectra.
     """
     detailed = _authenticated(request)
 
@@ -52,27 +53,18 @@ def health(request: Request) -> HealthResponse:
     overall = "ok"
 
     # Database check -- use the per-request session from middleware.
-    # Anonymous probes (container healthchecks, the VPS sync and
-    # verify-deploy scripts) read only `status`, so they get a one-row ping.
-    # Counting the spectra table on every unauthenticated call is slow on the
-    # live stores and lets anyone load the public host cheaply.
+    # Every caller gets a one-row ping. Counting the spectra table was a full
+    # scan of the largest table on each call (9-16 s live), reachable by
+    # anonymous probes and, on the public tier, by any signed-up account, and
+    # the SPA polls health every 30 s per open tab (#153, #154).
     try:
         session = request.state.db
+        session.execute(text("SELECT 1")).scalar()
         if detailed:
-            n_scans = session.query(func.count(ScanORM.id)).scalar() or 0
-            n_spectra = (
-                session.query(func.count(SpectrumORM.id))
-                .filter(SpectrumORM.spectrum_type.in_(MEASURED_SPECTRUM_TYPES))
-                .scalar()
-                or 0
-            )
-            checks["database"] = HealthCheck(
-                status="ok",
-                n_scans=n_scans,
-                n_spectra=n_spectra,
-            )
-        else:
-            session.execute(text("SELECT 1")).scalar()
+            n_scans = None
+            if request.app.state.access_mode == "internal":
+                n_scans = session.query(func.count(ScanORM.id)).scalar() or 0
+            checks["database"] = HealthCheck(status="ok", n_scans=n_scans)
     except Exception as exc:
         checks["database"] = HealthCheck(status="error", error=str(exc))
         overall = "error"

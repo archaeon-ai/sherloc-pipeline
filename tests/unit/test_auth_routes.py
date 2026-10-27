@@ -341,6 +341,30 @@ def test_auth0_signed_in_health_has_checks_but_no_db_path(
     assert db["status"] == "ok" and db.get("path") is None
 
 
+
+def test_public_signed_in_health_runs_no_table_count(
+    monkeypatch, tmp_path, httpx_mock, signing_key
+):
+    """Any signed-up account gets a public-tier token, so signed-in public
+    health must not count any table (#154): a ping only, no n_scans/n_spectra."""
+    from sqlalchemy import event
+
+    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode="public")
+    httpx_mock.add_response(url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]})
+    token = _mint(signing_key, audience=AUTH0_AUDIENCE_PUBLIC, identity=[])
+    engine = get_engine(str(tmp_path / "phase_pds.db"))
+    create_all_tables(engine)
+    seen = []
+    event.listen(engine, "before_cursor_execute",
+                 lambda conn, cur, statement, *rest: seen.append(statement.lower()))
+    with TestClient(create_app(engine=engine, access_mode="public")) as client:
+        resp = client.get("/api/health", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200, resp.text
+    db = resp.json()["checks"]["database"]
+    assert db["status"] == "ok"
+    assert db.get("n_scans") is None and db.get("n_spectra") is None
+    assert not [s for s in seen if "count(" in s], seen
+
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json", "/api/config"])
 def test_dev_mode_still_serves_without_a_token(monkeypatch, tmp_path, path):
     monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
