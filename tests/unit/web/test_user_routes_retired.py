@@ -33,6 +33,10 @@ RETIRED = [
     ("GET", "/api/user/profiles/synthetic-id/export"),
     ("POST", "/api/user/profiles/import"),
     ("GET", "/api/user/classification/defaults"),
+    ("OPTIONS", "/api/user/preferences"),
+    ("TRACE", "/api/user/profiles"),
+    ("PATCH", "/api/user/"),
+    ("GET", "/api/user/synthetic/any/depth"),
 ]
 BODY = {"value": 1, "name": "synthetic", "base": "default", "overrides": []}
 
@@ -86,6 +90,27 @@ def test_retired_user_routes_are_404_and_write_nothing(monkeypatch, tmp_path, au
     with engine.connect() as conn:
         for model in (UserORM, UserPreferenceORM, ClassificationProfileORM):
             assert conn.execute(select(func.count()).select_from(model)).scalar_one() == 0
+
+
+def test_retired_user_routes_answer_cors_preflight_with_404(monkeypatch, tmp_path):
+    monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
+    monkeypatch.setenv("SHERLOC_CORS_ALLOWED_ORIGINS", "https://synthetic.example.invalid")
+    _, client = _build(tmp_path, "internal")
+    with client:
+        resp = client.options("/api/user/preferences", headers={
+            "Origin": "https://synthetic.example.invalid",
+            "Access-Control-Request-Method": "PUT",
+        })
+    assert resp.status_code == 404, resp.text
+    assert "access-control-allow-methods" not in resp.headers
+
+
+def test_neighbor_paths_are_not_retired(monkeypatch, tmp_path):
+    monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
+    _, client = _build(tmp_path, "internal")
+    with client:
+        resp = client.get("/api/username")
+    assert "spa-shell" in resp.text
 
 
 def test_retired_user_routes_are_not_in_the_schema(monkeypatch, tmp_path):

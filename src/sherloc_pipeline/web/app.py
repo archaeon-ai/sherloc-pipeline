@@ -58,6 +58,25 @@ class _RateLimiter:
             return 0
 
 
+class _RetiredUserRoutes:
+    """404 for /api/user and everything below it, whatever the method.
+
+    The preference and classification-profile routes are retired (no UI
+    called them). Answering here, outside CORS and routing, keeps every
+    method (OPTIONS and preflight included) a 404, never a 405 or the SPA
+    shell. The users / user_preferences / classification_profiles tables stay.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        path = scope["path"] if scope["type"] == "http" else ""
+        if path != "/api/user" and not path.startswith("/api/user/"):
+            return await self.app(scope, receive, send)
+        await JSONResponse(status_code=404, content={"detail": "Not Found"})(scope, receive, send)
+
+
 # Ten thousand 64-character template IDs plus bounded metadata fit in 1 MiB.
 IDENTIFY_BODY_LIMIT = 1024 * 1024
 
@@ -347,6 +366,8 @@ def create_app(
 
     # Registered last so byte admission wraps DB, auth and JSON parsing.
     app.add_middleware(_IdentifyBodyLimit)
+    # Outermost, so CORS preflight and routing never see /api/user.
+    app.add_middleware(_RetiredUserRoutes)
 
     # Register route modules
     from sherloc_pipeline.web.routes import config as config_routes
@@ -416,23 +437,6 @@ def create_app(
     app.include_router(images_routes.router, dependencies=auth_dep)
     app.include_router(jobs_routes.router, dependencies=auth_dep)
     app.include_router(map_routes.router, dependencies=auth_dep)
-
-    # /api/user/* (preferences, classification profiles, classification
-    # defaults) is retired: no UI called it, and every authenticated call
-    # wrote a users row. A 404 for every method, never the SPA shell. The
-    # users / user_preferences / classification_profiles tables stay.
-    @app.api_route(
-        "/api/user",
-        methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
-        include_in_schema=False,
-    )
-    @app.api_route(
-        "/api/user/{rest:path}",
-        methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
-        include_in_schema=False,
-    )
-    def retired_user_routes():
-        raise HTTPException(status_code=404, detail="Not Found")
 
     # WebSocket routes authenticate the handshake themselves
     # (web/auth.authenticate_websocket): browsers cannot set an
