@@ -89,6 +89,7 @@
       >Reset</button>
     </div>
   </div>
+  <p class="editor-note">Edits apply to this page only; they are lost on reload.</p>
 
   {#each domainGroups as [domain, entries]}
     <div class="domain-section">
@@ -159,6 +160,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+  }
+
+  .editor-note {
+    margin: 0;
+    font-size: 0.7rem;
+    color: var(--color-text-secondary);
   }
 
   .section-header {

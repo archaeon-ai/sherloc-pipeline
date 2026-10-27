@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **The `/api/user/*` routes are retired** on both the team and public apps:
+  preferences, classification profiles (including export and import) and
+  `/api/user/classification/defaults`. No UI called them, and every
+  authenticated preference or profile call created a `users` row. Every
+  method on `/api/user` and below (OPTIONS and CORS preflight included) now
+  returns 404, never a 405 or the SPA shell. The `users`,
+  `user_preferences` and `classification_profiles` tables, their ORM models
+  and their migrations are unchanged; no migration is needed. The unused
+  `services/classification.py` is removed with them.
+
+### Added
+- The Map mode Classification Rules editor says that edits apply to the
+  current page only and are lost on reload.
+
 ## [5.7.5] - 2026-10-26
 
 ### Fixed

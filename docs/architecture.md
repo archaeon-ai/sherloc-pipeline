@@ -45,7 +45,7 @@ package). They form three rough layers:
 | `cli/` | Typer entry point exposing every batch command. | `app.py` — 17 commands: `apply-review`, `backfill`, `backfill-masks`, `db-stats`, `extract-training`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`, `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`, `reclassify-targets`, `serve`. |
 | `api/` | Notebook-friendly functional API. Stateless wrappers around services and core, intended for Jupyter use. | `spectral.py` — `process_scan_average`, `process_subset_average`, `process_point`, `load_point_spectrum`, `load_reference_spectrum`, `plot_spectrum`, `plot_overlay`. |
 | `web/` | FastAPI app + Svelte frontend. Read-mostly exploration UI. | `app.py` (factory + middlewares), `auth.py` (CF Access JWT validation), `routes/` (11 modules), `frontend/` (Svelte). |
-| `services/` | Orchestrators that compose `core` primitives and persist results. | `pipeline.py` (the 7-step run), `handoff.py` (optional atomic delivery manifest), `ingestion.py` / `pds_ingestion.py` / `pixl_ingestion.py`, `spectral.py`, `map_fitting.py`, `spectrogram.py`, `classification.py`, `preprocessing.py`. |
+| `services/` | Orchestrators that compose `core` primitives and persist results. | `pipeline.py` (the 7-step run), `handoff.py` (optional atomic delivery manifest), `ingestion.py` / `pds_ingestion.py` / `pixl_ingestion.py`, `spectral.py`, `map_fitting.py`, `spectrogram.py`, `preprocessing.py`. |
 | `core/` | Pure algorithmic primitives. Should not depend on `services/`. | `preprocessing.py`, `baseline.py`, `fitting.py` (Raman cm⁻¹), `fluor_fitting.py` / `fluor_id.py` / `fluor_detection.py` (fluorescence in nm), `calibration.py`, `r1_extraction.py`, `r123_stitching.py`, `mineral_id.py`, `pds_client.py`, `pds_parsers.py`. |
 | `models/` | Pydantic DTOs + a small type registry. Shared between CLI/API/web/services. | `spectra.py`, `fitting.py`, `instrument.py`, `pds.py`, `pixl.py`, `spectrogram.py`. |
 | `database/` | SQLAlchemy ORM, connection management, Alembic glue. | `models.py` (17 ORMs), `connection.py` (`get_engine`, `init_pds_database`), `pixl_models.py`. |
@@ -83,6 +83,12 @@ with full provenance (method label, model sha256, per-region tau).
 Satellite to `spectra` with CASCADE lifecycle; `UNIQUE(spectrum_id, method)`
 prevents duplicate runs. The web `?despike=true` toggle reads these stored
 masks; no model inference ever runs on the serving host.
+
+`users`, `user_preferences` and `classification_profiles` have no writer:
+the `/api/user/*` routes that created them are retired (they now
+return 404). The tables and their migrations stay so existing databases,
+the nightly pull and backups keep their rows. `map_fit_cache` is read by
+`routes/map.py` but never written.
 
 `fitted_peaks.fit_modality` discriminates four peak domains:
 `minerals`, `organics`, `hydration`, `fluorescence`. Raman peaks carry
@@ -145,7 +151,6 @@ FastAPI app (uvicorn, 127.0.0.1:8000)
       ├── /api/pds                (pds.py)
       ├── /api/jobs               (jobs.py — generic job queue)
       ├── /api/map                (map.py — Map Mode + WebSocket)
-      ├── /api/user               (user.py — preferences, classification profiles)
       └── /api/config             (config.py)
 ```
 
