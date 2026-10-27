@@ -355,7 +355,6 @@ def create_app(
     from sherloc_pipeline.web.routes import jobs as jobs_routes
     from sherloc_pipeline.web.routes import map as map_routes
     from sherloc_pipeline.web.routes import pds as pds_routes
-    from sherloc_pipeline.web.routes import user as user_routes
     from sherloc_pipeline.web.routes import plots as plots_routes
     from sherloc_pipeline.web.routes import processing as processing_routes
     from sherloc_pipeline.web.routes import scans as scan_routes
@@ -418,9 +417,22 @@ def create_app(
     app.include_router(jobs_routes.router, dependencies=auth_dep)
     app.include_router(map_routes.router, dependencies=auth_dep)
 
-    # user_routes resolves the identity itself via _resolve_user; the
-    # router-level dependency makes an anonymous request a 401 first.
-    app.include_router(user_routes.router, dependencies=auth_dep)
+    # /api/user/* (preferences, classification profiles, classification
+    # defaults) is retired: no UI called it, and every authenticated call
+    # wrote a users row. A 404 for every method, never the SPA shell. The
+    # users / user_preferences / classification_profiles tables stay.
+    @app.api_route(
+        "/api/user",
+        methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
+    @app.api_route(
+        "/api/user/{rest:path}",
+        methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
+    def retired_user_routes():
+        raise HTTPException(status_code=404, detail="Not Found")
 
     # WebSocket routes authenticate the handshake themselves
     # (web/auth.authenticate_websocket): browsers cannot set an

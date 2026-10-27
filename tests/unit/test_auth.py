@@ -222,7 +222,7 @@ def test_missing_jwt_raises_autherror(token):
 # ---------------------------------------------------------------------------
 
 def test_dev_mode_bypasses_validation(monkeypatch, tmp_path):
-    """SHERLOC_AUTH_MODE=dev short-circuits validation in routes/user.py."""
+    """SHERLOC_AUTH_MODE=dev short-circuits validation on data routes."""
     monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
 
     from fastapi.testclient import TestClient
@@ -235,12 +235,9 @@ def test_dev_mode_bypasses_validation(monkeypatch, tmp_path):
 
     app = create_app(engine=engine)
     with TestClient(app) as client:
-        # No CF JWT header — anonymous would normally return [].
+        # No CF JWT header — anonymous would normally be a 401.
         # Under dev mode this resolves to dev@local instead.
-        resp = client.put(
-            "/api/user/preferences/test_key",
-            json={"value": 42},
-        )
+        resp = client.get("/api/scans")
         assert resp.status_code == 200, resp.text
 
 
@@ -334,7 +331,7 @@ def test_fetch_failure_no_cache_returns_503_at_route(monkeypatch, tmp_path, http
 
     with TestClient(app) as client:
         resp = client.get(
-            "/api/user/preferences",
+            "/api/scans",
             headers={"Cf-Access-Jwt-Assertion": token},
         )
         assert resp.status_code == 503, resp.text

@@ -178,10 +178,8 @@ def test_auth0_with_team_member_role_grants_access(
     token = _mint(signing_key, identity=["phase:team-member"])
 
     with _build_app(tmp_path) as client:
-        resp = client.put(
-            "/api/user/preferences/test_key",
-            json={"value": 7},
-            headers={"Authorization": f"Bearer {token}"},
+        resp = client.get(
+            "/api/scans", headers={"Authorization": f"Bearer {token}"}
         )
     assert resp.status_code == 200, resp.text
 
@@ -204,10 +202,8 @@ def test_auth0_with_unrelated_role_on_internal_host_is_forbidden(
     token = _mint(signing_key, identity=["phase:other"])
 
     with _build_app(tmp_path) as client:
-        resp = client.put(
-            "/api/user/preferences/test_key",
-            json={"value": 7},
-            headers={"Authorization": f"Bearer {token}"},
+        resp = client.get(
+            "/api/scans", headers={"Authorization": f"Bearer {token}"}
         )
     assert resp.status_code == 403, resp.text
 
@@ -227,10 +223,8 @@ def test_auth0_with_empty_identity_is_forbidden(
     token = _mint(signing_key, identity=[])
 
     with _build_app(tmp_path) as client:
-        resp = client.put(
-            "/api/user/preferences/test_key",
-            json={"value": 7},
-            headers={"Authorization": f"Bearer {token}"},
+        resp = client.get(
+            "/api/scans", headers={"Authorization": f"Bearer {token}"}
         )
     assert resp.status_code == 403, resp.text
 
@@ -266,8 +260,7 @@ def test_audience_cross_rejected_at_public_host(
 
     with TestClient(app) as client:
         resp = client.get(
-            "/api/user/preferences",
-            headers={"Authorization": f"Bearer {token}"},
+            "/api/scans", headers={"Authorization": f"Bearer {token}"}
         )
     # Audience mismatch → AuthError → 401 (the cross-deployment isolation
     # boundary; the role gate at 403 never fires).
@@ -283,7 +276,7 @@ def test_audience_cross_rejected_at_public_host(
 @pytest.mark.parametrize("access_mode", ["internal", "public"])
 @pytest.mark.parametrize(
     "path",
-    ["/docs", "/openapi.json", "/api/config", "/api/user/preferences", "/api/user/profiles"],
+    ["/docs", "/openapi.json", "/api/config"],
 )
 def test_auth0_signed_out_request_is_rejected(monkeypatch, tmp_path, path, access_mode):
     _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode=access_mode)
@@ -348,8 +341,7 @@ def test_auth0_signed_in_health_has_checks_but_no_db_path(
     assert db["status"] == "ok" and db.get("path") is None
 
 
-@pytest.mark.parametrize("path", ["/docs", "/openapi.json", "/api/config", "/api/user/preferences",
-                                  "/api/user/profiles"])
+@pytest.mark.parametrize("path", ["/docs", "/openapi.json", "/api/config"])
 def test_dev_mode_still_serves_without_a_token(monkeypatch, tmp_path, path):
     monkeypatch.setenv("SHERLOC_AUTH_MODE", "dev")
     with _build_app(tmp_path) as client:
@@ -423,12 +415,12 @@ def test_api_config_in_dev_mode(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_auth0_token_without_email_succeeds_on_user_route(
+def test_auth0_token_without_email_is_authorized(
     monkeypatch, tmp_path, httpx_mock, signing_key
 ):
     """Per spec §13.1 + B.12 F4: Auth0 access tokens commonly omit email
     (it lives on the ID token). A token with sub + role but no email
-    must still resolve a user record and authorise /api/user/* calls.
+    must still be authorized on the data API.
     """
     _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL)
     httpx_mock.add_response(
@@ -437,10 +429,8 @@ def test_auth0_token_without_email_succeeds_on_user_route(
     token = _mint(signing_key, identity=["phase:team-member"], email=None)
 
     with _build_app(tmp_path) as client:
-        resp = client.put(
-            "/api/user/preferences/test_key",
-            json={"value": 42},
-            headers={"Authorization": f"Bearer {token}"},
+        resp = client.get(
+            "/api/scans", headers={"Authorization": f"Bearer {token}"}
         )
     assert resp.status_code == 200, resp.text
 
@@ -610,46 +600,6 @@ def test_invalid_token_failure_log_omits_token_and_pyjwt_text(
         assert needle not in log_text, f"PyJWT detail '{needle}' leaked"
 
 
-def test_auth0_two_tokens_with_same_sub_resolve_same_user(
-    monkeypatch, tmp_path, httpx_mock, signing_key
-):
-    """Two requests with the same sub must hit the SAME user row, even
-    when one carries email and the other does not. Prevents a regression
-    where Auth0 access tokens (sub-only) and CF Access tokens (sub +
-    email) resolve to different user records during the parallel-run
-    window.
-    """
-    _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_INTERNAL)
-    httpx_mock.add_response(
-        url=JWKS_URL, json={"keys": [_public_jwk(signing_key, kid="kid-1")]}
-    )
-
-    with _build_app(tmp_path) as client:
-        # First request: token WITH email; sets a preference.
-        token_with_email = _mint(
-            signing_key, identity=["phase:team-member"], email="alice@example.com"
-        )
-        r1 = client.put(
-            "/api/user/preferences/k1",
-            json={"value": 1},
-            headers={"Authorization": f"Bearer {token_with_email}"},
-        )
-        assert r1.status_code == 200, r1.text
-
-        # Second request: token WITHOUT email but same sub; must read the
-        # SAME user's preferences (single record per sub).
-        token_no_email = _mint(
-            signing_key, identity=["phase:team-member"], email=None
-        )
-        r2 = client.get(
-            "/api/user/preferences",
-            headers={"Authorization": f"Bearer {token_no_email}"},
-        )
-        assert r2.status_code == 200, r2.text
-        prefs = {p["key"]: p["value"] for p in r2.json()["preferences"]}
-        assert prefs.get("k1") == 1, prefs
-
-
 # ---------------------------------------------------------------------------
 # §2.6.1 — public-mode route gate accepts any valid token
 # ---------------------------------------------------------------------------
@@ -672,10 +622,8 @@ def test_public_mode_accepts_any_valid_token(
         identity=[],
     )
     with _build_app(tmp_path) as client:
-        resp = client.put(
-            "/api/user/preferences/test_key",
-            json={"value": 7},
-            headers={"Authorization": f"Bearer {token}"},
+        resp = client.get(
+            "/api/scans", headers={"Authorization": f"Bearer {token}"}
         )
     assert resp.status_code == 200, resp.text
 
