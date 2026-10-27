@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from sherloc_pipeline.database.models import ScanORM, SpectrumORM
 from sherloc_pipeline.models.spectra import MEASURED_SPECTRUM_TYPES
@@ -51,21 +51,28 @@ def health(request: Request) -> HealthResponse:
     checks = {}
     overall = "ok"
 
-    # Database check -- use the per-request session from middleware
+    # Database check -- use the per-request session from middleware.
+    # Anonymous probes (container healthchecks, the VPS sync and
+    # verify-deploy scripts) read only `status`, so they get a one-row ping.
+    # Counting the spectra table on every unauthenticated call is slow on the
+    # live stores and lets anyone load the public host cheaply.
     try:
         session = request.state.db
-        n_scans = session.query(func.count(ScanORM.id)).scalar() or 0
-        n_spectra = (
-            session.query(func.count(SpectrumORM.id))
-            .filter(SpectrumORM.spectrum_type.in_(MEASURED_SPECTRUM_TYPES))
-            .scalar()
-            or 0
-        )
-        checks["database"] = HealthCheck(
-            status="ok",
-            n_scans=n_scans,
-            n_spectra=n_spectra,
-        )
+        if detailed:
+            n_scans = session.query(func.count(ScanORM.id)).scalar() or 0
+            n_spectra = (
+                session.query(func.count(SpectrumORM.id))
+                .filter(SpectrumORM.spectrum_type.in_(MEASURED_SPECTRUM_TYPES))
+                .scalar()
+                or 0
+            )
+            checks["database"] = HealthCheck(
+                status="ok",
+                n_scans=n_scans,
+                n_spectra=n_spectra,
+            )
+        else:
+            session.execute(text("SELECT 1")).scalar()
     except Exception as exc:
         checks["database"] = HealthCheck(status="error", error=str(exc))
         overall = "error"
