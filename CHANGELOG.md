@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.6] - 2026-10-27
+
 ### Removed
 - **The `/api/user/*` routes are retired** on both the team and public apps:
   preferences, classification profiles (including export and import) and
@@ -16,11 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns 404, never a 405 or the SPA shell. The `users`,
   `user_preferences` and `classification_profiles` tables, their ORM models
   and their migrations are unchanged; no migration is needed. The unused
-  `services/classification.py` is removed with them.
+  `services/classification.py` is removed with them (#150).
 
 ### Added
 - The Map mode Classification Rules editor says that edits apply to the
-  current page only and are lost on reload.
+  current page only and are lost on reload (#150).
+
+### Fixed
+- **An unreadable stored fluorescence spectrum no longer deletes that
+  point's persisted fluorescence peaks.** The point's existing rows are kept,
+  readable points are still committed, and the run then fails with exit 1,
+  as #139 does for Raman (#141).
 
 ## [5.7.5] - 2026-10-26
 
