@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **`/api/health` never counts the spectra table, for any caller (#154).**
+  5.7.6 removed the counts for anonymous calls only; a signed-in call still
+  scanned the whole spectra table, any signed-up account can sign in on the
+  public tier, and the web app polls health every 30 s per open tab. Every
+  call now pings the database with `SELECT 1`. The response shape is
+  unchanged, but `checks.database.n_spectra` is now always `null`. Signed-in
+  calls on the team tier still report `n_scans` (a small table, read by the
+  DB-refresh runbooks); on the public tier `n_scans` is `null` too.
+
 ## [5.7.6] - 2026-10-27
 
 ### Security
