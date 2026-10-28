@@ -346,7 +346,7 @@ def test_public_signed_in_health_runs_no_table_count(
     monkeypatch, tmp_path, httpx_mock, signing_key
 ):
     """Any signed-up account gets a public-tier token, so signed-in public
-    health must not count any table (#154): a ping only, no n_scans/n_spectra."""
+    health must not count any table (#154): a ping only; n_scans and n_spectra are null."""
     from sqlalchemy import event
 
     _set_auth0_env(monkeypatch, audience=AUTH0_AUDIENCE_PUBLIC, access_mode="public")
@@ -362,7 +362,9 @@ def test_public_signed_in_health_runs_no_table_count(
     assert resp.status_code == 200, resp.text
     db = resp.json()["checks"]["database"]
     assert db["status"] == "ok"
-    assert db.get("n_scans") is None and db.get("n_spectra") is None
+    # The fields stay in the response shape (nullable); their values are gone.
+    assert "n_scans" in db and db["n_scans"] is None
+    assert "n_spectra" in db and db["n_spectra"] is None
     assert not [s for s in seen if "count(" in s], seen
 
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json", "/api/config"])

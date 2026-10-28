@@ -119,6 +119,7 @@ async def test_detailed_health_never_counts_spectra(client, test_engine):
     finally:
         stop()
     db = resp.json()["checks"]["database"]
-    assert db["status"] == "ok" and db["n_scans"] == 1 and db.get("n_spectra") is None
+    assert db["status"] == "ok" and db["n_scans"] == 1
+    assert "n_spectra" in db and db["n_spectra"] is None
     counts = [s.lower() for s in seen if "count(" in s.lower()]
     assert counts and all("from scans" in s and "spectra" not in s for s in counts), counts
