@@ -2509,6 +2509,7 @@ def backfill_cmd(
         4. fit-fluor --all (fluorescence)
 
     Each domain is idempotent: re-running replaces only that domain's peaks.
+    Domains always run in the order above, whatever the order given to --domains.
 
     Examples:
         # Backfill all domains
@@ -2542,6 +2543,8 @@ def backfill_cmd(
                     console.print(f"[red]Invalid domain: {d}[/red]")
                     console.print(f"  Valid options: {', '.join(all_domains)}")
                     raise typer.Exit(code=1)
+            # Raman first: fluorescence co-occurrence scoring reads the Raman rows.
+            selected = [d for d in all_domains if d in selected]
         else:
             selected = all_domains
 

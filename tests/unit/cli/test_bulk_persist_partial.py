@@ -94,3 +94,22 @@ def test_fluor_backfill_counts_partially_committed_rows(fluor_bulk):
     assert exit_code == 1
     assert result["total_peaks"] == 5
     assert result["domain_stats"]["fluorescence"] == {"peaks": 5, "errors": 1}
+
+
+def test_backfill_runs_raman_domains_before_fluorescence(fluor_bulk, monkeypatch):
+    # Fluorescence co-occurrence scoring reads the Raman rows, so they go first (#164).
+    calls = []
+    persist, fit = FittingService.persist_raman_peaks, FittingService.fit_fluorescence
+
+    def record_persist(self, sol, target, scan, domain, **kw):
+        calls.append(domain)
+        return persist(self, sol, target, scan, domain, **kw)
+
+    def record_fit(self, sol, target, scan, **kw):
+        calls.append("fluorescence")
+        return fit(self, sol, target, scan, **kw)
+
+    monkeypatch.setattr(FittingService, "persist_raman_peaks", record_persist)
+    monkeypatch.setattr(FittingService, "fit_fluorescence", record_fit)
+    fluor_bulk("backfill", "--domains", "fluorescence,hydration,minerals")
+    assert calls == ["minerals"] * 2 + ["hydration"] * 2 + ["fluorescence"] * 2

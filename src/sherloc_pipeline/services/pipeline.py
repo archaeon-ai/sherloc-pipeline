@@ -754,48 +754,12 @@ class PipelineService:
                     stage_extra.update(inputs_result)
                     metadata["fluorescence_inputs"] = inputs_result
 
-        # Step 3/7 - Fluorescence Fitting + Persistence (unreadable spectra are fatal) --
-        fluor_metadata: Dict[str, Any] = {}
-        if db_path.exists():
-            self.console.print("[bold cyan]Step 3/7: Fluorescence Fitting + Persistence[/bold cyan]")
-            fitting_service._database_path = db_path
-            with capture_stage("fluorescence_fitting") as (stage_artifacts, stage_warnings, stage_extra):
-                try:
-                    fluor_result = fitting_service.fit_fluorescence(
-                        sol=sol,
-                        target=target,
-                        scan=scan,
-                        data_dir=resolved_data_dir,
-                        results_dir=resolved_results_dir,
-                        use_despiked_inputs=fluor_inputs_ok,
-                        despiked_row_ids=despiked_row_ids,
-                    )
-                except Exception as exc:
-                    if isinstance(exc, FittingError) and exc.context.get("unreadable_spectra"):
-                        raise
-                    self.logger.warning("Fluorescence fitting skipped: %s", exc)
-                    warning = f"Fluorescence fitting skipped: {exc}"
-                    warnings.append(warning)
-                    stage_warnings.append(warning)
-                    stage_extra["exception"] = str(exc)
-                else:
-                    if fluor_result.warnings:
-                        warnings.extend(fluor_result.warnings)
-                        stage_warnings.extend(fluor_result.warnings)
-                    fluor_metadata = fluor_result.metadata or {}
-                    stage_extra.update(fluor_metadata)
-                    peak_count = fluor_metadata.get("peaks_inserted", 0)
-                    self.console.print(
-                        f"  [green]Fluorescence: fitted and persisted {peak_count} peaks[/green]"
-                    )
-            metadata["fluorescence"] = fluor_metadata
-        else:
-            self.logger.debug("Fluorescence fitting skipped: database not found at %s", db_path)
-
-        # Step 4/7 - Raman Peak Persistence (unreadable peak CSVs are fatal) -----
+        # Step 3/7 - Raman Peak Persistence (unreadable peak CSVs are fatal) -----
+        # Runs before fluorescence: fit_fluorescence scores co-occurrence
+        # against the Raman rows in the DB, which must be this run's.
         persistence_metadata: Dict[str, Any] = {}
         if db_path.exists():
-            self.console.print("[bold cyan]Step 4/7: Raman Peak Persistence[/bold cyan]")
+            self.console.print("[bold cyan]Step 3/7: Raman Peak Persistence[/bold cyan]")
             fitting_service._database_path = db_path
             with capture_stage("raman_persistence") as (stage_artifacts, stage_warnings, stage_extra):
                 for domain in ["minerals", "organics", "hydration"]:
@@ -830,6 +794,44 @@ class PipelineService:
             fitting_metadata["persistence"] = persistence_metadata
         else:
             self.logger.debug("Raman persistence skipped: database not found at %s", db_path)
+
+        # Step 4/7 - Fluorescence Fitting + Persistence (unreadable spectra are fatal) --
+        fluor_metadata: Dict[str, Any] = {}
+        if db_path.exists():
+            self.console.print("[bold cyan]Step 4/7: Fluorescence Fitting + Persistence[/bold cyan]")
+            fitting_service._database_path = db_path
+            with capture_stage("fluorescence_fitting") as (stage_artifacts, stage_warnings, stage_extra):
+                try:
+                    fluor_result = fitting_service.fit_fluorescence(
+                        sol=sol,
+                        target=target,
+                        scan=scan,
+                        data_dir=resolved_data_dir,
+                        results_dir=resolved_results_dir,
+                        use_despiked_inputs=fluor_inputs_ok,
+                        despiked_row_ids=despiked_row_ids,
+                    )
+                except Exception as exc:
+                    if isinstance(exc, FittingError) and exc.context.get("unreadable_spectra"):
+                        raise
+                    self.logger.warning("Fluorescence fitting skipped: %s", exc)
+                    warning = f"Fluorescence fitting skipped: {exc}"
+                    warnings.append(warning)
+                    stage_warnings.append(warning)
+                    stage_extra["exception"] = str(exc)
+                else:
+                    if fluor_result.warnings:
+                        warnings.extend(fluor_result.warnings)
+                        stage_warnings.extend(fluor_result.warnings)
+                    fluor_metadata = fluor_result.metadata or {}
+                    stage_extra.update(fluor_metadata)
+                    peak_count = fluor_metadata.get("peaks_inserted", 0)
+                    self.console.print(
+                        f"  [green]Fluorescence: fitted and persisted {peak_count} peaks[/green]"
+                    )
+            metadata["fluorescence"] = fluor_metadata
+        else:
+            self.logger.debug("Fluorescence fitting skipped: database not found at %s", db_path)
 
         metadata["fitting"] = fitting_metadata
 

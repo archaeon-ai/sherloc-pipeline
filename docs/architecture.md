@@ -104,11 +104,12 @@ canonical batch path. Seven steps:
 1. **Preprocessing** — despike, baseline, background subtraction.
 2. **Raman fitting** (cm⁻¹ space) for `minerals`, `organics`,
    `hydration`. F-test or AICc model selection.
-3. **Fluorescence fitting** (nm space) — agnostic AICc default, or
+3. **Raman peak persistence** for the three Raman domains.
+4. **Fluorescence fitting** (nm space) — agnostic AICc default, or
    an optional hypothesis-driven strategy with falling-back-to-agnostic
    when constrained models score poorly. Doublet detection only fires
    in the Group-1 wavelength window (Ce³⁺ in anhydrite at Berry Hollow).
-4. **Raman peak persistence** for the three Raman domains.
+   Co-occurrence confidence is scored against the Raman peaks from step 3.
 5. **Per-scan averages** (line / detail trim percentiles differ by scan
    type — line scans 4 %, detail scans 2 %).
 6. **Spatial overlay rendering** on ACI context images.
