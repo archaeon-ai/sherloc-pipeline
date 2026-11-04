@@ -499,6 +499,35 @@ class TestZeroPeakCSVs:
             assert len(rows[point]) == 1
             assert rows[point][0]["center_cm1"] == run.new_centers[point]
 
+    def test_zero_byte_csv_stays_loud(self, synthetic_peak_run):
+        # An interrupted write can leave a zero-byte file; it is not a zero-peak table.
+        run = synthetic_peak_run
+        truncated = run.csv_paths[1]
+        truncated.write_bytes(b"")
+
+        with pytest.raises(FittingError) as exc_info:
+            _persist_synthetic_run(run)
+
+        assert exc_info.value.context["unreadable_peak_csvs"] == [{
+            "point_index": 1, "file_name": truncated.name, "exception_type": "EmptyDataError",
+        }]
+        assert _snapshot_peak_rows(run.database_path)[1] == run.previous[1]
+
+    @pytest.mark.parametrize("synthetic_peak_run", ["organics"], indirect=True)
+    def test_truncated_dg_with_valid_g_stays_loud(self, synthetic_peak_run):
+        # DG is preferred over G for a point; a truncated DG must not clear the point.
+        run = synthetic_peak_run
+        dg = run.csv_paths[1]
+        g = dg.with_name(dg.name.replace("_organics_dg_peaks", "_organics_g_peaks"))
+        g.write_bytes(dg.read_bytes())
+        dg.write_bytes(b"")
+
+        with pytest.raises(FittingError) as exc_info:
+            _persist_synthetic_run(run)
+
+        assert exc_info.value.context["unreadable_peak_csvs"][0]["file_name"] == dg.name
+        assert _snapshot_peak_rows(run.database_path)[1] == run.previous[1]
+
     def test_empty_data_error_on_non_blank_csv_stays_loud(self, synthetic_peak_run, monkeypatch):
         run = synthetic_peak_run
         suspect = run.csv_paths[1]

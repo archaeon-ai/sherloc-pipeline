@@ -90,10 +90,11 @@ def _to_bool_safe(value) -> bool:
 
 
 def _is_blank_peak_table(csv_path: Path) -> bool:
-    """True when a peak CSV holds only whitespace: the zero-peak table that
-    ``save_peak_table`` wrote before it emitted a header."""
+    """True when a peak CSV is exactly the zero-peak table ``save_peak_table``
+    wrote before it emitted a header: one line terminator. A zero-byte file is
+    not one (an interrupted write can leave it), so it stays unreadable."""
     try:
-        return not csv_path.read_bytes().strip()
+        return csv_path.read_bytes() in (b"\n", b"\r\n")
     except OSError:
         return False
 
@@ -2811,8 +2812,8 @@ class FittingService:
                         peaks_df = pd.read_csv(csv_path)
                     except pd.errors.EmptyDataError:
                         # A zero-peak point written before peak tables carried a
-                        # header is a blank file. The point found no peaks, so it
-                        # stays in the delete scope and gets zero rows.
+                        # header is a lone line terminator. The point found no
+                        # peaks, so it stays in the delete scope and gets zero rows.
                         if _is_blank_peak_table(csv_path):
                             continue
                         unreadable_peak_csvs.append({

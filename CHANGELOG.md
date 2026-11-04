@@ -23,9 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and no header, which `pd.read_csv` cannot parse. Since unreadable peak CSVs
   fail loudly (5.7.5), Raman persistence raised on almost every scan and
   Steps 5–7 never ran. `save_peak_table` now writes a header-only table for
-  a zero-peak point. Persistence reads a blank peak CSV left by earlier runs
-  as zero peaks, so that point's rows are cleared as before 5.7.5. Any other
-  unreadable peak CSV still fails loudly.
+  a zero-peak point. Persistence reads the one-newline peak CSV that earlier
+  runs left as zero peaks, so that point's rows are cleared as before 5.7.5.
+  Any other unreadable peak CSV, including a zero-byte file from an
+  interrupted write, still fails loudly.
 
 ## [5.7.6] - 2026-10-27
 
