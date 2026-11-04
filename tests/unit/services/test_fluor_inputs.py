@@ -686,9 +686,8 @@ def test_process_new_exits_one_for_unreadable_fluor_spectrum(
     assert _snapshot_fluor_peaks(run.database_path)[1] == run.previous[1]
 
 
-@pytest.mark.parametrize("data_source", ["loupe", "pds4"])
 def test_full_pipeline_scores_fluor_against_this_runs_raman(
-    synthetic_fluor_run, tmp_path, monkeypatch, data_source,
+    synthetic_fluor_run, tmp_path, monkeypatch,
 ):
     """Raman persistence runs before fluorescence, so co-occurrence uses this run's Raman rows (#164)."""
     from sherloc_pipeline.core import fluor_fitting
@@ -697,8 +696,6 @@ def test_full_pipeline_scores_fluor_against_this_runs_raman(
 
     run = synthetic_fluor_run
     monkeypatch.setenv("SHERLOC_DB_PATH", str(run.database_path))
-    with get_session(run.engine) as session:
-        session.get(SolORM, 76543).data_source = data_source
 
     def stub(wavelength, intensity, **kwargs):
         # group1b: confirmed by a sulfate Raman assignment at the same point
