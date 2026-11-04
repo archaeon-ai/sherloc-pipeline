@@ -411,13 +411,15 @@ def laser_normalize_enabled(config: Any) -> bool:
     return bool(value)
 
 
-def summarize_inputs(chosen: Dict[str, Dict[str, Any]], normalized: List[str],
-                     total_points: int) -> Dict[str, Any]:
+def summarize_inputs(
+    chosen: Dict[str, Dict[str, Any]], normalized: List[str], total_points: int,
+    *, spectrum_type: str = PARENT_SPECTRUM_TYPE,
+) -> Dict[str, Any]:
     """Metadata recording which input each fit used."""
     despiked = sum(1 for v in chosen.values() if v["despiked"])
     return {
         "input_spectrum_type": DESPIKED_SPECTRUM_TYPE if despiked == len(chosen) and chosen
-        else ("mixed" if despiked else PARENT_SPECTRUM_TYPE),
+        else ("mixed" if despiked else spectrum_type),
         "points_despiked": despiked,
         "points_fallback": len(chosen) - despiked,
         "points_laser_normalized": len(normalized),

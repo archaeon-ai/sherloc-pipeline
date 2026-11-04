@@ -757,3 +757,51 @@ def test_full_pipeline_scores_fluor_against_this_runs_raman(
     assert {p["mineral_assignment"] for p in peaks} == {"group1b"}
     assert {p["assignment_confidence"] for p in peaks} == {1.3}
     assert calls == ["minerals", "organics", "hydration", "fluorescence"]
+
+
+@pytest.mark.parametrize("photodiodes", [None, (1.0, 2.0, 4.0)])
+def test_pds_scan_fits_normalized_inputs_without_scaling_again(
+    synthetic_fluor_run, monkeypatch, photodiodes,
+):
+    from unittest.mock import Mock
+
+    from sherloc_pipeline.core import fluor_fitting
+    from sherloc_pipeline.core.r123_stitching import stitch_r123_spectrum
+
+    run = synthetic_fluor_run
+    with get_session(run.engine) as session:
+        session.query(SolORM).one().data_source = "pds4"
+        session.query(ScanORM).one().data_source = "pds4"
+        for point in session.query(ScanPointORM):
+            point.photodiode_mean = None if photodiodes is None else photodiodes[point.point_index]
+        for spectrum in session.query(SpectrumORM):
+            spectrum.spectrum_type = "laser_normalized"
+            spectrum.processing_level = "normalized"
+
+    run.fitting.context.config.fluorescence_fitting["laser_normalize"] = True
+    fit = Mock(wraps=fluor_fitting.fit_fluorescence_spectrum)
+    monkeypatch.setattr(fluor_fitting, "fit_fluorescence_spectrum", fit)
+
+    result = _fit_synthetic_fluor(run)
+
+    assert result.metadata["points_fitted"] == 3
+    assert fit.call_count == 3
+    for index, call in enumerate(fit.call_args_list):
+        measured = np.full(2148, 23.0 + index)
+        np.testing.assert_array_equal(
+            call.args[1], stitch_r123_spectrum(measured, measured, measured),
+        )
+        assert call.kwargs["saturation_threshold"] == 60000.0
+    assert result.metadata["input"]["input_spectrum_type"] == "laser_normalized"
+    assert result.metadata["input"]["laser_normalize"] is False
+    assert result.metadata["input"]["points_laser_normalized"] == 0
+    assert not any("photodiode" in w or "backfill" in w for w in result.warnings)
+    with get_session(run.engine) as session:
+        peaks = session.query(FittedPeakORM, SpectrumORM).join(
+            SpectrumORM, FittedPeakORM.spectrum_id == SpectrumORM.id,
+        ).all()
+        assert len(peaks) == 3
+        for peak, spectrum in peaks:
+            assert peak.center_nm == 314.0
+            assert spectrum.region == "R2"
+            assert spectrum.spectrum_type == "laser_normalized"
