@@ -15,6 +15,7 @@ Provides commands:
 """
 
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -2675,6 +2676,203 @@ def backfill_cmd(
         else:
             console.print(f"\n[red]Backfill failed: {e}[/red]")
         sys.exit(1)
+
+
+@app.command("refit")
+def refit_cmd(
+    ctx: typer.Context,
+    database: Optional[Path] = typer.Option(
+        None, "--database", "-d",
+        help="Database path (defaults to $SHERLOC_DB_PATH, else ./phase.db)",
+    ),
+    data_dir: Optional[Path] = typer.Option(
+        None, "--data-dir", help="Data directory (default: config paths.data_root, or $SHERLOC_DATA_DIR)",
+    ),
+    results_dir: Optional[Path] = typer.Option(
+        None, "--results-dir", help="Results directory (default: config paths.results_root, or $SHERLOC_RESULTS_DIR)",
+    ),
+    science: bool = typer.Option(False, "--science", help="Mars targets + cal meteorite (SAU-008) only"),
+    no_engineering: bool = typer.Option(False, "--no-engineering", help="Exclude engineering scans"),
+    journal: Optional[Path] = typer.Option(
+        None, "--journal",
+        help="Journal for a new batch (default: <results>/refit-<UTC time>.jsonl). Must not exist.",
+    ),
+    resume: Optional[Path] = typer.Option(
+        None, "--resume",
+        help="Continue the batch in this journal; skips the scans it lists.",
+    ),
+    trim_pct: Optional[float] = typer.Option(
+        None, "--trim-pct",
+        help="Override trim %% per tail (e.g., 8 for 8%%). Default: config.yaml (2%%).",
+    ),
+    model_selection: Optional[str] = typer.Option(
+        None, "--model-selection",
+        help="Peak-count model selection: 'aicc' or 'ftest'. Default: config.yaml (aicc).",
+    ),
+    despike_method: Optional[DespikeMethod] = typer.Option(
+        None, "--despike-method",
+        help="Cosmic-ray despike method: 'ml', 'modz', or 'none'. Default: config.yaml (ml).",
+    ),
+    allow_missing_background: bool = typer.Option(
+        False, "--allow-missing-background",
+        help="Run without background subtraction on averages when no background spectrum resolves.",
+    ),
+):
+    """Run full-pipeline on every selected scan in the database, one at a time.
+
+    Each scan that completes is appended to the journal. A scan counts as
+    complete only when every pipeline stage ran, Raman persistence ran for
+    all three domains and found a stored spectrum for every peak CSV,
+    fluorescence found R1-R3 spectra for at least one point, and no stage recorded
+    an error. Warnings alone do not fail a scan.
+
+    --resume continues a stopped batch. It refuses unless the database,
+    data and results directories, scan selection, effective configuration
+    (config.yaml plus overrides), installed code, dependency versions and
+    output-affecting SHERLOC_* environment variables are the same as when
+    the batch started. It skips only the scans the journal lists; failed and
+    unfinished scans run again. Do not run other writers against the
+    database during a batch.
+
+    Exit code 1 if any scan failed.
+
+    Examples:
+        sherloc refit --science
+        sherloc refit --science --journal refit-science.jsonl
+        sherloc refit --science --resume refit-science.jsonl
+    """
+    import contextlib
+
+    from sherloc_pipeline.services.config import get_runtime_config
+    from sherloc_pipeline.services.refit_journal import (
+        BatchJournal, JournalError, batch_identity, config_digest, pending, run_failures,
+    )
+
+    json_mode = (ctx.obj or {}).get("json", False)
+    if json_mode:
+        import logging as _logging
+        _logging.basicConfig(stream=sys.stderr)
+    out = Console(stderr=json_mode)
+
+    def fail(message: str) -> None:
+        if json_mode:
+            import json as json_mod
+            err = CLIError(
+                pipeline_version=_pipeline_version,
+                error_type="RefitError",
+                message=message,
+                exit_code=1,
+            )
+            print(json_mod.dumps(err.model_dump(), default=str), file=sys.stderr)
+        else:
+            out.print(f"[red]{message}[/red]")
+        raise typer.Exit(code=1)
+
+    if journal is not None and resume is not None:
+        fail("--journal and --resume are mutually exclusive")
+    db_path = Path(database or os.environ.get("SHERLOC_DB_PATH") or "./phase.db").resolve()
+    if not db_path.exists():
+        fail(f"Database not found: {db_path}")
+
+    if trim_pct is not None and not 0 <= trim_pct <= 50:
+        fail(f"--trim-pct must be between 0 and 50, got {trim_pct}")
+    if model_selection is not None and model_selection not in ("aicc", "ftest"):
+        fail(f"--model-selection must be one of ['aicc', 'ftest'], got {model_selection!r}")
+    # The override helpers print to stdout; keep stdout for the JSON document.
+    with contextlib.redirect_stdout(sys.stderr) if json_mode else contextlib.nullcontext():
+        _apply_trim_pct_override(trim_pct)
+        _apply_model_selection_override(model_selection)
+        _apply_despike_method_override(despike_method)
+        _apply_allow_missing_background(allow_missing_background)
+
+    config = get_runtime_config()
+    paths_cfg = config.paths if isinstance(getattr(config, "paths", None), dict) else {}
+    data_dir = data_dir or Path(paths_cfg.get("data_root") or "./data")
+    results_dir = results_dir or Path(paths_cfg.get("results_root") or "./results")
+    context = RuntimeContext.bootstrap(data_dir=data_dir, results_dir=results_dir)
+    identity = batch_identity(
+        database=db_path,
+        data_root=context.data_root,
+        results_root=context.results_root,
+        selection={"science": science, "no_engineering": no_engineering},
+        config_digest=config_digest(config),
+    )
+    try:
+        if resume is not None:
+            batch = BatchJournal.resume(resume, identity)
+        else:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            batch = BatchJournal.create(journal or context.results_root / f"refit-{stamp}.jsonl", identity)
+    except JournalError as e:
+        fail(str(e))
+
+    scans = _iter_all_scans(
+        db_path, out,
+        exclude_type="engineering" if no_engineering else None,
+        science_only=science,
+    )
+    to_run, skipped = pending(scans, batch.done)
+    out.print(
+        f"[bold]Refit[/bold]: {len(scans)} scan(s), {len(skipped)} already in the journal, "
+        f"{len(to_run)} to run. Journal: {batch.path}"
+    )
+
+    processed: List[str] = []
+    failed: List[str] = []
+    previous_db = os.environ.get("SHERLOC_DB_PATH")
+    os.environ["SHERLOC_DB_PATH"] = str(db_path)
+    try:
+        service = PipelineService(console=out, context=context)
+        for i, (sol_num, tgt, scn) in enumerate(to_run, start=1):
+            label = f"{sol_num:04d} {tgt or ''} {scn}"
+            out.print(f"\n[bold]({i}/{len(to_run)}) {label}[/bold]")
+            try:
+                result = service.run_full_pipeline(
+                    sol=f"{sol_num:04d}", target=tgt or "", scan=scn,
+                    data_dir=data_dir, results_dir=results_dir,
+                )
+                reasons = run_failures(result.metadata or {})
+            except Exception as e:
+                reasons = [str(e)]
+            if reasons:
+                failed.append(f"{label}: {'; '.join(reasons)}")
+                out.print(f"  [red]Not recorded: {'; '.join(reasons)}[/red]")
+                continue
+            try:
+                batch.record(sol_num, tgt or "", scn)
+            except OSError as e:
+                fail(f"{label} completed but could not be recorded in {batch.path}: {e}. Batch stopped.")
+            processed.append(label)
+    finally:
+        batch.close()
+        if previous_db is None:
+            os.environ.pop("SHERLOC_DB_PATH", None)
+        else:
+            os.environ["SHERLOC_DB_PATH"] = previous_db
+
+    if json_mode:
+        import json as json_mod
+        output = CLIResult(
+            pipeline_version=_pipeline_version,
+            command="refit",
+            result={
+                "journal": str(batch.path),
+                "scans": len(scans),
+                "processed": len(processed),
+                "skipped": len(skipped),
+                "failed": len(failed),
+                "errors": failed,
+            },
+        )
+        print(json_mod.dumps(output.model_dump(), default=str))
+    else:
+        out.print(
+            f"\n[bold]Refit:[/bold] {len(processed)} processed, {len(skipped)} skipped, "
+            f"{len(failed)} failed. Journal: {batch.path}"
+        )
+        for err in failed:
+            out.print(f"  - {err}")
+    sys.exit(1 if failed else 0)
 
 
 @app.command("backfill-masks")

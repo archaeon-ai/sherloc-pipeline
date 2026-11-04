@@ -2792,12 +2792,14 @@ class FittingService:
                 warnings_list: List[str] = []
                 unreadable_peak_csvs: List[Dict[str, Any]] = []
                 total_reviewable = 0
+                csvs_without_spectrum = 0
 
                 for csv_path, point_idx in peak_csvs:
                     if point_idx not in point_to_spectrum:
                         msg = f"Point {point_idx} not found in database, skipping CSV {csv_path.name}"
                         logger.warning(msg)
                         warnings_list.append(msg)
+                        csvs_without_spectrum += 1
                         continue
 
                     spectrum_id = point_to_spectrum[point_idx]
@@ -2904,6 +2906,7 @@ class FittingService:
                     "region": region,
                     "domain": domain,
                     "peak_csvs_found": len(peak_csvs),
+                    "csvs_without_spectrum": csvs_without_spectrum,
                     "zero_result_run": zero_result_run,
                     "total_reviewable_peaks": total_reviewable,
                     "peaks_inserted": inserted,
@@ -3122,6 +3125,7 @@ class FittingService:
                 warnings_list: List[str] = []
                 points_fitted = 0
                 points_skipped = 0
+                points_missing_regions = 0
                 points_saturated = 0
                 summary_rows: List[Dict[str, Any]] = []
                 accepted_rows: List[Dict[str, Any]] = []
@@ -3158,6 +3162,7 @@ class FittingService:
                             f"Missing R1/R2/R3 for point {point_idx}, skipping"
                         )
                         points_skipped += 1
+                        points_missing_regions += 1
                         summary_rows.append({
                             'point': point_idx, 'n_peaks': 0, 'r2': None,
                             'is_saturated': False, 'groups_detected': '',
@@ -3389,6 +3394,7 @@ class FittingService:
                     "total_scan_points": len(scan_points),
                     "points_fitted": points_fitted,
                     "points_skipped": points_skipped,
+                    "points_missing_regions": points_missing_regions,
                     "points_saturated": points_saturated,
                     "peaks_inserted": inserted,
                     "snr_threshold": snr_threshold,

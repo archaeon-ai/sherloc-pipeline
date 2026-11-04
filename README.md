@@ -599,6 +599,29 @@ sherloc backfill --dry-run
 - `--domains` - Comma-separated list of domains to backfill (default: all four)
 - `--dry-run` - Show scan count without processing
 
+### refit
+
+Run `full-pipeline` on every selected scan in the database, one scan at a time, and record each completed scan in a journal:
+
+```bash
+sherloc refit --science --journal refit-science.jsonl
+sherloc refit --science --resume refit-science.jsonl
+```
+
+A scan is recorded only when every pipeline stage ran, Raman persistence ran for all three domains and found a stored spectrum for every peak CSV, fluorescence found R1-R3 spectra for at least one point, and no stage recorded an error. Failed scans are listed at the end. The exit code is 1 if any scan failed.
+
+`--resume` skips the scans the journal lists and runs the rest. It refuses if any of these differ from the journal: the database, data or results directory, scan selection, effective configuration (config.yaml plus overrides), installed code, Python and dependency versions, or `SHERLOC_HANDOFF_DIR`, `SHERLOC_LEGACY_PLOTS`, `SHERLOC_DETERMINISTIC_PLOTS`, `SHERLOC_OVERLAY_DEBUG`. Run no other writers against the database during a batch.
+
+Scans need Loupe working directories, as for `full-pipeline`. A scan without them fails at Step 1 and is not recorded.
+
+**Options:**
+- `--database PATH` - Database (default: `$SHERLOC_DB_PATH`, else `./phase.db`). The run writes to this database.
+- `--science` / `--no-engineering` - Scan selection, as for `backfill`
+- `--journal PATH` - Journal for a new batch (default: `<results>/refit-<UTC time>.jsonl`)
+- `--resume PATH` - Continue a batch
+- `--data-dir`, `--results-dir` - Default: `paths.data_root` and `paths.results_root` in config.yaml (`$SHERLOC_DATA_DIR`, `$SHERLOC_RESULTS_DIR`)
+- `--trim-pct`, `--model-selection`, `--despike-method`, `--allow-missing-background` - As for `full-pipeline`
+
 ### backfill-masks
 
 Populate cosmic-ray despike masks (`cosmic_ray_masks` table) for
