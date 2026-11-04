@@ -168,7 +168,7 @@ class TestJournal:
 
     def test_identity_records_dependency_versions(self, tmp_path):
         runtime = _identity(tmp_path)["runtime"]
-        assert runtime["python"] and runtime["numpy"] and runtime["scipy"]
+        assert runtime["python"] and runtime["numpy"] and runtime["scipy"] and runtime["Pillow"]
 
     def test_unreadable_files_raise_journal_errors(self, tmp_path):
         path = tmp_path / "batch.jsonl"

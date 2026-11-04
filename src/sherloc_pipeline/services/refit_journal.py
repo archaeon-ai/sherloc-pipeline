@@ -59,7 +59,7 @@ IDENTITY_FIELDS: Tuple[str, ...] = (
 # Installed distributions whose versions can change fits, despiking or plots.
 DEPENDENCIES: Tuple[str, ...] = (
     "numpy", "scipy", "pandas", "matplotlib", "pybaselines", "scikit-learn",
-    "scikit-image", "onnxruntime",
+    "scikit-image", "onnxruntime", "Pillow", "plotly",
 )
 
 # Environment variables read during a full-pipeline run that change its outputs.
