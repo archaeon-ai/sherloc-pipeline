@@ -3150,6 +3150,27 @@ class FittingService:
                     spectrum_type=spectrum_type,
                     unreadable_spectra=unreadable_points,
                 )
+                if pds_normalized and chosen:
+                    # PDS rows carry the product's wavelength table; fit on
+                    # it, not on the Loupe polynomial (services/spectrum_axes.py).
+                    from sherloc_pipeline.services.spectrum_axes import resolve_spectrum_axes
+
+                    axis_rows = session.query(SpectrumORM).filter(
+                        SpectrumORM.scan_point_id.in_(list(chosen)),
+                        SpectrumORM.region.in_(("R1", "R2", "R3")),
+                        SpectrumORM.spectrum_type == spectrum_type,
+                    ).all()
+                    try:
+                        full_wavelength = resolve_spectrum_axes(
+                            scan_orm, axis_rows, "R123"
+                        ).wavelength
+                    except ValueError as exc:
+                        raise FittingError(
+                            f"Cannot resolve the PDS wavelength axis for scan "
+                            f"{sol}/{target}/{scan}: {exc}",
+                            exit_code=1,
+                            context={"sol": sol, "target": target, "scan": scan},
+                        ) from exc
                 laser_normalize = (
                     not pds_normalized
                     and fluor_inputs.laser_normalize_enabled(self.context.config)
@@ -3224,7 +3245,7 @@ class FittingService:
                     spectrum_type=spectrum_type,
                 )
                 input_meta["laser_normalize"] = laser_normalize
-                if input_meta["points_fallback"] and not pds_normalized:
+                if input_meta["points_fallback"]:
                     warnings_list.append(
                         f"{input_meta['points_fallback']} point(s) fitted on the non-despiked "
                         "input: no current ML-despiked R1-R3 rows (run the despiked backfill "

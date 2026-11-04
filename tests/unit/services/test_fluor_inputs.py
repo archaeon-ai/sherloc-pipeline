@@ -759,7 +759,10 @@ def test_full_pipeline_scores_fluor_against_this_runs_raman(
     assert calls == ["minerals", "organics", "hydration", "fluorescence"]
 
 
-def _set_scan_source(run, data_source, photodiodes, spectrum_type=None):
+_PDS_AXIS = np.linspace(244.0, 362.0, 2148)
+
+
+def _set_scan_source(run, data_source, photodiodes, spectrum_type=None, axis=None):
     with get_session(run.engine) as session:
         if data_source is not None:
             session.query(SolORM).one().data_source = data_source
@@ -770,6 +773,9 @@ def _set_scan_source(run, data_source, photodiodes, spectrum_type=None):
             for spectrum in session.query(SpectrumORM):
                 spectrum.spectrum_type = spectrum_type
                 spectrum.processing_level = "normalized"
+                if axis is not None:
+                    spectrum.wavelengths = fluor_inputs._encode(axis)
+                    spectrum.wavelength_source = "pds_embedded"
     run.fitting.context.config.fluorescence_fitting["laser_normalize"] = True
 
 
@@ -781,7 +787,7 @@ def test_pds_scan_fits_measured_rows_without_rescaling(
     from sherloc_pipeline.core.r123_stitching import stitch_r123_spectrum
 
     run = synthetic_fluor_run
-    _set_scan_source(run, "pds4", photodiodes, spectrum_type="laser_normalized")
+    _set_scan_source(run, "pds4", photodiodes, spectrum_type="laser_normalized", axis=_PDS_AXIS)
     fit = Mock(wraps=fluor_fitting.fit_fluorescence_spectrum)
     monkeypatch.setattr(fluor_fitting, "fit_fluorescence_spectrum", fit)
 
@@ -795,7 +801,9 @@ def test_pds_scan_fits_measured_rows_without_rescaling(
             call.args[1], stitch_r123_spectrum(measured, measured, measured),
         )
         assert call.kwargs["saturation_threshold"] == 60000.0
+        np.testing.assert_array_equal(call.args[0], _PDS_AXIS.astype(np.float32).astype(float))
     assert result.metadata["input"]["input_spectrum_type"] == "laser_normalized"
+    assert result.metadata["input"]["points_fallback"] == 0
     assert result.metadata["input"]["laser_normalize"] is False
     assert result.metadata["input"]["points_laser_normalized"] == 0
     assert not any("photodiode" in w or "backfill" in w for w in result.warnings)
@@ -810,14 +818,33 @@ def test_pds_scan_fits_measured_rows_without_rescaling(
             assert spectrum.spectrum_type == "laser_normalized"
 
 
-@pytest.mark.parametrize("data_source", [None, "loupe"])
-def test_non_pds_scan_keeps_laser_normalization(synthetic_fluor_run, data_source):
+def test_pds_scan_without_stored_axis_fails_and_keeps_prior_peaks(synthetic_fluor_run):
+    run = synthetic_fluor_run
+    _set_scan_source(run, "pds4", None, spectrum_type="laser_normalized")
+
+    with pytest.raises(FittingError, match="PDS wavelength axis"):
+        _fit_synthetic_fluor(run)
+
+    assert _snapshot_fluor_peaks(run.database_path) == run.previous
+
+
+@pytest.mark.parametrize("data_source", [None, "loupe", "other"])
+def test_non_pds_scan_keeps_laser_normalization(synthetic_fluor_run, monkeypatch, data_source):
+    from sherloc_pipeline.core import fluor_fitting
+    from sherloc_pipeline.core.calibration import calculate_loupe_wavelength_wavenumber
+
     run = synthetic_fluor_run
     _set_scan_source(run, data_source, (1.0, 2.0, 4.0))
+    fit = Mock(wraps=fluor_fitting.fit_fluorescence_spectrum)
+    monkeypatch.setattr(fluor_fitting, "fit_fluorescence_spectrum", fit)
 
     result = _fit_synthetic_fluor(run)
 
+    loupe_axis, _ = calculate_loupe_wavelength_wavenumber(2148)
+    for call in fit.call_args_list:
+        np.testing.assert_array_equal(call.args[0], loupe_axis)
     assert result.metadata["points_fitted"] == 3
+    assert result.metadata["input"]["points_fallback"] == 3
     assert result.metadata["input"]["input_spectrum_type"] == "dark_subtracted"
     assert result.metadata["input"]["laser_normalize"] is True
     assert result.metadata["input"]["points_laser_normalized"] == 3
