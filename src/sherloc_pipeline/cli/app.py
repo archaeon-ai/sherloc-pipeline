@@ -2723,7 +2723,7 @@ def refit_cmd(
     Each scan that completes is appended to the journal. A scan counts as
     complete only when every pipeline stage ran, Raman persistence ran for
     all three domains and found a stored spectrum for every peak CSV,
-    fluorescence found R1-R3 spectra for every point, and no stage recorded
+    fluorescence found R1-R3 spectra for at least one point, and no stage recorded
     an error. Warnings alone do not fail a scan.
 
     --resume continues a stopped batch. It refuses unless the database,

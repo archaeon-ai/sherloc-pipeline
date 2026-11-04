@@ -158,9 +158,11 @@ def run_failures(metadata: Dict[str, Any]) -> List[str]:
     A run is complete when every required stage was recorded, no stage holds a
     caught error (``exception`` or ``<name>_error`` in its extra), Raman
     persistence ran for all three domains and matched every peak CSV to a
-    stored spectrum, and fluorescence found R1-R3 inputs for every scan point.
-    Stage warnings alone do not count: a scan with zero-peak points warns and
-    is still complete.
+    stored spectrum, and fluorescence found R1-R3 inputs for at least one scan
+    point. A point without R1-R3 rows is a gap in the stored scan that a rerun
+    would not fill; a scan with no inputs at all was not fitted. Stage
+    warnings alone do not count: a scan with zero-peak points warns and is
+    still complete.
     """
     stages = {s.get("name"): s for s in (metadata.get("run") or {}).get("stages") or []}
     failures = [f"{name}: did not run" for name in REQUIRED_STAGES if name not in stages]
@@ -184,12 +186,12 @@ def run_failures(metadata: Dict[str, Any]) -> List[str]:
                 )
     fluor = stages.get("fluorescence_fitting")
     if fluor is not None and "exception" not in (fluor.get("extra") or {}):
-        missing = (fluor.get("extra") or {}).get("points_missing_regions")
-        if missing != 0:
-            failures.append(
-                f"fluorescence_fitting: {missing if missing is not None else 'unknown'} "
-                "point(s) have no R1-R3 inputs"
-            )
+        extra = fluor.get("extra") or {}
+        missing, total = extra.get("points_missing_regions"), extra.get("total_scan_points")
+        if not isinstance(missing, int) or not isinstance(total, int):
+            failures.append("fluorescence_fitting: input counts not reported")
+        elif missing >= total:
+            failures.append(f"fluorescence_fitting: none of {total} point(s) have R1-R3 inputs")
     return failures
 
 
@@ -215,7 +217,7 @@ class BatchJournal:
             raise JournalError(f"Cannot create journal {path}: {e}")
         tmp = Path(tmp_name)
         try:
-            with open(fd, "w", encoding="utf-8") as f:
+            with open(fd, "w", encoding="utf-8", newline="\n") as f:
                 f.write(json.dumps(header, sort_keys=True) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
@@ -244,7 +246,8 @@ class BatchJournal:
     @staticmethod
     def _lock(path: Path):
         try:
-            handle = open(path, "r+", encoding="utf-8")
+            # newline="\n": no CRLF translation, so text and byte offsets agree.
+            handle = open(path, "r+", encoding="utf-8", newline="\n")
         except OSError as e:
             raise JournalError(f"Cannot open journal {path}: {e}")
         try:

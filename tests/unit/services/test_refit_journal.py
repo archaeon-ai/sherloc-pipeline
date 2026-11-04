@@ -31,7 +31,7 @@ def _complete():
         d: {"peaks_inserted": 0, "csvs_without_spectrum": 0} for d in ("minerals", "organics", "hydration")
     }
     fluor = next(s for s in stages if s["name"] == "fluorescence_fitting")
-    fluor["extra"] = {"points_fitted": 0, "points_missing_regions": 0}
+    fluor["extra"] = {"points_fitted": 0, "points_missing_regions": 0, "total_scan_points": 4}
     return {"run": {"stages": stages}}
 
 
@@ -100,14 +100,16 @@ class TestRunFailures:
         assert run_failures(metadata) == [
             "raman_persistence: organics: unknown peak CSV(s) have no stored spectrum"]
 
-    def test_fluorescence_points_without_inputs(self):
+    def test_fluorescence_without_any_inputs(self):
         metadata = _complete()
-        _extra(metadata, "fluorescence_fitting")["points_missing_regions"] = 2
+        fluor = _extra(metadata, "fluorescence_fitting")
+        fluor["points_missing_regions"] = 3
+        assert run_failures(metadata) == []  # sparse scan: some points have no R1-R3 rows
+        fluor["points_missing_regions"] = 4
         assert run_failures(metadata) == [
-            "fluorescence_fitting: 2 point(s) have no R1-R3 inputs"]
-        del _extra(metadata, "fluorescence_fitting")["points_missing_regions"]
-        assert run_failures(metadata) == [
-            "fluorescence_fitting: unknown point(s) have no R1-R3 inputs"]
+            "fluorescence_fitting: none of 4 point(s) have R1-R3 inputs"]
+        del fluor["points_missing_regions"]
+        assert run_failures(metadata) == ["fluorescence_fitting: input counts not reported"]
 
     def test_no_run_metadata(self):
         assert len(run_failures({})) == len(REQUIRED_STAGES)
@@ -197,6 +199,20 @@ class TestJournal:
             batch.record(10, "Synthetic A", "scan_2")
         lines = path.read_text().splitlines()
         assert [json.loads(line)["scan"] for line in lines[1:]] == ["scan_1", "scan_2"]
+
+    def test_crlf_text_is_kept_byte_exact(self, tmp_path):
+        # A crash left a CRLF-terminated line before the partial one; the
+        # truncation offset must count its bytes as written.
+        path = tmp_path / "batch.jsonl"
+        BatchJournal.create(path, _identity(tmp_path)).close()
+        with open(path, "ab") as f:
+            f.write(b'{"sol": 10, "target": "A", "scan": "scan_1"}\r\n{"sol": 10, "tar')
+        with BatchJournal.resume(path, _identity(tmp_path)) as batch:
+            assert batch.done == {(10, "A", "scan_1")}
+            batch.record(10, "A", "scan_2")
+        lines = path.read_bytes().split(b"\n")
+        assert [json.loads(line)["scan"] for line in lines[1:] if line] == ["scan_1", "scan_2"]
+        assert path.read_bytes().count(b"\r\n") == 1  # only the planted line
 
     def test_unreadable_middle_line_refuses(self, tmp_path):
         path = tmp_path / "batch.jsonl"

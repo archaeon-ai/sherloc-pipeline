@@ -69,7 +69,7 @@ def stub_heavy_stages(monkeypatch, stub_raman_fits):
     from sherloc_pipeline.services.fitting import FittingService
 
     def fluorescence(*args, **kwargs):
-        return ServiceResult(summary="stubbed", metadata={"points_fitted": 0, "points_missing_regions": 0})
+        return ServiceResult(summary="stubbed", metadata={"points_fitted": 0, "points_missing_regions": 0, "total_scan_points": 1})
 
     monkeypatch.setattr(FittingService, "fit_fluorescence", fluorescence)
 
@@ -199,7 +199,7 @@ def test_scan_without_stored_spectra_is_not_recorded(
         "--despike-method", "none",
     )
     assert result.exit_code == 1, result.output
-    assert "have no R1-R3 inputs" in payload["result"]["errors"][0]
+    assert "have R1-R3 inputs" in payload["result"]["errors"][0]
     assert _journal_scans(journal) == []
 
 
