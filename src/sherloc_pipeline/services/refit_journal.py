@@ -1,21 +1,30 @@
 """Batch journal for ``sherloc refit``.
 
 A journal is a JSON Lines file. The first line identifies the batch: the
-database, data and results roots, scan selection, effective-config digest
-and code digest. Each later line names one scan that finished with every
-required stage run and no stage error. ``--resume`` continues a batch only
+database, data and results roots, scan selection, effective-config digest,
+code digest, dependency versions and the environment variables the run reads.
+Each later line names one scan that finished with every required stage run,
+every fitted point persisted, and no stage error. ``--resume`` continues a batch only
 when the identity is unchanged, and skips only the scans the journal lists.
 """
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
+import platform
+import tempfile
 from datetime import datetime, timezone
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 
 SCHEMA = "sherloc-refit-journal/1"
 
@@ -43,6 +52,24 @@ IDENTITY_FIELDS: Tuple[str, ...] = (
     "selection",
     "config_digest",
     "code_digest",
+    "runtime",
+    "environment",
+)
+
+# Installed distributions whose versions can change fits, despiking or plots.
+DEPENDENCIES: Tuple[str, ...] = (
+    "numpy", "scipy", "pandas", "matplotlib", "pybaselines", "scikit-learn",
+    "scikit-image", "onnxruntime",
+)
+
+# Environment variables read during a full-pipeline run that change its outputs.
+# SHERLOC_DB_PATH is set from --database and the data and results roots are
+# identity fields of their own.
+ENVIRONMENT: Tuple[str, ...] = (
+    "SHERLOC_HANDOFF_DIR",
+    "SHERLOC_LEGACY_PLOTS",
+    "SHERLOC_DETERMINISTIC_PLOTS",
+    "SHERLOC_OVERLAY_DEBUG",
 )
 
 ScanKey = Tuple[int, str, str]
@@ -68,6 +95,41 @@ def code_digest(package_root: Optional[Path] = None) -> str:
     return digest.hexdigest()
 
 
+def config_digest(config: Any) -> str:
+    """SHA-256 of the effective config, without the database and root paths.
+
+    Those come from --database, --data-dir and --results-dir (or their
+    defaults) and are identity fields of their own, so an ambient
+    SHERLOC_DB_PATH, SHERLOC_DATA_DIR or SHERLOC_RESULTS_DIR does not change
+    the digest of an otherwise identical batch.
+    """
+    from sherloc_pipeline.services.config import _normalize_for_hash
+
+    normalized = _normalize_for_hash(config)
+    normalized.pop("database", None)
+    paths = dict(normalized.get("paths") or {})
+    paths.pop("data_root", None)
+    paths.pop("results_root", None)
+    normalized["paths"] = paths
+    serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def runtime_versions() -> Dict[str, Optional[str]]:
+    """Python version and the installed version of each dependency (None if absent)."""
+    versions: Dict[str, Optional[str]] = {"python": platform.python_version()}
+    for name in DEPENDENCIES:
+        try:
+            versions[name] = importlib_metadata.version(name)
+        except importlib_metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def environment_values() -> Dict[str, Optional[str]]:
+    return {name: os.environ.get(name) for name in ENVIRONMENT}
+
+
 def batch_identity(
     *,
     database: Path,
@@ -85,6 +147,8 @@ def batch_identity(
         "selection": dict(selection),
         "config_digest": config_digest,
         "code_digest": code if code is not None else code_digest(),
+        "runtime": runtime_versions(),
+        "environment": environment_values(),
     }
 
 
@@ -92,9 +156,11 @@ def run_failures(metadata: Dict[str, Any]) -> List[str]:
     """Reasons a ``run_full_pipeline`` result is not a complete run; empty means complete.
 
     A run is complete when every required stage was recorded, no stage holds a
-    caught error (``exception`` or ``<name>_error`` in its extra), and Raman
-    persistence ran for all three domains. Stage warnings alone do not count:
-    a scan with zero-peak points warns and is still complete.
+    caught error (``exception`` or ``<name>_error`` in its extra), Raman
+    persistence ran for all three domains and matched every peak CSV to a
+    stored spectrum, and fluorescence found R1-R3 inputs for every scan point.
+    Stage warnings alone do not count: a scan with zero-peak points warns and
+    is still complete.
     """
     stages = {s.get("name"): s for s in (metadata.get("run") or {}).get("stages") or []}
     failures = [f"{name}: did not run" for name in REQUIRED_STAGES if name not in stages]
@@ -106,8 +172,24 @@ def run_failures(metadata: Dict[str, Any]) -> List[str]:
     persisted = (stages.get("raman_persistence") or {}).get("extra") or {}
     if "raman_persistence" in stages:
         for domain in RAMAN_DOMAINS:
-            if not isinstance(persisted.get(domain), dict) and f"{domain}_error" not in persisted:
+            if f"{domain}_error" in persisted:
+                continue
+            result = persisted.get(domain)
+            if not isinstance(result, dict):
                 failures.append(f"raman_persistence: {domain} did not run")
+            elif result.get("csvs_without_spectrum") != 0:
+                failures.append(
+                    f"raman_persistence: {domain}: "
+                    f"{result.get('csvs_without_spectrum', 'unknown')} peak CSV(s) have no stored spectrum"
+                )
+    fluor = stages.get("fluorescence_fitting")
+    if fluor is not None and "exception" not in (fluor.get("extra") or {}):
+        missing = (fluor.get("extra") or {}).get("points_missing_regions")
+        if missing != 0:
+            failures.append(
+                f"fluorescence_fitting: {missing if missing is not None else 'unknown'} "
+                "point(s) have no R1-R3 inputs"
+            )
     return failures
 
 
@@ -125,19 +207,25 @@ class BatchJournal:
         path = Path(path)
         if path.exists():
             raise JournalError(f"Journal already exists: {path}. Use --resume to continue it.")
-        path.parent.mkdir(parents=True, exist_ok=True)
         header = dict(identity, started_at=datetime.now(timezone.utc).isoformat())
-        tmp = path.with_name(f".{path.name}.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(json.dumps(header, sort_keys=True) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        except OSError as e:
+            raise JournalError(f"Cannot create journal {path}: {e}")
+        tmp = Path(tmp_name)
+        try:
+            with open(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(header, sort_keys=True) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
             os.link(tmp, path)  # fails if a concurrent create won
         except FileExistsError:
             raise JournalError(f"Journal already exists: {path}. Use --resume to continue it.")
+        except OSError as e:
+            raise JournalError(f"Cannot create journal {path}: {e}")
         finally:
-            tmp.unlink()
+            tmp.unlink(missing_ok=True)
         return cls(path, cls._lock(path), identity, set())
 
     @classmethod
@@ -155,10 +243,16 @@ class BatchJournal:
 
     @staticmethod
     def _lock(path: Path):
-        handle = open(path, "r+", encoding="utf-8")
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            handle = open(path, "r+", encoding="utf-8")
+        except OSError as e:
+            raise JournalError(f"Cannot open journal {path}: {e}")
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
             handle.close()
             raise JournalError(f"Journal is in use by another process: {path}")
         handle.seek(0, os.SEEK_END)
@@ -167,7 +261,10 @@ class BatchJournal:
     @staticmethod
     def _read(handle, path: Path, identity: Dict[str, Any]) -> Set[ScanKey]:
         handle.seek(0)
-        text = handle.read()
+        try:
+            text = handle.read()
+        except (OSError, UnicodeDecodeError) as e:
+            raise JournalError(f"Journal is unreadable: {path}: {e}")
         lines = text.split("\n")
         try:
             header = json.loads(lines[0])

@@ -33,20 +33,24 @@ def restore_config():
         setattr(cfg, name, value)
 
 
-@pytest.fixture
-def loupe_db(tmp_path, fixtures_path, monkeypatch):
-    db_path = tmp_path / "phase.db"
-    service = IngestionService(database_path=db_path, include_spectra=True, ingestion_mode="all_regions")
+def _ingest(db_path, fixtures_path, include_spectra):
+    service = IngestionService(
+        database_path=db_path, include_spectra=include_spectra, ingestion_mode="all_regions")
     service.ingest_workspace(fixtures_path / WORKSPACE_REL)
     with get_session(service.engine) as session:
         session.query(ScanORM).first().target = TARGET.replace("_", " ")
     service.engine.dispose()
-    monkeypatch.delenv("SHERLOC_DB_PATH", raising=False)
     return db_path
 
 
 @pytest.fixture
-def stub_heavy_stages(monkeypatch, stub_detector_factory):
+def loupe_db(tmp_path, fixtures_path, monkeypatch):
+    monkeypatch.delenv("SHERLOC_DB_PATH", raising=False)
+    return _ingest(tmp_path / "phase.db", fixtures_path, include_spectra=True)
+
+
+@pytest.fixture
+def stub_raman_fits(monkeypatch, stub_detector_factory):
     from sherloc_pipeline.services.fitting import FittingService
     from sherloc_pipeline.services.preprocessing import PreprocessingService
     from sherloc_pipeline.services.spatial import SpatialService
@@ -54,10 +58,20 @@ def stub_heavy_stages(monkeypatch, stub_detector_factory):
     def empty_result(*args, **kwargs):
         return ServiceResult(summary="stubbed", artifacts=[], warnings=[], metadata={})
 
-    for name in ("fit_minerals", "fit_organics", "fit_hydration", "fit_averages", "fit_fluorescence"):
+    for name in ("fit_minerals", "fit_organics", "fit_hydration", "fit_averages"):
         monkeypatch.setattr(FittingService, name, empty_result)
     monkeypatch.setattr(SpatialService, "render_overlay", empty_result)
     monkeypatch.setattr(PreprocessingService, "_build_ml_detector", lambda self: stub_detector_factory())
+
+
+@pytest.fixture
+def stub_heavy_stages(monkeypatch, stub_raman_fits):
+    from sherloc_pipeline.services.fitting import FittingService
+
+    def fluorescence(*args, **kwargs):
+        return ServiceResult(summary="stubbed", metadata={"points_fitted": 0, "points_missing_regions": 0})
+
+    monkeypatch.setattr(FittingService, "fit_fluorescence", fluorescence)
 
 
 @pytest.fixture
@@ -70,7 +84,7 @@ def stub_persistence(monkeypatch):
 
     def persisted(self, **kwargs):
         seen.append(os.environ.get("SHERLOC_DB_PATH"))
-        return ServiceResult(summary="ok", metadata={"peaks_inserted": 0})
+        return ServiceResult(summary="ok", metadata={"peaks_inserted": 0, "csvs_without_spectrum": 0})
 
     monkeypatch.setattr(FittingService, "persist_raman_peaks", persisted)
     return seen
@@ -78,8 +92,8 @@ def stub_persistence(monkeypatch):
 
 def _refit(*args):
     result = CliRunner().invoke(app, ["--json", "refit", *args])
-    lines = result.stdout.strip().splitlines()
-    payload = json.loads(lines[-1]) if lines else None
+    # stdout must be exactly one JSON document.
+    payload = json.loads(result.stdout) if result.stdout.strip() else None
     return result, payload
 
 
@@ -170,3 +184,65 @@ def test_journal_and_resume_are_exclusive(tmp_path, loupe_db):
                                       "--journal", str(tmp_path / "a"), "--resume", str(tmp_path / "b")])
     assert result.exit_code == 1
     assert "mutually exclusive" in result.output
+
+
+def test_scan_without_stored_spectra_is_not_recorded(
+    tmp_path, fixtures_path, stub_raman_fits, stub_persistence, restore_config, monkeypatch,
+):
+    # Ingested without spectra: real fluorescence finds no R1-R3 inputs for any point.
+    monkeypatch.delenv("SHERLOC_DB_PATH", raising=False)
+    db_path = _ingest(tmp_path / "phase.db", fixtures_path, include_spectra=False)
+    journal = tmp_path / "batch.jsonl"
+    result, payload = _refit(
+        "--database", str(db_path), "--data-dir", str(fixtures_path / "loupe"),
+        "--results-dir", str(tmp_path / "results"), "--journal", str(journal),
+        "--despike-method", "none",
+    )
+    assert result.exit_code == 1, result.output
+    assert "have no R1-R3 inputs" in payload["result"]["errors"][0]
+    assert _journal_scans(journal) == []
+
+
+def test_default_roots_come_from_config(
+    tmp_path, fixtures_path, loupe_db, stub_heavy_stages, stub_persistence, restore_config, monkeypatch,
+):
+    cfg = get_config()
+    monkeypatch.setitem(cfg.paths, "data_root", str(fixtures_path / "loupe"))
+    monkeypatch.setitem(cfg.paths, "results_root", str(tmp_path / "configured-results"))
+    result, payload = _refit("--database", str(loupe_db))
+    assert result.exit_code == 0, result.output
+    header = json.loads(open(payload["result"]["journal"]).readline())
+    assert header["data_root"] == str((fixtures_path / "loupe").resolve())
+    assert header["results_root"] == str((tmp_path / "configured-results").resolve())
+    assert payload["result"]["journal"].startswith(str((tmp_path / "configured-results").resolve()))
+
+
+def test_json_output_with_overrides_and_json_errors(
+    tmp_path, fixtures_path, loupe_db, stub_heavy_stages, stub_persistence, restore_config,
+):
+    common = ["--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+              "--results-dir", str(tmp_path / "results")]
+    result, payload = _refit(*common, "--trim-pct", "8", "--model-selection", "ftest",
+                             "--despike-method", "modz", "--allow-missing-background")
+    assert result.exit_code == 0, result.output
+    assert payload["command"] == "refit"
+
+    for bad in (["--trim-pct", "80"], ["--model-selection", "other"]):
+        result, payload = _refit(*common, *bad)
+        assert result.exit_code == 1
+        assert payload is None
+        assert json.loads(result.stderr.strip().splitlines()[-1])["error_type"] == "RefitError"
+
+
+def test_resume_ignores_ambient_db_path_when_database_is_given(
+    tmp_path, fixtures_path, loupe_db, stub_heavy_stages, stub_persistence, restore_config, monkeypatch,
+):
+    journal = tmp_path / "batch.jsonl"
+    common = ["--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+              "--results-dir", str(tmp_path / "results")]
+    monkeypatch.setitem(get_config().database, "path", str(tmp_path / "ambient-a.db"))
+    assert _refit(*common, "--journal", str(journal))[0].exit_code == 0
+    monkeypatch.setitem(get_config().database, "path", str(tmp_path / "ambient-b.db"))
+    result, payload = _refit(*common, "--resume", str(journal))
+    assert result.exit_code == 0, result.output
+    assert payload["result"]["skipped"] == 1

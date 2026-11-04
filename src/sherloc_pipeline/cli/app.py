@@ -2685,8 +2685,12 @@ def refit_cmd(
         None, "--database", "-d",
         help="Database path (defaults to $SHERLOC_DB_PATH, else ./phase.db)",
     ),
-    data_dir: Optional[Path] = typer.Option(None, "--data-dir", help="Data directory (defaults to config)"),
-    results_dir: Optional[Path] = typer.Option(None, "--results-dir", help="Results directory (defaults to config)"),
+    data_dir: Optional[Path] = typer.Option(
+        None, "--data-dir", help="Data directory (default: config paths.data_root, or $SHERLOC_DATA_DIR)",
+    ),
+    results_dir: Optional[Path] = typer.Option(
+        None, "--results-dir", help="Results directory (default: config paths.results_root, or $SHERLOC_RESULTS_DIR)",
+    ),
     science: bool = typer.Option(False, "--science", help="Mars targets + cal meteorite (SAU-008) only"),
     no_engineering: bool = typer.Option(False, "--no-engineering", help="Exclude engineering scans"),
     journal: Optional[Path] = typer.Option(
@@ -2718,13 +2722,15 @@ def refit_cmd(
 
     Each scan that completes is appended to the journal. A scan counts as
     complete only when every pipeline stage ran, Raman persistence ran for
-    all three domains, and no stage recorded an error. Warnings alone do not
-    fail a scan.
+    all three domains and found a stored spectrum for every peak CSV,
+    fluorescence found R1-R3 spectra for every point, and no stage recorded
+    an error. Warnings alone do not fail a scan.
 
     --resume continues a stopped batch. It refuses unless the database,
     data and results directories, scan selection, effective configuration
-    (config.yaml plus overrides) and installed code are the same as when the
-    batch started. It skips only the scans the journal lists; failed and
+    (config.yaml plus overrides), installed code, dependency versions and
+    output-affecting SHERLOC_* environment variables are the same as when
+    the batch started. It skips only the scans the journal lists; failed and
     unfinished scans run again. Do not run other writers against the
     database during a batch.
 
@@ -2735,9 +2741,11 @@ def refit_cmd(
         sherloc refit --science --journal refit-science.jsonl
         sherloc refit --science --resume refit-science.jsonl
     """
-    from sherloc_pipeline.services.config import compute_config_hash, get_runtime_config
+    import contextlib
+
+    from sherloc_pipeline.services.config import get_runtime_config
     from sherloc_pipeline.services.refit_journal import (
-        BatchJournal, JournalError, batch_identity, pending, run_failures,
+        BatchJournal, JournalError, batch_identity, config_digest, pending, run_failures,
     )
 
     json_mode = (ctx.obj or {}).get("json", False)
@@ -2766,17 +2774,28 @@ def refit_cmd(
     if not db_path.exists():
         fail(f"Database not found: {db_path}")
 
-    _apply_trim_pct_override(trim_pct)
-    _apply_model_selection_override(model_selection)
-    _apply_despike_method_override(despike_method)
-    _apply_allow_missing_background(allow_missing_background)
+    if trim_pct is not None and not 0 <= trim_pct <= 50:
+        fail(f"--trim-pct must be between 0 and 50, got {trim_pct}")
+    if model_selection is not None and model_selection not in ("aicc", "ftest"):
+        fail(f"--model-selection must be one of ['aicc', 'ftest'], got {model_selection!r}")
+    # The override helpers print to stdout; keep stdout for the JSON document.
+    with contextlib.redirect_stdout(sys.stderr) if json_mode else contextlib.nullcontext():
+        _apply_trim_pct_override(trim_pct)
+        _apply_model_selection_override(model_selection)
+        _apply_despike_method_override(despike_method)
+        _apply_allow_missing_background(allow_missing_background)
+
+    config = get_runtime_config()
+    paths_cfg = config.paths if isinstance(getattr(config, "paths", None), dict) else {}
+    data_dir = data_dir or Path(paths_cfg.get("data_root") or "./data")
+    results_dir = results_dir or Path(paths_cfg.get("results_root") or "./results")
     context = RuntimeContext.bootstrap(data_dir=data_dir, results_dir=results_dir)
     identity = batch_identity(
         database=db_path,
         data_root=context.data_root,
         results_root=context.results_root,
         selection={"science": science, "no_engineering": no_engineering},
-        config_digest=compute_config_hash(get_runtime_config()),
+        config_digest=config_digest(config),
     )
     try:
         if resume is not None:
@@ -2818,9 +2837,12 @@ def refit_cmd(
             if reasons:
                 failed.append(f"{label}: {'; '.join(reasons)}")
                 out.print(f"  [red]Not recorded: {'; '.join(reasons)}[/red]")
-            else:
+                continue
+            try:
                 batch.record(sol_num, tgt or "", scn)
-                processed.append(label)
+            except OSError as e:
+                fail(f"{label} completed but could not be recorded in {batch.path}: {e}. Batch stopped.")
+            processed.append(label)
     finally:
         batch.close()
         if previous_db is None:

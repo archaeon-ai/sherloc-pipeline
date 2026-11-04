@@ -14,6 +14,7 @@ from sherloc_pipeline.services.refit_journal import (
     JournalError,
     batch_identity,
     code_digest,
+    config_digest,
     pending,
     run_failures,
 )
@@ -26,8 +27,16 @@ def _stage(name, **extra):
 def _complete():
     stages = [_stage(name) for name in REQUIRED_STAGES]
     persistence = next(s for s in stages if s["name"] == "raman_persistence")
-    persistence["extra"] = {d: {"peaks_inserted": 0} for d in ("minerals", "organics", "hydration")}
+    persistence["extra"] = {
+        d: {"peaks_inserted": 0, "csvs_without_spectrum": 0} for d in ("minerals", "organics", "hydration")
+    }
+    fluor = next(s for s in stages if s["name"] == "fluorescence_fitting")
+    fluor["extra"] = {"points_fitted": 0, "points_missing_regions": 0}
     return {"run": {"stages": stages}}
+
+
+def _extra(metadata, name):
+    return next(s for s in metadata["run"]["stages"] if s["name"] == name)["extra"]
 
 
 def _identity(tmp_path, **changes):
@@ -78,6 +87,28 @@ class TestRunFailures:
         del persistence["extra"]["hydration"]
         assert run_failures(metadata) == ["raman_persistence: hydration did not run"]
 
+    def test_peak_csvs_without_stored_spectra(self):
+        # A database ingested without spectra: the fit ran but nothing could be persisted.
+        metadata = _complete()
+        _extra(metadata, "raman_persistence")["minerals"]["csvs_without_spectrum"] = 3
+        assert run_failures(metadata) == [
+            "raman_persistence: minerals: 3 peak CSV(s) have no stored spectrum"]
+
+    def test_persistence_result_without_spectrum_count(self):
+        metadata = _complete()
+        del _extra(metadata, "raman_persistence")["organics"]["csvs_without_spectrum"]
+        assert run_failures(metadata) == [
+            "raman_persistence: organics: unknown peak CSV(s) have no stored spectrum"]
+
+    def test_fluorescence_points_without_inputs(self):
+        metadata = _complete()
+        _extra(metadata, "fluorescence_fitting")["points_missing_regions"] = 2
+        assert run_failures(metadata) == [
+            "fluorescence_fitting: 2 point(s) have no R1-R3 inputs"]
+        del _extra(metadata, "fluorescence_fitting")["points_missing_regions"]
+        assert run_failures(metadata) == [
+            "fluorescence_fitting: unknown point(s) have no R1-R3 inputs"]
+
     def test_no_run_metadata(self):
         assert len(run_failures({})) == len(REQUIRED_STAGES)
 
@@ -114,6 +145,39 @@ class TestJournal:
         with pytest.raises(JournalError, match=f"Cannot resume .*{field}"):
             BatchJournal.resume(path, _identity(tmp_path, **{field: changed}))
 
+    def test_create_never_overwrites_a_journal_that_appears_concurrently(self, tmp_path, monkeypatch):
+        path = tmp_path / "batch.jsonl"
+        BatchJournal.create(path, _identity(tmp_path)).close()
+        before = path.read_bytes()
+        # Both processes passed the exists() check; the second must lose cleanly.
+        monkeypatch.setattr(Path, "exists", lambda self: False)
+        with pytest.raises(JournalError, match="already exists"):
+            BatchJournal.create(path, _identity(tmp_path, selection={"science": False}))
+        assert path.read_bytes() == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["batch.jsonl"]
+
+    def test_resume_refuses_an_environment_change(self, tmp_path, monkeypatch):
+        path = tmp_path / "batch.jsonl"
+        monkeypatch.delenv("SHERLOC_HANDOFF_DIR", raising=False)
+        BatchJournal.create(path, _identity(tmp_path)).close()
+        monkeypatch.setenv("SHERLOC_HANDOFF_DIR", str(tmp_path / "handoff"))
+        with pytest.raises(JournalError, match="environment"):
+            BatchJournal.resume(path, _identity(tmp_path))
+
+    def test_identity_records_dependency_versions(self, tmp_path):
+        runtime = _identity(tmp_path)["runtime"]
+        assert runtime["python"] and runtime["numpy"] and runtime["scipy"]
+
+    def test_unreadable_files_raise_journal_errors(self, tmp_path):
+        path = tmp_path / "batch.jsonl"
+        path.write_bytes(b"\xff\xfe not utf-8\n")
+        with pytest.raises(JournalError, match="unreadable"):
+            BatchJournal.resume(path, _identity(tmp_path))
+        blocker = tmp_path / "file"
+        blocker.write_text("")
+        with pytest.raises(JournalError, match="Cannot create journal"):
+            BatchJournal.create(blocker / "batch.jsonl", _identity(tmp_path))
+
     def test_resume_refuses_other_files(self, tmp_path):
         path = tmp_path / "other.jsonl"
         path.write_text('{"schema": "something-else"}\n')
@@ -147,6 +211,22 @@ class TestJournal:
         with BatchJournal.create(path, _identity(tmp_path)):
             with pytest.raises(JournalError, match="in use"):
                 BatchJournal.resume(path, _identity(tmp_path))
+
+
+def test_config_digest_ignores_database_and_root_paths():
+    config = {
+        "fitting": {"parsimony": {"model_selection": "aicc"}},
+        "paths": {"data_root": "a", "results_root": "b", "background_dir": "c"},
+        "database": {"path": "one.db"},
+    }
+    moved = {
+        "fitting": {"parsimony": {"model_selection": "aicc"}},
+        "paths": {"data_root": "x", "results_root": "y", "background_dir": "c"},
+        "database": {"path": "two.db"},
+    }
+    assert config_digest(config) == config_digest(moved)
+    assert config_digest(config) != config_digest(dict(config, paths=dict(config["paths"], background_dir="z")))
+    assert config_digest(config) != config_digest(dict(config, fitting={"parsimony": {"model_selection": "ftest"}}))
 
 
 def test_code_digest_tracks_content_not_bytecode(tmp_path):
