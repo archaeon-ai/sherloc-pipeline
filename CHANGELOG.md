@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`sherloc refit`: run `full-pipeline` over the database's scans with a resumable journal.**
+  Each scan that completes (every stage ran, Raman persistence ran for all
+  three domains, no stage error) is appended to a JSON Lines journal.
+  `--resume <journal>` skips the recorded scans and refuses if the database,
+  data or results directory, scan selection, effective-config digest or
+  code digest has changed. Serial. The run writes to `--database`.
+
 ### Security
 - **`/api/health` never counts the spectra table, for any caller (#154).**
   5.7.6 removed the counts for anonymous calls only; a signed-in call still
