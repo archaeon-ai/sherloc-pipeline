@@ -412,14 +412,21 @@ def laser_normalize_enabled(config: Any) -> bool:
 
 
 def summarize_inputs(chosen: Dict[str, Dict[str, Any]], normalized: List[str],
-                     total_points: int) -> Dict[str, Any]:
-    """Metadata recording which input each fit used."""
+                     total_points: int, *,
+                     spectrum_type: str = PARENT_SPECTRUM_TYPE) -> Dict[str, Any]:
+    """Metadata recording which input each fit used.
+
+    ``spectrum_type`` is the measured input type, reported when no point
+    used despiked rows. ``laser_normalized`` (PDS) input has no despiked
+    rows to fall back from, so it reports no fallback points.
+    """
     despiked = sum(1 for v in chosen.values() if v["despiked"])
+    fallback = 0 if spectrum_type == "laser_normalized" else len(chosen) - despiked
     return {
         "input_spectrum_type": DESPIKED_SPECTRUM_TYPE if despiked == len(chosen) and chosen
-        else ("mixed" if despiked else PARENT_SPECTRUM_TYPE),
+        else ("mixed" if despiked else spectrum_type),
         "points_despiked": despiked,
-        "points_fallback": len(chosen) - despiked,
+        "points_fallback": fallback,
         "points_laser_normalized": len(normalized),
         "points_total": total_points,
     }

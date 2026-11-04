@@ -3135,16 +3135,46 @@ class FittingService:
                 # Input: the stored-ML-despiked R1-R3 rows when current for all
                 # three regions, else today's dark_subtracted/active rows
                 # (services/fluor_inputs.py). Then the laser-normalization stage.
+                # PDS scans fit their measured laser_normalized rows, which are
+                # already normalized, so the stage is skipped for them.
+                from sherloc_pipeline.models.spectra import resolve_spectrum_type
                 from sherloc_pipeline.services import fluor_inputs
 
+                spectrum_type = resolve_spectrum_type(scan_orm)
+                pds_normalized = spectrum_type == "laser_normalized"
                 unreadable_points: Dict[str, str] = {}
                 chosen = fluor_inputs.load_fluorescence_inputs(
                     session, [sp.id for sp in scan_points],
                     allow_despiked=use_despiked_inputs,
                     allowed_despiked_ids=despiked_row_ids,
+                    spectrum_type=spectrum_type,
                     unreadable_spectra=unreadable_points,
                 )
-                laser_normalize = fluor_inputs.laser_normalize_enabled(self.context.config)
+                if pds_normalized and chosen:
+                    # PDS rows carry the product's wavelength table; fit on
+                    # it, not on the Loupe polynomial (services/spectrum_axes.py).
+                    from sherloc_pipeline.services.spectrum_axes import resolve_spectrum_axes
+
+                    axis_rows = session.query(SpectrumORM).filter(
+                        SpectrumORM.scan_point_id.in_(list(chosen)),
+                        SpectrumORM.region.in_(("R1", "R2", "R3")),
+                        SpectrumORM.spectrum_type == spectrum_type,
+                    ).all()
+                    try:
+                        full_wavelength = resolve_spectrum_axes(
+                            scan_orm, axis_rows, "R123"
+                        ).wavelength
+                    except ValueError as exc:
+                        raise FittingError(
+                            f"Cannot resolve the PDS wavelength axis for scan "
+                            f"{sol}/{target}/{scan}: {exc}",
+                            exit_code=1,
+                            context={"sol": sol, "target": target, "scan": scan},
+                        ) from exc
+                laser_normalize = (
+                    not pds_normalized
+                    and fluor_inputs.laser_normalize_enabled(self.context.config)
+                )
                 norm_factors = fluor_inputs.laser_normalization_factors(
                     {sp.id: sp.photodiode_mean for sp in scan_points}
                 ) if laser_normalize else {}
@@ -3211,7 +3241,8 @@ class FittingService:
                     })
 
                 input_meta = fluor_inputs.summarize_inputs(
-                    chosen, normalized_points, len(scan_points)
+                    chosen, normalized_points, len(scan_points),
+                    spectrum_type=spectrum_type,
                 )
                 input_meta["laser_normalize"] = laser_normalize
                 if input_meta["points_fallback"]:

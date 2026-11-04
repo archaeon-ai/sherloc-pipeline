@@ -28,6 +28,9 @@ last run. CI places test temp in the runner's per-job folder.
 - Security-sensitive reports: see [`SECURITY.md`](SECURITY.md).
 - Pull requests: include a concise summary, a test plan, and link any related
   issue. CI must pass before review.
+- Pull requests from forks are reviewed line by line and may be re-authored by
+  a maintainer, with credit to the original pull request. CI runs on fork pull
+  requests only after a maintainer approves the run.
 
 ## Conventional commits
 

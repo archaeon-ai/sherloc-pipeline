@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DB-refresh runbooks); on the public tier `n_scans` is `null` too.
 
 ### Fixed
+- **`fit-fluor` on PDS scans fits the measured `laser_normalized` rows (#166).**
+  It no longer looks for Loupe `dark_subtracted` rows, fits on the wavelength
+  table stored with the rows instead of the Loupe polynomial (a scan without one
+  fails), applies no second laser normalization, and reports
+  `input_spectrum_type` as `laser_normalized` with no fallback points.
 - **Fluorescence confidence is scored against the same run's Raman peaks (#164).**
   `full-pipeline` fitted fluorescence (Step 3) before it persisted the Raman
   peaks (Step 4), so each fluorescence peak's `assignment_confidence` came
