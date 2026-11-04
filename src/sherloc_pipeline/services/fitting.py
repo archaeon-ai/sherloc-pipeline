@@ -89,6 +89,15 @@ def _to_bool_safe(value) -> bool:
     return str(value).strip().lower() in ("true", "1", "t", "yes")
 
 
+def _is_blank_peak_table(csv_path: Path) -> bool:
+    """True when a peak CSV holds only whitespace: the zero-peak table that
+    ``save_peak_table`` wrote before it emitted a header."""
+    try:
+        return not csv_path.read_bytes().strip()
+    except OSError:
+        return False
+
+
 # Domain-specific CSV filename patterns for Raman peak discovery
 RAMAN_CSV_PATTERNS = {
     "minerals":  r"_point(\d+)_fit_peaks\.csv$",
@@ -2800,6 +2809,18 @@ class FittingService:
 
                     try:
                         peaks_df = pd.read_csv(csv_path)
+                    except pd.errors.EmptyDataError:
+                        # A zero-peak point written before peak tables carried a
+                        # header is a blank file. The point found no peaks, so it
+                        # stays in the delete scope and gets zero rows.
+                        if _is_blank_peak_table(csv_path):
+                            continue
+                        unreadable_peak_csvs.append({
+                            "point_index": point_idx,
+                            "file_name": csv_path.name,
+                            "exception_type": "EmptyDataError",
+                        })
+                        continue
                     except Exception as e:
                         unreadable_peak_csvs.append({
                             "point_index": point_idx,

@@ -467,6 +467,58 @@ class TestUnreadablePeakCSVs:
         assert _snapshot_peak_rows(run.database_path)[1] == run.previous[1]
 
 
+class TestZeroPeakCSVs:
+    """A point whose fit found no peaks persists as zero rows (issue #161)."""
+
+    def test_save_peak_table_writes_header_for_zero_peaks(self, tmp_path):
+        from sherloc_pipeline.core.fitting import PEAK_TABLE_COLUMNS, save_peak_table
+
+        csv_path = tmp_path / "zero_point0_fit_peaks.csv"
+        save_peak_table([], str(csv_path))
+        df = pd.read_csv(csv_path)
+        assert df.empty
+        assert list(df.columns) == PEAK_TABLE_COLUMNS
+
+    @pytest.mark.parametrize("table", ["header_only", "legacy_blank"])
+    def test_zero_peak_point_clears_its_rows(self, synthetic_peak_run, table):
+        from sherloc_pipeline.core.fitting import save_peak_table
+
+        run = synthetic_peak_run
+        zero = run.csv_paths[1]
+        if table == "header_only":
+            save_peak_table([], str(zero))
+        else:
+            zero.write_bytes(b"\n")
+
+        result = _persist_synthetic_run(run)
+
+        assert result.metadata["peaks_inserted"] == 2
+        rows = _snapshot_peak_rows(run.database_path)
+        assert rows.get(1, []) == []
+        for point in (0, 2):
+            assert len(rows[point]) == 1
+            assert rows[point][0]["center_cm1"] == run.new_centers[point]
+
+    def test_empty_data_error_on_non_blank_csv_stays_loud(self, synthetic_peak_run, monkeypatch):
+        run = synthetic_peak_run
+        suspect = run.csv_paths[1]
+        read_csv = pd.read_csv
+
+        def empty_data_for_one_csv(path, *args, **kwargs):
+            if Path(path) == suspect:
+                raise pd.errors.EmptyDataError("No columns to parse from file")
+            return read_csv(path, *args, **kwargs)
+
+        monkeypatch.setattr(pd, "read_csv", empty_data_for_one_csv)
+        with pytest.raises(FittingError) as exc_info:
+            _persist_synthetic_run(run)
+
+        assert exc_info.value.context["unreadable_peak_csvs"] == [{
+            "point_index": 1, "file_name": suspect.name, "exception_type": "EmptyDataError",
+        }]
+        assert _snapshot_peak_rows(run.database_path)[1] == run.previous[1]
+
+
 # ---------------------------------------------------------------------------
 # AC 1 — Minerals domain (matches old behavior + assignment)
 # ---------------------------------------------------------------------------
