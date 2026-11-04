@@ -313,7 +313,15 @@ def fit_spectrum(
     return FitResult(peaks=peaks, r2=float(r2), rss=rss, dof=dof, warnings=[]), full_model
 
 
+PEAK_TABLE_COLUMNS = [
+    'center_cm1', 'fwhm_cm1', 'amplitude_a', 'area', 'snr',
+    'pass_snr', 'pass_fwhm', 'pass_r2', 'sharpness_ratio', 'pass_sharpness',
+]
+
+
 def save_peak_table(peaks: List[PeakFit], output_csv_path: str) -> None:
+    """Write a point's peak table. A point with no peaks gets a header-only
+    table, so readers see zero rows instead of an unparseable empty file."""
     import pandas as pd
     rows = [
         {
@@ -330,7 +338,7 @@ def save_peak_table(peaks: List[PeakFit], output_csv_path: str) -> None:
         }
         for p in peaks
     ]
-    pd.DataFrame(rows).to_csv(output_csv_path, index=False)
+    pd.DataFrame(rows, columns=PEAK_TABLE_COLUMNS).to_csv(output_csv_path, index=False)
 
 
 
