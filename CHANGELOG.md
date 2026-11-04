@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DB-refresh runbooks); on the public tier `n_scans` is `null` too.
 
 ### Fixed
+- **Fluorescence confidence is scored against the same run's Raman peaks (#164).**
+  `full-pipeline` fitted fluorescence (Step 3) before it persisted the Raman
+  peaks (Step 4), so each fluorescence peak's `assignment_confidence` came
+  from the Raman rows already in the database: none on a scan's first run,
+  the previous run's on a rerun. Raman persistence is now Step 3 and
+  fluorescence Step 4. `backfill --domains` now runs domains in the fixed
+  order (minerals, organics, hydration, fluorescence) regardless of the
+  order given. Rows written by earlier runs are not changed; rerun
+  `fit-fluor` for a scan to rescore it.
 - **`full-pipeline` no longer stops at Step 4 on points with no peaks (#161).**
   A point whose fit found no peaks got a peak CSV holding a single newline
   and no header, which `pd.read_csv` cannot parse. Since unreadable peak CSVs

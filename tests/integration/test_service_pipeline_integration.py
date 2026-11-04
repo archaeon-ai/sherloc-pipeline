@@ -586,49 +586,6 @@ class TestCLIPlotDomainParsing:
 class TestPipelineOrchestration:
     """Verify pipeline step ordering for fluorescence and Raman persistence."""
 
-    def test_pipeline_calls_fluorescence_before_raman_persistence(self):
-        """Pipeline steps 3 and 4 should call fit_fluorescence then persist_raman_peaks."""
-        call_order = []
-
-        with patch("sherloc_pipeline.services.pipeline.FittingService") as MockFS:
-            mock_service = MagicMock()
-
-            def track_fluor(*a, **kw):
-                call_order.append("fluorescence")
-                return MagicMock(warnings=[], metadata={"peaks_inserted": 5})
-
-            def track_raman(*a, **kw):
-                call_order.append(f"raman_{kw.get('domain', 'unknown')}")
-                return MagicMock(warnings=[], metadata={"peaks_inserted": 3})
-
-            mock_service.fit_fluorescence.side_effect = track_fluor
-            mock_service.persist_raman_peaks.side_effect = track_raman
-            mock_service.fit_scan.return_value = MagicMock(
-                warnings=[], metadata={}, artifacts=[],
-            )
-            MockFS.return_value = mock_service
-
-            # Import PipelineService after patching
-            from sherloc_pipeline.services.pipeline import PipelineService
-
-            pipeline = PipelineService.__new__(PipelineService)
-            pipeline.console = MagicMock()
-            pipeline.logger = MagicMock()
-
-            # Mock the full pipeline run through calling the fitting steps directly
-            # We test by checking that fit_fluorescence and persist_raman_peaks
-            # are called with the right domains
-            mock_service.fit_fluorescence(sol="293", target="Quartier", scan="HDR_1")
-            for domain in ["minerals", "organics", "hydration"]:
-                mock_service.persist_raman_peaks(
-                    sol="293", target="Quartier", scan="HDR_1", domain=domain,
-                )
-
-        assert call_order[0] == "fluorescence"
-        assert "raman_minerals" in call_order
-        assert "raman_organics" in call_order
-        assert "raman_hydration" in call_order
-
     def test_pipeline_raman_persistence_all_three_domains(self):
         """Pipeline step 4 should iterate over minerals, organics, hydration."""
         from sherloc_pipeline.services.pipeline import PipelineService

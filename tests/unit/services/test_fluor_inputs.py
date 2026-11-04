@@ -684,3 +684,76 @@ def test_process_new_exits_one_for_unreadable_fluor_spectrum(
     assert "point 1" in errors[0]
     assert "previously persisted fluorescence peaks were kept" in errors[0]
     assert _snapshot_fluor_peaks(run.database_path)[1] == run.previous[1]
+
+
+def test_full_pipeline_scores_fluor_against_this_runs_raman(
+    synthetic_fluor_run, tmp_path, monkeypatch,
+):
+    """Raman persistence runs before fluorescence, so co-occurrence uses this run's Raman rows (#164)."""
+    from sherloc_pipeline.core import fluor_fitting
+    from sherloc_pipeline.services.base import ServiceResult
+    from sherloc_pipeline.services.pipeline import PipelineService
+
+    run = synthetic_fluor_run
+    monkeypatch.setenv("SHERLOC_DB_PATH", str(run.database_path))
+
+    def stub(wavelength, intensity, **kwargs):
+        # group1b: confirmed by a sulfate Raman assignment at the same point
+        return fluor_fitting.FluorFitResult(
+            peaks=[fluor_fitting.FluorPeakFit(
+                center_nm=325.0, amplitude=73.0, fwhm_nm=13.0, area=97.0, snr=19.0,
+            )],
+            r2=0.91, rss=11.0, aicc=7.0, n_peaks=1, is_saturated=False,
+            fit_skipped=False, n_saturated_channels=0, n_masked_channels=0,
+        )
+
+    monkeypatch.setattr(fluor_fitting, "fit_fluorescence_spectrum", stub)
+    fitted = ServiceResult(summary="Synthetic fitting completed")
+    for method in ("fit_minerals", "fit_organics", "fit_hydration", "fit_averages"):
+        monkeypatch.setattr(run.fitting, method, Mock(return_value=fitted))
+    calls = []
+    fit_fluorescence = run.fitting.fit_fluorescence
+
+    def fluor(**kwargs):
+        calls.append("fluorescence")
+        return fit_fluorescence(**kwargs)
+
+    def persist(**kwargs):
+        calls.append(kwargs["domain"])
+        if kwargs["domain"] == "minerals":
+            with get_session(run.engine) as session:
+                for spectrum in session.query(SpectrumORM).filter_by(region="R1"):
+                    session.add(FittedPeakORM(
+                        id=str(uuid4()), spectrum_id=spectrum.id, fit_modality="minerals",
+                        center_cm1=1010.0, amplitude=50.0, mineral_assignment="sulf1_v1",
+                    ))
+        return ServiceResult(summary="Synthetic persistence completed")
+
+    monkeypatch.setattr(run.fitting, "fit_fluorescence", fluor)
+    monkeypatch.setattr(run.fitting, "persist_raman_peaks", persist)
+
+    def factory(**kwargs):
+        run.fitting.console = kwargs["console"]
+        return run.fitting
+
+    with patch("sherloc_pipeline.services.pipeline.FittingService", side_effect=factory), \
+         patch("sherloc_pipeline.services.pipeline.PreprocessingService") as preprocessing, \
+         patch("sherloc_pipeline.services.pipeline.DataIngestion") as ingestion, \
+         patch("sherloc_pipeline.services.pipeline.archive_existing_results", return_value=None), \
+         patch("sherloc_pipeline.services.fluor_inputs.refresh_despiked_rows_for_scan", return_value={}), \
+         patch("sherloc_pipeline.services.pipeline.ReviewService"), \
+         patch("sherloc_pipeline.services.pipeline.SpatialService") as spatial:
+        preprocessing.return_value.run_scan.return_value = fitted
+        ingestion.return_value.get_results_path.return_value = tmp_path / "results"
+        spatial.return_value.render_overlay.return_value = fitted
+        PipelineService().run_full_pipeline(
+            sol="76543", target="Synthetic_Fluor", scan="synthetic_scan",
+            data_dir=tmp_path, results_dir=tmp_path / "results",
+        )
+
+    peaks = [p for rows in _snapshot_fluor_peaks(run.database_path).values() for p in rows
+             if p["fit_modality"] == "fluorescence"]
+    assert len(peaks) == 3
+    assert {p["mineral_assignment"] for p in peaks} == {"group1b"}
+    assert {p["assignment_confidence"] for p in peaks} == {1.3}
+    assert calls == ["minerals", "organics", "hydration", "fluorescence"]
