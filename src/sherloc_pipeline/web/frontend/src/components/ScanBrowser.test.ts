@@ -33,6 +33,7 @@ const responseWithScan: ScanListResponse = {
       processing_status: null,
       processed_at: null,
       processing_pipeline_version: null,
+      has_fitted_peaks: false,
     },
   ],
   total: 1,

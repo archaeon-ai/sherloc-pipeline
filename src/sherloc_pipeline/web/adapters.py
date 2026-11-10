@@ -27,8 +27,8 @@ def _format_dt(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat().replace("+00:00", "Z")
 
 
-def scan_orm_to_list_item(scan: ScanORM) -> ScanListItem:
-    """Convert a ScanORM to a scan list DTO."""
+def scan_orm_to_list_item(scan: ScanORM, *, has_fitted_peaks: bool) -> ScanListItem:
+    """Convert a ScanORM to a scan list DTO; the caller derives ``has_fitted_peaks``."""
     return ScanListItem(
         id=scan.id,
         sol_number=scan.sol_number,
@@ -42,11 +42,12 @@ def scan_orm_to_list_item(scan: ScanORM) -> ScanListItem:
         processing_status=getattr(scan, "processing_status", None),
         processed_at=_format_dt(getattr(scan, "processed_at", None)),
         processing_pipeline_version=getattr(scan, "processing_pipeline_version", None),
+        has_fitted_peaks=has_fitted_peaks,
     )
 
 
-def scan_orm_to_detail(scan: ScanORM) -> ScanDetail:
-    """Convert a ScanORM to a full scan detail DTO."""
+def scan_orm_to_detail(scan: ScanORM, *, has_fitted_peaks: bool) -> ScanDetail:
+    """Convert a ScanORM to a full scan detail DTO; the caller derives ``has_fitted_peaks``."""
     return ScanDetail(
         id=scan.id,
         sol_number=scan.sol_number,
@@ -70,6 +71,7 @@ def scan_orm_to_detail(scan: ScanORM) -> ScanDetail:
         processing_pipeline_version=getattr(scan, "processing_pipeline_version", None),
         processing_config_hash=getattr(scan, "processing_config_hash", None),
         processing_error=getattr(scan, "processing_error", None),
+        has_fitted_peaks=has_fitted_peaks,
         sclk_start=getattr(scan, "sclk_start", None),
         sclk_stop=getattr(scan, "sclk_stop", None),
         created_at=_format_dt(getattr(scan, "created_at", None)),

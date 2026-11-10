@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from sqlalchemy.exc import DatabaseError, OperationalError
@@ -15,6 +15,7 @@ from sherloc_pipeline.core.coordinates import (
 )
 from sherloc_pipeline.database.models import (
     CosmicRayMaskORM,
+    FittedPeakORM,
     ScanORM,
     ScanPointORM,
     SpectrumORM,
@@ -38,6 +39,24 @@ from sherloc_pipeline.web.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _has_fitted_peaks_expr(scan_id=ScanORM.id):
+    """Correlated EXISTS: the scan has at least one fitted_peaks row.
+
+    fitted_peaks -> spectra -> scan_points -> scans. Derived at read time
+    because nothing writes ``scans.processing_status``; that column is
+    reported unchanged. With the default ``scan_id`` the EXISTS correlates
+    to the enclosing scans query; pass a value for a single scan.
+    """
+    return (
+        select(FittedPeakORM.id)
+        .join(SpectrumORM, FittedPeakORM.spectrum_id == SpectrumORM.id)
+        .join(ScanPointORM, SpectrumORM.scan_point_id == ScanPointORM.id)
+        .where(ScanPointORM.scan_id == scan_id)
+        .exists()
+    )
+
 
 router = APIRouter(prefix="/api", tags=["scans"])
 
@@ -98,6 +117,7 @@ def list_scans(
     scan_class: Optional[str] = Query(None),
     scan_type: Optional[str] = Query(None),
     processing_status: Optional[str] = Query(None),
+    has_fitted_peaks: Optional[bool] = Query(None),
     sort_by: Optional[str] = Query(None),
     sort_order: str = Query("asc"),
     offset: int = Query(0, ge=0),
@@ -143,6 +163,9 @@ def list_scans(
             q = q.filter(ScanORM.processing_status.is_(None))
         else:
             q = q.filter(ScanORM.processing_status == processing_status)
+    if has_fitted_peaks is not None:
+        fitted = _has_fitted_peaks_expr()
+        q = q.filter(fitted if has_fitted_peaks else ~fitted)
 
     total = q.count()
     if sort_by == "target":
@@ -167,7 +190,14 @@ def list_scans(
             ScanORM.id.asc(),
         )
 
-    scans = q.order_by(*order_columns).offset(offset).limit(limit).all()
+    # The fit status rides along in the same SELECT (no per-scan query).
+    rows = (
+        q.add_columns(_has_fitted_peaks_expr().label("has_fitted_peaks"))
+        .order_by(*order_columns)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
     # Per spec §12.2: when the DB is empty (zero scans visible to this
     # access mode) AND the caller applied no filters, surface a hint
@@ -175,13 +205,16 @@ def list_scans(
     message: Optional[str] = None
     has_filters = any(
         v is not None
-        for v in (sol, scan_name, sol_from, sol_to, target, scan_class, scan_type, processing_status)
+        for v in (
+            sol, scan_name, sol_from, sol_to, target, scan_class, scan_type,
+            processing_status, has_fitted_peaks,
+        )
     )
     if total == 0 and not has_filters:
         message = "No data ingested yet. See 'sherloc init --help' to bootstrap."
 
     return ScanListResponse(
-        scans=[scan_orm_to_list_item(s) for s in scans],
+        scans=[scan_orm_to_list_item(s, has_fitted_peaks=bool(f)) for s, f in rows],
         total=total,
         offset=offset,
         limit=limit,
@@ -199,7 +232,8 @@ def get_scan(request: Request, scan_id: str) -> ScanDetailResponse:
     data_access = _get_data_access(request)
     data_access.validate_scan_access(scan)
 
-    detail = scan_orm_to_detail(scan)
+    has_fits = session.query(_has_fitted_peaks_expr(scan_id)).scalar()
+    detail = scan_orm_to_detail(scan, has_fitted_peaks=bool(has_fits))
     if data_access.is_public:
         # Linked scans can be team-tier; raw error text can contain internal locations.
         detail.parent_scan_id = None

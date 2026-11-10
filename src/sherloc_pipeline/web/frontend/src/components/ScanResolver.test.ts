@@ -13,7 +13,7 @@ function scan(id: string): ScanListItem {
     id, scan_id: `test-${id}`, scan_name: 'Testrock_detail', sol_number: 42424,
     target: 'Testrock', n_points: 3, scan_class: 'primary', scan_type: 'detail',
     target_type: 'mars_target', processing_status: null, processed_at: null,
-    processing_pipeline_version: null,
+    processing_pipeline_version: null, has_fitted_peaks: false,
   };
 }
 

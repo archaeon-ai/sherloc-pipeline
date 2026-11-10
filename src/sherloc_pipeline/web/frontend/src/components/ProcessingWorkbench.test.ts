@@ -70,6 +70,7 @@ function fakeScan() {
     processing_status: 'completed' as const,
     processed_at: null,
     processing_pipeline_version: null,
+    has_fitted_peaks: false,
     processing_config_hash: null,
     processing_error: null,
     sclk_start: null,

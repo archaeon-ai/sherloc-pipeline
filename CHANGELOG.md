@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes to `--database`.
 - Raman persistence metadata reports `csvs_without_spectrum`; fluorescence
   fitting metadata reports `points_missing_regions`.
+- **Scan fit status derived from fitted peaks.** The scan list and scan
+  detail responses carry `has_fitted_peaks` (true when the scan has at
+  least one `fitted_peaks` row), computed in the list query itself, and
+  `GET /api/scans` takes a `has_fitted_peaks` filter. The Scan Browser and
+  Processing Workbench show it as "peaks fitted" / "no fitted peaks", and
+  the Scan Browser Status filter offers those two choices. They previously
+  showed the `processing_status` column, which nothing writes, so every
+  scan read "unprocessed". `processing_status` and its filter are
+  unchanged in the API. No database write, no migration.
 
 ### Security
 - **`/api/health` never counts the spectra table, for any caller (#154).**
