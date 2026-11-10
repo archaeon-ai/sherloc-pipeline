@@ -1891,3 +1891,21 @@ it.each([
   expect(getAvg).toHaveBeenCalledTimes(spectrumCalls);
   expect(api.getBadpixChannels).toHaveBeenCalledTimes(annotationCalls);
 });
+
+describe('ProcessingWorkbench fit status', () => {
+  it.each([
+    [true, 'peaks fitted'],
+    [false, 'no fitted peaks'],
+  ])('has_fitted_peaks=%s renders "%s" (stored column ignored)', async (hasFittedPeaks, label) => {
+    vi.mocked(api.getScan).mockResolvedValue({
+      schema_version: '1.0.0',
+      scan: { ...fakeScan(), processing_status: 'completed' as const, has_fitted_peaks: hasFittedPeaks },
+    });
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    const dt = [...container.querySelectorAll('dt')].find((el) => el.textContent === 'Status')!;
+    expect(dt.nextElementSibling).toHaveTextContent(new RegExp(`^${label}$`));
+    expect(screen.queryByText('completed')).toBeNull();
+    expect(screen.queryByText('unprocessed')).toBeNull();
+  });
+});

@@ -139,3 +139,65 @@ describe('ScanBrowser filters and sorting', () => {
     ));
   });
 });
+
+describe('ScanBrowser fit status', () => {
+  const twoScans: ScanListResponse = {
+    ...emptyResponse,
+    scans: [
+      { ...responseWithScan.scans[0], id: 'fitted', scan_name: 'detail_1', has_fitted_peaks: true },
+      { ...responseWithScan.scans[0], id: 'unfitted', scan_name: 'detail_2', has_fitted_peaks: false },
+    ],
+    total: 2,
+  };
+
+  it('labels each scan from has_fitted_peaks, not the stored status column', async () => {
+    getScansMock.mockResolvedValue({
+      ...twoScans,
+      // The stored column must not drive the label.
+      scans: twoScans.scans.map((s) => ({ ...s, processing_status: 'completed' as const })),
+    });
+    render(ScanBrowser);
+    await waitFor(() => expect(screen.getByText('detail_2')).toBeInTheDocument());
+
+    // Status is the seventh column (Sol, Target, Scan Name, Points, Class, Type, Status).
+    const status = (name: string) => screen.getByText(name).closest('tr')!.querySelectorAll('td')[6];
+    expect(status('detail_1')).toHaveTextContent(/^peaks fitted$/);
+    expect(status('detail_2')).toHaveTextContent(/^no fitted peaks$/);
+    expect(screen.queryByText('unprocessed')).toBeNull();
+    expect(screen.queryByText('completed')).toBeNull();
+  });
+
+  it('offers exactly All / peaks fitted / no fitted peaks and filters on has_fitted_peaks', async () => {
+    render(ScanBrowser);
+    await waitFor(() => expect(getScansMock).toHaveBeenCalledTimes(1));
+
+    const select = screen.getByLabelText('Status') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
+      'All',
+      'peaks fitted',
+      'no fitted peaks',
+    ]);
+
+    for (const [label, value] of [['peaks fitted', true], ['no fitted peaks', false]] as const) {
+      const option = [...select.options].find((o) => o.textContent?.trim() === label)!;
+      await fireEvent.change(select, { target: { value: option.value } });
+      await fireEvent.submit(screen.getByRole('button', { name: 'Filter' }).closest('form')!);
+      await waitFor(() => expect(getScansMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ has_fitted_peaks: value }),
+      ));
+      expect(getScansMock.mock.lastCall![0]).not.toHaveProperty('processing_status');
+      expect(window.location.hash).toContain(`has_fitted_peaks=${value}`);
+    }
+  });
+
+  it('restores the fit-status filter from the hash', async () => {
+    window.history.replaceState(null, '', '#/?has_fitted_peaks=false');
+    currentHash.set('#/?has_fitted_peaks=false');
+    render(ScanBrowser);
+    await waitFor(() => expect(getScansMock).toHaveBeenCalledWith(
+      expect.objectContaining({ has_fitted_peaks: false }),
+    ));
+    const select = screen.getByLabelText('Status') as HTMLSelectElement;
+    expect(select.selectedOptions[0].textContent?.trim()).toBe('no fitted peaks');
+  });
+});
