@@ -40,6 +40,7 @@
   import RamanView from './RamanView.svelte';
   import ExportMenu from './ExportMenu.svelte';
   import AciViewer from './AciViewer.svelte';
+  import { fitStatusBadge, fitStatusLabel } from '../lib/fitStatus';
 
   export let scanId: string;
   export let queryParams: Record<string, string> = {};
@@ -677,13 +678,8 @@
               <dt>Type</dt><dd>{scan.scan_type ?? '--'}</dd>
               <dt>Status</dt>
               <dd>
-                <span
-                  class="badge"
-                  class:badge-success={scan.processing_status === 'completed'}
-                  class:badge-error={scan.processing_status === 'failed'}
-                  class:badge-neutral={!scan.processing_status}
-                >
-                  {scan.processing_status ?? 'unprocessed'}
+                <span class="badge {fitStatusBadge(scan.has_fitted_peaks)}">
+                  {fitStatusLabel(scan.has_fitted_peaks)}
                 </span>
               </dd>
             </dl>

@@ -25,6 +25,8 @@ export interface ScanListItem {
   processing_status: 'completed' | 'failed' | null;
   processed_at: string | null;
   processing_pipeline_version: string | null;
+  /** Derived by the API: the scan has at least one fitted peak. */
+  has_fitted_peaks: boolean;
 }
 
 export interface ScanListResponse {
@@ -59,6 +61,8 @@ export interface ScanDetail {
   processing_status: 'completed' | 'failed' | null;
   processed_at: string | null;
   processing_pipeline_version: string | null;
+  /** Derived by the API: the scan has at least one fitted peak. */
+  has_fitted_peaks: boolean;
   processing_config_hash: string | null;
   processing_error: string | null;
   sclk_start: number | null;
@@ -510,6 +514,7 @@ export interface ScanFilterParams {
   scan_class?: string;
   scan_type?: string;
   processing_status?: string;
+  has_fitted_peaks?: boolean;
   sort_by?: 'sol' | 'target';
   sort_order?: 'asc' | 'desc';
   offset?: number;

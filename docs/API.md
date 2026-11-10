@@ -509,9 +509,16 @@ columns, and pagination. All parameters are optional:
 | `sol_from`, `sol_to` | Inclusive lower and upper sol bounds |
 | `target` | Case-insensitive substring match; spaces and underscores are equivalent |
 | `scan_class`, `scan_type`, `processing_status` | Existing categorical filters |
+| `has_fitted_peaks` | `true`: scans with at least one fitted peak; `false`: scans with none |
 | `sort_by` | `sol` or `target` |
 | `sort_order` | `asc` or `desc` (defaults to `asc`) |
 | `offset`, `limit` | Pagination offset and page size |
+
+Each scan in the list, and the scan in `GET /api/scans/{id}`, carries
+`has_fitted_peaks`, derived when the request is served: `true` when at
+least one `fitted_peaks` row belongs to the scan through its spectra and
+points. `processing_status` is the stored column, reported unchanged; no
+pipeline step writes it yet, so it is normally `null`.
 
 A reversed sol range, unknown sort field, or unknown sort direction returns
 HTTP 400. Sorting includes stable sol/name tie-breakers so rows do not move

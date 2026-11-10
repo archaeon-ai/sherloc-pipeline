@@ -3,6 +3,7 @@
   import { accessModeResolved, currentHash, navigate } from '../lib/stores';
   import { getScans } from '../lib/api';
   import type { ScanListItem, ScanFilterParams } from '../lib/types';
+  import { fitStatusBadge, fitStatusLabel } from '../lib/fitStatus';
 
   let scans: ScanListItem[] = [];
   let total = 0;
@@ -20,7 +21,8 @@
   let filterTarget: string = '';
   let filterScanClass: string = '';
   let filterScanType: string = '';
-  let filterProcessingStatus: string = '';
+  // '' = all, 'true' = peaks fitted, 'false' = no fitted peaks.
+  let filterFitStatus: '' | 'true' | 'false' = '';
   let offset = 0;
   let limit = 50;
   let sortBy: 'sol' | 'target' | '' = '';
@@ -62,7 +64,8 @@
     filterTarget = params.get('target') ?? '';
     filterScanClass = params.get('scan_class') ?? '';
     filterScanType = params.get('scan_type') ?? '';
-    filterProcessingStatus = params.get('processing_status') ?? '';
+    const fitStatus = params.get('has_fitted_peaks');
+    filterFitStatus = fitStatus === 'true' || fitStatus === 'false' ? fitStatus : '';
     offset = Math.max(0, Number.parseInt(params.get('offset') ?? '0', 10) || 0);
     const requestedSort = params.get('sort_by');
     sortBy = requestedSort === 'sol' || requestedSort === 'target' ? requestedSort : '';
@@ -76,7 +79,7 @@
     if (filterTarget) params.set('target', filterTarget);
     if (filterScanClass) params.set('scan_class', filterScanClass);
     if (filterScanType) params.set('scan_type', filterScanType);
-    if (filterProcessingStatus) params.set('processing_status', filterProcessingStatus);
+    if (filterFitStatus) params.set('has_fitted_peaks', filterFitStatus);
     if (sortBy) {
       params.set('sort_by', sortBy);
       params.set('sort_order', sortOrder);
@@ -111,7 +114,7 @@
       if (filterTarget) params.target = filterTarget;
       if (filterScanClass) params.scan_class = filterScanClass;
       if (filterScanType) params.scan_type = filterScanType;
-      if (filterProcessingStatus) params.processing_status = filterProcessingStatus;
+      if (filterFitStatus) params.has_fitted_peaks = filterFitStatus === 'true';
       if (sortBy) {
         params.sort_by = sortBy;
         params.sort_order = sortOrder;
@@ -140,7 +143,7 @@
     filterTarget = '';
     filterScanClass = '';
     filterScanType = '';
-    filterProcessingStatus = '';
+    filterFitStatus = '';
     offset = 0;
     syncBrowserLocation();
     fetchScans();
@@ -178,11 +181,6 @@
     navigate(`#/scan/${scanId}/workbench`);
   }
 
-  function statusBadge(status: string | null): string {
-    if (status === 'completed') return 'badge-success';
-    if (status === 'failed') return 'badge-error';
-    return 'badge-neutral';
-  }
 </script>
 
 <div class="page-container">
@@ -226,11 +224,10 @@
         </div>
         <div class="filter-field">
           <label for="f-status">Status</label>
-          <select id="f-status" bind:value={filterProcessingStatus}>
+          <select id="f-status" bind:value={filterFitStatus}>
             <option value="">All</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
-            <option value="null">Unprocessed</option>
+            <option value="true">peaks fitted</option>
+            <option value="false">no fitted peaks</option>
           </select>
         </div>
         <div class="filter-actions">
@@ -317,8 +314,8 @@
               <td><span class="badge badge-neutral">{scan.scan_class}</span></td>
               <td>{scan.scan_type ?? '--'}</td>
               <td>
-                <span class="badge {statusBadge(scan.processing_status)}">
-                  {scan.processing_status ?? 'unprocessed'}
+                <span class="badge {fitStatusBadge(scan.has_fitted_peaks)}">
+                  {fitStatusLabel(scan.has_fitted_peaks)}
                 </span>
               </td>
               <td class="mono" style="font-size: 0.8rem; color: var(--color-text-secondary)">
