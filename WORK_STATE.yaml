@@ -1,8 +1,0 @@
-work_package: research lane, WEEK-PLAN 2.3 item 4 / section 4 item 8 - minerals labeler (PM order 11/12 08:55)
-branch: minerals-labeler
-head: 9e715e0
-open_decisions:
-  - "Ken: the four class names (present / absent / spike / unsure) and the 'scoring: neutral' word"
-  - "Ken: when to label the 147-row disputed sheet (manifest built locally, see next_action)"
-next_action: PR open; Codex review, then merge on GO + CI green. Remove this file before merge.
-last_verified: 2026-11-12T11:38:51-08:00 - 18 targeted tests + architecture tests pass locally; real manifest builds 147 rows (127 aicc-only, 20 ftest-only, 84 at SNR 3-4, 1 mask flag) matching summary.csv; UI checked on loopback 8592 with a scratch output dir, then stopped
