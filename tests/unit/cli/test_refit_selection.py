@@ -102,3 +102,17 @@ def test_resume_does_not_rerun_unrunnable_scans_as_failures(db, calls, tmp_path)
     assert payload["result"]["failed"] == 0
     assert payload["result"]["skipped"] == 2
     assert payload["result"]["unrunnable"] == [f"{SOL:04d} detail_2: no target"]
+
+
+def test_text_summary_lists_unrunnable_and_duplicate_scans(db, calls, tmp_path):
+    result = CliRunner().invoke(app, [
+        "refit", "--database", str(db), "--data-dir", str(tmp_path / "data"),
+        "--results-dir", str(tmp_path / "results"), "--journal", str(tmp_path / "batch.jsonl"),
+    ])
+
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "1 without a target, 1 duplicate key(s), 2 to run" in text
+    assert f"Not run (no target): 1 - {SOL:04d} detail_2: no target" in text
+    assert f"Duplicate scan keys, run once: 1 - {SOL:04d} Synthetic_B detail_3" in text
+    assert "0 failed" in text

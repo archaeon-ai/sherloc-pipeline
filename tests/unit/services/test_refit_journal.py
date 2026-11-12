@@ -52,6 +52,11 @@ def _identity(tmp_path, **changes):
     return identity
 
 
+def test_every_identity_field_is_in_a_real_identity(tmp_path):
+    # A field batch_identity() never emits would compare None == None on resume.
+    assert set(IDENTITY_FIELDS) <= set(_identity(tmp_path))
+
+
 class TestRunFailures:
     def test_complete_run(self):
         assert run_failures(_complete()) == []

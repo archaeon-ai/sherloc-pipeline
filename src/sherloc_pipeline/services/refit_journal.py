@@ -52,7 +52,6 @@ IDENTITY_FIELDS: Tuple[str, ...] = (
     "selection",
     "config_digest",
     "code_digest",
-    "select_runnable",
     "runtime",
     "environment",
 )
