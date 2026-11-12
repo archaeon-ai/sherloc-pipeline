@@ -348,13 +348,16 @@ class PreprocessingService:
                 # Step 2: Laser Normalization
                 task2 = progress.add_task("Applying laser normalization...", total=None)
                 try:
-                    process_laser_normalization(
+                    normalized_file = process_laser_normalization(
                         working_dir=working_dir,
                         sol=sol,
                         target=target,
                         scan=scan,
                         generate_plots=generate_plots,
-                        results_dir=ingestion.results_dir
+                        results_dir=ingestion.results_dir,
+                        output_dir=ingestion.get_results_path(
+                            target=target, sol=sol, scan=scan
+                        ),
                     )
                     progress.update(task2, description="✅ Laser normalization completed")
                 except Exception as e:
@@ -369,7 +372,9 @@ class PreprocessingService:
                 # Step 3: Data Ingestion - Normalized Spectra
                 task3 = progress.add_task("Processing normalized spectra...", total=None)
                 try:
-                    normalized_spectra = ingestion.process_normalized_spectra(working_dir)
+                    normalized_spectra = ingestion.process_normalized_spectra(
+                        working_dir, normalized_file=normalized_file
+                    )
                     progress.update(task3, description="✅ Normalized spectra processed")
                 except Exception as e:
                     progress.update(task3, description="❌ Normalized spectra processing failed")
