@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DB-refresh runbooks); on the public tier `n_scans` is `null` too.
 
 ### Fixed
+- **`backfill-fluor-inputs --in-place` refuses while `sherloc refit` runs** (#169).
+  `refit` writes the database but was missing from the running-writer check.
 - **`fit-fluor` on PDS scans fits the measured `laser_normalized` rows (#166).**
   It no longer looks for Loupe `dark_subtracted` rows, fits on the wavelength
   table stored with the rows instead of the Loupe polynomial (a scan without one
