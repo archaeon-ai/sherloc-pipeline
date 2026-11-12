@@ -614,6 +614,8 @@ A scan is recorded only when every pipeline stage ran, Raman persistence ran for
 
 Scans need Loupe working directories, as for `full-pipeline`. A scan without them fails at Step 1 and is not recorded.
 
+A scan with no target cannot be run and is listed as not run (no target); it is not counted as a failure. Scans that share a sol, target and scan name (after spaces in the target become underscores) run once, and the extra rows are listed as duplicates. The `--json` result carries both lists as `unrunnable` and `duplicates`.
+
 **Options:**
 - `--database PATH` - Database (default: `$SHERLOC_DB_PATH`, else `./phase.db`). The run writes to this database.
 - `--science` / `--no-engineering` - Scan selection, as for `backfill`

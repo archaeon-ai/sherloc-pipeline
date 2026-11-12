@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DB-refresh runbooks); on the public tier `n_scans` is `null` too.
 
 ### Fixed
+- **`sherloc refit` skips scans with no target and runs each scan key once** (#170).
+  A scan with no target failed on every pass, was never recorded and ran
+  again on every `--resume`; it is now listed as not run (`unrunnable`)
+  and does not count as a failure. Scans sharing a (sol, target, scan) key
+  ran twice in one pass; the extra rows are now listed as `duplicates`.
 - **`fit-fluor` keeps stored peaks for points with no R1-R3 inputs** (#174).
   A point skipped as `missing_regions` was still in the delete scope, so
   the fluorescence peaks an earlier run stored for it were deleted and
