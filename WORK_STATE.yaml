@@ -1,6 +1,13 @@
-work_package: "#135 data commands never create or upgrade schema; also the CONSOLE lane restart pointer (PM kenwilliford-77 11/12 order: #187 fields MERGED 8e9edb9; this; then v5.7.7 release PR, PR only)"
-branch: fix-135-no-implicit-schema
-head: ae0c954
+work_package: "#135 data commands never create or upgrade schema (PR #188); CONSOLE lane restart pointer (PM kenwilliford-77 order 11/12: #187 fields MERGED 8e9edb9; #188 this; then v5.7.7 release PR, PR only, no tag/release/publish)"
+branch: fix-135-no-implicit-schema (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/188)
+head: e7c077f
 open_decisions: []
-next_action: Codex r3 on exact head, CI, merge on GO; then release PR v5.7.7 (PR only)
-last_verified: 2026-11-12T09:41:59-08:00 — new tests/unit/database/test_schema_guard.py 8 passed; targeted unit+contract+pds files touching ingestion/init/db-stats 900 passed, 142 skipped
+next_action: >-
+  1) Read result of the broad targeted test run started ~10:30 (it ran on the code committed as e7c077f; if lost, rerun: unit+contract+pds+refit_e2e files touching
+  IngestionService/init/db-stats/fit_modality/process-new/refit). 2) Post Codex r3 review + response on #188: files in ~/.local/state/project-notebook/console-restart-2026-11-12/
+  (codex-188-r3.md, resp-188-r3.md: replace HEADSHA with e7c077f), gh pr edit 188 --body-file pr-135.md. 3) Codex r4 = LAST round (cap r4): build prompt with buildpr.sh 188 4 <wt> out prior
+  ground-135.md (prior = prior-188-r3.md + r3 resolution + resp-188-r3.md), run runreview.sh. GO -> git rm WORK_STATE.yaml (needs confirming exact head: either include removal before r4, or merge with residue per policy), CI green, gh pr merge 188 --merge --match-head-commit, wt finish.
+  NO-GO at r4 -> residue on PR, report to PM, do not merge. 4) Release PR: worktree ~/code/sherloc-pipeline-release-5-7-7 (branch release-5.7.7, created, untouched): bump pyproject.toml + src/sherloc_pipeline/__init__.py to 5.7.7, CHANGELOG "## [5.7.7] - 2026-11-12" under Unreleased (pattern: commit cb57117); PR only, Codex, CI, merge; NO tag/release/publish.
+  5) Update ~/.local/state/project-notebook/state-2026-11-12/console.md; ONE SendMessage to kenwilliford-77; READY-FOR-CLEAR. Hard stop: park by 13:15 (reboot 14:00).
+  Codex history #188: r1 NO-GO 5 Major (F2-F5 fixed, F1 contested); r2 NO-GO 3/5 (F1 upheld, F6 new, fixed); r3 NO-GO 5/6 (F1 default, F7 skip-ingest) fixed in e7c077f.
+last_verified: 2026-11-12T10:31:17-08:00 — tests/unit/database/test_schema_guard.py + tests/unit/cli + test_cli_init passed after fixes (F7 tests 3 passed); broad run pending
