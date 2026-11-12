@@ -349,7 +349,9 @@ class DataIngestion:
                 find_working_directory (may fail for manifest-resolved scans).
             normalized_spectra: Pre-processed normalized frames to average.
                 If None (the default — the legacy behavior), the frames are
-                re-loaded from the workspace. The ml despike path passes its
+                re-loaded from ``normalized_spectra_path`` (this scan's
+                results-folder darkSubSpectraN.csv, else the workspace
+                copy Loupe wrote). The ml despike path passes its
                 in-run frames here so despiked fluorescence/R123 products
                 proceed through the chain.
 

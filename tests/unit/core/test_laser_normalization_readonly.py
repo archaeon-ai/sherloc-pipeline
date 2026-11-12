@@ -102,3 +102,24 @@ def test_scan_reader_prefers_this_pipelines_output_over_the_workspace(tmp_path):
         generate_plots=False, output_dir=out,
     )
     assert ingestion.normalized_spectra_path(work) == out / "darkSubSpectraN.csv"
+
+
+@pytest.mark.parametrize("where", ["nested", "symlink", "plots"])
+def test_destinations_inside_the_workspace_are_refused(tmp_path, where):
+    work = write_workspace(tmp_path, LOUPE_WITH_TEXT)
+    before = snapshot(work)
+    kwargs = dict(generate_plots=False, output_dir=tmp_path / "results" / "scan")
+    if where == "nested":
+        kwargs["output_dir"] = work / "results"
+    elif where == "symlink":
+        alias = tmp_path / "alias"
+        alias.symlink_to(work / "sub", target_is_directory=True)
+        kwargs["output_dir"] = alias
+    else:
+        kwargs.update(generate_plots=True, results_dir=work / "plots")
+
+    with pytest.raises(ValueError, match="inside the input workspace"):
+        process_laser_normalization(work, sol=0, target="synthetic", scan="synthetic", **kwargs)
+
+    assert snapshot(work) == before
+    assert not (work / "results").exists() and not (work / "sub").exists() and not (work / "plots").exists()

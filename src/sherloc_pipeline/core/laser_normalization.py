@@ -100,18 +100,15 @@ def process_laser_normalization(
         generate_plots: Whether to generate comparison plots (default: True)
         results_dir: Base results directory (default: None, will use config)
         output_dir: Directory that receives ``darkSubSpectra{processing_flag}.csv``
-            (normally the scan's results folder). Must not be ``working_dir``.
+            (normally the scan's results folder). Must lie outside
+            ``working_dir``; so must the plot directory.
 
     Returns:
         Path of the normalized spectra file written.
     """
     logger.info(f"Starting laser normalization for {working_dir}")
     output_dir = Path(output_dir)
-    if output_dir.resolve() == Path(working_dir).resolve():
-        raise ValueError(
-            f"output_dir must not be the input workspace ({working_dir}); "
-            "laser normalization never writes into the workspace"
-        )
+    _refuse_inside_workspace(output_dir, working_dir, "output_dir")
 
     # Read photodiode data and calculate normalization factors
     photodiode_file = working_dir / "photodiodeRaw.csv"
@@ -193,6 +190,7 @@ def process_laser_normalization(
 
         # Create the test_plots subdirectory under [sol]_[scan]
         test_plots_dir = results_dir / target / f"{sol}_{scan}" / "test_plots"
+        _refuse_inside_workspace(test_plots_dir, working_dir, "plot directory")
         test_plots_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate plots for each region
@@ -214,6 +212,20 @@ def process_laser_normalization(
     return output_file
 
 
+
+
+def _refuse_inside_workspace(destination: Path, working_dir: Path, what: str) -> None:
+    """Raise unless ``destination`` lies outside the input workspace (issue #131).
+
+    Both paths are resolved, so a symlink into the workspace is caught too.
+    """
+    workspace = Path(working_dir).resolve()
+    resolved = Path(destination).resolve()
+    if resolved == workspace or resolved.is_relative_to(workspace):
+        raise ValueError(
+            f"{what} {destination} is inside the input workspace {working_dir}; "
+            "laser normalization never writes into the workspace"
+        )
 
 
 def check_section_headers(dark_sub: pd.DataFrame, n_spectra: int, source: Path) -> None:
