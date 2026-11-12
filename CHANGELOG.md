@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DB-refresh runbooks); on the public tier `n_scans` is `null` too.
 
 ### Fixed
+- **`fit-fluor` keeps stored peaks for points with no R1-R3 inputs** (#174).
+  A point skipped as `missing_regions` was still in the delete scope, so
+  the fluorescence peaks an earlier run stored for it were deleted and
+  nothing replaced them. Only points that had inputs this run are now
+  replaced, as unreadable spectra already were.
 - **`fit-fluor` on PDS scans fits the measured `laser_normalized` rows (#166).**
   It no longer looks for Loupe `dark_subtracted` rows, fits on the wavelength
   table stored with the rows instead of the Loupe polynomial (a scan without one
