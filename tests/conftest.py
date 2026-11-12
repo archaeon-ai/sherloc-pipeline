@@ -181,7 +181,11 @@ def stub_manifest(stub_model_path):
 
 @pytest.fixture
 def stub_detector_factory(stub_manifest, stub_model_path):
-    """Callable building a real MLCRDetector over the stub artifact."""
+    """Callable building a real MLCRDetector over the stub artifact.
+
+    The detector needs onnxruntime (the ml-despike extra): tests that use
+    this fixture skip without it instead of erroring (#172)."""
+    pytest.importorskip("onnxruntime")
 
     def factory():
         from sherloc_pipeline.ml_despike.detector import MLCRDetector
