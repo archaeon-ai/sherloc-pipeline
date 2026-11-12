@@ -21,6 +21,11 @@ from sherloc_pipeline.services.ingestion import IngestionService
 OLD_REVISION = "17db1a1940d6"  # the revision before the reference-catalog tables
 
 
+
+def _flat(text):
+    """CLI output with Rich line wrapping undone (the wrap width follows the terminal)."""
+    return " ".join(text.split())
+
 def _tables(path):
     engine = get_engine(path)
     try:
@@ -258,7 +263,7 @@ def test_cli_ingest_refuses_a_missing_database(tmp_path):
     path = tmp_path / "phase.db"
     result = CliRunner().invoke(app, ["ingest", str(source), "--database", str(path)])
     assert result.exit_code != 0
-    assert "sherloc init" in result.output
+    assert "sherloc init" in _flat(result.output)
     assert not path.exists()
 
 
@@ -329,7 +334,7 @@ def test_process_new_checks_the_database_in_every_mode(tmp_path, behind_db, mode
     for path in (missing, behind_db):
         result = CliRunner().invoke(app, ["process-new", str(sol), mode, "--database", str(path)])
         assert result.exit_code != 0, result.output
-        assert "sherloc init" in result.output or "alembic upgrade" in result.output
+        assert "sherloc init" in _flat(result.output) or "alembic upgrade" in _flat(result.output)
     assert not missing.exists()
     assert _journal_mode(behind_db) == "delete"
     assert raw_tables() == before
@@ -342,6 +347,6 @@ def test_refit_refuses_a_database_behind_head(tmp_path, behind_db):
     result = CliRunner().invoke(app, ["refit", "--database", str(behind_db),
                                       "--journal", str(tmp_path / "j.jsonl")])
     assert result.exit_code != 0
-    assert "alembic upgrade" in result.output
+    assert "alembic upgrade" in _flat(result.output)
     assert not (tmp_path / "j.jsonl").exists()
     assert _revisions(behind_db) == (OLD_REVISION,)
