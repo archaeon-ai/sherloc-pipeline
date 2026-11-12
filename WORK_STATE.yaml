@@ -1,6 +1,6 @@
 work_package: "#170 refit: NULL-target scans fail every pass; duplicate keys run twice"
 branch: fix-170-refit-selection
-head: 18250a0
+head: b3fd48e
 open_decisions: []
-next_action: open PR, Codex review r1; merge main (CHANGELOG) before merge; no tests 06:00-11:30 Thu
-last_verified: 2026-11-11T17:42:17-08:00 — new tests red on origin/main src, green with fix; refit selection/journal/e2e 56 passed
+next_action: Codex r2 on PR #185 (r1 CONDITIONAL_GO F1 F2 addressed); merge main before merge; no tests 06:00-11:30 Thu
+last_verified: 2026-11-11T17:50:20-08:00 — selection + journal tests 48 passed; invariant red at r1 head
