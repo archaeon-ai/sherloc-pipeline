@@ -273,17 +273,42 @@ class DataIngestion:
         
         return spectra
     
-    def process_normalized_spectra(self, working_dir: Path) -> Dict[str, pd.DataFrame]:
+    def normalized_spectra_path(
+        self, working_dir: Path, sol: Optional[str] = None,
+        target: Optional[str] = None, scan: Optional[str] = None,
+    ) -> Path:
+        """Where to read laser-normalized spectra (darkSubSpectraN.csv) from.
+
+        Laser normalization writes into the scan's results folder, never into
+        the input workspace (issue #131). When the scan is known (arguments,
+        else this instance's sol/target/scan) and that file exists, it wins;
+        otherwise the workspace copy (written by Loupe itself) is used.
+        """
+        sol, target, scan = sol or self.sol, target or self.target, scan or self.scan
+        if sol and target and scan:
+            produced = self.get_results_path(
+                target=target, sol=sol, scan=scan
+            ) / "darkSubSpectraN.csv"
+            if produced.is_file():
+                return produced
+        return Path(working_dir) / "darkSubSpectraN.csv"
+
+    def process_normalized_spectra(
+        self, working_dir: Path, normalized_file: Optional[Path] = None
+    ) -> Dict[str, pd.DataFrame]:
         """Process normalized spectra for a single scan.
         
         Args:
-            working_dir: Path to working directory
+            working_dir: Path to working directory (read for loupe.csv metadata)
+            normalized_file: darkSubSpectraN.csv to read. Defaults to
+                ``normalized_spectra_path(working_dir)``.
             
         Returns:
             Dict with processed normalized spectra DataFrames
         """
         # Load normalized data
-        normalized_file = working_dir / "darkSubSpectraN.csv"
+        if normalized_file is None:
+            normalized_file = self.normalized_spectra_path(working_dir)
         require_file(normalized_file, "Normalized data file not found")
         
         normalized_df = pd.read_csv(normalized_file, dtype=str, low_memory=False)
@@ -324,7 +349,9 @@ class DataIngestion:
                 find_working_directory (may fail for manifest-resolved scans).
             normalized_spectra: Pre-processed normalized frames to average.
                 If None (the default — the legacy behavior), the frames are
-                re-loaded from the workspace. The ml despike path passes its
+                re-loaded from ``normalized_spectra_path`` (this scan's
+                results-folder darkSubSpectraN.csv, else the workspace
+                copy Loupe wrote). The ml despike path passes its
                 in-run frames here so despiked fluorescence/R123 products
                 proceed through the chain.
 
@@ -343,7 +370,12 @@ class DataIngestion:
         # Get processed spectra
         raw_spectra = self.process_raw_spectra(working_dir)
         if normalized_spectra is None:
-            normalized_spectra = self.process_normalized_spectra(working_dir)
+            normalized_spectra = self.process_normalized_spectra(
+                working_dir,
+                normalized_file=self.normalized_spectra_path(
+                    working_dir, sol=sol, target=target, scan=scan
+                ),
+            )
         
         file_counts = {'CSV': 0, 'PNG': 0}
         # The averages written by this call, by region label and method.
@@ -703,8 +735,8 @@ class DataIngestion:
         return spectra_df
     
     def load_laser_normalized_spectra(self, working_dir: Path) -> pd.DataFrame:
-        """Load darkSubSpectraN.csv data if available."""
-        normalized_file = working_dir / "darkSubSpectraN.csv"
+        """Load darkSubSpectraN.csv data if available (see normalized_spectra_path)."""
+        normalized_file = self.normalized_spectra_path(working_dir)
         require_file(normalized_file, "Laser normalized spectra file not found")
         
         # Read with dtype=str and low_memory=False to avoid DtypeWarning on mixed columns

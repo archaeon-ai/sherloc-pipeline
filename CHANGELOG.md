@@ -45,6 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the fluorescence peaks an earlier run stored for it were deleted and
   nothing replaced them. Only points that had inputs this run are now
   replaced, as unreadable spectra already were.
+- **Laser normalization no longer modifies the input Loupe workspace** (#131).
+  `darkSubSpectraN.csv` is written to the scan's results folder
+  (`<results>/<target>/<sol>_<scan>/`) instead of the workspace, and
+  `loupe.csv` is no longer rewritten. The rewrite round-tripped the file
+  through pandas, turning `specProcessingApplied,None` into `nanN`,
+  blanking values such as `N/A`, and raising `TypeError` when every value
+  parsed as a number. Readers prefer the results-folder file for the scan
+  and fall back to a `darkSubSpectraN.csv` written by Loupe in the
+  workspace. `process_laser_normalization` now takes a required
+  `output_dir` keyword and returns the path it wrote;
+  `update_loupe_csv_processing_flag` is removed.
 - **`fit-fluor` on PDS scans fits the measured `laser_normalized` rows (#166).**
   It no longer looks for Loupe `dark_subtracted` rows, fits on the wavelength
   table stored with the rows instead of the Loupe polynomial (a scan without one
