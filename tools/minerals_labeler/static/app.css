@@ -1,0 +1,65 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, sans-serif;
+  color: #192d3d;
+  background: #f4f6f8;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1400px; margin: 0 auto; padding: 20px; }
+header, nav { display: flex; align-items: center; gap: 12px; }
+header { justify-content: space-between; margin-bottom: 16px; }
+#progress { font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+button {
+  min-height: 48px;
+  padding: 10px 18px;
+  border: 1px solid #a6b7c3;
+  border-radius: 8px;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:hover:enabled { background: #e8f1f7; border-color: #28618b; }
+button:focus-visible { outline: 3px solid #2374ab; outline-offset: 3px; }
+button:disabled { opacity: 0.45; cursor: default; }
+.plots { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; }
+canvas {
+  display: block;
+  width: 100%;
+  height: clamp(260px, 60vh, 580px);
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #d4dee5;
+  border-radius: 8px;
+}
+.choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.choices button { min-height: 64px; font-weight: 600; }
+kbd { font: inherit; font-weight: 400; margin-right: 5px; color: #4b6275; }
+#status { margin: 12px 0 0; }
+.plots { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); }
+#fits { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+#fits h2 { font-size: 1rem; margin: 0 0 4px; }
+#fits h2.a { color: #b4541a; }
+#fits h2.b { color: #1d7a52; }
+#fits table { border-collapse: collapse; margin-bottom: 14px; width: 100%; }
+#fits th, #fits td { text-align: right; padding: 2px 6px; border-bottom: 1px solid #e1e8ed; }
+#fits tr.in-band td { font-weight: 700; background: rgba(218, 155, 35, 0.16); }
+#fits tr.dropped td { color: #7d8f9c; }
+#fits .flag { margin: 0; color: #8a3b12; font-weight: 600; }
+.question { margin: 12px 0 0; font-weight: 600; }
+
+@media (max-width: 699px) {
+  main { padding: 12px; }
+  header { margin-bottom: 12px; }
+  nav { gap: 8px; }
+  button { padding: 10px 12px; }
+  .plots { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  #win { height: clamp(200px, 34svh, 280px); }
+  #fits { font-size: 0.85rem; }
+  .choices { gap: 8px; margin-top: 12px; }
+  .choices button { padding: 8px 4px; }
+  kbd { display: block; margin: 0 0 3px; }
+}
