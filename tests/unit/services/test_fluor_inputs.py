@@ -171,6 +171,12 @@ def test_an_unknown_scan_is_reported_not_raised(db):
 
 def test_counts_exclude_the_derived_rows(db):
     db_path, service = db
+    # PDS ingestion opens an existing database only if it already carries the
+    # PDS unique index (#135); add it as an operator would.
+    from sqlalchemy import text
+
+    with service.engine.begin() as conn:
+        conn.execute(text("CREATE UNIQUE INDEX uq_pds_scans_scan_id ON scans (scan_id)"))
     pds = PDSIngestionService(pds_db_path=db_path)
     before = (service.get_database_stats()["spectra"], pds.get_database_stats()["spectra"],
               pds.validate_database()["spectra_by_region"])

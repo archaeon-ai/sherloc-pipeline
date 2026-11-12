@@ -131,3 +131,93 @@ def test_db_stats_does_not_create_a_missing_database(tmp_path):
     result = _db_stats(path)
     assert result.exit_code != 0
     assert not path.exists()
+
+
+def _journal_mode(path):
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("PRAGMA journal_mode").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_refused_open_keeps_the_journal_mode(behind_db):
+    import sqlite3
+
+    conn = sqlite3.connect(behind_db)
+    conn.execute("PRAGMA journal_mode=DELETE")
+    conn.close()
+    with pytest.raises(SchemaNotCurrentError):
+        open_database(behind_db)
+    assert _journal_mode(behind_db) == "delete"
+
+
+def test_schema_heads_constant_matches_the_migration_scripts():
+    from alembic.script import ScriptDirectory
+
+    from sherloc_pipeline.database.connection import _alembic_config
+
+    assert alembic_heads() == tuple(sorted(ScriptDirectory.from_config(_alembic_config()).get_heads()))
+
+
+def _schema_objects(path):
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    try:
+        objects = {
+            (kind, name) for kind, name in conn.execute(
+                "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
+        }
+        columns = {
+            table: sorted(
+                (c[1], c[2].upper(), c[3], c[5]) for c in conn.execute(f"PRAGMA table_info('{table}')"))
+            for kind, table in objects if kind == "table"
+        }
+        return objects, columns
+    finally:
+        conn.close()
+
+
+def test_new_database_matches_the_migrated_head(tmp_path, monkeypatch):
+    """open_database's created schema is the one `alembic upgrade head` builds (same stamp, same objects)."""
+    from alembic import command
+
+    from sherloc_pipeline.database.connection import _alembic_config
+
+    migrated = tmp_path / "migrated.db"
+    monkeypatch.setenv("PHASE_DATABASE_PATH", str(migrated))
+    command.upgrade(_alembic_config(), "head")
+    created = tmp_path / "created.db"
+    open_database(created).dispose()
+    assert _schema_objects(created) == _schema_objects(migrated)
+    assert _revisions(created) == _revisions(migrated)
+
+
+def test_new_database_rejects_an_invalid_fit_modality(tmp_path):
+    from sqlalchemy.exc import IntegrityError, OperationalError
+
+    path = tmp_path / "new.db"
+    engine = open_database(path)
+    try:
+        with pytest.raises((IntegrityError, OperationalError), match="invalid fit_modality"):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO fitted_peaks (id, spectrum_id, fit_modality) VALUES ('x', 'y', 'not-a-modality')"))
+    finally:
+        engine.dispose()
+
+
+def test_new_pds_database_gets_its_unique_index(tmp_path):
+    path = tmp_path / "pds.db"
+    init_pds_database(path).dispose()
+    assert ("index", "uq_pds_scans_scan_id") in _schema_objects(path)[0]
+
+
+def test_current_pds_database_without_its_index_is_refused_unchanged(current_db):
+    before = _schema_objects(current_db)
+    with pytest.raises(SchemaNotCurrentError, match="uq_pds_scans_scan_id"):
+        init_pds_database(current_db)
+    assert _schema_objects(current_db) == before

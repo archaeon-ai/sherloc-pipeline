@@ -156,10 +156,13 @@ class SchemaNotCurrentError(RuntimeError):
     names the revision pair and the command.
     """
 
-    def __init__(self, database_path, current, heads):
+    def __init__(self, database_path, current, heads, detail=None):
         self.database_path = str(database_path)
         self.current = tuple(current)
         self.heads = tuple(heads)
+        if detail is not None:
+            super().__init__(f"Database {self.database_path} is at {', '.join(self.current)} but {detail}")
+            return
         found = ", ".join(self.current) or "unstamped (tables but no alembic_version)"
         expected = ", ".join(self.heads)
         target = self.heads[0] if len(self.heads) == 1 else "heads"
@@ -181,16 +184,15 @@ def _alembic_config():
     return Config(str(ini_path))
 
 
-_HEADS_CACHE: dict = {}
+# The Alembic head this code expects. A constant, so data commands can check
+# a database without the migration scripts (a wheel install does not ship
+# them); tests/unit/database/test_schema_guard.py pins it to alembic/versions.
+SCHEMA_HEADS = ("a13c4e5f6071",)
 
 
 def alembic_heads() -> tuple:
-    """The Alembic head revision(s) of this code, sorted."""
-    if "heads" not in _HEADS_CACHE:
-        from alembic.script import ScriptDirectory
-
-        _HEADS_CACHE["heads"] = tuple(sorted(ScriptDirectory.from_config(_alembic_config()).get_heads()))
-    return _HEADS_CACHE["heads"]
+    """The Alembic head revision(s) this code expects, sorted."""
+    return tuple(sorted(SCHEMA_HEADS))
 
 
 def schema_revisions(engine: Engine) -> tuple:
@@ -211,14 +213,20 @@ def _data_tables(engine: Engine) -> list:
 
 
 def _create_and_stamp(engine: Engine) -> None:
-    """Create the ORM schema on an empty database and stamp it at the code's head."""
-    from alembic.runtime.migration import MigrationContext
-    from alembic.script import ScriptDirectory
+    """Create the schema on an empty database and stamp it at SCHEMA_HEADS.
 
-    script = ScriptDirectory.from_config(_alembic_config())
+    create_all builds the same objects as the migration chain (tables,
+    indexes and triggers; parity is tested against ``alembic upgrade head``).
+    """
     create_all_tables(engine)
     with engine.begin() as conn:
-        MigrationContext.configure(conn).stamp(script, "heads")
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS alembic_version "
+            "(version_num VARCHAR(32) NOT NULL, CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+        ))
+        conn.execute(text("DELETE FROM alembic_version"))
+        for head in alembic_heads():
+            conn.execute(text("INSERT INTO alembic_version (version_num) VALUES (:v)"), {"v": head})
 
 
 def require_current_schema(engine: Engine, database_path) -> None:
@@ -228,34 +236,52 @@ def require_current_schema(engine: Engine, database_path) -> None:
         raise SchemaNotCurrentError(database_path, current, heads)
 
 
-def open_database(database_path: Optional[Union[str, Path]] = None) -> Engine:
-    """Open a database for a command that reads and writes data, without changing its schema.
-
-    - ``:memory:``: the ORM schema is created (nothing to conflict with).
-    - A missing file, or one with no tables: the ORM schema is created and
-      stamped at the code's Alembic head, so a later ``alembic upgrade``
-      starts from the right revision.
-    - Any other database must already be at the code's head; otherwise
-      ``SchemaNotCurrentError`` is raised and nothing is written.
-    """
+def _open_database(database_path) -> tuple:
+    """open_database, also returning whether the schema was created by this call."""
     if database_path is None:
         database_path = "./phase.db"
     if str(database_path) == ":memory:":
         engine = get_engine(database_path)
         create_all_tables(engine)
-        return engine
+        return engine, True
 
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+    path = Path(database_path)
+    if path.exists():
+        # Inspect through a read-only engine: get_engine's connect hook sets
+        # journal_mode=WAL, which persists, and a refused open must change
+        # nothing.
+        probe = open_database_readonly(path)
+        try:
+            has_tables = bool(_data_tables(probe))
+            if has_tables:
+                require_current_schema(probe, database_path)
+        finally:
+            probe.dispose()
+        if has_tables:
+            return get_engine(database_path), False
+
+    path.parent.mkdir(parents=True, exist_ok=True)
     engine = get_engine(database_path)
     try:
-        if _data_tables(engine):
-            require_current_schema(engine, database_path)
-        else:
-            _create_and_stamp(engine)
+        _create_and_stamp(engine)
     except Exception:
         engine.dispose()
         raise
-    return engine
+    return engine, True
+
+
+def open_database(database_path: Optional[Union[str, Path]] = None) -> Engine:
+    """Open a database for a command that reads and writes data, without changing its schema.
+
+    - ``:memory:``: the ORM schema is created (nothing to conflict with).
+    - A missing file, or one with no tables: the schema is created and
+      stamped at the code's Alembic head (``SCHEMA_HEADS``), the same
+      objects ``alembic upgrade head`` builds.
+    - Any other database must already be stamped at that head; otherwise
+      ``SchemaNotCurrentError`` is raised and the file is not modified (it
+      is inspected read-only).
+    """
+    return _open_database(database_path)[0]
 
 
 def open_database_readonly(database_path: Union[str, Path]) -> Engine:
@@ -386,9 +412,27 @@ def init_pds_database(
     if str(db_path) != ":memory:":
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # A new database gets the stamped ORM schema; an existing one must
-    # already be at head. PDS ingestion never migrates (#135).
-    engine = open_database(db_path)
+    # A new database gets the stamped schema and the index; an existing one
+    # must already be at head and carry the index. PDS ingestion never
+    # migrates or adds schema to an existing database (#135).
+    engine, created = _open_database(db_path)
+    if not created:
+        with engine.connect() as conn:
+            present = conn.execute(text(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'uq_pds_scans_scan_id'"
+            )).first()
+        if present is None:
+            engine.dispose()
+            raise SchemaNotCurrentError(
+                db_path, alembic_heads(), alembic_heads(),
+                detail=(
+                    "it lacks the PDS unique index uq_pds_scans_scan_id. Nothing was changed. "
+                    f"An operator adds it with: sqlite3 {db_path} "
+                    "'CREATE UNIQUE INDEX uq_pds_scans_scan_id ON scans (scan_id)'"
+                ),
+            )
+        logger.info("Opened PDS database at %s", db_path)
+        return engine
 
     # Add PDS-specific unique constraint on scans.scan_id (spec s12).
     with engine.connect() as conn:
