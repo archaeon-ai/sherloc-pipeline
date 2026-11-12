@@ -1,8 +1,8 @@
 work_package: "Mineral fitter rulings (Ken 11/12: aicc, fwhm 25, r2 none; gain decide after replay; mask negative spikes; CR mask = review flag; cap 5)"
 branch: fitter-aicc-rulings (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/190)
-head: 3c957d4
+head: 76a9f5f
 open_decisions:
   - "Ken: aicc_improve_threshold value after replay (0 in this PR; replay: gain 2 loses 22 rows, 18 at SNR 3-4)"
   - "Ken: reject_merged_candidates on/off (replay: +3 rows, 0 lost; recovers p88)"
-next_action: "Codex r1 on the PR; CI; then follow-up PR: wire stored CR mask into batch worker + fitted_peaks column (migration)"
-last_verified: "2026-11-12T12:34:30-08:00 — targeted fitting suites 509 passed + test_fitting_rulings 5 passed (scratch export of 8e9edb9); replay base reproduces 332 stored AICc rows"
+next_action: "Read ~/.local/state/project-notebook/console-restart-2026-11-12/codex-190-r1.md (r1 relaunched 13:00 detached at head 76a9f5f; first r1 paused on Codex env preflight, no verdict -> codex-190-r1-paused.md). Post r1 + response, fix, rounds to cap r4; git rm WORK_STATE.yaml before last round; merge on exact-head GO + CI green (strict + conversation resolution). Then v5.7.7 release PR (PR only)."
+last_verified: "2026-11-12T12:59:56-08:00 — CI test pass on PR #190 (run 43301700044, head 76a9f5f); replay outputs in project-notebook state-2026-11-12/aicc-gain-look"
