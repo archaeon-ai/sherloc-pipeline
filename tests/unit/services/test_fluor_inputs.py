@@ -16,7 +16,9 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from sherloc_pipeline.database.connection import create_all_tables, get_engine, get_session
+from sherloc_pipeline.database.connection import (
+    get_engine, get_session, open_database,
+)
 from sherloc_pipeline.database.models import (
     CosmicRayMaskORM,
     FittedPeakORM,
@@ -448,8 +450,8 @@ def synthetic_fluor_run(tmp_path, monkeypatch):
         Path("/data"), Path("/nas"),
     ))
     database_path = tmp_path / "synthetic.db"
-    engine = get_engine(database_path)
-    create_all_tables(engine)
+    # Stamped, as `sherloc init` leaves it: process-new refuses unstamped databases (#135).
+    engine = open_database(database_path, create_missing=True)
     with get_session(engine) as session:
         session.add(SolORM(sol_number=76543, data_source="loupe"))
         session.flush()
