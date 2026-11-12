@@ -14,10 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loop (default 0 = unchanged selection). Mineral fits give zero weight to
   ROI channels below `-minerals_negative_spike_sigma` (10) x noise_std;
   input stays not despiked. `fit_spectrum(cr_mask_cm1=...)` sets a per-peak
-  `cr_mask_review` flag (peak-table column; never a filter). Optional
-  `parsimony.reject_merged_candidates` (default off) skips AICc candidates
-  the merge step would shrink. The config hash changes, so a refit re-fits
-  minerals.
+  `cr_mask_review` flag (peak-table column; never a filter).
+  `parsimony.reject_merged_candidates` (default on) skips AICc candidates
+  the merge step would shrink. Exported summary AICc counts only the
+  channels the fit used; a fully masked ROI is a no-peaks result. The config
+  hash changes, so a refit re-fits minerals.
 - **Data commands no longer create or upgrade schema on an existing
   database (#135).** `ingest`, `process-new` and PDS ingestion (`pds-ingest`
   and the web PDS route) open a database with tables only when it is

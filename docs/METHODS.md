@@ -593,7 +593,13 @@ def f_test_pvalue(rss_reduced: float, rss_full: float,
 
 **Corrected Akaike Information Criterion (AICc, default):**
 
-Fits every candidate peak count from `aicc_min` (default 1) to `aicc_max` and picks the one minimizing AICc. No threshold; balances goodness-of-fit against parameter count via the +2k penalty term plus a small-sample correction.
+Fits every candidate peak count from `aicc_min` (default 1) to `aicc_max` (default 5) in increasing order. A larger model replaces the current best only when it lowers AICc by more than `parsimony.aicc_improve_threshold` (default 0, which keeps the strict minimum). Balances goodness-of-fit against parameter count via the +2k penalty term plus a small-sample correction.
+
+With `parsimony.reject_merged_candidates: true` (default), a candidate is skipped when two of its reportable components lie closer than half `peak_separation_cm1`: the post-fit merge step would drop one of them, so that candidate's AICc was earned by a component the output does not keep.
+
+**Negative-spike exclusion (minerals):** ROI channels below `-minerals_negative_spike_sigma × noise_std` (default 10) get zero weight. They are left out of peak seeding, the least-squares residual, RSS, AICc (n counts only the retained channels, in model selection and in the exported summary) and R²; the returned model still covers every ROI channel. The fit reports `negative_spike_channels_masked:N`. If every ROI channel is excluded, the point is a no-peaks result. Organics and hydration fits are unchanged.
+
+**Cosmic-ray review flag:** when a spectrum's cosmic-ray mask positions are supplied, each fitted peak carries `cr_mask_review` (a mask channel lies within center ± FWHM/2). It is a review flag only: it never removes a peak and never changes the fit input.
 
 ```python
 def compute_aicc(n_samples: int, rss: float, num_params: int) -> float:
@@ -606,9 +612,9 @@ def compute_aicc(n_samples: int, rss: float, num_params: int) -> float:
 For fluorescence fitting (`domain="fluorescence"`), AICc is used for model selection regardless of the UI selection.
 
 **Quality Thresholds (defaults from `src/sherloc_pipeline/config.yaml`, minerals domain):**
-- **R²:** ≥ 0.25 (`r_squared_min`)
+- **R²:** per-peak `pass_r2` flag at ≥ 0 (`r_squared_min`); persistence still requires R² > 0 (`posthoc_filters.r2_min`)
 - **SNR:** ≥ 3.0 (`min_snr`)
-- **FWHM:** initial-search lower bound 22 cm⁻¹ (`fit_fwhm_min_initial_cm1`), upper bound 90 cm⁻¹ (`fwhm_max_cm1`); post-fit filter ≥ 30 cm⁻¹ (`filter_fwhm_min_cm1`); reviewable/persist eligibility ≥ 25 cm⁻¹ (`reviewable_fwhm_min_cm1`)
+- **FWHM:** initial-search lower bound 22 cm⁻¹ (`fit_fwhm_min_initial_cm1`), upper bound 90 cm⁻¹ (`fwhm_max_cm1`); post-fit `pass_fwhm` flag ≥ 25 cm⁻¹ (`filter_fwhm_min_cm1`); reviewable/persist eligibility ≥ 25 cm⁻¹ (`reviewable_fwhm_min_cm1`)
 
 Domain overrides (organics, hydration, fluorescence) are defined in the same `fitting:` block of `config.yaml` and may relax or tighten these defaults. The fluorescence `posthoc_filters` block sets `r2_min: 0.0` and `fwhm_min_cm1: 0.0`, disabling those post-hoc R² and FWHM rejection gates for the fluorescence domain.
 

@@ -57,6 +57,7 @@ class FitResult:
     rss: float
     dof: int
     warnings: List[str]
+    n_samples: Optional[int] = None  # channels the fit used (ROI minus masked channels); None = not recorded
 
 
 class PeakType(str, Enum):

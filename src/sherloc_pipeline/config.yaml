@@ -136,7 +136,7 @@ fitting:
     aicc_min_peaks: 1
     aicc_max_peaks: 5                 # capped by max_peaks and seeds
     aicc_improve_threshold: 0.0       # a larger model must lower AICc by more than this (0 = strict minimum)
-    reject_merged_candidates: false   # skip candidates whose components the merge step would drop
+    reject_merged_candidates: true    # skip candidates whose components the merge step would drop (Ken 11/12: p88 rule on)
 
   # Per-scan slit estimation from laser line (600–700 cm^-1)
   dynamic_slit:

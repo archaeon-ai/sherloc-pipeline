@@ -164,6 +164,11 @@ def fit_spectrum(
         n_negative_masked = int(np.count_nonzero(~keep))
         if n_negative_masked:
             x, y_roi = x[keep], y_roi[keep]
+    mask_warnings = [f"negative_spike_channels_masked:{n_negative_masked}"] if n_negative_masked else []
+    if x.size == 0:
+        # Every ROI channel was masked (or the ROI is empty): nothing to fit.
+        return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=0, warnings=mask_warnings + ["no_peaks_detected"],
+                         n_samples=0), np.zeros_like(y)
     if seed_centers is not None and len(seed_centers) > 0:
         # Map seed centers to nearest indices within ROI
         centers = sorted(seed_centers)
@@ -178,7 +183,8 @@ def fit_spectrum(
         pre_snr_min = float(cfg.get('min_seed_snr', 2.0))
         seed_idxs_all = [i for i in seed_idxs_all if (y_roi[i] >= pre_snr_min * noise_std)]
         if not seed_idxs_all:
-            return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1), warnings=["no_peaks_detected"]), np.zeros_like(y)
+            return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1),
+                             warnings=mask_warnings + ["no_peaks_detected"], n_samples=int(x.size)), np.zeros_like(y)
 
     # Model selection configuration
     parsimony_cfg = dict(cfg.get('parsimony', {}))
@@ -281,7 +287,8 @@ def fit_spectrum(
 
     # Fallback if nothing succeeded
     if best is None:
-        return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1), warnings=["fit_failed"]), np.zeros_like(y)
+        return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1),
+                         warnings=mask_warnings + ["fit_failed"], n_samples=int(x.size)), np.zeros_like(y)
 
     params = best[1]
     y_model = multi_gaussian(x, params)
@@ -339,8 +346,8 @@ def fit_spectrum(
 
     # Final sort by position
     peaks.sort(key=lambda p: p.m_cm1)
-    warnings = [f"negative_spike_channels_masked:{n_negative_masked}"] if n_negative_masked else []
-    return FitResult(peaks=peaks, r2=float(r2), rss=rss, dof=dof, warnings=warnings), full_model
+    return FitResult(peaks=peaks, r2=float(r2), rss=rss, dof=dof, warnings=list(mask_warnings),
+                     n_samples=int(x.size)), full_model
 
 
 def _merge_would_drop(params: np.ndarray, min_amp: float, min_display_snr: float,

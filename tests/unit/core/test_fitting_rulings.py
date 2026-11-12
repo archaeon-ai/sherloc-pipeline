@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from sherloc_pipeline.core.fitting import _merge_would_drop, fit_spectrum, save_peak_table
+from sherloc_pipeline.core.fitting import fit_spectrum, save_peak_table
 
 CONFIG = yaml.safe_load(
     (Path(__file__).resolve().parents[3] / "src/sherloc_pipeline/config.yaml").read_text()
@@ -36,7 +36,7 @@ def _cfg(**parsimony):
 def test_config_carries_the_rulings():
     assert CONFIG["parsimony"]["model_selection"] == "aicc"
     assert CONFIG["parsimony"]["aicc_improve_threshold"] == 0.0
-    assert CONFIG["parsimony"]["reject_merged_candidates"] is False
+    assert CONFIG["parsimony"]["reject_merged_candidates"] is True
     assert CONFIG["filter_fwhm_min_cm1"] == 25
     assert CONFIG["r_squared_min"] == 0.0
     assert CONFIG["posthoc_filters"]["r2_min"] == 0.0
@@ -53,6 +53,7 @@ def test_aicc_improve_threshold_is_read_by_the_selection_loop():
 
 
 def test_merge_would_drop_matches_the_merge_step():
+    from sherloc_pipeline.core.fitting import _merge_would_drop
     noise = 10.0
     close = np.array([1005.0, 400.0, 85.0, 1016.0, 2500.0, 23.0])
     apart = np.array([976.0, 400.0, 30.0, 1016.0, 2500.0, 23.0])
@@ -89,3 +90,46 @@ def test_cr_mask_is_a_review_flag_never_a_filter(tmp_path):
     out = tmp_path / "peaks.csv"
     save_peak_table(hit.peaks, str(out))
     assert pd.read_csv(out).cr_mask_review.tolist() == [True]
+
+
+def _worker(x, y, tmp_path, cfg=None):
+    from sherloc_pipeline.services.fitting import _fit_point_minerals
+    return _fit_point_minerals(
+        {"point_idx": 3, "y": y}, x=x, fit_cfg=cfg or _cfg(), fit_roi=(700.0, 1200.0),
+        plot_roi=(700.0, 1300.0), out_dir=str(tmp_path), sol="0001", target="T",
+        scan="detail_1", region="R1", snr_min_cfg=3.0, fwhm_min_cfg=25.0,
+    )
+
+
+def test_fully_masked_roi_is_a_no_peaks_result_not_a_failure(tmp_path):
+    x, y = _spectrum([])
+    roi = (x >= 700) & (x <= 1200)
+    y[roi] = -20000.0
+    n_roi = int(roi.sum())
+    res, model = fit_spectrum(x, y, _cfg(), roi=(700, 1200), negative_spike_sigma=10.0)
+    assert res.peaks == [] and res.n_samples == 0 and model.shape == y.shape
+    assert res.warnings == [f"negative_spike_channels_masked:{n_roi}", "no_peaks_detected"]
+    out = _worker(x, y, tmp_path)
+    assert out["summary_row"] is not None and out["summary_row"]["num_peaks"] == 0
+    assert out["warnings"] == [f"point 3: negative_spike_channels_masked:{n_roi}"]
+
+
+def test_worker_aicc_uses_the_channels_the_fit_used(tmp_path):
+    import math
+    from sherloc_pipeline.core.fitting import _compute_aicc
+    x, y = _spectrum([(1015.0, 600.0, 26.0), (1130.0, 500.0, 44.0)], spike=(1190.0, -20000.0))
+    out = _worker(x, y, tmp_path)
+    n_roi = int(((x >= 700) & (x <= 1200)).sum())
+    row = out["summary_row"]
+    expected = _compute_aicc(n_samples=n_roi - 1, rss=row["rss"], num_params=row["k_params"])
+    assert math.isclose(row["aicc"], expected, rel_tol=1e-9)
+    assert out["warnings"] == ["point 3: negative_spike_channels_masked:1"]
+
+
+def test_no_peaks_keeps_the_mask_count():
+    x = np.linspace(500.0, 2200.0, 1800)
+    y = np.zeros_like(x)
+    y[int(np.argmin(np.abs(x - 1000.0)))] = -20000.0
+    res, _ = fit_spectrum(x, y, _cfg(), roi=(700, 1200), noise_std=1.0, negative_spike_sigma=10.0)
+    assert res.peaks == []
+    assert res.warnings == ["negative_spike_channels_masked:1", "no_peaks_detected"]
