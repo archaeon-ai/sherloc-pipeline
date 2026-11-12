@@ -45,8 +45,9 @@ def _has_fitted_peaks_expr(scan_id=ScanORM.id):
     """Correlated EXISTS: the scan has at least one fitted_peaks row.
 
     fitted_peaks -> spectra -> scan_points -> scans. Derived at read time
-    because nothing writes ``scans.processing_status``; that column is
-    reported unchanged. With the default ``scan_id`` the EXISTS correlates
+    because ``scans.processing_status`` is written only by runs since the
+    processing-fields writer (NULL on scans no run has touched since); that
+    column is reported unchanged. With the default ``scan_id`` the EXISTS correlates
     to the enclosing scans query; pass a value for a single scan.
     """
     return (

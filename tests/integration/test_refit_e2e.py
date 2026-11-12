@@ -6,6 +6,7 @@ Fitting and spatial rendering are stubbed (see test_despike_methods_e2e).
 
 import copy
 import json
+import os
 import uuid
 
 import pytest
@@ -247,3 +248,124 @@ def test_resume_ignores_ambient_db_path_when_database_is_given(
     result, payload = _refit(*common, "--resume", str(journal))
     assert result.exit_code == 0, result.output
     assert payload["result"]["skipped"] == 1
+
+
+# Per-scan processing fields (status, time, config hash, version, error) ------------------
+
+
+def _scan_fields(db_path):
+    from sherloc_pipeline.database.models import FittedPeakORM
+
+    engine = get_engine(db_path)
+    try:
+        with get_session(engine) as session:
+            scan = session.query(ScanORM).one()
+            fields = {
+                "status": scan.processing_status,
+                "processed_at": scan.processed_at,
+                "config_hash": scan.processing_config_hash,
+                "version": scan.processing_pipeline_version,
+                "error": scan.processing_error,
+            }
+            return fields, session.query(FittedPeakORM).count()
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def peak_writing_persistence(monkeypatch):
+    """Raman persistence that stores one minerals peak per R1 spectrum, like a fit with peaks."""
+    from sherloc_pipeline.database.models import FittedPeakORM, SpectrumORM
+    from sherloc_pipeline.services.fitting import FittingService
+
+    def persisted(self, **kwargs):
+        inserted = 0
+        if kwargs["domain"] == "minerals":
+            engine = get_engine(os.environ["SHERLOC_DB_PATH"])
+            with get_session(engine) as session:
+                for spectrum in session.query(SpectrumORM).filter_by(region="R1"):
+                    session.add(FittedPeakORM(
+                        id=str(uuid.uuid4()), spectrum_id=spectrum.id, fit_modality="minerals",
+                        center_cm1=1010.0, amplitude=50.0,
+                    ))
+                    inserted += 1
+            engine.dispose()
+        return ServiceResult(summary="ok", metadata={"peaks_inserted": inserted, "csvs_without_spectrum": 0})
+
+    monkeypatch.setattr(FittingService, "persist_raman_peaks", persisted)
+
+
+@pytest.mark.parametrize("case", ["peaks", "no_peaks", "incomplete"])
+def test_refit_writes_scan_processing_fields(
+    case, tmp_path, fixtures_path, loupe_db, stub_heavy_stages, restore_config, monkeypatch, request,
+):
+    """A refit writes every processing field, and the status agrees with the peak rows and the journal."""
+    from sherloc_pipeline import __version__
+
+    if case == "peaks":
+        request.getfixturevalue("peak_writing_persistence")
+    elif case == "no_peaks":
+        request.getfixturevalue("stub_persistence")
+    # "incomplete": fitting is stubbed, so real persistence finds no fit output and the run is not complete.
+    journal = tmp_path / "batch.jsonl"
+    before, _ = _scan_fields(loupe_db)
+    assert before == {"status": None, "processed_at": None, "config_hash": None, "version": None, "error": None}
+
+    result, payload = _refit(
+        "--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+        "--results-dir", str(tmp_path / "results"), "--journal", str(journal),
+    )
+    fields, peak_rows = _scan_fields(loupe_db)
+    header = json.loads(journal.read_text().splitlines()[0])
+
+    assert fields["processed_at"] is not None
+    assert fields["config_hash"] == header["config_digest"]
+    assert fields["version"] == __version__
+    if case == "incomplete":
+        assert result.exit_code == 1
+        assert fields["status"] == "failed"
+        assert "raman_persistence" in fields["error"]
+        assert _journal_scans(journal) == []
+    else:
+        assert result.exit_code == 0, result.output
+        assert fields["status"] == "completed"
+        assert fields["error"] is None
+        assert len(_journal_scans(journal)) == 1
+        assert (peak_rows > 0) == (case == "peaks")
+
+
+def test_refit_records_a_run_that_raises_as_failed(tmp_path, fixtures_path, loupe_db, restore_config, monkeypatch):
+    from sherloc_pipeline.services.preprocessing import PreprocessingService
+
+    def boom(self, **kwargs):
+        raise RuntimeError("synthetic preprocessing failure")
+
+    monkeypatch.setattr(PreprocessingService, "run_scan", boom)
+    journal = tmp_path / "batch.jsonl"
+    result, payload = _refit(
+        "--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+        "--results-dir", str(tmp_path / "results"), "--journal", str(journal),
+    )
+    fields, peak_rows = _scan_fields(loupe_db)
+    assert result.exit_code == 1
+    assert fields["status"] == "failed"
+    assert "synthetic preprocessing failure" in fields["error"]
+    assert fields["processed_at"] is not None and fields["config_hash"] and fields["version"]
+    assert peak_rows == 0
+    assert _journal_scans(journal) == []
+
+
+def test_complete_run_is_not_journaled_when_fields_cannot_be_written(
+    tmp_path, fixtures_path, loupe_db, stub_heavy_stages, stub_persistence, restore_config, monkeypatch,
+):
+    from sherloc_pipeline.services import scan_processing
+
+    monkeypatch.setattr(scan_processing, "record_scan_processing", lambda *a, **k: False)
+    journal = tmp_path / "batch.jsonl"
+    result, payload = _refit(
+        "--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+        "--results-dir", str(tmp_path / "results"), "--journal", str(journal),
+    )
+    assert result.exit_code == 1
+    assert "processing fields not written" in payload["result"]["errors"][0]
+    assert _journal_scans(journal) == []

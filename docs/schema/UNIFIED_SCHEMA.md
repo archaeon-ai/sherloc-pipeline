@@ -258,11 +258,11 @@ A complete spectroscopy scan of a target (equivalent to Loupe workspace or PDS4 
 | `scan_class` | VARCHAR(20) | NO | Scan classification — see [`ScanClass`](#scanclass) below | `classify_scan_class(scan_name)` | Same |
 | `parent_scan_id` | UUID | YES (FK self) | For `sub_scan` rows: parent primary scan; SET NULL on parent delete | NULL or set by classifier | NULL or set by classifier |
 | `source_scan_ids` | JSON | YES | For `composite` rows: best-effort provenance list of contributing scan IDs | NULL | NULL |
-| `processing_status` | TEXT | YES | Pipeline processing state (`pending`, `running`, `complete`, `error`) | Set by pipeline | Set by pipeline |
-| `processed_at` | DATETIME | YES | Timestamp of last successful pipeline run | Set by pipeline | Set by pipeline |
-| `processing_config_hash` | VARCHAR(64) | YES | SHA-256 of the config used for the most recent processing run | Set by pipeline | Set by pipeline |
-| `processing_pipeline_version` | VARCHAR(20) | YES | Code-version tag (e.g., commit SHA) of the pipeline that ran | Set by pipeline | Set by pipeline |
-| `processing_error` | TEXT | YES | Error message from the most recent failed run, if any | Set by pipeline | Set by pipeline |
+| `processing_status` | TEXT | YES | How the most recent full-pipeline run that reached the database ended: `completed` (complete by the refit rule; zero accepted peaks still counts) or `failed`. NULL until a run records it | Set by full-pipeline / process-new / refit | Same |
+| `processed_at` | DATETIME | YES | UTC time (no zone) the most recent recorded run ended, completed or failed | Set by pipeline | Set by pipeline |
+| `processing_config_hash` | VARCHAR(64) | YES | SHA-256 of the effective config without database and root paths (`refit_journal.config_digest`, the digest a refit journal records) | Set by pipeline | Set by pipeline |
+| `processing_pipeline_version` | VARCHAR(20) | YES | Installed package version of the pipeline that ran (e.g. `5.7.6`) | Set by pipeline | Set by pipeline |
+| `processing_error` | TEXT | YES | Failure reasons of the most recent run; NULL when it completed | Set by pipeline | Set by pipeline |
 | `site_drive` | VARCHAR(20) | YES | 7-digit Rover Motion Counter | NULL | `geom:Motion_Counter` site+drive |
 | `sequence_id` | VARCHAR(20) | YES | SRLC sequence code | NULL | `msn_surface:Command_Execution` |
 | `source_path` | TEXT | YES | Original file path | Workspace path | PDS4 LID |

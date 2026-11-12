@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-scan processing fields are written.** Every full-pipeline run that
+  reaches a database (`full-pipeline`, `process-new`, `refit`) records on
+  the scan row: `processing_status` (`completed` when the run is complete
+  by the refit rule, including a run that accepted zero peaks; else
+  `failed`), `processed_at` (UTC), `processing_config_hash` (the
+  path-free effective-config digest a refit journal records),
+  `processing_pipeline_version` and `processing_error` (the failure
+  reasons; cleared on completion). A run that raises is recorded as failed.
+  A complete run whose fields cannot be written fails, so `refit` does not
+  journal it. Existing columns; no migration. The web keeps the read-time
+  `has_fitted_peaks` status for now.
 - **`sherloc refit`: run `full-pipeline` over the database's scans with a resumable journal.**
   Each scan that completes (every stage ran, Raman persistence ran for all
   three domains and matched every peak CSV to a stored spectrum,

@@ -84,7 +84,7 @@ class ScanListItem(BaseModel):
     processing_pipeline_version: Optional[str] = None
     # Derived at read time: true when the scan has at least one
     # fitted_peaks row. processing_status above is the stored column,
-    # which no pipeline step writes yet.
+    # written by full-pipeline runs; NULL on scans no run has recorded.
     has_fitted_peaks: bool = False
 
 
@@ -127,7 +127,7 @@ class ScanDetail(BaseModel):
     processing_error: Optional[str] = None
     # Derived at read time: true when the scan has at least one
     # fitted_peaks row. processing_status above is the stored column,
-    # which no pipeline step writes yet.
+    # written by full-pipeline runs; NULL on scans no run has recorded.
     has_fitted_peaks: bool = False
     sclk_start: Optional[int] = None
     sclk_stop: Optional[int] = None

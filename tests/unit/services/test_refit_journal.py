@@ -120,7 +120,7 @@ class TestRunFailures:
         assert len(run_failures({})) == len(REQUIRED_STAGES)
 
     def test_required_stages_exist_in_the_pipeline(self):
-        source = inspect.getsource(pipeline.PipelineService.run_full_pipeline)
+        source = inspect.getsource(pipeline.PipelineService._run_full_pipeline)
         for name in REQUIRED_STAGES:
             assert f'capture_stage("{name}")' in source
 

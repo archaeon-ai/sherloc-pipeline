@@ -591,7 +591,7 @@ class TestPipelineOrchestration:
         from sherloc_pipeline.services.pipeline import PipelineService
         import inspect
 
-        source = inspect.getsource(PipelineService.run_full_pipeline)
+        source = inspect.getsource(PipelineService._run_full_pipeline)
         # Verify the pipeline source iterates over all three Raman domains
         assert '"minerals"' in source
         assert '"organics"' in source
@@ -604,7 +604,7 @@ class TestPipelineOrchestration:
         from sherloc_pipeline.services.pipeline import PipelineService
         import inspect
 
-        source = inspect.getsource(PipelineService.run_full_pipeline)
+        source = inspect.getsource(PipelineService._run_full_pipeline)
         # Fluorescence step is wrapped in try/except (non-fatal)
         # Check that "Fluorescence fitting skipped" message exists
         assert "Fluorescence fitting skipped" in source

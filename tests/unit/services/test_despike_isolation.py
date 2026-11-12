@@ -83,7 +83,7 @@ class TestPipelineWiring:
     def test_run_full_pipeline_has_cr_mask_persistence_stage(self):
         from sherloc_pipeline.services.pipeline import PipelineService
 
-        source = inspect.getsource(PipelineService.run_full_pipeline)
+        source = inspect.getsource(PipelineService._run_full_pipeline)
         assert 'capture_stage("cr_mask_persistence")' in source
         assert "CRMaskService" in source
         # Non-fatal: persists inside the warn-and-continue pattern
@@ -94,14 +94,14 @@ class TestPipelineWiring:
         to config resolution); the legacy despike_r1 kwarg is gone."""
         from sherloc_pipeline.services.pipeline import PipelineService
 
-        source = inspect.getsource(PipelineService.run_full_pipeline)
+        source = inspect.getsource(PipelineService._run_full_pipeline)
         assert "despike_method=None" in source
         assert "despike_r1" not in source
 
     def test_persistence_gated_on_masks_and_db(self):
         from sherloc_pipeline.services.pipeline import PipelineService
 
-        source = inspect.getsource(PipelineService.run_full_pipeline)
+        source = inspect.getsource(PipelineService._run_full_pipeline)
         assert 'despike_metadata.get("masks")' in source
 
     def test_run_scan_has_no_despike_r1_parameter(self):

@@ -517,8 +517,9 @@ columns, and pagination. All parameters are optional:
 Each scan in the list, and the scan in `GET /api/scans/{id}`, carries
 `has_fitted_peaks`, derived when the request is served: `true` when at
 least one `fitted_peaks` row belongs to the scan through its spectra and
-points. `processing_status` is the stored column, reported unchanged; no
-pipeline step writes it yet, so it is normally `null`.
+points. `processing_status` is the stored column, reported unchanged:
+`completed` or `failed` for scans a full-pipeline run (including `refit`
+and `process-new`) has recorded since 5.7.7, else `null`.
 
 A reversed sol range, unknown sort field, or unknown sort direction returns
 HTTP 400. Sorting includes stable sol/name tie-breakers so rows do not move
