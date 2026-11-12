@@ -65,7 +65,9 @@ python -m tools.minerals_labeler.server --manifest M.json --out OUTDIR --labeler
 
 Open `http://127.0.0.1:8591/`. Non-loopback hosts are refused unless `--allow-nonloopback` is given.
 Requests whose `Host` is not the bound address (or `localhost` / `127.0.0.1` / `[::1]` on a loopback bind)
-with the bound port, or whose `Origin` does not match it, get 403; this blocks DNS-rebinding reads.
+with the bound port, or that carry more than one `Origin` or one that does not match, get 403 (GET and POST; no
+other method is implemented); this blocks DNS-rebinding reads. A wildcard bind (`0.0.0.0`, `::`) is refused even
+with `--allow-nonloopback`: bind the concrete interface address the browser will use.
 Use a separate output directory per manifest and labeler. Rows are shown in manifest order. A restart
 with a different manifest or labeler is refused.
 
