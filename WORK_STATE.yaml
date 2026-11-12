@@ -1,6 +1,6 @@
 work_package: "#131 laser normalization must not modify the input workspace"
-branch: fix-131-readonly-input
-head: 3670265
+branch: fix-131-readonly-input (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/181)
+head: 9d60c5d
 open_decisions: []
-next_action: full suite green, commit fix, push, open PR, Codex review
-last_verified: 2026-11-11T16:47:02-08:00 — new unit + e2e tests red on origin/main code, green with fix; targeted suites 27 passed
+next_action: Codex r2 on PR #181 (r1 NO-GO: F1 evidence, F2 containment, F3 doc — all addressed); CI pending
+last_verified: 2026-11-11T16:58:46-08:00 — readonly + regions tests 11 passed; e2e red on origin/main src, containment red on 682b8d9
