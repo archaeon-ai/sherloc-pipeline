@@ -22,7 +22,7 @@ function message(text = "") {
 function controls() {
   choices.forEach((button) => { button.disabled = busy || state.frozen || !current; });
   back.disabled = busy || state.frozen || index <= 0;
-  finish.disabled = busy || state.frozen;
+  finish.disabled = busy || state.frozen || state.n_labeled < state.n_total;
   progress.textContent = `${Math.min(index + 1, state.n_total)} / ${state.n_total}`;
 }
 
@@ -139,7 +139,7 @@ function plot(canvas, item) {
     lx += 80;
   });
   ctx.fillStyle = "#435c6e";
-  ctx.fillText("solid: whole fit · dashed: kept components · shaded: disputed band", lx, 20);
+  ctx.fillText("solid: sum of output components · dashed: kept components · shaded: disputed band", lx, 20);
   ctx.font = "11px system-ui, sans-serif";
   const ticks = width < 300 ? 3 : 5;
   for (let i = 0; i <= ticks; i += 1) {
@@ -180,7 +180,14 @@ function table(item) {
       cell(row, c.kept ? "yes" : "no");
       grid.append(row);
     });
-    fitsBox.append(heading, grid);
+    fitsBox.append(heading);
+    if (item.flags.incomplete_fits.includes(name)) {
+      const note = document.createElement("p");
+      note.className = "flag";
+      note.textContent = "Drawn line is short of this fit: the fitter merged away component(s) not in the table.";
+      fitsBox.append(note);
+    }
+    fitsBox.append(grid);
   });
   if (item.flags.mask_px_in_band > 0) {
     const flag = document.createElement("p");

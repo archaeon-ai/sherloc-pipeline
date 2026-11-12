@@ -96,10 +96,14 @@ def _public_item(item):
     mask = flags.get("mask_px_in_band", 0) if isinstance(flags, dict) else None
     if isinstance(mask, bool) or not isinstance(mask, int) or mask < 0:
         raise ValueError("Invalid flags")
+    incomplete = flags.get("incomplete_fits", [])
+    if (not isinstance(incomplete, list) or not set(incomplete) <= {"A", "B"}
+            or len(set(incomplete)) != len(incomplete)):
+        raise ValueError("Invalid flags")
     return {"window": _trace(item.get("window")),
             "band": {"center_cm1": band["center_cm1"], "fwhm_cm1": band["fwhm_cm1"]},
             "fits": {"A": _components(fits["A"]), "B": _components(fits["B"])},
-            "flags": {"mask_px_in_band": mask}}
+            "flags": {"mask_px_in_band": mask, "incomplete_fits": sorted(incomplete)}}
 
 
 class Session:
@@ -220,6 +224,8 @@ class Session:
         with self.lock:
             if self.frozen:
                 return 409
+            if len(self._latest) < len(self._items):
+                return 422  # every row needs a label before the set is frozen
             final = _json_bytes(self._final_document())
             final_path = self.out / "labels-final.json"
             try:
@@ -264,7 +270,18 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
         self._send(code, _json_bytes({"error": "Request refused"}))
 
+    def _host_ok(self):
+        """Refuse DNS-rebinding requests: Host must name the bound address, Origin must match it."""
+        hosts = self.headers.get_all("Host", [])
+        if len(hosts) != 1 or hosts[0].lower() not in self.server.allowed_hosts:
+            return False
+        origin = self.headers.get("Origin")
+        return origin is None or origin.lower() in {"http://" + h for h in self.server.allowed_hosts}
+
     def do_GET(self):
+        if not self._host_ok():
+            self.send_error(403)
+            return
         if self.path in self.server.assets:
             body, content_type = self.server.assets[self.path]
             self._send(200, body, content_type)
@@ -310,6 +327,9 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     def do_POST(self):
+        if not self._host_ok():
+            self.send_error(403)
+            return
         if self.server.session.state()["frozen"]:
             self.send_error(409)
             return
@@ -366,6 +386,11 @@ def create_server(manifest, out, labeler, host="127.0.0.1", port=8591,
             address_family = socket.AF_INET6
         server_class = IPv6LabelingServer
     server = server_class((host, port), Handler)
+    bound = server.server_address[1]
+    names = {host.lower(), f"[{host.lower()}]"}
+    if address is not None and address.is_loopback:
+        names |= {"localhost", "127.0.0.1", "[::1]"}
+    server.allowed_hosts = {f"{name}:{bound}" for name in names}
     server.session = session
     server.assets = assets
     return server

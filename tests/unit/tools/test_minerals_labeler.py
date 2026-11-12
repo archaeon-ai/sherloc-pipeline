@@ -76,9 +76,12 @@ def synthetic(tmp_path):
         comp(scan, 4, "aicc", 1000.0, snr=9.0), comp(scan, 4, "aicc", 1080.0, snr=3.2),
         comp(scan, 4, "aicc_gain2", 1001.0, snr=9.0),
         comp(scan, 5, "aicc", 830.0, snr=5.5), comp(scan, 5, "aicc_gain2", 1150.0, snr=7.0),
+        # points 6-7: losses at zero and negative point R2 (gain2 has no R2 bar; disputed does)
+        comp(scan, 6, "aicc", 900.0, snr=4.0, r2=0.0), comp(scan, 6, "aicc_gain2", 700.0, snr=1.0),
+        comp(scan, 7, "aicc", 905.0, snr=4.1, r2=-0.2),
     ]
     components = write_components(tmp_path / "comps.csv", rows)
-    results = write_results(tmp_path / "results", scan, range(6), despiked_offset=1e6)
+    results = write_results(tmp_path / "results", scan, range(8), despiked_offset=1e6)
     flags = tmp_path / "flags.csv"
     flags.write_text("scan,point,center_cm1,mask_px_in_fwhm\n" f"{scan},0,850,2\n", encoding="utf-8")
     return {"scan": scan, "components": components, "results": results, "flags": flags,
@@ -130,12 +133,33 @@ def test_gain2_sheet_lists_lost_components_by_snr(synthetic):
     doc = mf.build_manifest(synthetic["components"], synthetic["results"], "gain2")
     assert doc["header"]["rules"] == ["aicc", "aicc_gain2"]
     assert doc["header"]["order"] == "snr ascending"
+    assert doc["header"]["persist_rule"]["r2_bar_applied"] is False
+    # Only losses (never the aicc_gain2-only 1150), at any point R2 (900 at R2 0, 905 at R2 -0.2).
     # A point with no aicc_gain2 rows has zero components under that rule (as a failed fit
     # has under the F-test in the comparison set), so its kept aicc components count as lost.
     assert [(i["point"], i["only_in"], i["band"]["center_cm1"]) for i in doc["items"]] == [
-        (4, "aicc", 1080.0), (0, "aicc", 850.0), (5, "aicc", 830.0), (0, "aicc", 1000.0),
-        (3, "aicc", 760.0), (3, "aicc", 1000.0), (5, "aicc_gain2", 1150.0)]
-    assert [i["rank"] for i in doc["items"]] == list(range(7))
+        (4, "aicc", 1080.0), (0, "aicc", 850.0), (6, "aicc", 900.0), (7, "aicc", 905.0),
+        (5, "aicc", 830.0), (0, "aicc", 1000.0), (3, "aicc", 760.0), (3, "aicc", 1000.0)]
+    assert [i["rank"] for i in doc["items"]] == list(range(8))
+    disputed = mf.build_manifest(synthetic["components"], synthetic["results"], "disputed")
+    assert disputed["header"]["persist_rule"]["r2_bar_applied"] is True
+    assert not [i for i in disputed["items"] if i["point"] in (6, 7)]
+
+
+def test_incomplete_fit_flag_marks_a_drawn_line_short_of_the_stored_fit(tmp_path):
+    scan = "SYNTHETIC_target/0002_detail"
+    exact = 2 * 20 * math.sqrt(math.log(2))  # FWHM of the synthetic band exp(-((x-1000)/20)^2)
+    components = write_components(tmp_path / "c.csv", [
+        comp(scan, 0, "ftest", 1000.0, amp=50.0, fwhm=exact, r2=0.99),  # drawn line = spectrum
+        comp(scan, 0, "aicc", 760.0, r2=0.99),  # stored R2 high, drawn line misses the band
+    ])
+    results = write_results(tmp_path / "results", scan, [0])
+    doc = mf.build_manifest(components, results, "disputed", 1)
+    assert mf.drawn_r2(doc["items"][0]["window"], [
+        {"center_cm1": 1000.0, "amplitude": 50.0, "fwhm_cm1": exact}]) == pytest.approx(1.0)
+    for item in doc["items"]:
+        aicc_letter = next(k for k, v in item["fit_rules"].items() if v == "aicc")
+        assert item["flags"]["incomplete_fits"] == [aicc_letter]
 
 
 def test_unknown_sheet_and_ambiguous_spectra_are_refused(synthetic):
@@ -175,10 +199,11 @@ def running(manifest, out, **kwargs):
         app.server_close()
 
 
-def request(app, path, payload=None):
+def request(app, path, payload=None, extra=None):
     connection = http.client.HTTPConnection(*app.server_address[:2], timeout=5)
     body = None if payload is None else json.dumps(payload).encode()
     headers = {} if payload is None else {"Content-Type": "application/json"}
+    headers.update(extra or {})
     connection.request("GET" if payload is None else "POST", path, body=body, headers=headers)
     response = connection.getresponse()
     data = response.read()
@@ -220,10 +245,16 @@ def test_label_finish_freeze_and_restart(manifest_file, tmp_path):
     with running(path, out) as app:
         ids = [json.loads(request(app, f"/api/item/{k}")[1])["id"] for k in range(7)]
         assert request(app, "/api/label", {"id": ids[0], "label": "real"})[0] == 400
-        for opaque, label in zip(ids, ["present", "absent", "spike", "unsure", "present"]):
+        assert request(app, "/api/finish", {})[0] == 422
+        chosen = ["present", "absent", "spike", "unsure", "present", "absent", "spike"]
+        for opaque, label in zip(ids[:5], chosen):
             assert request(app, "/api/label", {"id": opaque, "label": label})[0] == 200
         assert request(app, "/api/label", {"id": ids[0], "label": "absent"})[0] == 200
         assert json.loads(request(app, "/api/state")[1])["next_index"] == 5
+        assert request(app, "/api/finish", {})[0] == 422  # incomplete sets are never frozen
+        assert not (out / "labels-final.json").exists()
+        for opaque, label in zip(ids[5:], chosen[5:]):
+            assert request(app, "/api/label", {"id": opaque, "label": label})[0] == 200
         assert request(app, "/api/finish", {})[0] == 200
         assert request(app, "/api/label", {"id": ids[5], "label": "present"})[0] == 409
     final = (out / "labels-final.json").read_bytes()
@@ -231,10 +262,11 @@ def test_label_finish_freeze_and_restart(manifest_file, tmp_path):
     labels = json.loads(final)["labels"]
     order = [i["unit_id"] for i in doc["items"]]
     assert labels == {order[0]: "absent", order[1]: "absent", order[2]: "spike",
-                      order[3]: "unsure", order[4]: "present"}
+                      order[3]: "unsure", order[4]: "present", order[5]: "absent",
+                      order[6]: "spike"}
     assert json.loads(final)["manifest_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     journal = [json.loads(line) for line in (out / "labels.jsonl").read_text().splitlines()]
-    assert len(journal) == 6 and all(re.fullmatch(r"[0-9a-f]{16}", e["id"]) for e in journal)
+    assert len(journal) == 8 and all(re.fullmatch(r"[0-9a-f]{16}", e["id"]) for e in journal)
     assert oct((out / "key").stat().st_mode & 0o777) == "0o600"
     with running(path, out) as app:
         assert json.loads(request(app, "/api/state")[1])["frozen"] is True
@@ -251,6 +283,24 @@ def test_resume_refuses_a_changed_manifest(manifest_file, tmp_path):
         server.create_server(str(path), str(out), "tester", port=0)
 
 
+def test_dns_rebinding_host_and_foreign_origin_are_refused(manifest_file, tmp_path):
+    path, _ = manifest_file
+    with running(path, tmp_path / "out") as app:
+        port = app.server_address[1]
+        hostile = {"Host": f"attacker.example:{port}"}
+        assert request(app, "/api/item/0", extra=hostile)[0] == 403
+        assert request(app, "/api/state", extra={"Host": "127.0.0.1:1"})[0] == 403
+        opaque = json.loads(request(app, "/api/item/0")[1])["id"]
+        evil = {"Origin": "http://attacker.example"}
+        assert request(app, "/api/label", {"id": opaque, "label": "absent"}, evil)[0] == 403
+        assert json.loads(request(app, "/api/state")[1])["n_labeled"] == 0
+        for name in ("localhost", "127.0.0.1"):
+            good = {"Host": f"{name}:{port}", "Origin": f"http://{name}:{port}"}
+            assert request(app, "/api/item/0", extra=good)[0] == 200
+        assert request(app, "/api/label", {"id": opaque, "label": "absent"},
+                       {"Origin": f"http://127.0.0.1:{port}"})[0] == 200
+
+
 @pytest.mark.parametrize("host", ["0.0.0.0", "192.0.2.1", "example.org"])
 def test_nonloopback_refused_before_io(manifest_file, tmp_path, host):
     path, _ = manifest_file
@@ -260,7 +310,7 @@ def test_nonloopback_refused_before_io(manifest_file, tmp_path, host):
 
 
 @pytest.mark.parametrize("defect", ["no_b", "bad_fwhm", "no_kept", "bad_band", "bad_flag",
-                                    "no_check"])
+                                    "bad_incomplete", "no_check"])
 def test_invalid_manifests_are_refused(manifest_file, tmp_path, defect):
     path, doc = manifest_file
     item = doc["items"][0]
@@ -274,6 +324,8 @@ def test_invalid_manifests_are_refused(manifest_file, tmp_path, defect):
         item["band"]["center_cm1"] = "1000"
     elif defect == "bad_flag":
         item["flags"]["mask_px_in_band"] = -1
+    elif defect == "bad_incomplete":
+        item["flags"]["incomplete_fits"] = ["C"]
     else:
         doc["header"]["public_check"] = " "
     path.write_text(json.dumps(doc), encoding="utf-8")
