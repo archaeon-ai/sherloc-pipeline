@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DB-refresh runbooks); on the public tier `n_scans` is `null` too.
 
 ### Fixed
+- **`sherloc refit --resume` no longer refuses after a frontend install or build** (#171).
+  The code digest left out only bytecode, so files under `web/frontend`
+  (`node_modules`, build output) changed it. That tree is now excluded;
+  Python, config and package data still count.
 - **`fit-fluor` on PDS scans fits the measured `laser_normalized` rows (#166).**
   It no longer looks for Loupe `dark_subtracted` rows, fits on the wavelength
   table stored with the rows instead of the Loupe polynomial (a scan without one

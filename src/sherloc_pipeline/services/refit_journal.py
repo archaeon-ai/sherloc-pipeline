@@ -79,15 +79,29 @@ class JournalError(Exception):
     """The journal cannot be created, read or resumed."""
 
 
+# Not pipeline code: the web frontend sources, node_modules and build output.
+# Installing frontend packages or building the frontend must not make
+# --resume refuse (#171).
+DIGEST_EXCLUDED_DIRS = (("web", "frontend"),)
+
+
 def code_digest(package_root: Optional[Path] = None) -> str:
-    """SHA-256 over every file in the installed package, excluding bytecode."""
+    """SHA-256 over the files of the installed package.
+
+    Every file counts (Python, config and package data such as background
+    spectra) except bytecode and the ``web/frontend`` tree.
+    """
     if package_root is None:
         package_root = Path(__file__).resolve().parents[1]
     digest = hashlib.sha256()
-    files = sorted(
-        p for p in package_root.rglob("*")
-        if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
-    )
+
+    def included(path: Path) -> bool:
+        parts = path.relative_to(package_root).parts
+        if "__pycache__" in parts or path.suffix == ".pyc":
+            return False
+        return not any(parts[:len(d)] == d for d in DIGEST_EXCLUDED_DIRS)
+
+    files = sorted(p for p in package_root.rglob("*") if p.is_file() and included(p))
     for path in files:
         digest.update(path.relative_to(package_root).as_posix().encode())
         digest.update(b"\0")
