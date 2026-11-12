@@ -509,9 +509,16 @@ class PipelineService:
         except Exception as exc:
             if db_path.exists():
                 try:
-                    record(STATUS_FAILED, str(exc) or type(exc).__name__)
+                    written = record(STATUS_FAILED, str(exc) or type(exc).__name__)
                 except Exception as record_exc:
-                    self.logger.warning("Scan processing fields not written: %s", record_exc)
+                    written, cause = False, str(record_exc)
+                else:
+                    cause = "no matching scan row"
+                if not written:
+                    self.logger.warning(
+                        "Scan processing fields not written for %s/%s/%s: %s",
+                        sol, target, scan, cause,
+                    )
             raise
         if not db_path.exists():
             return result

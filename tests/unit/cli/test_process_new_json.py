@@ -144,3 +144,27 @@ def test_override_messages_stay_off_stdout(tmp_path, invoke, monkeypatch):
     assert 'Trim override' in result.stderr
     assert 'Model selection override' in result.stderr
     assert 'Despike method override' in result.stderr
+
+
+@pytest.mark.parametrize('ambient', [None, 'other.db'])
+def test_pipeline_writes_the_database_given_by_option(tmp_path, invoke, monkeypatch, ambient):
+    """--database reaches the pipeline's writers (persistence and the scan processing fields)."""
+    path = seed_scans(tmp_path, [('Synthetic rock', 'mars_target')])
+    if ambient is None:
+        monkeypatch.delenv('SHERLOC_DB_PATH', raising=False)
+    else:
+        monkeypatch.setenv('SHERLOC_DB_PATH', str(tmp_path / ambient))
+    seen = []
+    pipeline = Mock()
+    def fit(**kwargs):
+        import os
+        seen.append(os.environ.get('SHERLOC_DB_PATH'))
+        return ServiceResult(summary='synthetic fitted')
+    pipeline.return_value.run_full_pipeline.side_effect = fit
+    monkeypatch.setattr(cli, 'PipelineService', pipeline)
+    result = invoke(path)
+    assert result.exit_code == 0, result.output
+    assert seen == [str((tmp_path / 'test.db').resolve())]
+    import os
+    expected = None if ambient is None else str(tmp_path / ambient)
+    assert os.environ.get('SHERLOC_DB_PATH') == expected

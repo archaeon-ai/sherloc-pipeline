@@ -1254,20 +1254,34 @@ def process_new_cmd(
         pipeline_service = PipelineService(console=console)
         total_errors: List[str] = []
 
-        for sol_num, tgt, scn in scans:
-            console.print(f"\n  Processing {scn} (target={tgt})...")
-            try:
-                result = pipeline_service.run_full_pipeline(
-                    sol=f"{sol_num:04d}",
-                    target=tgt or "",
-                    scan=scn,
-                    data_dir=data_dir,
-                    results_dir=results_dir,
-                )
-                console.print(f"    [green]{result.summary}[/green]")
-            except Exception as e:
-                total_errors.append(f"{scn}: {e}")
-                console.print(f"    [red]Failed: {e}[/red]")
+        # The pipeline's persistence stages and the scan processing fields
+        # write to SHERLOC_DB_PATH (else ./phase.db). An explicit --database
+        # must reach them too, or they would write a different database
+        # from the one ingested and selected above.
+        previous_db = os.environ.get("SHERLOC_DB_PATH")
+        if database is not None:
+            os.environ["SHERLOC_DB_PATH"] = str(Path(database).resolve())
+        try:
+            for sol_num, tgt, scn in scans:
+                console.print(f"\n  Processing {scn} (target={tgt})...")
+                try:
+                    result = pipeline_service.run_full_pipeline(
+                        sol=f"{sol_num:04d}",
+                        target=tgt or "",
+                        scan=scn,
+                        data_dir=data_dir,
+                        results_dir=results_dir,
+                    )
+                    console.print(f"    [green]{result.summary}[/green]")
+                except Exception as e:
+                    total_errors.append(f"{scn}: {e}")
+                    console.print(f"    [red]Failed: {e}[/red]")
+        finally:
+            if database is not None:
+                if previous_db is None:
+                    os.environ.pop("SHERLOC_DB_PATH", None)
+                else:
+                    os.environ["SHERLOC_DB_PATH"] = previous_db
 
         # Summary
         elapsed = time.monotonic() - t0

@@ -76,3 +76,22 @@ def test_no_matching_scan_returns_false(db):
 def test_rejects_other_statuses(db):
     with pytest.raises(ValueError):
         _record(db, status="pending")
+
+
+def test_failed_run_warns_when_its_fields_cannot_be_written(db, monkeypatch, caplog):
+    import logging
+
+    from sherloc_pipeline.services import scan_processing
+    from sherloc_pipeline.services.pipeline import PipelineService
+
+    monkeypatch.setenv("SHERLOC_DB_PATH", str(db))
+    monkeypatch.setattr(scan_processing, "record_scan_processing", lambda *a, **k: False)
+
+    def boom(self, **kwargs):
+        raise RuntimeError("synthetic stage failure")
+
+    monkeypatch.setattr(PipelineService, "_run_full_pipeline", boom)
+    with caplog.at_level(logging.WARNING, logger="sherloc_pipeline.services.pipeline"):
+        with pytest.raises(RuntimeError, match="synthetic stage failure"):
+            PipelineService().run_full_pipeline(sol="0921", target="Missing", scan="detail_1")
+    assert "Scan processing fields not written for 0921/Missing/detail_1: no matching scan row" in caplog.text

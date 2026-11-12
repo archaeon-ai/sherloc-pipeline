@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A complete run whose fields cannot be written fails, so `refit` does not
   journal it. Existing columns; no migration. The web keeps the read-time
   `has_fitted_peaks` status for now.
+- **`process-new --database` now reaches the pipeline's writers.** Peak
+  persistence (and now the processing fields) wrote to `SHERLOC_DB_PATH`,
+  else `./phase.db`, even when `--database` named another database. An
+  explicit `--database` is now set as `SHERLOC_DB_PATH` for the pipeline
+  runs and restored afterwards. Without `--database` nothing changes.
 - **`sherloc refit`: run `full-pipeline` over the database's scans with a resumable journal.**
   Each scan that completes (every stage ran, Raman persistence ran for all
   three domains and matched every peak CSV to a stored spectrum,
