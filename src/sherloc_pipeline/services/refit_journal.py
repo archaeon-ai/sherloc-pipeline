@@ -52,6 +52,7 @@ IDENTITY_FIELDS: Tuple[str, ...] = (
     "selection",
     "config_digest",
     "code_digest",
+    "select_runnable",
     "runtime",
     "environment",
 )
@@ -318,6 +319,32 @@ class BatchJournal:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+def select_runnable(
+    scans: Iterable[ScanKey],
+) -> Tuple[List[ScanKey], List[ScanKey], List[ScanKey]]:
+    """Split scans into (runnable, no target, duplicate key) (#170).
+
+    full-pipeline needs a target, so a scan without one cannot run: it would
+    fail on every pass and never be recorded. Scans that share a
+    (sol, target, scan) key are one run; only the first is kept.
+    """
+    runnable: List[ScanKey] = []
+    no_target: List[ScanKey] = []
+    duplicates: List[ScanKey] = []
+    seen: Set[ScanKey] = set()
+    for sol, target, scan in scans:
+        if not target:
+            no_target.append((sol, target or "", scan))
+            continue
+        key = (int(sol), target, scan)
+        if key in seen:
+            duplicates.append((sol, target, scan))
+            continue
+        seen.add(key)
+        runnable.append((sol, target, scan))
+    return runnable, no_target, duplicates
 
 
 def pending(scans: Iterable[ScanKey], done: Set[ScanKey]) -> Tuple[List[ScanKey], List[ScanKey]]:

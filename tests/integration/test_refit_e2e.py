@@ -111,7 +111,8 @@ def test_records_complete_scans_and_resume_skips_them(
     result, payload = _refit(*common, "--journal", str(journal))
     assert result.exit_code == 0, result.output
     assert payload["result"] | {"journal": None} == {
-        "journal": None, "scans": 1, "processed": 1, "skipped": 0, "failed": 0, "errors": []}
+        "journal": None, "scans": 1, "processed": 1, "skipped": 0, "failed": 0, "errors": [],
+        "unrunnable": [], "duplicates": []}
     assert [(e["sol"], e["scan"]) for e in _journal_scans(journal)] == [(921, "detail_1")]
     assert stub_persistence == [str(loupe_db.resolve())] * 3
 
@@ -162,7 +163,7 @@ def test_scan_without_loupe_inputs_fails_and_is_not_recorded(tmp_path, monkeypat
         session.add(SolORM(sol_number=4321, data_source="pds4"))
         session.flush()
         session.add(ScanORM(
-            id=str(uuid.uuid4()), sol_number=4321, target=None, target_type="mars_target",
+            id=str(uuid.uuid4()), sol_number=4321, target="Synthetic PDS", target_type="mars_target",
             scan_name="detail_1", scan_id="synthetic_pds", sclk_start=0, n_points=1,
             n_channels=2148, data_source="pds4",
         ))

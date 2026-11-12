@@ -2746,6 +2746,7 @@ def refit_cmd(
     from sherloc_pipeline.services.config import get_runtime_config
     from sherloc_pipeline.services.refit_journal import (
         BatchJournal, JournalError, batch_identity, config_digest, pending, run_failures,
+        select_runnable,
     )
 
     json_mode = (ctx.obj or {}).get("json", False)
@@ -2811,9 +2812,13 @@ def refit_cmd(
         exclude_type="engineering" if no_engineering else None,
         science_only=science,
     )
-    to_run, skipped = pending(scans, batch.done)
+    runnable, no_target, duplicates = select_runnable(scans)
+    unrunnable = [f"{sol_num:04d} {scn}: no target" for sol_num, _, scn in no_target]
+    duplicate_labels = [f"{sol_num:04d} {tgt} {scn}" for sol_num, tgt, scn in duplicates]
+    to_run, skipped = pending(runnable, batch.done)
     out.print(
         f"[bold]Refit[/bold]: {len(scans)} scan(s), {len(skipped)} already in the journal, "
+        f"{len(unrunnable)} without a target, {len(duplicates)} duplicate key(s), "
         f"{len(to_run)} to run. Journal: {batch.path}"
     )
 
@@ -2862,6 +2867,8 @@ def refit_cmd(
                 "skipped": len(skipped),
                 "failed": len(failed),
                 "errors": failed,
+                "unrunnable": unrunnable,
+                "duplicates": duplicate_labels,
             },
         )
         print(json_mod.dumps(output.model_dump(), default=str))
@@ -2872,6 +2879,14 @@ def refit_cmd(
         )
         for err in failed:
             out.print(f"  - {err}")
+        if unrunnable:
+            out.print(f"[yellow]Not run (no target): {len(unrunnable)}[/yellow]")
+            for item in unrunnable:
+                out.print(f"  - {item}")
+        if duplicate_labels:
+            out.print(f"[yellow]Duplicate scan keys, run once: {len(duplicate_labels)}[/yellow]")
+            for item in duplicate_labels:
+                out.print(f"  - {item}")
     sys.exit(1 if failed else 0)
 
 
