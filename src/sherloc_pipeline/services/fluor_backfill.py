@@ -32,7 +32,7 @@ WRITER_COMMANDS = (
     "full-pipeline", "process-new", "ingest", "pds-ingest", "fit-fluor",
     "persist-peaks", "backfill", "backfill-masks", "backfill-public-release",
     "backfill-fluor-inputs", "reclassify-targets", "reclassify-scan-types",
-    "reclassify-scan-classes", "reclassify-product-roles", "apply-review",
+    "reclassify-scan-classes", "reclassify-product-roles", "apply-review", "refit",
 )
 BUSY_TIMEOUT_MS = 5000
 
