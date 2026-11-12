@@ -100,12 +100,14 @@ def resolve_scan_context(
     
         # Resolve data directory from config if not provided
         if data_dir is None:
-            data_dir_str = config.paths.get('data_dir', '../data/loupe') if hasattr(config, 'paths') else '../data/loupe'
+            paths_cfg = config.paths if hasattr(config, 'paths') else {}
+            data_dir_str = paths_cfg.get('data_root') or paths_cfg.get('data_dir') or '../data/loupe'
             data_dir = Path(data_dir_str)
     
         # Resolve results directory from config if not provided
         if results_dir is None:
-            results_dir_str = config.paths.get('results_dir', '../results') if hasattr(config, 'paths') else '../results'
+            paths_cfg = config.paths if hasattr(config, 'paths') else {}
+            results_dir_str = paths_cfg.get('results_root') or paths_cfg.get('results_dir') or '../results'
             results_dir = Path(results_dir_str)
     
         # Normalize to absolute paths
