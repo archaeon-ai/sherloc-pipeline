@@ -2,5 +2,5 @@ work_package: "#171 refit code_digest includes frontend files"
 branch: fix-171-code-digest (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/184)
 head: 3173c09
 open_decisions: []
-next_action: Codex r1 GO at 6cf5271. after #181 merges: merge origin/main (CHANGELOG conflict, keep both), git rm WORK_STATE.yaml, push (no force), Codex confirmation round on exact head, CI green, merge with --match-head-commit; no tests Thu 06:00-11:30
+next_action: Codex r1 GO at 3173c09. after #181 merges: merge origin/main (CHANGELOG conflict, keep both), git rm WORK_STATE.yaml, push (no force), Codex confirmation round on exact head, CI green, merge with --match-head-commit; no tests Thu 06:00-11:30
 last_verified: 2026-11-11T18:07:03-08:00 — review and CI state read from the PR (comments, gh pr checks); no local tests for this update
