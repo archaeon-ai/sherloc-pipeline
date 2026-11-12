@@ -1,6 +1,6 @@
 work_package: "Mineral fitter rulings (Ken 11/12: aicc, fwhm 25, r2 none; gain decide after replay; mask negative spikes; CR mask = review flag; cap 5)"
-branch: fitter-aicc-rulings (PR: pending)
-head: pending
+branch: fitter-aicc-rulings (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/190)
+head: 3c957d4
 open_decisions:
   - "Ken: aicc_improve_threshold value after replay (0 in this PR; replay: gain 2 loses 22 rows, 18 at SNR 3-4)"
   - "Ken: reject_merged_candidates on/off (replay: +3 rows, 0 lost; recovers p88)"
