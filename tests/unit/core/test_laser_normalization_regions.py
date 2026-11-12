@@ -38,15 +38,20 @@ def write_workspace(root, repeat_headers: bool = True):
     return work
 
 
+def output_dir(work):
+    return work.parent / "results"
+
+
 def normalize(work):
-    process_laser_normalization(work, sol=0, target="synthetic", scan="synthetic", generate_plots=False)
+    return process_laser_normalization(
+        work, sol=0, target="synthetic", scan="synthetic", generate_plots=False,
+        output_dir=output_dir(work),
+    )
 
 
 def test_each_region_keeps_its_points_and_their_factors(tmp_path):
     work = write_workspace(tmp_path)
-    normalize(work)
-
-    lines = (work / "darkSubSpectraN.csv").read_text().splitlines()
+    lines = normalize(work).read_text().splitlines()
     assert len(lines) == 3 * N_SPECTRA + 3
     headers = [0, N_SPECTRA + 1, 2 * N_SPECTRA + 2]
     for region, start in zip((1, 2, 3), headers):
@@ -61,9 +66,9 @@ def test_each_region_keeps_its_points_and_their_factors(tmp_path):
 
 def test_downstream_reader_returns_point_k_from_raw_point_k(tmp_path):
     work = write_workspace(tmp_path)
-    normalize(work)
+    normalized = normalize(work)
 
-    spectra = DataIngestion(base_data_dir=tmp_path).process_normalized_spectra(work)
+    spectra = DataIngestion(base_data_dir=tmp_path).process_normalized_spectra(work, normalized_file=normalized)
 
     fluorescence = spectra["fluorescence"]
     r1 = spectra["R1"]
@@ -77,6 +82,7 @@ def test_refuses_a_file_without_the_repeated_section_headers(tmp_path):
     work = write_workspace(tmp_path, repeat_headers=False)
     with pytest.raises(ValueError, match="section header"):
         normalize(work)
+    assert not (output_dir(work) / "darkSubSpectraN.csv").exists()
     assert not (work / "darkSubSpectraN.csv").exists()
 
 
@@ -85,4 +91,5 @@ def test_refuses_a_file_whose_length_does_not_match_n_spectra(tmp_path):
     (work / "loupe.csv").write_text(f"n_spectra,{N_SPECTRA + 1}\nn_channels,{N_CHANNELS}\nspecProcessingApplied,D\n")
     with pytest.raises(ValueError, match="section header"):
         normalize(work)
+    assert not (output_dir(work) / "darkSubSpectraN.csv").exists()
     assert not (work / "darkSubSpectraN.csv").exists()

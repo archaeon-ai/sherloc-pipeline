@@ -74,8 +74,10 @@ def process_laser_normalization(
     scan: str,
     processing_flag: str = "N",
     generate_plots: bool = True,
-    results_dir: Path = None
-) -> None:
+    results_dir: Path = None,
+    *,
+    output_dir: Path,
+) -> Path:
     """
     Process laser normalization for darkSubSpectra data only (matching Loupe behavior).
 
@@ -83,8 +85,11 @@ def process_laser_normalization(
     1. Read photodiode data and calculate normalization factors
     2. Read darkSubSpectra data and split into R1, R2, R3 regions
     3. Apply normalization to each region separately
-    4. Write normalized data back to file
+    4. Write normalized data to ``output_dir``
     5. Generate comparison plots (optional)
+
+    The working directory is input data and is only read: nothing in it is
+    written or rewritten (issue #131).
 
     Args:
         working_dir: Path to the working directory containing the data files
@@ -94,8 +99,16 @@ def process_laser_normalization(
         processing_flag: Processing flag to append to output filenames (default: "N")
         generate_plots: Whether to generate comparison plots (default: True)
         results_dir: Base results directory (default: None, will use config)
+        output_dir: Directory that receives ``darkSubSpectra{processing_flag}.csv``
+            (normally the scan's results folder). Must lie outside
+            ``working_dir``; so must the plot directory.
+
+    Returns:
+        Path of the normalized spectra file written.
     """
     logger.info(f"Starting laser normalization for {working_dir}")
+    output_dir = Path(output_dir)
+    _refuse_inside_workspace(output_dir, working_dir, "output_dir")
 
     # Read photodiode data and calculate normalization factors
     photodiode_file = working_dir / "photodiodeRaw.csv"
@@ -148,16 +161,14 @@ def process_laser_normalization(
     R3_norm = R3_numeric.multiply(norm_factors, axis='rows')
 
     # Write normalized data back (concatenate R1+R2+R3 like Loupe's writeSpectraRegions)
-    output_file = working_dir / f"darkSubSpectra{processing_flag}.csv"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / f"darkSubSpectra{processing_flag}.csv"
     logger.info(f"Writing normalized darkSubSpectra to {output_file}")
 
     # Write in the same format as Loupe's writeSpectraRegions
     R1_norm.to_csv(output_file, header=True, index=False, float_format='%.3f')
     R2_norm.to_csv(output_file, mode='a', header=True, index=False, float_format='%.3f')
     R3_norm.to_csv(output_file, mode='a', header=True, index=False, float_format='%.3f')
-
-    # Update processing flag in loupe.csv
-    update_loupe_csv_processing_flag(working_dir, processing_flag)
 
     # Generate comparison plots by default (can be disabled by caller via --no-plots)
     if generate_plots:
@@ -179,6 +190,7 @@ def process_laser_normalization(
 
         # Create the test_plots subdirectory under [sol]_[scan]
         test_plots_dir = results_dir / target / f"{sol}_{scan}" / "test_plots"
+        _refuse_inside_workspace(test_plots_dir, working_dir, "plot directory")
         test_plots_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate plots for each region
@@ -197,8 +209,23 @@ def process_laser_normalization(
         logger.info(f"Comparison plots saved to: {test_plots_dir}")
 
     logger.info("Laser normalization completed successfully")
+    return output_file
 
 
+
+
+def _refuse_inside_workspace(destination: Path, working_dir: Path, what: str) -> None:
+    """Raise unless ``destination`` lies outside the input workspace (issue #131).
+
+    Both paths are resolved, so a symlink into the workspace is caught too.
+    """
+    workspace = Path(working_dir).resolve()
+    resolved = Path(destination).resolve()
+    if resolved == workspace or resolved.is_relative_to(workspace):
+        raise ValueError(
+            f"{what} {destination} is inside the input workspace {working_dir}; "
+            "laser normalization never writes into the workspace"
+        )
 
 
 def check_section_headers(dark_sub: pd.DataFrame, n_spectra: int, source: Path) -> None:
@@ -216,30 +243,3 @@ def check_section_headers(dark_sub: pd.DataFrame, n_spectra: int, source: Path) 
             f"{expected['R2']}/{expected['R3']}; got {len(dark_sub)} rows, "
             f"headers {', '.join(f'{r}={found[r][:16]!r}' for r in expected)})"
         )
-
-
-def update_loupe_csv_processing_flag(working_dir: Path, processing_flag: str) -> None:
-    """
-    Update the processing flag in loupe.csv to indicate laser normalization was applied.
-
-    Args:
-        working_dir: Path to the working directory
-        processing_flag: Processing flag to add
-    """
-    loupe_file = working_dir / "loupe.csv"
-    if not loupe_file.exists():
-        logger.warning(f"Loupe file not found: {loupe_file}")
-        return
-
-    # Read current loupe.csv as key-value pairs
-    loupe_df = pd.read_csv(loupe_file, header=None, names=['key', 'value'])
-
-    # Update processing flag (add 'N' if not already present)
-    current_flag = str(loupe_df[loupe_df['key'] == 'specProcessingApplied']['value'].iloc[0])
-    if processing_flag not in current_flag:
-        new_flag = current_flag + processing_flag if current_flag != 'None' else processing_flag
-        loupe_df.loc[loupe_df['key'] == 'specProcessingApplied', 'value'] = new_flag
-        loupe_df.to_csv(loupe_file, header=False, index=False)
-        logger.info(f"Updated processing flag: {current_flag} -> {new_flag}")
-    else:
-        logger.info(f"Processing flag {processing_flag} already present: {current_flag}")

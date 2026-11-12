@@ -126,6 +126,14 @@ def test_writer_detection_resolves_args_env_and_the_implicit_default(source, tmp
     assert sorted(fluor_backfill.writers_on(source, proc_root=proc)) == [101, 102, 103, 106]
 
 
+def test_a_running_refit_is_a_writer(source, tmp_path):
+    """#169: refit runs full-pipeline on every selected scan and writes the database."""
+    proc, here = tmp_path / "proc-refit", source.parent
+    _fake_proc(proc, 301, ["sherloc", "refit", "--database", source.name], here)
+    _fake_proc(proc, 302, ["python", "-m", "sherloc_pipeline.cli.app", "refit"], here)  # implicit ./phase.db
+    assert sorted(fluor_backfill.writers_on(source, proc_root=proc)) == [301, 302]
+
+
 def test_in_place_is_refused_without_proc(source, tmp_path, monkeypatch):
     real = fluor_backfill.writers_on
     monkeypatch.setattr(

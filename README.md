@@ -357,7 +357,7 @@ data/loupe/
     │       ├── activeSpectra.csv      # Active spectra (R1/R2/R3 stacked)
     │       ├── darkSpectra.csv        # Dark spectra
     │       ├── darkSubSpectra.csv     # Raw dark-subtracted spectra (R1/R2/R3)
-    │       ├── darkSubSpectraN.csv    # Laser-normalized dark-subtracted spectra
+    │       ├── darkSubSpectraN.csv    # Laser-normalized spectra, if Loupe wrote one (the pipeline writes its own to the results folder)
     │       ├── photodiodeRaw.csv      # Photodiode shots used for normalization
     │       ├── loupe.csv              # Scan manifest + metadata (n_spectra, etc.)
     │       ├── spatial.csv            # Laser spot az/el + pixel locations
