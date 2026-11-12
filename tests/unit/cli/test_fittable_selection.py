@@ -60,8 +60,8 @@ SEED = [
 def db_path(tmp_path):
     """A file-backed phase.db seeded with the SEED corpus."""
     path = tmp_path / "phase.db"
-    engine = get_engine(str(path))
-    Base.metadata.create_all(engine)
+    from sherloc_pipeline.database.connection import open_database
+    engine = open_database(str(path), create_missing=True)  # stamped, as `sherloc init` leaves it
     with Session(engine) as sess:
         for sol in {row[0] for row in SEED}:
             sess.add(SolORM(sol_number=sol, data_source="loupe"))

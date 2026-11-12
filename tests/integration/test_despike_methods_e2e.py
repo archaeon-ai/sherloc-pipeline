@@ -99,7 +99,7 @@ class TestMlEndToEnd:
     @pytest.fixture
     def ingested_db(self, tmp_path, fixtures_path):
         db_path = tmp_path / "phase.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=True,
             ingestion_mode="all_regions",
@@ -222,7 +222,7 @@ class TestPipelinePersistenceWiring:
     @pytest.fixture
     def ingested_db(self, tmp_path, fixtures_path):
         db_path = tmp_path / "phase.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=True,
             ingestion_mode="all_regions",

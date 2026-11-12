@@ -265,7 +265,7 @@ def _has_index(engine: Engine, name: str) -> bool:
 def _open_database(
     database_path,
     *,
-    create_missing: bool = True,
+    create_missing: bool = False,
     init_command: Optional[str] = None,
     required_index: Optional[str] = None,
 ) -> tuple:
@@ -323,17 +323,16 @@ def _open_database(
 def open_database(
     database_path: Optional[Union[str, Path]] = None,
     *,
-    create_missing: bool = True,
+    create_missing: bool = False,
 ) -> Engine:
     """Open a database for a command that reads and writes data, without changing its schema.
 
     - ``:memory:``: the ORM schema is created (nothing to conflict with).
-    - A missing file, or one with no tables: with ``create_missing`` (the
-      library default, used by tests and programmatic setup) the schema is
-      created and stamped at the code's Alembic head (``SCHEMA_HEADS``), the
-      same objects ``alembic upgrade head`` builds. The CLI data commands
-      pass ``create_missing=False`` and get ``DatabaseNotInitializedError``
-      naming ``sherloc init``; nothing is created.
+    - A missing file, or one with no tables: ``DatabaseNotInitializedError``
+      naming ``sherloc init``, and nothing is created. Only a caller that
+      passes ``create_missing=True`` (test and programmatic setup) gets the
+      schema created and stamped at the code's Alembic head
+      (``SCHEMA_HEADS``), the same objects ``alembic upgrade head`` builds.
     - Any other database must already be stamped at that head; otherwise
       ``SchemaNotCurrentError`` is raised and the file is not modified (it
       is inspected read-only).
@@ -445,23 +444,22 @@ PDS_DATABASE_PATH = _default_pds_db_path()
 def init_pds_database(
     db_path: Optional[Union[str, Path]] = None,
     *,
-    create_missing: bool = True,
+    create_missing: bool = False,
 ) -> Engine:
     """Open phase_pds.db for PDS ingestion, never changing an existing database's schema.
 
-    A new (missing or empty) database, when ``create_missing``, gets the
+    A new (missing or empty) database, only with ``create_missing=True``, gets the
     schema stamped at the code's Alembic head plus the PDS unique index on
     ``scans.scan_id`` (spec s9, s12). An existing database must already be
     at head and carry that index, checked read-only; otherwise
-    ``SchemaNotCurrentError`` is raised and nothing is changed (#135). With
-    ``create_missing=False`` (the CLI and web ingestion paths) a missing or
-    empty database raises ``DatabaseNotInitializedError`` naming
-    ``sherloc init --mode pds``.
+    ``SchemaNotCurrentError`` is raised and nothing is changed (#135). By
+    default a missing or empty database raises ``DatabaseNotInitializedError``
+    naming ``sherloc init --mode pds``.
 
     Args:
         db_path: Path to the PDS database file. Defaults to
             ``./phase_pds.db``. Can be ``:memory:`` for testing.
-        create_missing: Create a missing or empty database.
+        create_missing: Create a missing or empty database (default False).
 
     Returns:
         SQLAlchemy Engine instance for the database.

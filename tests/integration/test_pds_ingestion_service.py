@@ -101,7 +101,7 @@ class TestIdempotency:
     def pds_service(self, tmp_path):
         """Create PDSIngestionService with temp database."""
         pds_db = tmp_path / "phase_pds_test.db"
-        return PDSIngestionService(pds_db_path=pds_db)
+        return PDSIngestionService(create_missing=True, pds_db_path=pds_db)
 
     def test_fresh_ingestion_creates_records(self, pds_service):
         """First ingestion of Sol 921 creates sol, scans, points, spectra.
@@ -271,7 +271,7 @@ class TestVersionComparison:
     def pds_service(self, tmp_path):
         """Create PDSIngestionService with temp database."""
         pds_db = tmp_path / "phase_pds_version_test.db"
-        return PDSIngestionService(pds_db_path=pds_db)
+        return PDSIngestionService(create_missing=True, pds_db_path=pds_db)
 
     def test_version_stored_in_pds4_metadata(self, pds_service):
         """pds4_metadata.version stores the PDS version string."""
@@ -312,13 +312,13 @@ class TestErrorHandling:
 
     def test_missing_sol_directory_raises(self, tmp_path):
         """Non-existent sol_dir raises PDSIngestionError."""
-        service = PDSIngestionService(pds_db_path=tmp_path / "test.db")
+        service = PDSIngestionService(create_missing=True, pds_db_path=tmp_path / "test.db")
         with pytest.raises(PDSIngestionError, match="Sol directory not found"):
             service.ingest_sol(tmp_path / "nonexistent")
 
     def test_empty_sol_directory(self, tmp_path):
         """Empty directory returns no-observations result."""
-        service = PDSIngestionService(pds_db_path=tmp_path / "test.db")
+        service = PDSIngestionService(create_missing=True, pds_db_path=tmp_path / "test.db")
         empty_dir = tmp_path / "empty_sol"
         empty_dir.mkdir()
         result = service.ingest_sol(empty_dir)
@@ -618,7 +618,7 @@ class TestTargetResolverSol921Integration:
             pytest.skip("Loupe phase.db not available")
 
         pds_db = tmp_path / "phase_pds_target_test.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB,
         )
@@ -712,7 +712,7 @@ class TestACIContextImageAssociation:
     def service_with_sol921(self, tmp_path):
         """Ingest Sol 921 and return (service, result)."""
         pds_db = tmp_path / "phase_pds_aci_test.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
@@ -868,7 +868,7 @@ class TestSol921FullIngestion:
     def ingested(self, tmp_path):
         """Ingest Sol 921 with Loupe cross-reference and return (service, result)."""
         pds_db = tmp_path / "phase_pds_full_test.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
@@ -1120,7 +1120,7 @@ class TestDatabaseValidation:
     def validated(self, tmp_path):
         """Ingest Sol 921 and return (service, report)."""
         pds_db = tmp_path / "phase_pds_validation_test.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
@@ -1208,7 +1208,7 @@ class TestDatabaseValidation:
     def test_empty_database_report(self, tmp_path):
         """Validation on empty database should return zeros and valid=True."""
         pds_db = tmp_path / "phase_pds_empty_test.db"
-        service = PDSIngestionService(pds_db_path=pds_db)
+        service = PDSIngestionService(create_missing=True, pds_db_path=pds_db)
         report = service.validate_database()
         assert report["valid"] is True
         assert report["counts"]["scans"] == 0

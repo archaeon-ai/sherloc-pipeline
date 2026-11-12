@@ -340,7 +340,7 @@ class TestReingestCascade:
         """Force re-ingest removes pre-existing masks; zero orphans remain."""
         workspace = fixtures_path / self.WORKSPACE_REL
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=True,
             ingestion_mode="all_regions",

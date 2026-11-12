@@ -43,7 +43,7 @@ def synthetic_sol(tmp_path, monkeypatch):
     monkeypatch.setattr(LoupeWorkspaceParser, "parse", parse)
     # process-new does not create a database (#135); initialize it as `sherloc init` would.
     from sherloc_pipeline.database.connection import open_database
-    open_database(tmp_path / "test.db").dispose()
+    open_database(tmp_path / "test.db", create_missing=True).dispose()
     return sol_dir
 
 
@@ -74,7 +74,7 @@ def assert_errors(errors, failure):
 @pytest.mark.parametrize("failure", ["workspace", "finalization", "both"])
 def test_ingest_sol_reports_collected_errors(synthetic_sol, tmp_path, monkeypatch, failure):
     inject_failure(monkeypatch, failure)
-    service = ingestion.IngestionService(
+    service = ingestion.IngestionService(create_missing=True, 
         database_path=tmp_path / "test.db", console=Console(quiet=True),
     )
 
@@ -89,7 +89,7 @@ def test_ingest_sol_reports_collected_errors(synthetic_sol, tmp_path, monkeypatc
 
 
 def test_successful_and_skipped_sol_remain_successful(synthetic_sol, tmp_path):
-    service = ingestion.IngestionService(
+    service = ingestion.IngestionService(create_missing=True, 
         database_path=tmp_path / "test.db", console=Console(quiet=True),
     )
     result = service.ingest_sol(synthetic_sol)

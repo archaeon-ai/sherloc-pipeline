@@ -65,7 +65,7 @@ class _Config:
 @pytest.fixture
 def db(tmp_path, fixtures_path):
     db_path = tmp_path / "phase.db"
-    service = IngestionService(
+    service = IngestionService(create_missing=True, 
         database_path=db_path, include_spectra=True, ingestion_mode="all_regions"
     )
     service.ingest_workspace(fixtures_path / WORKSPACE_REL)
@@ -177,7 +177,7 @@ def test_counts_exclude_the_derived_rows(db):
 
     with service.engine.begin() as conn:
         conn.execute(text("CREATE UNIQUE INDEX uq_pds_scans_scan_id ON scans (scan_id)"))
-    pds = PDSIngestionService(pds_db_path=db_path)
+    pds = PDSIngestionService(create_missing=True, pds_db_path=db_path)
     before = (service.get_database_stats()["spectra"], pds.get_database_stats()["spectra"],
               pds.validate_database()["spectra_by_region"])
     _rebuild(db_path)

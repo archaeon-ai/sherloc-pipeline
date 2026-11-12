@@ -141,7 +141,7 @@ class TestCliDispatch:
         from sherloc_pipeline.services.preprocessing import resolve_despike_method
 
         db_path = tmp_path / "test.db"
-        ingestion = IngestionService(
+        ingestion = IngestionService(create_missing=True, 
             database_path=db_path, include_spectra=False
         )
         ingestion.ingest_workspace(

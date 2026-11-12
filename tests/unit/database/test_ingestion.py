@@ -37,13 +37,13 @@ class TestIngestionServiceInit:
     def test_init_creates_database(self, tmp_path):
         """Test that service creates database file."""
         db_path = tmp_path / "test.db"
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
         assert db_path.exists()
 
     def test_init_creates_tables(self, tmp_path):
         """Test that service creates all tables."""
         db_path = tmp_path / "test.db"
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
 
         from sqlalchemy import inspect
         inspector = inspect(service.engine)
@@ -65,7 +65,7 @@ class TestWorkspaceIngestion:
             "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
         )
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,  # Faster test
         )
@@ -89,7 +89,7 @@ class TestWorkspaceIngestion:
             "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
         )
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=True,
         )
@@ -111,7 +111,7 @@ class TestWorkspaceIngestion:
             "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
         )
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -138,7 +138,7 @@ class TestWorkspaceIngestion:
             "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
         )
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -174,7 +174,7 @@ class TestWorkspaceIngestion:
         shutil.copytree(src_workspace, workspace)
 
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -208,7 +208,7 @@ class TestWorkspaceIngestion:
             "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
         )
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -252,7 +252,7 @@ class TestWorkspaceIngestion:
     def test_ingest_workspace_not_found(self, tmp_path):
         """Test error when workspace not found."""
         db_path = tmp_path / "test.db"
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
 
         with pytest.raises(IngestionError) as exc_info:
             service.ingest_workspace(tmp_path / "nonexistent")
@@ -265,7 +265,7 @@ class TestWorkspaceIngestion:
         invalid_dir = tmp_path / "invalid"
         invalid_dir.mkdir()
 
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
 
         with pytest.raises(IngestionError) as exc_info:
             service.ingest_workspace(invalid_dir)
@@ -280,7 +280,7 @@ class TestSolIngestion:
         """Test ingesting a complete sol."""
         sol_dir = fixtures_path / "loupe" / "sol_0921"
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -301,7 +301,7 @@ class TestSolIngestion:
         """Test that sol ingestion creates instrument state and CCD config."""
         sol_dir = fixtures_path / "loupe" / "sol_0921"
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -322,7 +322,7 @@ class TestSolIngestion:
         """Test that re-ingesting sol is idempotent."""
         sol_dir = fixtures_path / "loupe" / "sol_0921"
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -339,7 +339,7 @@ class TestSolIngestion:
     def test_ingest_sol_not_found(self, tmp_path):
         """Test error when sol directory not found."""
         db_path = tmp_path / "test.db"
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
 
         with pytest.raises(IngestionError) as exc_info:
             service.ingest_sol(tmp_path / "sol_9999")
@@ -354,7 +354,7 @@ class TestDirectoryIngestion:
         """Test ingesting entire Loupe directory."""
         loupe_dir = fixtures_path / "loupe"
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -369,7 +369,7 @@ class TestDirectoryIngestion:
         """Test directory ingestion with limit."""
         loupe_dir = fixtures_path / "loupe"
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -382,7 +382,7 @@ class TestDirectoryIngestion:
     def test_ingest_directory_not_found(self, tmp_path):
         """Test error when directory not found."""
         db_path = tmp_path / "test.db"
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
 
         with pytest.raises(IngestionError) as exc_info:
             service.ingest_directory(tmp_path / "nonexistent")
@@ -395,7 +395,7 @@ class TestDirectoryIngestion:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
 
         with pytest.raises(IngestionError) as exc_info:
             service.ingest_directory(empty_dir)
@@ -409,7 +409,7 @@ class TestDatabaseStats:
     def test_get_database_stats_empty(self, tmp_path):
         """Test stats on empty database."""
         db_path = tmp_path / "test.db"
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
 
         stats = service.get_database_stats()
 
@@ -422,7 +422,7 @@ class TestDatabaseStats:
         """Test stats after ingestion."""
         sol_dir = fixtures_path / "loupe" / "sol_0921"
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -439,7 +439,7 @@ class TestDatabaseStats:
         """Test listing ingested sols."""
         loupe_dir = fixtures_path / "loupe"
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -455,7 +455,7 @@ class TestDatabaseStats:
         """Test getting scans for a sol."""
         sol_dir = fixtures_path / "loupe" / "sol_0921"
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -475,19 +475,19 @@ class TestIngestionMode:
     def test_default_mode_is_all_regions(self, tmp_path):
         """Default ingestion_mode is 'all_regions'."""
         db_path = tmp_path / "test.db"
-        service = IngestionService(database_path=db_path)
+        service = IngestionService(create_missing=True, database_path=db_path)
         assert service.ingestion_mode == "all_regions"
 
     def test_invalid_mode_raises(self, tmp_path):
         """Invalid ingestion_mode raises ValueError."""
         db_path = tmp_path / "test.db"
         with pytest.raises(ValueError, match="Invalid ingestion_mode"):
-            IngestionService(database_path=db_path, ingestion_mode="invalid")
+            IngestionService(create_missing=True, database_path=db_path, ingestion_mode="invalid")
 
     def test_all_regions_mode_accepted(self, tmp_path):
         """'all_regions' is a valid ingestion_mode."""
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path, ingestion_mode="all_regions"
         )
         assert service.ingestion_mode == "all_regions"
@@ -534,7 +534,7 @@ class TestIngestionMode:
         (workspace / "darkSubSpectra.csv").write_text("\n".join(spectra_lines))
 
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=True,
             ingestion_mode="R1_only",
@@ -594,7 +594,7 @@ class TestIngestionMode:
         (workspace / "darkSubSpectra.csv").write_text("\n".join(spectra_lines))
 
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=True,
             ingestion_mode="all_regions",
@@ -653,7 +653,7 @@ class TestIngestionMode:
         (workspace / "darkSubSpectra.csv").write_text("\n".join(spectra_lines))
 
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=True,
             ingestion_mode="all_regions",
@@ -675,7 +675,7 @@ class TestIngestionValidation:
             "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
         )
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )
@@ -698,7 +698,7 @@ class TestIngestionValidation:
             "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
         )
         db_path = tmp_path / "test.db"
-        service = IngestionService(
+        service = IngestionService(create_missing=True, 
             database_path=db_path,
             include_spectra=False,
         )

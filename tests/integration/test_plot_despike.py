@@ -65,7 +65,7 @@ def mask_db(tmp_path_factory, fixtures_path):
     """Temp DB with the fixture scan ingested and known masks persisted."""
     tmp = tmp_path_factory.mktemp("plot_despike_db")
     db_path = tmp / "phase.db"
-    service = IngestionService(
+    service = IngestionService(create_missing=True, 
         database_path=db_path,
         include_spectra=True,
         ingestion_mode="all_regions",

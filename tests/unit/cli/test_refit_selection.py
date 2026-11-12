@@ -35,8 +35,8 @@ def _scan(target, scan_name):
 def db(tmp_path, monkeypatch):
     monkeypatch.delenv("SHERLOC_DB_PATH", raising=False)
     path = tmp_path / "phase.db"
-    engine = get_engine(path)
-    create_all_tables(engine)
+    from sherloc_pipeline.database.connection import open_database
+    engine = open_database(path, create_missing=True)  # stamped, as `sherloc init` leaves it
     with get_session(engine) as session:
         session.add(SolORM(sol_number=SOL, data_source="loupe"))
         session.flush()

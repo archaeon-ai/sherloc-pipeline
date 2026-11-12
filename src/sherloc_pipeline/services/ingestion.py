@@ -138,7 +138,7 @@ class IngestionService:
         include_spectra: bool = True,
         ingestion_mode: str = "all_regions",
         read_only: bool = False,
-        create_missing: bool = True,
+        create_missing: bool = False,
     ):
         """Initialize the ingestion service.
 
@@ -150,9 +150,9 @@ class IngestionService:
                 'all_regions' (default) - R1, R2, R3 as separate spectra rows per scan point.
                 'R1_only' - Ingest only R1 (Raman) section.
             read_only: Open an existing database read-only (``db-stats``).
-            create_missing: Create a missing or empty database (library
-                default). The CLI passes False: ``DatabaseNotInitializedError``
-                names ``sherloc init`` instead.
+            create_missing: Create a missing or empty database. Default
+                False: ``DatabaseNotInitializedError`` names ``sherloc init``
+                (#135). Tests and programmatic setup pass True.
 
         Raises:
             SchemaNotCurrentError: the database exists with tables but is not

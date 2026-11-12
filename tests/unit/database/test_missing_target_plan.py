@@ -148,7 +148,7 @@ def test_direct_workspace_ingest_uses_sol_lpe_target(fixtures_path, tmp_path):
     workspace = tmp_path / "sol_0921" / "detail_1" / source.name
     shutil.copytree(source, workspace)
     (tmp_path / "sol_0921" / "Sol_0921_Amherst_Point.lpe").write_text("")
-    service = IngestionService(
+    service = IngestionService(create_missing=True, 
         database_path=tmp_path / "ingest.db", include_spectra=False
     )
 
@@ -174,7 +174,7 @@ def test_direct_workspace_ingest_rejects_lpe_for_another_sol(
     workspace = tmp_path / "sol_0921" / "detail_1" / source.name
     shutil.copytree(source, workspace)
     (tmp_path / "sol_0921" / "Sol_0100_Other_Rock.lpe").write_text("")
-    service = IngestionService(
+    service = IngestionService(create_missing=True, 
         database_path=tmp_path / "ingest.db", include_spectra=False
     )
 
@@ -197,7 +197,7 @@ def test_targetless_science_workspace_logs_error_and_returns_warning(
         / "detail_1"
         / "SrlcSpecSpecSohRaw_0748731411-51550-1_Loupe_working"
     )
-    service = IngestionService(
+    service = IngestionService(create_missing=True, 
         database_path=tmp_path / "ingest.db", include_spectra=False
     )
 

@@ -1166,6 +1166,11 @@ def process_new_cmd(
         if sol_number is None:
             raise ValueError(f"Cannot extract sol number from: {sol_dir}")
 
+        # The database must exist at the code's schema head before any mode
+        # reads or writes it, --skip-ingest and --dry-run included (#135).
+        from sherloc_pipeline.database.connection import open_database as _open_checked
+        _open_checked(db_path).dispose()
+
         # Step 2: Ingest
         if skip_ingest:
             console.print(f"[yellow]Skipping ingest (--skip-ingest)[/yellow]")
@@ -2793,6 +2798,12 @@ def refit_cmd(
     db_path = Path(database or os.environ.get("SHERLOC_DB_PATH") or "./phase.db").resolve()
     if not db_path.exists():
         fail(f"Database not found: {db_path}")
+    # A refit writes every scan it runs: the schema must be the code's head (#135).
+    from sherloc_pipeline.database.connection import open_database as _open_checked
+    try:
+        _open_checked(db_path).dispose()
+    except Exception as e:
+        fail(str(e))
 
     if trim_pct is not None and not 0 <= trim_pct <= 50:
         fail(f"--trim-pct must be between 0 and 50, got {trim_pct}")

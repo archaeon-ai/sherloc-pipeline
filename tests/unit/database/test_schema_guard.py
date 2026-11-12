@@ -40,7 +40,7 @@ def _revisions(path):
 @pytest.fixture
 def current_db(tmp_path):
     path = tmp_path / "phase.db"
-    open_database(path).dispose()
+    open_database(path, create_missing=True).dispose()
     return path
 
 
@@ -67,7 +67,7 @@ def unstamped_db(tmp_path):
 
 def test_new_database_is_created_and_stamped_at_head(tmp_path):
     path = tmp_path / "sub" / "new.db"
-    open_database(path).dispose()
+    open_database(path, create_missing=True).dispose()
     assert _revisions(path) == alembic_heads()
     assert set(CATALOG_TABLES) <= _tables(path)
 
@@ -191,7 +191,7 @@ def test_new_database_matches_the_migrated_head(tmp_path, monkeypatch):
     monkeypatch.setenv("PHASE_DATABASE_PATH", str(migrated))
     command.upgrade(_alembic_config(), "head")
     created = tmp_path / "created.db"
-    open_database(created).dispose()
+    open_database(created, create_missing=True).dispose()
     assert _schema_objects(created) == _schema_objects(migrated)
     assert _revisions(created) == _revisions(migrated)
 
@@ -200,7 +200,7 @@ def test_new_database_rejects_an_invalid_fit_modality(tmp_path):
     from sqlalchemy.exc import IntegrityError, OperationalError
 
     path = tmp_path / "new.db"
-    engine = open_database(path)
+    engine = open_database(path, create_missing=True)
     try:
         with pytest.raises((IntegrityError, OperationalError), match="invalid fit_modality"):
             with engine.begin() as conn:
@@ -212,7 +212,7 @@ def test_new_database_rejects_an_invalid_fit_modality(tmp_path):
 
 def test_new_pds_database_gets_its_unique_index(tmp_path):
     path = tmp_path / "pds.db"
-    init_pds_database(path).dispose()
+    init_pds_database(path, create_missing=True).dispose()
     assert ("index", "uq_pds_scans_scan_id") in _schema_objects(path)[0]
 
 
@@ -284,3 +284,64 @@ def test_init_pds_mode_defaults_to_the_pds_database(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert (home / "phase_pds.db").exists() and not (home / "phase.db").exists()
     assert ("index", "uq_pds_scans_scan_id") in _schema_objects(home / "phase_pds.db")[0]
+
+
+@pytest.mark.parametrize("empty_file", [False, True])
+def test_services_do_not_create_a_database_by_default(tmp_path, empty_file):
+    """The issue's trigger: constructing the ingestion services on a new path, with no extra argument."""
+    from sherloc_pipeline.database.connection import DatabaseNotInitializedError
+    from sherloc_pipeline.services.pds_ingestion import PDSIngestionService
+
+    path = tmp_path / "phase.db"
+    if empty_file:
+        path.touch()
+    with pytest.raises(DatabaseNotInitializedError):
+        IngestionService(database_path=path)
+    with pytest.raises(DatabaseNotInitializedError):
+        PDSIngestionService(pds_db_path=path)
+    with pytest.raises(DatabaseNotInitializedError):
+        open_database(path)
+    assert path.exists() is empty_file
+    if empty_file:
+        assert path.stat().st_size == 0
+
+
+@pytest.mark.parametrize("mode", ["--skip-ingest", "--dry-run"])
+def test_process_new_checks_the_database_in_every_mode(tmp_path, behind_db, mode):
+    import sqlite3
+
+    from sherloc_pipeline.cli.app import app
+
+    def raw_tables():
+        conn = sqlite3.connect(behind_db)
+        try:
+            return {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            conn.close()
+
+    before = raw_tables()
+    conn = sqlite3.connect(behind_db)
+    assert conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0] == "delete"
+    conn.close()
+    sol = tmp_path / "sol_0001"
+    sol.mkdir()
+    missing = tmp_path / "missing.db"
+    for path in (missing, behind_db):
+        result = CliRunner().invoke(app, ["process-new", str(sol), mode, "--database", str(path)])
+        assert result.exit_code != 0, result.output
+        assert "sherloc init" in result.output or "alembic upgrade" in result.output
+    assert not missing.exists()
+    assert _journal_mode(behind_db) == "delete"
+    assert raw_tables() == before
+    assert _revisions(behind_db) == (OLD_REVISION,)
+
+
+def test_refit_refuses_a_database_behind_head(tmp_path, behind_db):
+    from sherloc_pipeline.cli.app import app
+
+    result = CliRunner().invoke(app, ["refit", "--database", str(behind_db),
+                                      "--journal", str(tmp_path / "j.jsonl")])
+    assert result.exit_code != 0
+    assert "alembic upgrade" in result.output
+    assert not (tmp_path / "j.jsonl").exists()
+    assert _revisions(behind_db) == (OLD_REVISION,)
