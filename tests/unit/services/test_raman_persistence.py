@@ -16,7 +16,9 @@ from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 
-from sherloc_pipeline.database.connection import get_engine, get_session, create_all_tables
+from sherloc_pipeline.database.connection import (
+    get_engine, get_session, create_all_tables, open_database,
+)
 from sherloc_pipeline.database.models import (
     SolORM, ScanORM, ScanPointORM, SpectrumORM, FittedPeakORM,
 )
@@ -277,8 +279,8 @@ def synthetic_peak_run(tmp_path, request, point_count):
     ))
     domain = request.param
     database_path = tmp_path / "synthetic.db"
-    engine = get_engine(database_path)
-    create_all_tables(engine)
+    # Stamped, as `sherloc init` leaves it: process-new refuses unstamped databases (#135).
+    engine = open_database(database_path, create_missing=True)
     fit_dir = tmp_path / f"{domain}_fit"
     fit_dir.mkdir()
     prefix = "87654_Synthetic_CSV_synthetic_scan_R1"

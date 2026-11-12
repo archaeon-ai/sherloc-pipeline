@@ -28,7 +28,7 @@ def _add_peak(session, *, peak_id: str, spectrum_id: str) -> None:
             spectrum_id=spectrum_id,
             amplitude=1.0,
             center_cm1=1085.0,
-            fit_modality="raman",
+            fit_modality="minerals",
         )
     )
 

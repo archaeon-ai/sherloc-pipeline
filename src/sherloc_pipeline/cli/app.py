@@ -880,6 +880,7 @@ def ingest_cmd(
             console=console,
             database_path=database,
             include_spectra=not no_spectra,
+            create_missing=False,
         )
 
         # Determine mode based on path
@@ -1165,6 +1166,11 @@ def process_new_cmd(
         if sol_number is None:
             raise ValueError(f"Cannot extract sol number from: {sol_dir}")
 
+        # The database must exist at the code's schema head before any mode
+        # reads or writes it, --skip-ingest and --dry-run included (#135).
+        from sherloc_pipeline.database.connection import open_database as _open_checked
+        _open_checked(db_path).dispose()
+
         # Step 2: Ingest
         if skip_ingest:
             console.print(f"[yellow]Skipping ingest (--skip-ingest)[/yellow]")
@@ -1184,6 +1190,7 @@ def process_new_cmd(
                 database_path=db_path,
                 include_spectra=True,
                 ingestion_mode="all_regions",
+                create_missing=False,
             )
             result = service.ingest_sol(sol_dir, force=False)
             if not result.metadata.get("success", True):
@@ -1360,6 +1367,7 @@ def db_stats_cmd(
             console=console,
             database_path=database,
             include_spectra=False,
+            read_only=True,
         )
 
         db_stats = service.get_database_stats()
@@ -1645,6 +1653,7 @@ def pds_ingest_cmd(
             service = PDSIngestionService(
                 pds_db_path=pds_database,
                 loupe_db_path=None,  # No Loupe needed for version check
+                create_missing=False,
             )
 
             table = Table(title="Version Update Check")
@@ -1723,6 +1732,7 @@ def pds_ingest_cmd(
             pds_db_path=pds_database,
             loupe_db_path=loupe_database,
             public_release_index=public_release_index,
+            create_missing=False,
         )
 
         total_obs_ingested = 0
@@ -2788,6 +2798,12 @@ def refit_cmd(
     db_path = Path(database or os.environ.get("SHERLOC_DB_PATH") or "./phase.db").resolve()
     if not db_path.exists():
         fail(f"Database not found: {db_path}")
+    # A refit writes every scan it runs: the schema must be the code's head (#135).
+    from sherloc_pipeline.database.connection import open_database as _open_checked
+    try:
+        _open_checked(db_path).dispose()
+    except Exception as e:
+        fail(str(e))
 
     if trim_pct is not None and not 0 <= trim_pct <= 50:
         fail(f"--trim-pct must be between 0 and 50, got {trim_pct}")
@@ -3578,11 +3594,13 @@ def init_cmd(
     ctx: typer.Context,
     database: Optional[Path] = typer.Option(
         None, "--database", "-d",
-        help="Database path (default: $SHERLOC_DB or ./phase.db)",
+        help="Database path (default: $SHERLOC_DB or ./phase.db; with --mode pds, "
+             "$SHERLOC_PDS_DB or ./phase_pds.db)",
     ),
     mode: str = typer.Option(
         "empty", "--mode",
-        help="Workflow hint shown in next-step guidance: pds | loupe | empty",
+        help="pds | loupe | empty. Next-step guidance; pds also creates the PDS "
+             "unique index and defaults the database to phase_pds.db",
     ),
     sherloc_home: Optional[Path] = typer.Option(
         None, "--sherloc-home",
@@ -3617,9 +3635,18 @@ def init_cmd(
         sherloc_home or os.environ.get("SHERLOC_HOME") or "."
     ).resolve()
 
-    db_path = Path(
-        database or os.environ.get("SHERLOC_DB") or (home_root / "phase.db")
-    )
+    if mode == "pds":
+        # The database pds-ingest writes by default (#135: it no longer creates one).
+        db_path = Path(
+            database
+            or os.environ.get("SHERLOC_PDS_DB")
+            or os.environ.get("SHERLOC_PDS_DB_PATH")
+            or (home_root / "phase_pds.db")
+        )
+    else:
+        db_path = Path(
+            database or os.environ.get("SHERLOC_DB") or (home_root / "phase.db")
+        )
 
     subdirs = [
         home_root / "data",
@@ -3645,6 +3672,18 @@ def init_cmd(
             raise typer.Exit(code=1)
 
         init_database(db_path)
+        if mode == "pds":
+            # The PDS unique index is not a migration; PDS ingestion requires
+            # it on an existing database and never adds it itself (#135).
+            from sherloc_pipeline.database.connection import PDS_UNIQUE_INDEX_SQL, get_engine
+            from sqlalchemy import text as _text
+
+            _engine = get_engine(db_path)
+            try:
+                with _engine.begin() as _conn:
+                    _conn.execute(_text(PDS_UNIQUE_INDEX_SQL))
+            finally:
+                _engine.dispose()
 
     except typer.Exit:
         raise

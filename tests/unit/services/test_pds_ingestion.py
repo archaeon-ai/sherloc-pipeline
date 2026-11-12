@@ -765,12 +765,12 @@ class TestIdempotencyUnit:
 
     def test_service_creates_pds_engine(self, tmp_path):
         """PDSIngestionService constructor creates pds_engine."""
-        service = PDSIngestionService(pds_db_path=tmp_path / "test.db")
+        service = PDSIngestionService(create_missing=True, pds_db_path=tmp_path / "test.db")
         assert service.pds_engine is not None
 
     def test_service_optional_loupe_engine(self, tmp_path):
         """loupe_db_path=None → loupe_engine is None."""
-        service = PDSIngestionService(pds_db_path=tmp_path / "test.db")
+        service = PDSIngestionService(create_missing=True, pds_db_path=tmp_path / "test.db")
         assert service.loupe_engine is None
 
     def test_service_with_loupe_db(self, tmp_path):
@@ -779,7 +779,7 @@ class TestIdempotencyUnit:
         loupe_engine = get_engine(loupe_db)
         create_all_tables(loupe_engine)
 
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=tmp_path / "pds.db",
             loupe_db_path=loupe_db,
         )
@@ -788,7 +788,7 @@ class TestIdempotencyUnit:
     def test_nonexistent_loupe_db_logs_warning(self, tmp_path, caplog):
         """Nonexistent loupe_db_path → warning logged, engine None."""
         with caplog.at_level(logging.WARNING):
-            service = PDSIngestionService(
+            service = PDSIngestionService(create_missing=True, 
                 pds_db_path=tmp_path / "pds.db",
                 loupe_db_path=tmp_path / "missing.db",
             )
@@ -798,13 +798,13 @@ class TestIdempotencyUnit:
 
     def test_missing_sol_dir_raises(self, tmp_path):
         """Non-existent sol_dir raises PDSIngestionError."""
-        service = PDSIngestionService(pds_db_path=tmp_path / "test.db")
+        service = PDSIngestionService(create_missing=True, pds_db_path=tmp_path / "test.db")
         with pytest.raises(PDSIngestionError, match="Sol directory not found"):
             service.ingest_sol(tmp_path / "nonexistent_sol")
 
     def test_empty_sol_dir(self, tmp_path):
         """Empty directory returns no-observations result."""
-        service = PDSIngestionService(pds_db_path=tmp_path / "test.db")
+        service = PDSIngestionService(create_missing=True, pds_db_path=tmp_path / "test.db")
         empty_dir = tmp_path / "empty_sol"
         empty_dir.mkdir()
         result = service.ingest_sol(empty_dir)
@@ -812,7 +812,7 @@ class TestIdempotencyUnit:
 
     def test_database_stats_empty(self, tmp_path):
         """Empty database returns zero stats."""
-        service = PDSIngestionService(pds_db_path=tmp_path / "test.db")
+        service = PDSIngestionService(create_missing=True, pds_db_path=tmp_path / "test.db")
         stats = service.get_database_stats()
         assert stats["sols"] == 0
         assert stats["scans"] == 0
@@ -839,23 +839,23 @@ class TestInitPdsDatabase:
         from sherloc_pipeline.database import init_pds_database
         db_path = tmp_path / "new_pds.db"
         assert not db_path.exists()
-        init_pds_database(db_path)
+        init_pds_database(db_path, create_missing=True)
         assert db_path.exists()
 
     def test_idempotent(self, tmp_path):
         """Multiple calls don't raise errors."""
         from sherloc_pipeline.database import init_pds_database
         db_path = tmp_path / "pds.db"
-        init_pds_database(db_path)
-        init_pds_database(db_path)  # Second call
-        init_pds_database(db_path)  # Third call
+        init_pds_database(db_path, create_missing=True)
+        init_pds_database(db_path, create_missing=True)  # Second call
+        init_pds_database(db_path, create_missing=True)  # Third call
         assert db_path.exists()
 
     def test_creates_parent_dirs(self, tmp_path):
         """Creates parent directories if needed."""
         from sherloc_pipeline.database import init_pds_database
         db_path = tmp_path / "subdir" / "nested" / "pds.db"
-        init_pds_database(db_path)
+        init_pds_database(db_path, create_missing=True)
         assert db_path.exists()
 
     def test_unique_constraint_on_scan_id(self, tmp_path):
@@ -864,7 +864,7 @@ class TestInitPdsDatabase:
         from sherloc_pipeline.database import init_pds_database
 
         db_path = tmp_path / "pds_unique.db"
-        engine = init_pds_database(db_path)
+        engine = init_pds_database(db_path, create_missing=True)
 
         with get_session(engine) as session:
             session.add(SolORM(

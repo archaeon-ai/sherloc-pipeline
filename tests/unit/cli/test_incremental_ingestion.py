@@ -35,7 +35,7 @@ def add_workspace(sol_dir, number):
 
 
 def service_for(tmp_path):
-    return IngestionService(
+    return IngestionService(create_missing=True, 
         database_path=tmp_path / "test.db", include_spectra=False,
         console=Console(quiet=True),
     )
@@ -143,6 +143,9 @@ def test_plain_retry_recovers_failure_after_workspace_rows_are_written(tmp_path,
 def test_process_new_plain_retry_discovers_later_scan(tmp_path, monkeypatch):
     sol_dir = tmp_path / "data" / "sol_0001"
     add_workspace(sol_dir, 1)
+    # process-new does not create a database (#135); initialize it as `sherloc init` would.
+    from sherloc_pipeline.database.connection import open_database
+    open_database(tmp_path / "test.db", create_missing=True).dispose()
     pipeline = Mock()
     pipeline.return_value.run_full_pipeline.return_value = ServiceResult(summary="Synthetic fit")
     monkeypatch.setattr(cli, "PipelineService", pipeline)

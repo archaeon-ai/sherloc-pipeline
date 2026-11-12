@@ -35,7 +35,7 @@ def restore_config():
 
 
 def _ingest(db_path, fixtures_path, include_spectra):
-    service = IngestionService(
+    service = IngestionService(create_missing=True, 
         database_path=db_path, include_spectra=include_spectra, ingestion_mode="all_regions")
     service.ingest_workspace(fixtures_path / WORKSPACE_REL)
     with get_session(service.engine) as session:
@@ -158,8 +158,8 @@ def test_resume_refuses_a_different_effective_config(
 def test_scan_without_loupe_inputs_fails_and_is_not_recorded(tmp_path, monkeypatch, restore_config):
     # A PDS4-ingested scan has no Loupe working directory, so full-pipeline stops at Step 1.
     db_path = tmp_path / "pds.db"
-    engine = get_engine(db_path)
-    create_all_tables(engine)
+    from sherloc_pipeline.database.connection import open_database
+    engine = open_database(db_path, create_missing=True)  # stamped, as `sherloc init` leaves it
     with get_session(engine) as session:
         session.add(SolORM(sol_number=4321, data_source="pds4"))
         session.flush()

@@ -29,7 +29,7 @@ Verifies the install. Runs the test suite, initializes an empty schema, and star
 pytest -m "not slow"
 
 # Initialize an empty database at ./phase.db
-SHERLOC_DB=./phase.db alembic upgrade head
+PHASE_DATABASE_PATH=./phase.db alembic upgrade head
 
 # Start the API server (binds to 127.0.0.1:8000 by default)
 SHERLOC_AUTH_MODE=dev SHERLOC_DB=./phase.db ./scripts/serve.sh
@@ -50,8 +50,10 @@ curl -fsS http://127.0.0.1:8000/api/health
 If you already have a `phase.db` (Loupe-derived) or `phase_pds.db` (PDS-derived):
 
 ```bash
-# Make sure the schema is at the current migration head
-SHERLOC_DB=/path/to/your/phase.db alembic upgrade head
+# Make sure the schema is at the current migration head. Data commands
+# (ingest, process-new, pds-ingest) refuse a database that is missing or not at
+# head and never migrate it themselves; db-stats opens it read-only.
+PHASE_DATABASE_PATH=/path/to/your/phase.db alembic upgrade head
 
 # Start the server pointing at your DB
 SHERLOC_AUTH_MODE=dev SHERLOC_DB=/path/to/your/phase.db ./scripts/serve.sh

@@ -51,8 +51,8 @@ def test_validation_failure_has_one_stdout_error(tmp_path, invoke, case):
 
 
 def seed_scans(tmp_path, rows):
-    engine = get_engine(tmp_path / 'test.db')
-    Base.metadata.create_all(engine)
+    from sherloc_pipeline.database.connection import open_database
+    engine = open_database(tmp_path / 'test.db', create_missing=True)  # stamped, as `sherloc init` leaves it
     with get_session(engine) as session:
         session.add(SolORM(sol_number=1, data_source='loupe'))
         session.flush()

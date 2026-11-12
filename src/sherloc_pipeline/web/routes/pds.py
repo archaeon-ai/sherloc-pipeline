@@ -314,7 +314,7 @@ def _run_pds_download(
         )
 
         if sol_dir.exists():
-            service = PDSIngestionService(pds_db_path=pds_db_path)
+            service = PDSIngestionService(pds_db_path=pds_db_path, create_missing=False)
             ingest_result = service.ingest_sol(sol_dir, force=force_reingest)
             n_scans = getattr(ingest_result, "n_scans", 0)
             n_spectra = getattr(ingest_result, "n_spectra", 0)

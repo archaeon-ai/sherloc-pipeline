@@ -28,10 +28,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.engine import Engine
 
+from sherloc_pipeline.database.connection import open_database, open_database_readonly
 from sherloc_pipeline.database import (
     get_engine,
     get_session,
-    create_all_tables,
     SolORM,
     ScanORM,
     ScanPointORM,
@@ -137,6 +137,8 @@ class IngestionService:
         database_path: Optional[Path] = None,
         include_spectra: bool = True,
         ingestion_mode: str = "all_regions",
+        read_only: bool = False,
+        create_missing: bool = False,
     ):
         """Initialize the ingestion service.
 
@@ -147,6 +149,16 @@ class IngestionService:
             ingestion_mode: Which spectral regions to ingest.
                 'all_regions' (default) - R1, R2, R3 as separate spectra rows per scan point.
                 'R1_only' - Ingest only R1 (Raman) section.
+            read_only: Open an existing database read-only (``db-stats``).
+            create_missing: Create a missing or empty database. Default
+                False: ``DatabaseNotInitializedError`` names ``sherloc init``
+                (#135). Tests and programmatic setup pass True.
+
+        Raises:
+            SchemaNotCurrentError: the database exists with tables but is not
+                at the code's Alembic head. Nothing is created or upgraded
+                (#135).
+            FileNotFoundError: ``read_only`` and the database does not exist.
         """
         if ingestion_mode not in self.VALID_INGESTION_MODES:
             raise ValueError(
@@ -163,8 +175,10 @@ class IngestionService:
             database_path = Path("./phase.db")
 
         self.database_path = database_path
-        self.engine = get_engine(database_path)
-        create_all_tables(self.engine)
+        if read_only:
+            self.engine = open_database_readonly(database_path)
+        else:
+            self.engine = open_database(database_path, create_missing=create_missing)
 
     def ingest_directory(
         self,
