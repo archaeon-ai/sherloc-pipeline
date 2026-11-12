@@ -1,6 +1,0 @@
-work_package: "#174 fit_fluorescence deletes stored rows for points with no inputs"
-branch: fix-174-fluor-missing-regions
-head: 8f26c7a
-open_decisions: []
-next_action: push, open PR, Codex review r1 (after #181 merges, rebase if CHANGELOG conflicts)
-last_verified: 2026-11-11T16:52:09-08:00 — new test red on origin/main code (stored peaks deleted), green with fix; fluor/refit/map/bulk suites 94 passed
