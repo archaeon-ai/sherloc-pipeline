@@ -80,7 +80,8 @@ pip install -e ".[dev]"          # test + lint tooling
 Bootstrap a working directory and database:
 
 ```bash
-sherloc init --mode pds   # creates data/, outputs/, .cache/sherloc/, runs migrations
+sherloc init --mode pds   # creates data/, outputs/, .cache/sherloc/, and ./phase_pds.db (migrated)
+sherloc init --mode loupe # the same with ./phase.db, for Loupe ingestion
 ```
 
 Verify installation:
@@ -115,6 +116,7 @@ data products from the [PDS Geosciences Node](https://pds-geosciences.wustl.edu/
 ```bash
 pip install -e ".[pds,web]"                     # PDS client + web UI
 
+sherloc init --mode pds                         # once: create ./phase_pds.db
 sherloc pds-download --sol 921                  # fetch a sol's PDS products → ./pds/
 sherloc pds-ingest   --sol 921                  # ingest → ./phase_pds.db
 

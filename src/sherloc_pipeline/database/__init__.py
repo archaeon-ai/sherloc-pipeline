@@ -34,6 +34,7 @@ from sherloc_pipeline.database.connection import (
     open_database_readonly,
     require_current_schema,
     SchemaNotCurrentError,
+    DatabaseNotInitializedError,
     DATABASE_URL,
     PDS_DATABASE_PATH,
 )
@@ -84,6 +85,7 @@ __all__ = [
     "open_database_readonly",
     "require_current_schema",
     "SchemaNotCurrentError",
+    "DatabaseNotInitializedError",
     "DATABASE_URL",
     "PDS_DATABASE_PATH",
     # Base class

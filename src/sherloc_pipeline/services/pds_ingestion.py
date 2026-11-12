@@ -339,11 +339,14 @@ class PDSIngestionService:
         pds_db_path: Optional[Path] = None,
         loupe_db_path: Optional[Path] = None,
         public_release_index: Optional[Path] = None,
+        create_missing: bool = True,
     ):
         """Initialize the PDS ingestion service.
 
         Args:
             pds_db_path: Path to phase_pds.db. Defaults to ./phase_pds.db.
+            create_missing: Create a missing or empty PDS database (library
+                default). The CLI and web ingestion paths pass False (#135).
             loupe_db_path: Optional path to phase.db for target name cross-reference.
                 If None, target names will not be resolved via SCLK lookup.
         """
@@ -358,7 +361,7 @@ class PDSIngestionService:
         self.pds_db_path = Path(pds_db_path)
 
         # Engine A: phase_pds.db for writes (with PDS-specific unique constraint)
-        self.pds_engine: Engine = init_pds_database(self.pds_db_path)
+        self.pds_engine: Engine = init_pds_database(self.pds_db_path, create_missing=create_missing)
 
         # Engine B: phase.db for target name lookups (optional)
         self.loupe_engine: Optional[Engine] = None

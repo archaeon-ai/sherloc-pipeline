@@ -138,6 +138,7 @@ class IngestionService:
         include_spectra: bool = True,
         ingestion_mode: str = "all_regions",
         read_only: bool = False,
+        create_missing: bool = True,
     ):
         """Initialize the ingestion service.
 
@@ -149,11 +150,14 @@ class IngestionService:
                 'all_regions' (default) - R1, R2, R3 as separate spectra rows per scan point.
                 'R1_only' - Ingest only R1 (Raman) section.
             read_only: Open an existing database read-only (``db-stats``).
+            create_missing: Create a missing or empty database (library
+                default). The CLI passes False: ``DatabaseNotInitializedError``
+                names ``sherloc init`` instead.
 
         Raises:
             SchemaNotCurrentError: the database exists with tables but is not
                 at the code's Alembic head. Nothing is created or upgraded
-                (#135); a missing or empty database gets the stamped schema.
+                (#135).
             FileNotFoundError: ``read_only`` and the database does not exist.
         """
         if ingestion_mode not in self.VALID_INGESTION_MODES:
@@ -174,7 +178,7 @@ class IngestionService:
         if read_only:
             self.engine = open_database_readonly(database_path)
         else:
-            self.engine = open_database(database_path)
+            self.engine = open_database(database_path, create_missing=create_missing)
 
     def ingest_directory(
         self,

@@ -174,6 +174,25 @@ class SchemaNotCurrentError(RuntimeError):
         )
 
 
+class DatabaseNotInitializedError(RuntimeError):
+    """A data command was pointed at a missing or empty database.
+
+    Data commands do not create a database implicitly (#135); ``sherloc
+    init`` creates one on purpose.
+    """
+
+    def __init__(self, database_path, init_command):
+        self.database_path = str(database_path)
+        super().__init__(
+            f"Database {self.database_path} does not exist or has no tables. Nothing was "
+            f"created. Create it on purpose with: {init_command}"
+        )
+
+
+PDS_UNIQUE_INDEX = "uq_pds_scans_scan_id"
+PDS_UNIQUE_INDEX_SQL = f"CREATE UNIQUE INDEX IF NOT EXISTS {PDS_UNIQUE_INDEX} ON scans (scan_id)"
+
+
 def _alembic_config():
     from alembic.config import Config
 
@@ -236,8 +255,25 @@ def require_current_schema(engine: Engine, database_path) -> None:
         raise SchemaNotCurrentError(database_path, current, heads)
 
 
-def _open_database(database_path) -> tuple:
-    """open_database, also returning whether the schema was created by this call."""
+def _has_index(engine: Engine, name: str) -> bool:
+    with engine.connect() as conn:
+        return conn.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = :n"), {"n": name}
+        ).first() is not None
+
+
+def _open_database(
+    database_path,
+    *,
+    create_missing: bool = True,
+    init_command: Optional[str] = None,
+    required_index: Optional[str] = None,
+) -> tuple:
+    """open_database, also returning whether the schema was created by this call.
+
+    ``required_index``: an existing database must also carry this index,
+    checked through the read-only probe; otherwise ``SchemaNotCurrentError``.
+    """
     if database_path is None:
         database_path = "./phase.db"
     if str(database_path) == ":memory:":
@@ -246,6 +282,7 @@ def _open_database(database_path) -> tuple:
         return engine, True
 
     path = Path(database_path)
+    has_tables = False
     if path.exists():
         # Inspect through a read-only engine: get_engine's connect hook sets
         # journal_mode=WAL, which persists, and a refused open must change
@@ -255,10 +292,23 @@ def _open_database(database_path) -> tuple:
             has_tables = bool(_data_tables(probe))
             if has_tables:
                 require_current_schema(probe, database_path)
+                if required_index is not None and not _has_index(probe, required_index):
+                    raise SchemaNotCurrentError(
+                        database_path, alembic_heads(), alembic_heads(),
+                        detail=(
+                            f"it lacks the index {required_index}. Nothing was changed. "
+                            f"An operator adds it with: sqlite3 {database_path} "
+                            f"'CREATE UNIQUE INDEX {required_index} ON scans (scan_id)'"
+                        ),
+                    )
         finally:
             probe.dispose()
-        if has_tables:
-            return get_engine(database_path), False
+    if has_tables:
+        return get_engine(database_path), False
+    if not create_missing:
+        raise DatabaseNotInitializedError(
+            database_path, init_command or f"sherloc init --database {database_path}"
+        )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     engine = get_engine(database_path)
@@ -270,18 +320,25 @@ def _open_database(database_path) -> tuple:
     return engine, True
 
 
-def open_database(database_path: Optional[Union[str, Path]] = None) -> Engine:
+def open_database(
+    database_path: Optional[Union[str, Path]] = None,
+    *,
+    create_missing: bool = True,
+) -> Engine:
     """Open a database for a command that reads and writes data, without changing its schema.
 
     - ``:memory:``: the ORM schema is created (nothing to conflict with).
-    - A missing file, or one with no tables: the schema is created and
-      stamped at the code's Alembic head (``SCHEMA_HEADS``), the same
-      objects ``alembic upgrade head`` builds.
+    - A missing file, or one with no tables: with ``create_missing`` (the
+      library default, used by tests and programmatic setup) the schema is
+      created and stamped at the code's Alembic head (``SCHEMA_HEADS``), the
+      same objects ``alembic upgrade head`` builds. The CLI data commands
+      pass ``create_missing=False`` and get ``DatabaseNotInitializedError``
+      naming ``sherloc init``; nothing is created.
     - Any other database must already be stamped at that head; otherwise
       ``SchemaNotCurrentError`` is raised and the file is not modified (it
       is inspected read-only).
     """
-    return _open_database(database_path)[0]
+    return _open_database(database_path, create_missing=create_missing)[0]
 
 
 def open_database_readonly(database_path: Union[str, Path]) -> Engine:
@@ -387,62 +444,43 @@ PDS_DATABASE_PATH = _default_pds_db_path()
 
 def init_pds_database(
     db_path: Optional[Union[str, Path]] = None,
+    *,
+    create_missing: bool = True,
 ) -> Engine:
-    """Open phase_pds.db for PDS ingestion plus PDS-specific constraints.
+    """Open phase_pds.db for PDS ingestion, never changing an existing database's schema.
 
-    A new (missing or empty) database gets the ORM schema stamped at the
-    code's Alembic head. An existing database must already be at head, or
-    ``SchemaNotCurrentError`` is raised: this path never migrates. Then adds a PDS-specific unique constraint on ``scans.scan_id``
-    to enforce idempotency via PDS LID (spec s9, s12).
-
-    This function is idempotent on a current database: the unique index
-    uses ``IF NOT EXISTS``.
+    A new (missing or empty) database, when ``create_missing``, gets the
+    schema stamped at the code's Alembic head plus the PDS unique index on
+    ``scans.scan_id`` (spec s9, s12). An existing database must already be
+    at head and carry that index, checked read-only; otherwise
+    ``SchemaNotCurrentError`` is raised and nothing is changed (#135). With
+    ``create_missing=False`` (the CLI and web ingestion paths) a missing or
+    empty database raises ``DatabaseNotInitializedError`` naming
+    ``sherloc init --mode pds``.
 
     Args:
         db_path: Path to the PDS database file. Defaults to
             ``./phase_pds.db``. Can be ``:memory:`` for testing.
+        create_missing: Create a missing or empty database.
 
     Returns:
-        SQLAlchemy Engine instance for the initialized database.
+        SQLAlchemy Engine instance for the database.
     """
     if db_path is None:
         db_path = PDS_DATABASE_PATH
 
-    # Ensure parent directory exists
-    if str(db_path) != ":memory:":
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-
-    # A new database gets the stamped schema and the index; an existing one
-    # must already be at head and carry the index. PDS ingestion never
-    # migrates or adds schema to an existing database (#135).
-    engine, created = _open_database(db_path)
-    if not created:
-        with engine.connect() as conn:
-            present = conn.execute(text(
-                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'uq_pds_scans_scan_id'"
-            )).first()
-        if present is None:
-            engine.dispose()
-            raise SchemaNotCurrentError(
-                db_path, alembic_heads(), alembic_heads(),
-                detail=(
-                    "it lacks the PDS unique index uq_pds_scans_scan_id. Nothing was changed. "
-                    f"An operator adds it with: sqlite3 {db_path} "
-                    "'CREATE UNIQUE INDEX uq_pds_scans_scan_id ON scans (scan_id)'"
-                ),
-            )
+    engine, created = _open_database(
+        db_path,
+        create_missing=create_missing,
+        init_command=f"sherloc init --database {db_path} --mode pds",
+        required_index=PDS_UNIQUE_INDEX,
+    )
+    if created:
+        with engine.begin() as conn:
+            conn.execute(text(PDS_UNIQUE_INDEX_SQL))
+        logger.info("Initialized PDS database at %s", db_path)
+    else:
         logger.info("Opened PDS database at %s", db_path)
-        return engine
-
-    # Add PDS-specific unique constraint on scans.scan_id (spec s12).
-    with engine.connect() as conn:
-        conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_pds_scans_scan_id "
-            "ON scans (scan_id)"
-        ))
-        conn.commit()
-
-    logger.info("Initialized PDS database at %s", db_path)
     return engine
 
 

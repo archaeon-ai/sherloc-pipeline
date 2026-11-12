@@ -221,3 +221,66 @@ def test_current_pds_database_without_its_index_is_refused_unchanged(current_db)
     with pytest.raises(SchemaNotCurrentError, match="uq_pds_scans_scan_id"):
         init_pds_database(current_db)
     assert _schema_objects(current_db) == before
+
+
+def test_pds_index_refusal_keeps_the_journal_mode(current_db):
+    import sqlite3
+
+    conn = sqlite3.connect(current_db)
+    conn.execute("PRAGMA journal_mode=DELETE")
+    conn.close()
+    with pytest.raises(SchemaNotCurrentError, match="uq_pds_scans_scan_id"):
+        init_pds_database(current_db)
+    assert _journal_mode(current_db) == "delete"
+
+
+@pytest.mark.parametrize("empty_file", [False, True])
+def test_data_commands_do_not_create_a_database(tmp_path, empty_file):
+    from sherloc_pipeline.database.connection import DatabaseNotInitializedError
+
+    path = tmp_path / "phase.db"
+    if empty_file:
+        path.touch()
+    with pytest.raises(DatabaseNotInitializedError, match=f"sherloc init --database {path}"):
+        IngestionService(database_path=path, include_spectra=False, create_missing=False)
+    with pytest.raises(DatabaseNotInitializedError, match="--mode pds"):
+        init_pds_database(path, create_missing=False)
+    assert path.exists() is empty_file
+    if empty_file:
+        assert path.stat().st_size == 0
+
+
+def test_cli_ingest_refuses_a_missing_database(tmp_path):
+    from sherloc_pipeline.cli.app import app
+
+    source = tmp_path / "sol_0921"
+    source.mkdir()
+    path = tmp_path / "phase.db"
+    result = CliRunner().invoke(app, ["ingest", str(source), "--database", str(path)])
+    assert result.exit_code != 0
+    assert "sherloc init" in result.output
+    assert not path.exists()
+
+
+def test_init_pds_mode_prepares_a_database_pds_ingestion_accepts(tmp_path, monkeypatch):
+    from sherloc_pipeline.cli.app import app
+
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "phase_pds.db"
+    result = CliRunner().invoke(app, ["init", "--database", str(path), "--mode", "pds",
+                                      "--sherloc-home", str(tmp_path / "home")])
+    assert result.exit_code == 0, result.output
+    init_pds_database(path, create_missing=False).dispose()
+    assert _revisions(path) == alembic_heads()
+
+
+def test_init_pds_mode_defaults_to_the_pds_database(tmp_path, monkeypatch):
+    from sherloc_pipeline.cli.app import app
+
+    for name in ("SHERLOC_DB", "SHERLOC_PDS_DB", "SHERLOC_PDS_DB_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    home = tmp_path / "home"
+    result = CliRunner().invoke(app, ["init", "--mode", "pds", "--sherloc-home", str(home)])
+    assert result.exit_code == 0, result.output
+    assert (home / "phase_pds.db").exists() and not (home / "phase.db").exists()
+    assert ("index", "uq_pds_scans_scan_id") in _schema_objects(home / "phase_pds.db")[0]

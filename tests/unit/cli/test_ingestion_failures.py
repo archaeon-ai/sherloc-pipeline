@@ -41,6 +41,9 @@ def synthetic_sol(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(LoupeWorkspaceParser, "parse", parse)
+    # process-new does not create a database (#135); initialize it as `sherloc init` would.
+    from sherloc_pipeline.database.connection import open_database
+    open_database(tmp_path / "test.db").dispose()
     return sol_dir
 
 

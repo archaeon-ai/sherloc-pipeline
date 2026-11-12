@@ -880,6 +880,7 @@ def ingest_cmd(
             console=console,
             database_path=database,
             include_spectra=not no_spectra,
+            create_missing=False,
         )
 
         # Determine mode based on path
@@ -1184,6 +1185,7 @@ def process_new_cmd(
                 database_path=db_path,
                 include_spectra=True,
                 ingestion_mode="all_regions",
+                create_missing=False,
             )
             result = service.ingest_sol(sol_dir, force=False)
             if not result.metadata.get("success", True):
@@ -1646,6 +1648,7 @@ def pds_ingest_cmd(
             service = PDSIngestionService(
                 pds_db_path=pds_database,
                 loupe_db_path=None,  # No Loupe needed for version check
+                create_missing=False,
             )
 
             table = Table(title="Version Update Check")
@@ -1724,6 +1727,7 @@ def pds_ingest_cmd(
             pds_db_path=pds_database,
             loupe_db_path=loupe_database,
             public_release_index=public_release_index,
+            create_missing=False,
         )
 
         total_obs_ingested = 0
@@ -3579,11 +3583,13 @@ def init_cmd(
     ctx: typer.Context,
     database: Optional[Path] = typer.Option(
         None, "--database", "-d",
-        help="Database path (default: $SHERLOC_DB or ./phase.db)",
+        help="Database path (default: $SHERLOC_DB or ./phase.db; with --mode pds, "
+             "$SHERLOC_PDS_DB or ./phase_pds.db)",
     ),
     mode: str = typer.Option(
         "empty", "--mode",
-        help="Workflow hint shown in next-step guidance: pds | loupe | empty",
+        help="pds | loupe | empty. Next-step guidance; pds also creates the PDS "
+             "unique index and defaults the database to phase_pds.db",
     ),
     sherloc_home: Optional[Path] = typer.Option(
         None, "--sherloc-home",
@@ -3618,9 +3624,18 @@ def init_cmd(
         sherloc_home or os.environ.get("SHERLOC_HOME") or "."
     ).resolve()
 
-    db_path = Path(
-        database or os.environ.get("SHERLOC_DB") or (home_root / "phase.db")
-    )
+    if mode == "pds":
+        # The database pds-ingest writes by default (#135: it no longer creates one).
+        db_path = Path(
+            database
+            or os.environ.get("SHERLOC_PDS_DB")
+            or os.environ.get("SHERLOC_PDS_DB_PATH")
+            or (home_root / "phase_pds.db")
+        )
+    else:
+        db_path = Path(
+            database or os.environ.get("SHERLOC_DB") or (home_root / "phase.db")
+        )
 
     subdirs = [
         home_root / "data",
@@ -3646,6 +3661,18 @@ def init_cmd(
             raise typer.Exit(code=1)
 
         init_database(db_path)
+        if mode == "pds":
+            # The PDS unique index is not a migration; PDS ingestion requires
+            # it on an existing database and never adds it itself (#135).
+            from sherloc_pipeline.database.connection import PDS_UNIQUE_INDEX_SQL, get_engine
+            from sqlalchemy import text as _text
+
+            _engine = get_engine(db_path)
+            try:
+                with _engine.begin() as _conn:
+                    _conn.execute(_text(PDS_UNIQUE_INDEX_SQL))
+            finally:
+                _engine.dispose()
 
     except typer.Exit:
         raise

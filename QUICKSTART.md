@@ -51,7 +51,7 @@ If you already have a `phase.db` (Loupe-derived) or `phase_pds.db` (PDS-derived)
 
 ```bash
 # Make sure the schema is at the current migration head. Data commands
-# (ingest, process-new, refit, ingest-pds) refuse a database that is not at
+# (ingest, process-new, pds-ingest) refuse a database that is missing or not at
 # head and never migrate it themselves; db-stats opens it read-only.
 PHASE_DATABASE_PATH=/path/to/your/phase.db alembic upgrade head
 

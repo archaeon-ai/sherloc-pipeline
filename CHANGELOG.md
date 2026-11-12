@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Data commands no longer create or upgrade schema on an existing
-  database (#135).** `ingest`, `process-new` and PDS ingestion (`ingest-pds`
+  database (#135).** `ingest`, `process-new` and PDS ingestion (`pds-ingest`
   and the web PDS route) open a database with tables only when it is
   stamped at the code's Alembic head; otherwise they stop with
   `SchemaNotCurrentError`, naming both revisions and the operator command
@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triggers that only the migration created, so the created schema matches
   `alembic upgrade head` (tested). PDS ingestion refuses an existing
   database that lacks its unique index instead of adding it.
+  The CLI data commands (`ingest`, `process-new`, `pds-ingest`, the web
+  PDS ingestion route) also no longer create a missing or empty database:
+  they stop with `DatabaseNotInitializedError` naming `sherloc init
+  --database <db>` (`--mode pds` for PDS). `sherloc init --mode pds` now
+  defaults to `./phase_pds.db` (or `$SHERLOC_PDS_DB`) and creates the PDS
+  unique index. The library API (`IngestionService`, `PDSIngestionService`,
+  `open_database`) still creates a new database by default
+  (`create_missing=True`).
   `db-stats` opens the database read-only and
   no longer creates a missing file. `sherloc init` still migrates (it is
   the explicit command), but a failed upgrade is now an error instead of a
