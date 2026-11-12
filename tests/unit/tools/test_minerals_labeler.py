@@ -146,20 +146,26 @@ def test_gain2_sheet_lists_lost_components_by_snr(synthetic):
     assert not [i for i in disputed["items"] if i["point"] in (6, 7)]
 
 
-def test_incomplete_fit_flag_marks_a_drawn_line_short_of_the_stored_fit(tmp_path):
-    scan = "SYNTHETIC_target/0002_detail"
-    exact = 2 * 20 * math.sqrt(math.log(2))  # FWHM of the synthetic band exp(-((x-1000)/20)^2)
-    components = write_components(tmp_path / "c.csv", [
-        comp(scan, 0, "ftest", 1000.0, amp=50.0, fwhm=exact, r2=0.99),  # drawn line = spectrum
-        comp(scan, 0, "aicc", 760.0, r2=0.99),  # stored R2 high, drawn line misses the band
-    ])
-    results = write_results(tmp_path / "results", scan, [0])
-    doc = mf.build_manifest(components, results, "disputed", 1)
-    assert mf.drawn_r2(doc["items"][0]["window"], [
-        {"center_cm1": 1000.0, "amplitude": 50.0, "fwhm_cm1": exact}]) == pytest.approx(1.0)
+def test_fitter_models_follow_the_blind_letters_and_must_cover_the_window(synthetic):
+    base = mf.build_manifest(synthetic["components"], synthetic["results"], "disputed", 5)
+    assert base["header"]["solid_line"] == "sum of output components"
+    assert all("models" not in i for i in base["items"])
+    curves = {f"{i['scan']}|{i['point']}|{rule}": [float(len(rule)) + k * 0.0 for k in
+                                                      range(len(i["window"]["x"]))]
+              for i in base["items"] for rule in ("aicc", "ftest")}
+    path = synthetic["tmp"] / "models.json"
+    path.write_text(json.dumps(curves), encoding="utf-8")
+    doc = mf.build_manifest(synthetic["components"], synthetic["results"], "disputed", 5,
+                            models=path)
+    assert doc["header"]["solid_line"] == "fitter full model (--models)"
     for item in doc["items"]:
-        aicc_letter = next(k for k, v in item["fit_rules"].items() if v == "aicc")
-        assert item["flags"]["incomplete_fits"] == [aicc_letter]
+        for letter, rule in item["fit_rules"].items():
+            assert item["models"][letter] == curves[f"{item['scan']}|{item['point']}|{rule}"]
+    key = next(iter(curves))
+    curves[key] = curves[key][:-1]
+    path.write_text(json.dumps(curves), encoding="utf-8")
+    with pytest.raises(ValueError):
+        mf.build_manifest(synthetic["components"], synthetic["results"], "disputed", 5, models=path)
 
 
 def test_unknown_sheet_and_ambiguous_spectra_are_refused(synthetic):
@@ -222,7 +228,7 @@ def test_items_served_in_manifest_order_with_only_public_fields(manifest_file, t
             status, raw, _ = request(app, f"/api/item/{k}")
             assert status == 200
             item = json.loads(raw)
-            assert set(item) == {"id", "k", "n_total", "window", "band", "fits", "flags"}
+            assert set(item) == {"id", "k", "n_total", "window", "models", "band", "fits", "flags"}
             assert set(item["fits"]) == {"A", "B"}
             for fit in item["fits"].values():
                 for c in fit:
@@ -310,7 +316,7 @@ def test_nonloopback_refused_before_io(manifest_file, tmp_path, host):
 
 
 @pytest.mark.parametrize("defect", ["no_b", "bad_fwhm", "no_kept", "bad_band", "bad_flag",
-                                    "bad_incomplete", "no_check"])
+                                    "bad_models", "no_check"])
 def test_invalid_manifests_are_refused(manifest_file, tmp_path, defect):
     path, doc = manifest_file
     item = doc["items"][0]
@@ -324,8 +330,8 @@ def test_invalid_manifests_are_refused(manifest_file, tmp_path, defect):
         item["band"]["center_cm1"] = "1000"
     elif defect == "bad_flag":
         item["flags"]["mask_px_in_band"] = -1
-    elif defect == "bad_incomplete":
-        item["flags"]["incomplete_fits"] = ["C"]
+    elif defect == "bad_models":
+        item["models"] = {"A": [0.0], "B": [0.0]}
     else:
         doc["header"]["public_check"] = " "
     path.write_text(json.dumps(doc), encoding="utf-8")

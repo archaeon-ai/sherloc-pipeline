@@ -59,7 +59,11 @@ function plot(canvas, item) {
   const curves = [];
   ["A", "B"].forEach((name) => {
     const comps = item.fits[name];
-    curves.push({ name, dash: [], width: 2, y: dense.map((v) => comps.reduce((t, c) => t + gauss(v, c), 0)) });
+    if (item.models) {
+      curves.push({ name, dash: [], width: 2, x: trace.x, y: item.models[name] });
+    } else {
+      curves.push({ name, dash: [], width: 2, y: dense.map((v) => comps.reduce((t, c) => t + gauss(v, c), 0)) });
+    }
     comps.filter((c) => c.kept).forEach((c) => {
       curves.push({ name, dash: [5, 4], width: 1, y: dense.map((v) => gauss(v, c)) });
     });
@@ -109,7 +113,7 @@ function plot(canvas, item) {
     ctx.lineWidth = curve.width;
     ctx.setLineDash(curve.dash);
     ctx.beginPath();
-    dense.forEach((v, i) => {
+    (curve.x || dense).forEach((v, i) => {
       if (i === 0) ctx.moveTo(x(v), y(curve.y[i]));
       else ctx.lineTo(x(v), y(curve.y[i]));
     });
@@ -139,7 +143,8 @@ function plot(canvas, item) {
     lx += 80;
   });
   ctx.fillStyle = "#435c6e";
-  ctx.fillText("solid: sum of output components · dashed: kept components · shaded: disputed band", lx, 20);
+  const solid = item.models ? "solid: fitter model" : "solid: sum of output components";
+  if (width >= 640) ctx.fillText(`${solid} · dashed: kept components · shaded: disputed band`, lx, 20);
   ctx.font = "11px system-ui, sans-serif";
   const ticks = width < 300 ? 3 : 5;
   for (let i = 0; i <= ticks; i += 1) {
@@ -180,14 +185,9 @@ function table(item) {
       cell(row, c.kept ? "yes" : "no");
       grid.append(row);
     });
-    fitsBox.append(heading);
-    if (item.flags.incomplete_fits.includes(name)) {
-      const note = document.createElement("p");
-      note.className = "flag";
-      note.textContent = "Drawn line is short of this fit: the fitter merged away component(s) not in the table.";
-      fitsBox.append(note);
-    }
-    fitsBox.append(grid);
+    const box = document.createElement("div");
+    box.append(heading, grid);
+    fitsBox.append(box);
   });
   if (item.flags.mask_px_in_band > 0) {
     const flag = document.createElement("p");

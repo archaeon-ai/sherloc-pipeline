@@ -16,7 +16,9 @@ The input component table has one row per fitted component (persisted or not):
 ``scan, point, rule, center, amp, fwhm, snr, pass_sharpness, r2`` (extra columns ignored). Spectra are
 read from ``<results>/<scan>/*_R1_normalized_baselined.csv`` (not the despiked file), columns
 ``raman_shift`` and one column per point index. Fit A / fit B is a seeded coin flip per row; the rule
-behind each letter is in the manifest item, never served.
+behind each letter is in the manifest item, never served. With ``--models`` (the fitter's full model per
+fit, on the window axis), the UI draws that model as the solid line; the output component table can omit
+components the fitter pruned or merged, so their sum is only the fallback.
 
 The manifest holds spectra: keep it on this machine, outside any repository or served directory.
 """
@@ -39,7 +41,6 @@ SHEETS = {
     "gain2": {"rules": ("aicc", "aicc_gain2"), "order": "snr ascending", "r2_bar": False,
               "directions": "first rule only"},
 }
-INCOMPLETE_R2_GAP = 0.03
 LABELS = {
     "1": ("present", "a mineral band is in the shaded region"),
     "2": ("absent", "no band there; the component fits noise or baseline"),
@@ -126,22 +127,19 @@ def _fit(groups, scan, point, rule, r2_bar):
             for c in sorted(groups.get((scan, point, rule), []), key=lambda c: c["center_cm1"])]
 
 
-def drawn_r2(window, fit):
-    """R2 of the drawn line (sum of the output components) against the window spectrum."""
-    x, y = window["x"], window["y"]
-    model = [sum(c["amplitude"] * math.exp(-4 * math.log(2) * (v - c["center_cm1"]) ** 2
-                                           / c["fwhm_cm1"] ** 2) for c in fit) for v in x]
-    mean = sum(y) / len(y)
-    total = sum((v - mean) ** 2 for v in y)
-    return 1.0 - sum((a - b) ** 2 for a, b in zip(y, model)) / total if total else 0.0
 
+def read_models(path):
+    """Optional fitter full models: JSON {"<scan>|<point>|<rule>": [y on the window axis]}."""
+    if path is None:
+        return None
+    with open(path, encoding="utf-8") as stream:
+        models = json.load(stream)
+    if not isinstance(models, dict):
+        raise ValueError("models must be a JSON object")
+    return models
 
-def first_r2(groups, scan, point, rule):
-    comps = groups.get((scan, point, rule), [])
-    return comps[0]["r2"] if comps else None
-
-
-def build_manifest(components, results, sheet="disputed", seed=DEFAULT_SEED, mask_flags=None):
+def build_manifest(components, results, sheet="disputed", seed=DEFAULT_SEED, mask_flags=None,
+                   models=None):
     """Return the manifest document for one sheet."""
     if sheet not in SHEETS:
         raise ValueError(f"unknown sheet {sheet!r}")
@@ -149,6 +147,7 @@ def build_manifest(components, results, sheet="disputed", seed=DEFAULT_SEED, mas
     groups = read_components(components)
     rows = disputed_rows(groups, rules, r2_bar, SHEETS[sheet]["directions"] == "both")
     flags = read_mask_flags(mask_flags)
+    curves = read_models(models)
     rng = random.Random(seed)
     if sheet == "disputed":
         rng.shuffle(rows)
@@ -161,26 +160,31 @@ def build_manifest(components, results, sheet="disputed", seed=DEFAULT_SEED, mas
         mask = flags.get((scan, point, round(comp["center_cm1"], 1)), 0)
         window = read_window(results, scan, point, cache)
         fits = {letter: _fit(groups, scan, point, rule, r2_bar) for letter, rule in letters.items()}
-        # A fit whose stored point R2 is well above the drawn line's R2 lost components to the
-        # fitter's merge step; the UI says so for that fit.
-        incomplete = [letter for letter, rule in letters.items() if fits[letter]
-                      and first_r2(groups, scan, point, rule) is not None
-                      and first_r2(groups, scan, point, rule) - drawn_r2(window, fits[letter])
-                      > INCOMPLETE_R2_GAP]
+        item_models = None
+        if curves is not None:
+            item_models = {}
+            for letter, rule in letters.items():
+                curve = curves.get(f"{scan}|{point}|{rule}")
+                if not isinstance(curve, list) or len(curve) != len(window["x"]):
+                    raise ValueError(f"no model on the window axis for {scan} point {point} {rule}")
+                item_models[letter] = curve
         items.append({
             "unit_id": f"{sheet}:{scan}:p{point}:{row['only_in']}:{comp['center_cm1']:.2f}",
             "rank": rank, "scan": scan, "point": point, "only_in": row["only_in"],
             "fit_rules": letters, "snr": comp["snr"],
             "band": {"center_cm1": comp["center_cm1"], "fwhm_cm1": comp["fwhm_cm1"]},
             "window": window, "fits": fits,
-            "flags": {"mask_px_in_band": mask, "incomplete_fits": incomplete},
+            "flags": {"mask_px_in_band": mask},
+            **({"models": item_models} if item_models is not None else {}),
         })
     header = {
         "sheet": sheet, "rules": list(rules), "order": SHEETS[sheet]["order"], "seed": seed,
         "n_items": len(items),
         "components_sha256": hashlib.sha256(Path(components).read_bytes()).hexdigest(),
         "persist_rule": PERSIST | {"r2_bar_applied": r2_bar},
-        "directions": SHEETS[sheet]["directions"], "incomplete_r2_gap": INCOMPLETE_R2_GAP,
+        "directions": SHEETS[sheet]["directions"],
+        "solid_line": ("fitter full model (--models)" if curves is not None
+                       else "sum of output components"),
         "match_tol_cm1": MATCH_TOL_CM1, "window_cm1": list(WINDOW_CM1),
         "labels": {key: {"label": name, "meaning": meaning} for key, (name, meaning) in LABELS.items()},
         "public_check": "LOCAL ONLY: SHERLOC spectra from the local results tree; never commit, "
@@ -197,8 +201,10 @@ def main(argv=None):
     parser.add_argument("--sheet", choices=sorted(SHEETS), default="disputed")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--mask-flags", help="optional CSV: scan, point, center_cm1, mask_px_in_fwhm")
+    parser.add_argument("--models", help='optional JSON {"scan|point|rule": [model y on the window]}')
     args = parser.parse_args(argv)
-    document = build_manifest(args.components, args.results, args.sheet, args.seed, args.mask_flags)
+    document = build_manifest(args.components, args.results, args.sheet, args.seed, args.mask_flags,
+                              args.models)
     Path(args.out).write_text(json.dumps(document, allow_nan=False) + "\n", encoding="utf-8")
     print(f"{args.sheet}: {document['header']['n_items']} rows -> {args.out}")
 

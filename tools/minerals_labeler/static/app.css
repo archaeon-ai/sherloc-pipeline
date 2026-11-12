@@ -50,6 +50,10 @@ kbd { font: inherit; font-weight: 400; margin-right: 5px; color: #4b6275; }
 #fits tr.dropped td { color: #7d8f9c; }
 #fits .flag { margin: 0; color: #8a3b12; font-weight: 600; }
 .question { margin: 12px 0 0; font-weight: 600; }
+@media (max-width: 999px) {
+  .plots { grid-template-columns: minmax(0, 1fr); }
+  #fits { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); column-gap: 16px; }
+}
 
 @media (max-width: 699px) {
   main { padding: 12px; }

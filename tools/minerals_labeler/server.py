@@ -96,14 +96,18 @@ def _public_item(item):
     mask = flags.get("mask_px_in_band", 0) if isinstance(flags, dict) else None
     if isinstance(mask, bool) or not isinstance(mask, int) or mask < 0:
         raise ValueError("Invalid flags")
-    incomplete = flags.get("incomplete_fits", [])
-    if (not isinstance(incomplete, list) or not set(incomplete) <= {"A", "B"}
-            or len(set(incomplete)) != len(incomplete)):
-        raise ValueError("Invalid flags")
-    return {"window": _trace(item.get("window")),
+    window = _trace(item.get("window"))
+    models = item.get("models")
+    if models is not None:
+        if (not isinstance(models, dict) or set(models) != {"A", "B"}
+                or not all(isinstance(m, list) and len(m) == len(window["x"])
+                           and all(_number(v) for v in m) for m in models.values())):
+            raise ValueError("Invalid models")
+        models = {"A": list(models["A"]), "B": list(models["B"])}
+    return {"window": window, "models": models,
             "band": {"center_cm1": band["center_cm1"], "fwhm_cm1": band["fwhm_cm1"]},
             "fits": {"A": _components(fits["A"]), "B": _components(fits["B"])},
-            "flags": {"mask_px_in_band": mask, "incomplete_fits": sorted(incomplete)}}
+            "flags": {"mask_px_in_band": mask}}
 
 
 class Session:

@@ -26,14 +26,13 @@ no Finish: labels save on each click and a restart resumes at the first unlabele
 
 - Fit **A** and fit **B**: a seeded coin flip per row decides which rule is which letter. The rule names,
   scan, point, rank and unit ID stay in the manifest and are never served.
-- Solid line: the sum of that fit's output components (labeled so in the plot). Dashed: each component the
+- Solid line: the fitter's full model for that fit when the manifest carries `--models` (labeled
+  "fitter model"); otherwise the sum of the output components (labeled so). The output table can omit
+  components the fitter pruned or merged, so build real sheets with `--models`. Dashed: each component the
   fit keeps (SNR ≥ 3, FWHM ≥ 25, sharpness passes; on the `disputed` sheet also point R² > 0, the rule the
   comparison set used). The table lists every output component with center, FWHM, SNR and kept; the row in
   the band is highlighted.
 - A cosmic-ray mask pixel inside the band is shown as a **review flag**, never a veto.
-- Known limit: where the fitter's merge step removed a component from the output table, the solid line is
-  not the optimizer's whole model. The builder flags such a fit when its stored point R² exceeds the drawn
-  line's R² by more than 0.03, and the UI then says under that fit that the drawn line is short of it.
 
 ## Sheets and manifests
 
@@ -45,6 +44,9 @@ no Finish: labels save on each click and a restart resumes at the first unlabele
   rows for a rule has zero components under that rule.
 - `--results`: the results tree; spectra are read from `<results>/<scan>/*_R1_normalized_baselined.csv`.
 - `--mask-flags` (optional): `scan, point, center_cm1, mask_px_in_fwhm`.
+- `--models` (optional, recommended): JSON `{"<scan>|<point>|<rule>": [y, ...]}`, the full model the fitter
+  returns with its output table (`fit_spectrum`'s second value), cut to the window axis. Every fit of every
+  row must have one, or the build is refused.
 
 | sheet | rules | rows | order |
 |---|---|---|---|
@@ -52,7 +54,7 @@ no Finish: labels save on each click and a restart resumes at the first unlabele
 | `gain2` | `aicc`, `aicc_gain2` | only the components the AICc gain threshold of 2 loses; kept means SNR ≥ 3, FWHM ≥ 25, sharpness, with **no** R² bar (ruling: r2 none) | SNR ascending, so SNR 3–4 rows come first |
 
 The manifest header records the sheet, rules, order, seed, item count, the component table's SHA-256,
-the persist rule, the match tolerance, the window, the class keys and a `public_check` declaration.
+the persist rule, the match tolerance, what the solid line is, the window, the class keys and a `public_check` declaration.
 **The manifest holds spectra**: keep it on the local machine, outside any repository or served directory.
 
 ## Run (loopback only)
