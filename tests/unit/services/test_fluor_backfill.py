@@ -27,7 +27,7 @@ class _Config:
 @pytest.fixture
 def source(tmp_path, fixtures_path):
     db_path = tmp_path / "phase.db"
-    service = IngestionService(
+    service = IngestionService(create_missing=True, 
         database_path=db_path, include_spectra=True, ingestion_mode="all_regions"
     )
     service.ingest_workspace(fixtures_path / WORKSPACE_REL)

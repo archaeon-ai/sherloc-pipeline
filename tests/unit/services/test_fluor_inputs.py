@@ -16,7 +16,9 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from sherloc_pipeline.database.connection import create_all_tables, get_engine, get_session
+from sherloc_pipeline.database.connection import (
+    get_engine, get_session, open_database,
+)
 from sherloc_pipeline.database.models import (
     CosmicRayMaskORM,
     FittedPeakORM,
@@ -65,7 +67,7 @@ class _Config:
 @pytest.fixture
 def db(tmp_path, fixtures_path):
     db_path = tmp_path / "phase.db"
-    service = IngestionService(
+    service = IngestionService(create_missing=True, 
         database_path=db_path, include_spectra=True, ingestion_mode="all_regions"
     )
     service.ingest_workspace(fixtures_path / WORKSPACE_REL)
@@ -171,7 +173,13 @@ def test_an_unknown_scan_is_reported_not_raised(db):
 
 def test_counts_exclude_the_derived_rows(db):
     db_path, service = db
-    pds = PDSIngestionService(pds_db_path=db_path)
+    # PDS ingestion opens an existing database only if it already carries the
+    # PDS unique index (#135); add it as an operator would.
+    from sqlalchemy import text
+
+    with service.engine.begin() as conn:
+        conn.execute(text("CREATE UNIQUE INDEX uq_pds_scans_scan_id ON scans (scan_id)"))
+    pds = PDSIngestionService(create_missing=True, pds_db_path=db_path)
     before = (service.get_database_stats()["spectra"], pds.get_database_stats()["spectra"],
               pds.validate_database()["spectra_by_region"])
     _rebuild(db_path)
@@ -442,8 +450,8 @@ def synthetic_fluor_run(tmp_path, monkeypatch):
         Path("/data"), Path("/nas"),
     ))
     database_path = tmp_path / "synthetic.db"
-    engine = get_engine(database_path)
-    create_all_tables(engine)
+    # Stamped, as `sherloc init` leaves it: process-new refuses unstamped databases (#135).
+    engine = open_database(database_path, create_missing=True)
     with get_session(engine) as session:
         session.add(SolORM(sol_number=76543, data_source="loupe"))
         session.flush()

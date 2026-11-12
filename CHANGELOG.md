@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Data commands no longer create or upgrade schema on an existing
+  database (#135).** `ingest`, `process-new` and PDS ingestion (`pds-ingest`
+  and the web PDS route) open a database with tables only when it is
+  stamped at the code's Alembic head; otherwise they stop with
+  `SchemaNotCurrentError`, naming both revisions and the operator command
+  (`PHASE_DATABASE_PATH=<db> alembic upgrade <head>`), and change nothing.
+  Before, `create_all` added any missing tables without an Alembic stamp
+  (a later `alembic upgrade` then failed) and the PDS path ran `alembic
+  upgrade head` on open. The check reads the database through a read-only
+  connection, so a refused open does not even switch the journal mode. A
+  missing or empty database still gets the full schema, now stamped at the
+  head the code expects (`SCHEMA_HEADS`, so a wheel install needs no
+  migration scripts); the ORM now also creates the two `fit_modality`
+  triggers that only the migration created, so the created schema matches
+  `alembic upgrade head` (tested). PDS ingestion refuses an existing
+  database that lacks its unique index instead of adding it.
+  Data paths also no longer create a missing or empty database:
+  `IngestionService`, `PDSIngestionService`, `open_database` and
+  `init_pds_database` stop with `DatabaseNotInitializedError` naming
+  `sherloc init --database <db>` (`--mode pds` for PDS) unless the caller
+  passes `create_missing=True` (test and programmatic setup). This covers
+  `ingest`, `process-new` (every mode, `--skip-ingest` and `--dry-run`
+  included: the database is checked before any branch), `pds-ingest` and
+  the web PDS ingestion route; `refit` checks the database the same way
+  before it starts. `sherloc init --mode pds` now defaults to
+  `./phase_pds.db` (or `$SHERLOC_PDS_DB`) and creates the PDS unique index.
+  `db-stats` opens the database read-only and
+  no longer creates a missing file. `sherloc init` still migrates (it is
+  the explicit command), but a failed upgrade is now an error instead of a
+  silent `create_all` fallback.
+- QUICKSTART's migration commands use `PHASE_DATABASE_PATH`, the variable
+  `alembic/env.py` reads (`SHERLOC_DB` was ignored by Alembic).
+
 ### Added
 - **Per-scan processing fields are written.** Every full-pipeline run that
   reaches a database (`full-pipeline`, `process-new`, `refit`) records on

@@ -1062,6 +1062,37 @@ class FittedPeakORM(Base):
         )
 
 
+# Migration 6cff8ea9cb06 creates these triggers. They are attached to the ORM
+# table too, so a schema created with create_all matches the migrated head
+# (open_database stamps a new database at head; #135).
+FIT_MODALITY_TRIGGERS = (
+    """CREATE TRIGGER IF NOT EXISTS check_fit_modality_insert
+        BEFORE INSERT ON fitted_peaks
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid fit_modality value')
+            WHERE NEW.fit_modality NOT IN ('minerals', 'organics', 'hydration', 'fluorescence');
+        END""",
+    """CREATE TRIGGER IF NOT EXISTS check_fit_modality_update
+        BEFORE UPDATE OF fit_modality ON fitted_peaks
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid fit_modality value')
+            WHERE NEW.fit_modality NOT IN ('minerals', 'organics', 'hydration', 'fluorescence');
+        END""",
+)
+
+
+def _attach_fit_modality_triggers() -> None:
+    from sqlalchemy import DDL, event
+
+    for statement in FIT_MODALITY_TRIGGERS:
+        event.listen(
+            FittedPeakORM.__table__, "after_create", DDL(statement).execute_if(dialect="sqlite")
+        )
+
+
+_attach_fit_modality_triggers()
+
+
 class CosmicRayMaskORM(Base):
     """SQLAlchemy model for CosmicRayMask.
 

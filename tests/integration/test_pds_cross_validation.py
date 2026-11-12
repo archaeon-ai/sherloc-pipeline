@@ -58,7 +58,7 @@ def pds_engine(tmp_path_factory):
     if not SOL_921_DIR.exists():
         pytest.skip("Sol 921 PDS data not available")
     pds_db = tmp_path_factory.mktemp("cross_validation") / "phase_pds.db"
-    service = PDSIngestionService(
+    service = PDSIngestionService(create_missing=True, 
         pds_db_path=pds_db,
         loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
     )

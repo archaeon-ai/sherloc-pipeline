@@ -390,7 +390,7 @@ class TestStage4Ingestion:
     def service_result(self, tmp_path):
         """Ingest Sol 921 and return (service, result)."""
         pds_db = tmp_path / "phase_pds_roundtrip.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
@@ -575,7 +575,7 @@ class TestStage5Validation:
     def validated(self, tmp_path):
         """Ingest Sol 921 then validate and return (service, report)."""
         pds_db = tmp_path / "phase_pds_roundtrip_val.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
@@ -689,7 +689,7 @@ class TestEndToEndRoundtrip:
 
         # Stage 4: Ingest
         pds_db = tmp_path / "phase_pds_e2e.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
@@ -721,7 +721,7 @@ class TestIdempotencyRoundtrip:
     def test_idempotent_double_ingestion(self, tmp_path):
         """Second ingestion skips all, counts unchanged."""
         pds_db = tmp_path / "phase_pds_idem.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
@@ -741,7 +741,7 @@ class TestIdempotencyRoundtrip:
     def test_force_reingestion_preserves_counts(self, tmp_path):
         """Force re-ingestion cascade-deletes and re-creates, counts unchanged."""
         pds_db = tmp_path / "phase_pds_force.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
@@ -763,7 +763,7 @@ class TestIdempotencyRoundtrip:
     def test_validation_passes_after_force(self, tmp_path):
         """Database still valid after force re-ingestion."""
         pds_db = tmp_path / "phase_pds_val_force.db"
-        service = PDSIngestionService(
+        service = PDSIngestionService(create_missing=True, 
             pds_db_path=pds_db,
             loupe_db_path=LOUPE_DB if LOUPE_DB.exists() else None,
         )
