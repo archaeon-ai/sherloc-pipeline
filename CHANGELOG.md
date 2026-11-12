@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DB-refresh runbooks); on the public tier `n_scans` is `null` too.
 
 ### Fixed
+- **`fit-fluor` keeps stored peaks for points with no R1-R3 inputs** (#174).
+  A point skipped as `missing_regions` was still in the delete scope, so
+  the fluorescence peaks an earlier run stored for it were deleted and
+  nothing replaced them. Only points that had inputs this run are now
+  replaced, as unreadable spectra already were.
 - **Laser normalization no longer modifies the input Loupe workspace** (#131).
   `darkSubSpectraN.csv` is written to the scan's results folder
   (`<results>/<target>/<sol>_<scan>/`) instead of the workspace, and

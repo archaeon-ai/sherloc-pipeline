@@ -557,7 +557,7 @@ def test_all_readable_fluor_points_replace_prior_peaks(synthetic_fluor_run):
         assert rows[point][0]["center_nm"] == 314.0
 
 
-def test_never_measured_fluor_point_stays_in_delete_scope(synthetic_fluor_run, monkeypatch):
+def test_never_measured_fluor_point_is_outside_delete_scope(synthetic_fluor_run, monkeypatch):
     run = synthetic_fluor_run
     missing_id = str(uuid4())
     with get_session(run.engine) as session:
@@ -569,9 +569,27 @@ def test_never_measured_fluor_point_stays_in_delete_scope(synthetic_fluor_run, m
     result = _fit_synthetic_fluor(run)
     assert result.metadata["peaks_inserted"] == 3
     assert result.metadata["points_skipped"] == 1
-    assert missing_id in writer.call_args.args[2]
-    assert len(writer.call_args.args[2]) == 4
+    # Only points with R1-R3 inputs this run are replaced (#174).
+    assert missing_id not in writer.call_args.args[2]
+    assert len(writer.call_args.args[2]) == 3
     assert len(writer.call_args.args[1]) == 3
+
+
+def test_point_missing_a_region_keeps_its_prior_fluor_peaks(synthetic_fluor_run):
+    """#174: a point with no complete R1-R3 input is skipped, so its stored
+    fluorescence peaks must survive; the other points are replaced."""
+    run = synthetic_fluor_run
+    with get_session(run.engine) as session:
+        point = session.query(ScanPointORM).filter_by(point_index=2).one()
+        session.query(SpectrumORM).filter_by(scan_point_id=point.id, region="R3").delete()
+    result = _fit_synthetic_fluor(run)
+    assert result.metadata["points_missing_regions"] == 1
+    assert result.metadata["peaks_inserted"] == 2
+    rows = _snapshot_fluor_peaks(run.database_path)
+    assert rows[2] == run.previous[2]
+    for point in (0, 1):
+        assert len(rows[point]) == 1
+        assert rows[point][0]["id"] not in {row["id"] for row in run.previous[point]}
 
 
 def test_all_unreadable_fluor_points_keep_prior_peaks(synthetic_fluor_run):

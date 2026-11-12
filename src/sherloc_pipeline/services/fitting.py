@@ -3396,8 +3396,14 @@ class FittingService:
                         except Exception as e:
                             logger.warning(f"Failed to generate fluor plot for point {point_idx}: {e}")
 
-                # Persist via shared helper (idempotent domain-filtered delete+insert)
-                scan_point_ids = [sp.id for sp in scan_points if sp.id not in unreadable_points]
+                # Persist via shared helper (idempotent domain-filtered delete+insert).
+                # Only points that had R1-R3 inputs this run are replaced: a point
+                # skipped for missing regions (#174) or unreadable spectra keeps
+                # the fluorescence peaks stored by an earlier run.
+                scan_point_ids = [
+                    sp.id for sp in scan_points
+                    if sp.id in chosen and sp.id not in unreadable_points
+                ]
                 inserted = self._write_peaks_to_db(
                     session, all_peaks, scan_point_ids, "fluorescence"
                 )
