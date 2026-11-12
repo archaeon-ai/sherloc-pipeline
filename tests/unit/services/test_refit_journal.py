@@ -256,5 +256,24 @@ def test_code_digest_tracks_content_not_bytecode(tmp_path):
     assert code_digest(package) != before
 
 
+def test_code_digest_ignores_the_frontend_tree_but_not_package_data(tmp_path):
+    """#171: installing or building the frontend must not change the digest;
+    package data the pipeline reads (e.g. a background CSV) still does."""
+    package = tmp_path / "pkg"
+    (package / "web" / "frontend").mkdir(parents=True)
+    (package / "data" / "background").mkdir(parents=True)
+    (package / "a.py").write_text("x = 1\n")
+    (package / "data" / "background" / "bkg.csv").write_text("w,i\n1,2\n")
+    before = code_digest(package)
+    (package / "web" / "frontend" / "node_modules" / "lib").mkdir(parents=True)
+    (package / "web" / "frontend" / "node_modules" / "lib" / "index.js").write_text("1\n")
+    (package / "web" / "frontend" / "dist").mkdir()
+    (package / "web" / "frontend" / "dist" / "app.js").write_text("1\n")
+    (package / "web" / "frontend" / "package.json").write_text("{}\n")
+    assert code_digest(package) == before
+    (package / "data" / "background" / "bkg.csv").write_text("w,i\n1,3\n")
+    assert code_digest(package) != before
+
+
 def test_code_digest_defaults_to_the_installed_package():
     assert code_digest() == code_digest(Path(refit_journal.__file__).resolve().parents[1])

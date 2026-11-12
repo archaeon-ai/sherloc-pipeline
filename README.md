@@ -610,7 +610,7 @@ sherloc refit --science --resume refit-science.jsonl
 
 A scan is recorded only when every pipeline stage ran, Raman persistence ran for all three domains and found a stored spectrum for every peak CSV, fluorescence found R1-R3 spectra for at least one point, and no stage recorded an error. Failed scans are listed at the end. The exit code is 1 if any scan failed.
 
-`--resume` skips the scans the journal lists and runs the rest. It refuses if any of these differ from the journal: the database, data or results directory, scan selection, effective configuration (config.yaml plus overrides), installed code, Python and dependency versions, or `SHERLOC_HANDOFF_DIR`, `SHERLOC_LEGACY_PLOTS`, `SHERLOC_DETERMINISTIC_PLOTS`, `SHERLOC_OVERLAY_DEBUG`. Run no other writers against the database during a batch.
+`--resume` skips the scans the journal lists and runs the rest. It refuses if any of these differ from the journal: the database, data or results directory, scan selection, effective configuration (config.yaml plus overrides), installed code, Python and dependency versions, or `SHERLOC_HANDOFF_DIR`, `SHERLOC_LEGACY_PLOTS`, `SHERLOC_DETERMINISTIC_PLOTS`, `SHERLOC_OVERLAY_DEBUG`. "Installed code" is a digest of the package files (Python, config and package data), not counting the `web/frontend` tree, so installing or building the frontend does not block a resume. Run no other writers against the database during a batch. Run `--resume` from the same directory as the original batch: relative paths such as the background spectrum directory (`paths.background_dir`, default `./data/background`) resolve against the working directory.
 
 Scans need Loupe working directories, as for `full-pipeline`. A scan without them fails at Step 1 and is not recorded.
 
