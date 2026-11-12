@@ -472,10 +472,88 @@ class PipelineService:
         results_dir: Optional[Path] = None,
         stage_window: Optional[Dict[str, object]] = None,
     ) -> ServiceResult:
-        """Run the entire legacy CLI full pipeline for a single scan."""
-        from sherloc_pipeline.core.data_ingestion import normalize_target_name
-        target = normalize_target_name(target)
+        """Run the entire legacy CLI full pipeline for a single scan.
 
+        When the database exists (``SHERLOC_DB_PATH``, else ``./phase.db``),
+        the scan row records how the run ended in its processing fields
+        (``services/scan_processing.py``): ``completed`` when the run is
+        complete by the refit rule (``refit_journal.run_failures``), else
+        ``failed`` with the reasons. A run that raises is recorded as failed
+        and the exception propagates. A complete run whose fields cannot be
+        written raises ``PipelineRunError``, so a refit does not journal it.
+        """
+        from sherloc_pipeline.core.data_ingestion import normalize_target_name
+        from sherloc_pipeline.services.refit_journal import run_failures
+        from sherloc_pipeline.services.scan_processing import (
+            STATUS_COMPLETED, STATUS_FAILED, record_scan_processing,
+        )
+        target = normalize_target_name(target)
+        db_path = Path(os.environ.get("SHERLOC_DB_PATH", "./phase.db"))
+
+        def record(status: str, error: Optional[str]) -> bool:
+            from sherloc_pipeline import __version__
+            from sherloc_pipeline.services.refit_journal import config_digest
+
+            return record_scan_processing(
+                db_path, sol=sol, target=target, scan=scan,
+                status=status, error=error,
+                config_hash=config_digest(self.context.config),
+                pipeline_version=__version__,
+            )
+
+        try:
+            result = self._run_full_pipeline(
+                sol=sol, target=target, scan=scan,
+                data_dir=data_dir, results_dir=results_dir, stage_window=stage_window,
+            )
+        except Exception as exc:
+            if db_path.exists():
+                try:
+                    written = record(STATUS_FAILED, str(exc) or type(exc).__name__)
+                except Exception as record_exc:
+                    written, cause = False, str(record_exc)
+                else:
+                    cause = "no matching scan row"
+                if not written:
+                    self.logger.warning(
+                        "Scan processing fields not written for %s/%s/%s: %s",
+                        sol, target, scan, cause,
+                    )
+            raise
+        if not db_path.exists():
+            return result
+
+        reasons = run_failures(result.metadata or {})
+        status = STATUS_FAILED if reasons else STATUS_COMPLETED
+        try:
+            written = record(status, "; ".join(reasons) or None)
+        except Exception as exc:
+            written, cause = False, str(exc)
+        else:
+            cause = "no matching scan row"
+        if not written:
+            message = f"Scan processing fields not written for {sol}/{target}/{scan}: {cause}"
+            if status == STATUS_COMPLETED:
+                raise PipelineRunError(
+                    message, exit_code=1,
+                    context={"sol": sol, "target": target, "scan": scan},
+                )
+            self.logger.warning(message)
+            result.warnings.append(message)
+        result.metadata = dict(result.metadata or {})
+        result.metadata["processing_status"] = status if written else None
+        return result
+
+    def _run_full_pipeline(
+        self,
+        *,
+        sol: str,
+        target: str,
+        scan: str,
+        data_dir: Optional[Path] = None,
+        results_dir: Optional[Path] = None,
+        stage_window: Optional[Dict[str, object]] = None,
+    ) -> ServiceResult:
         run_context = self.context.with_overrides(
             data_dir=data_dir,
             results_dir=results_dir,

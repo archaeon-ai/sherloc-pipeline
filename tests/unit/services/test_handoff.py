@@ -92,7 +92,7 @@ def test_unconfigured_handoff_is_an_explicit_skip(tmp_path: Path) -> None:
 
 
 def test_pipeline_publishes_only_after_summary_and_before_success() -> None:
-    source = inspect.getsource(PipelineService.run_full_pipeline)
+    source = inspect.getsource(PipelineService._run_full_pipeline)
     assert source.index('capture_stage("summary")') < source.index(
         'os.environ.get("SHERLOC_HANDOFF_DIR")'
     )
