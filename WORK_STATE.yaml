@@ -1,0 +1,6 @@
+work_package: "#169 refit missing from fluor_backfill WRITER_COMMANDS"
+branch: fix-169-refit-writer
+head: 0b77e9e
+open_decisions: []
+next_action: open PR, Codex review r1; rebase CHANGELOG after #181/#182 merge
+last_verified: 2026-11-11T16:55:03-08:00 — new test red on origin/main code, green with fix; test_fluor_backfill.py 12 passed
