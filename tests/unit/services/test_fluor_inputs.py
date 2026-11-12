@@ -557,7 +557,7 @@ def test_all_readable_fluor_points_replace_prior_peaks(synthetic_fluor_run):
         assert rows[point][0]["center_nm"] == 314.0
 
 
-def test_never_measured_fluor_point_stays_in_delete_scope(synthetic_fluor_run, monkeypatch):
+def test_never_measured_fluor_point_is_outside_delete_scope(synthetic_fluor_run, monkeypatch):
     run = synthetic_fluor_run
     missing_id = str(uuid4())
     with get_session(run.engine) as session:
@@ -569,8 +569,9 @@ def test_never_measured_fluor_point_stays_in_delete_scope(synthetic_fluor_run, m
     result = _fit_synthetic_fluor(run)
     assert result.metadata["peaks_inserted"] == 3
     assert result.metadata["points_skipped"] == 1
-    assert missing_id in writer.call_args.args[2]
-    assert len(writer.call_args.args[2]) == 4
+    # Only points with R1-R3 inputs this run are replaced (#174).
+    assert missing_id not in writer.call_args.args[2]
+    assert len(writer.call_args.args[2]) == 3
     assert len(writer.call_args.args[1]) == 3
 
 
