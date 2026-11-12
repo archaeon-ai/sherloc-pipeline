@@ -1360,6 +1360,7 @@ def db_stats_cmd(
             console=console,
             database_path=database,
             include_spectra=False,
+            read_only=True,
         )
 
         db_stats = service.get_database_stats()

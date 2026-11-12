@@ -148,6 +148,127 @@ def create_all_tables(engine: Engine) -> None:
     Base.metadata.create_all(engine)
 
 
+class SchemaNotCurrentError(RuntimeError):
+    """An existing database is not at the code's Alembic head.
+
+    Paths that read and write data never create or upgrade schema on an
+    existing database: migrations are applied by an operator. The message
+    names the revision pair and the command.
+    """
+
+    def __init__(self, database_path, current, heads):
+        self.database_path = str(database_path)
+        self.current = tuple(current)
+        self.heads = tuple(heads)
+        found = ", ".join(self.current) or "unstamped (tables but no alembic_version)"
+        expected = ", ".join(self.heads)
+        target = self.heads[0] if len(self.heads) == 1 else "heads"
+        super().__init__(
+            f"Database {self.database_path} schema is at {found}; this code expects {expected}. "
+            f"Nothing was changed. Schema changes are applied by an operator, from the "
+            f"sherloc-pipeline checkout: PHASE_DATABASE_PATH={self.database_path} "
+            f"alembic upgrade {target}"
+        )
+
+
+def _alembic_config():
+    from alembic.config import Config
+
+    package_root = Path(__file__).parent.parent.parent.parent  # src/../..
+    ini_path = package_root / "alembic.ini"
+    if not ini_path.exists():
+        raise FileNotFoundError(f"alembic.ini not found at {ini_path}")
+    return Config(str(ini_path))
+
+
+_HEADS_CACHE: dict = {}
+
+
+def alembic_heads() -> tuple:
+    """The Alembic head revision(s) of this code, sorted."""
+    if "heads" not in _HEADS_CACHE:
+        from alembic.script import ScriptDirectory
+
+        _HEADS_CACHE["heads"] = tuple(sorted(ScriptDirectory.from_config(_alembic_config()).get_heads()))
+    return _HEADS_CACHE["heads"]
+
+
+def schema_revisions(engine: Engine) -> tuple:
+    """The revision(s) stamped in the database's alembic_version, sorted (empty if none)."""
+    from alembic.runtime.migration import MigrationContext
+
+    with engine.connect() as conn:
+        return tuple(sorted(MigrationContext.configure(conn).get_current_heads()))
+
+
+def _data_tables(engine: Engine) -> list:
+    from sqlalchemy import inspect
+
+    return [
+        name for name in inspect(engine).get_table_names()
+        if name != "alembic_version" and not name.startswith("sqlite_")
+    ]
+
+
+def _create_and_stamp(engine: Engine) -> None:
+    """Create the ORM schema on an empty database and stamp it at the code's head."""
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(_alembic_config())
+    create_all_tables(engine)
+    with engine.begin() as conn:
+        MigrationContext.configure(conn).stamp(script, "heads")
+
+
+def require_current_schema(engine: Engine, database_path) -> None:
+    """Raise SchemaNotCurrentError unless the database is stamped at the code's head(s)."""
+    current, heads = schema_revisions(engine), alembic_heads()
+    if set(current) != set(heads):
+        raise SchemaNotCurrentError(database_path, current, heads)
+
+
+def open_database(database_path: Optional[Union[str, Path]] = None) -> Engine:
+    """Open a database for a command that reads and writes data, without changing its schema.
+
+    - ``:memory:``: the ORM schema is created (nothing to conflict with).
+    - A missing file, or one with no tables: the ORM schema is created and
+      stamped at the code's Alembic head, so a later ``alembic upgrade``
+      starts from the right revision.
+    - Any other database must already be at the code's head; otherwise
+      ``SchemaNotCurrentError`` is raised and nothing is written.
+    """
+    if database_path is None:
+        database_path = "./phase.db"
+    if str(database_path) == ":memory:":
+        engine = get_engine(database_path)
+        create_all_tables(engine)
+        return engine
+
+    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+    engine = get_engine(database_path)
+    try:
+        if _data_tables(engine):
+            require_current_schema(engine, database_path)
+        else:
+            _create_and_stamp(engine)
+    except Exception:
+        engine.dispose()
+        raise
+    return engine
+
+
+def open_database_readonly(database_path: Union[str, Path]) -> Engine:
+    """Open an existing SQLite database read-only (no file creation, no schema change)."""
+    path = Path(database_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Database not found: {path}")
+    return create_engine(
+        f"sqlite:///file:{path.resolve()}?mode=ro&uri=true",
+        connect_args={"check_same_thread": False},
+    )
+
+
 def ensure_database_exists(database_path: Optional[Union[str, Path]] = None) -> Engine:
     """Ensure the database exists and has all tables.
 
@@ -205,14 +326,11 @@ def init_database(
     engine = get_engine(db_path)
 
     if str(db_path) != ":memory:":
-        try:
-            _run_alembic_upgrade(str(db_path))
-        except Exception as exc:
-            logger.warning(
-                "Alembic upgrade failed for %s, falling back to create_all: %s",
-                db_path, exc,
-            )
-            create_all_tables(engine)
+        # `sherloc init` is the explicit operator command: it migrates an
+        # existing database to head. A failed upgrade is an error; falling
+        # back to create_all would add tables the alembic stamp does not
+        # record (#135).
+        _run_alembic_upgrade(str(db_path))
     else:
         create_all_tables(engine)
 
@@ -244,21 +362,19 @@ PDS_DATABASE_PATH = _default_pds_db_path()
 def init_pds_database(
     db_path: Optional[Union[str, Path]] = None,
 ) -> Engine:
-    """Initialize phase_pds.db via Alembic migrations plus PDS-specific constraints.
+    """Open phase_pds.db for PDS ingestion plus PDS-specific constraints.
 
-    For new databases, runs the full Alembic migration chain from scratch.
-    For existing databases, runs any pending migrations to bring the schema
-    to HEAD. Then adds a PDS-specific unique constraint on ``scans.scan_id``
+    A new (missing or empty) database gets the ORM schema stamped at the
+    code's Alembic head. An existing database must already be at head, or
+    ``SchemaNotCurrentError`` is raised: this path never migrates. Then adds a PDS-specific unique constraint on ``scans.scan_id``
     to enforce idempotency via PDS LID (spec s9, s12).
 
-    This function is idempotent: calling it multiple times on an existing
-    database is safe — Alembic skips already-applied migrations, and the
-    unique index uses ``IF NOT EXISTS``.
+    This function is idempotent on a current database: the unique index
+    uses ``IF NOT EXISTS``.
 
     Args:
         db_path: Path to the PDS database file. Defaults to
-            ``./phase_pds.db``. Can be ``:memory:`` for testing
-            (falls back to create_all_tables since Alembic needs a file).
+            ``./phase_pds.db``. Can be ``:memory:`` for testing.
 
     Returns:
         SQLAlchemy Engine instance for the initialized database.
@@ -270,21 +386,9 @@ def init_pds_database(
     if str(db_path) != ":memory:":
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    engine = get_engine(db_path)
-
-    # Use Alembic for schema management (file-based databases)
-    if str(db_path) != ":memory:":
-        try:
-            _run_alembic_upgrade(str(db_path))
-        except Exception as exc:
-            logger.warning(
-                "Alembic upgrade failed for %s, falling back to create_all: %s",
-                db_path, exc,
-            )
-            create_all_tables(engine)
-    else:
-        # In-memory DBs can't use Alembic (no persistent URL)
-        create_all_tables(engine)
+    # A new database gets the stamped ORM schema; an existing one must
+    # already be at head. PDS ingestion never migrates (#135).
+    engine = open_database(db_path)
 
     # Add PDS-specific unique constraint on scans.scan_id (spec s12).
     with engine.connect() as conn:
@@ -300,20 +404,14 @@ def init_pds_database(
 
 def _run_alembic_upgrade(db_path: str) -> None:
     """Run alembic upgrade head against the given database path."""
-    from alembic.config import Config
     from alembic import command
 
-    # Find alembic.ini relative to this package
-    package_root = Path(__file__).parent.parent.parent.parent  # src/../..
-    ini_path = package_root / "alembic.ini"
-    if not ini_path.exists():
-        raise FileNotFoundError(f"alembic.ini not found at {ini_path}")
+    alembic_cfg = _alembic_config()
 
     # env.py reads PHASE_DATABASE_PATH env var — set it to target the right DB
     old_env = os.environ.get("PHASE_DATABASE_PATH")
     os.environ["PHASE_DATABASE_PATH"] = db_path
     try:
-        alembic_cfg = Config(str(ini_path))
         command.upgrade(alembic_cfg, "head")
     finally:
         if old_env is not None:
