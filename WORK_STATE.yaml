@@ -1,0 +1,6 @@
+work_package: "#171 refit code_digest includes frontend files"
+branch: fix-171-code-digest
+head: 6cf5271
+open_decisions: []
+next_action: open PR, Codex review r1; rebase CHANGELOG after earlier PRs merge
+last_verified: 2026-11-11T17:00:30-08:00 — new test red on origin/main code, green with fix; test_refit_journal.py 45 passed
