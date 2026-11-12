@@ -1,6 +1,6 @@
 work_package: "per-scan processing fields writer (refit definition of done); also the CONSOLE lane restart pointer (PM kenwilliford-77, 11/12 order: fields PR, then #135, then v5.7.7 release PR)"
 branch: scan-processing-fields
-head: 8126f6c
+head: ee25b65
 open_decisions: []
-next_action: open PR, Codex review r1 on exact head, CI; then #135 in a new worktree
+next_action: Codex r2 on exact head, CI; merge on GO; then wt finish and #135
 last_verified: 2026-11-12T08:49:29-08:00 — targeted tests on worktree code: tests/integration/test_refit_e2e.py + fluor full_pipeline (15 passed), unit callers of run_full_pipeline (112 passed), getsource tests (8 passed)
