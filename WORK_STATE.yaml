@@ -5,15 +5,15 @@ open_decisions: []
 next_action: >-
   Lane queue, in order (no force-push, merge main instead of rebase; exact-head Codex GO + CI test green, then
   gh pr merge --merge --match-head-commit; report each merge to PM in one message; no tests Thu 06:00-11:30, park by 13:30).
-  1) PR #186 (ci: test timeout 30->45, worktree ~/code/sherloc-pipeline-ci-test-timeout-45): Codex r1 + CI were running at clear
-     (check PR comments; post the r1 review if not posted, scratch out file is gone after clear: re-run review if needed). Merge, wt finish ci-test-timeout-45.
+  1) DONE: PR #186 merged e503928 (r1 GO at 1c3ec94, CI green 17m52s), reported to PM, worktree finished.
   2) PR #181 (#131, worktree ~/code/sherloc-pipeline-fix-131-readonly-input, local branch pr181-merge tracks it; local branch
      fix-131-readonly-input holds an abandoned unpushed rebase, delete at wt finish): r3 Codex GO at ce9fbf3 but CI timed out at 30 min x4.
-     After #186 merges: merge origin/main into pr181-merge, push to origin fix-131-readonly-input, confirmation round, CI, merge.
+     origin/main merged into pr181-merge and pushed as c73d48b; r4 confirmation (scratchpad r181/out-r4.md) + CI run 43148779437 in flight at 19:35.
+     If out file gone: rebuild with scratchpad buildpr.sh pattern (prompt = skill refs + body + issue + PR thread + diff).
   3) PR #183 (#169, this worktree): r2 GO at fe68376. merge origin/main (CHANGELOG: keep both), git rm WORK_STATE.yaml, push, confirm, CI, merge.
   4) PR #184 (#171): r1 GO at 3173c09; worktree removed to free a slot (branch fix-171-code-digest pushed): recreate with
      git worktree add ~/code/sherloc-pipeline-fix-171-code-digest fix-171-code-digest, then as step 3.
   5) PR #185 (#170, worktree ~/code/sherloc-pipeline-fix-170-refit-selection): r2 GO at d422968; body edited after (lane decision note); as step 3.
   Review prompts: build with /tmp scratch build.sh pattern (skill references + PR body + issue + diff), run codex exec read-only sandbox, connectors off.
   Merged so far: #182 (#174, 7765dd9), reported. Open residue for PM: unexplained ~1.5x CI slowdown on #181 (local timings equal).
-last_verified: 2026-11-11T19:13:09-08:00 — states read from gh (PR comments, gh pr checks, gh run list); no local tests for this update
+last_verified: 2026-11-11T19:36:00-08:00 — #186 MERGED state read from gh; #181 head c73d48b pushed (git push output)
