@@ -1,8 +1,0 @@
-work_package: research lane, WEEK-PLAN 2.3 item 4 / section 4 item 8 - minerals labeler (PM order 11/12 08:55)
-branch: minerals-labeler  # PR https://github.com/archaeon-ai/sherloc-pipeline/pull/189
-head: see git log (this commit); reviewed head e2b266e
-open_decisions:
-  - "PM: Codex cap r4 is used (r4 GO on exact head e2b266e, 0 findings). Since then only a main sync (#188, no file overlap) and this file. Is a fresh exact-head review needed before merge, or does r4 + base-sync suffice?"
-  - "Ken: the four class names (present / absent / spike / unsure) and the 'scoring: neutral' word"
-next_action: "When CI is green on this head: remove WORK_STATE.yaml (commit), wait for CI green, then merge (gh pr merge 189 --merge --match-head-commit <sha>, subject 'Merge PR #189: ...' as in research-restart-2026-11-12-b.md), then wt finish minerals-labeler."
-last_verified: 2026-11-12T12:42:03-08:00 - CI test green on e2b266e (run 43297077471, 32m); local merge with 2e0855a passed 58 tests (tools + architecture) and ruff; merge refused only for strict up-to-date (BEHIND)
