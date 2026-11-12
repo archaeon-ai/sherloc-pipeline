@@ -1,0 +1,6 @@
+work_package: "#131 laser normalization must not modify the input workspace"
+branch: fix-131-readonly-input
+head: 3670265
+open_decisions: []
+next_action: full suite green, commit fix, push, open PR, Codex review
+last_verified: 2026-11-11T16:47:02-08:00 — new unit + e2e tests red on origin/main code, green with fix; targeted suites 27 passed
