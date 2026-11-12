@@ -270,10 +270,13 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
         sharpness_max = float(
             fit_cfg.get("posthoc_filters", {}).get("sharpness_max", 3.0)
         )
+        # Override only the selection method: the configured AICc settings
+        # (threshold, bounds, reject_merged_candidates) must reach the fitter.
+        base_parsimony = dict(fit_cfg.get("parsimony") or {})
         if fit_params_schema.model_selection == "f-test":
-            fit_cfg["parsimony"] = {"model_selection": "ftest", "ftest_alpha": 0.01}
+            fit_cfg["parsimony"] = {**base_parsimony, "model_selection": "ftest", "ftest_alpha": 0.01}
         else:
-            fit_cfg["parsimony"] = {"model_selection": "aicc"}
+            fit_cfg["parsimony"] = {**base_parsimony, "model_selection": "aicc"}
 
         try:
             fit_result, y_model_full = fit_spectrum(x, corrected, fit_cfg)
