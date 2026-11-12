@@ -1,0 +1,8 @@
+work_package: "Mineral fitter rulings (Ken 11/12: aicc, fwhm 25, r2 none; gain decide after replay; mask negative spikes; CR mask = review flag; cap 5)"
+branch: fitter-aicc-rulings (PR: pending)
+head: pending
+open_decisions:
+  - "Ken: aicc_improve_threshold value after replay (0 in this PR; replay: gain 2 loses 22 rows, 18 at SNR 3-4)"
+  - "Ken: reject_merged_candidates on/off (replay: +3 rows, 0 lost; recovers p88)"
+next_action: "Codex r1 on the PR; CI; then follow-up PR: wire stored CR mask into batch worker + fitted_peaks column (migration)"
+last_verified: "2026-11-12T12:34:30-08:00 — targeted fitting suites 509 passed + test_fitting_rulings 5 passed (scratch export of 8e9edb9); replay base reproduces 332 stored AICc rows"

@@ -168,7 +168,10 @@ def _fit_point_minerals(
     owned_artifacts = [peaks_csv, png_path]
 
     try:
-        result, y_model_full = fit_spectrum(x, y, fit_cfg, roi=fit_roi)
+        result, y_model_full = fit_spectrum(
+            x, y, fit_cfg, roi=fit_roi,
+            negative_spike_sigma=fit_cfg.get('minerals_negative_spike_sigma'),
+        )
         mask = (x >= plot_roi[0]) & (x <= plot_roi[1])
 
         accepted_point = any(
