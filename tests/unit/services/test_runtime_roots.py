@@ -54,3 +54,35 @@ def test_resolve_scan_context_reads_configured_data_root(clean_env, tmp_path, mo
     monkeypatch.setattr(paths_mod, "get_runtime_config", lambda: cfg)
     with pytest.raises(FileNotFoundError, match="configured-root"):
         paths_mod.resolve_scan_context("0001", "T", "detail_1")
+
+
+class _Captured(Exception):
+    pass
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_resolve_scan_context_passes_both_configured_roots(clean_env, tmp_path, monkeypatch, legacy):
+    """Both roots reach scan discovery: data_root / results_root, or the legacy
+    data_dir / results_dir keys when only those are configured."""
+    from sherloc_pipeline.services import paths as paths_mod
+    data, results = tmp_path / "cfg-data", tmp_path / "cfg-results"
+    (data / "sol_0001").mkdir(parents=True)
+    cfg = load_config()
+    if legacy:
+        cfg.paths = {"data_dir": str(data), "results_dir": str(results)}
+    else:
+        clean_env.setenv("SHERLOC_DATA_DIR", str(data))
+        clean_env.setenv("SHERLOC_RESULTS_DIR", str(results))
+        cfg = load_config()
+    seen = {}
+
+    def fake_ingestion(**kwargs):
+        seen.update(kwargs)
+        raise _Captured
+
+    monkeypatch.setattr(paths_mod, "get_runtime_config", lambda: cfg)
+    monkeypatch.setattr(paths_mod, "DataIngestion", fake_ingestion)
+    with pytest.raises(_Captured):
+        paths_mod.resolve_scan_context("0001", "T", "detail_1")
+    assert seen["base_data_dir"] == data.resolve()
+    assert seen["results_dir"] == results.resolve()
