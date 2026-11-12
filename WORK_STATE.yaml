@@ -1,6 +1,6 @@
 work_package: "#169 refit missing from fluor_backfill WRITER_COMMANDS"
-branch: fix-169-refit-writer
-head: 0b77e9e
+branch: fix-169-refit-writer (PR https://github.com/archaeon-ai/sherloc-pipeline/pull/183)
+head: fe68376
 open_decisions: []
-next_action: open PR, Codex review r1; rebase CHANGELOG after #181/#182 merge
-last_verified: 2026-11-11T16:55:03-08:00 — new test red on origin/main code, green with fix; test_fluor_backfill.py 12 passed
+next_action: Codex r2 GO at fe68376. after #181 merges: merge origin/main (CHANGELOG conflict, keep both), git rm WORK_STATE.yaml, push (no force), Codex confirmation round on exact head, CI green, merge with --match-head-commit; no tests Thu 06:00-11:30
+last_verified: 2026-11-11T18:07:01-08:00 — review and CI state read from the PR (comments, gh pr checks); no local tests for this update
