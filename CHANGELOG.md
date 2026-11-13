@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.7] - 2026-11-12
+
 ### Changed
 - **Mineral fit rules of 2026-11-12.** `filter_fwhm_min_cm1` 30 -> 25 (the
   persistence gate) and `r_squared_min` 0.25 -> 0.0 (the R2 > 0 persistence
@@ -18,7 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parsimony.reject_merged_candidates` (default on) skips AICc candidates
   the merge step would shrink. Exported summary AICc counts only the
   channels the fit used; a fully masked ROI is a no-peaks result. The config
-  hash changes, so a refit re-fits minerals.
+  hash changes, so a refit re-fits minerals (#190).
+- **Runtime default roots come from `paths.data_root` / `paths.results_root`
+  (#173).** `RuntimeContext.bootstrap()` and scan-path resolution, when no
+  directory is given, now use the configured roots (`./data`, `./results`,
+  or `SHERLOC_DATA_DIR` / `SHERLOC_RESULTS_DIR`) instead of the hard-coded
+  `../data/loupe` and `../results`. The old `paths.data_dir` /
+  `paths.results_dir` keys are still read if a config uses them.
 - **Data commands no longer create or upgrade schema on an existing
   database (#135).** `ingest`, `process-new` and PDS ingestion (`pds-ingest`
   and the web PDS route) open a database with tables only when it is
