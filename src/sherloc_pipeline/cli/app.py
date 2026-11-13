@@ -2182,17 +2182,21 @@ def _iter_all_scans(
     return rows if with_ids else [row[:3] for row in rows]
 
 
-def _refuse_shared_outputs(scans):
+def _refuse_shared_outputs(scans, all_scans=None):
     """Split bulk rows into (runnable, errors) by output identity (#175).
 
     Result artifacts live under ``<target>/<sol>_<scan>``, so two rows with the
     same sol, normalized target and scan name (e.g. two scans stored without a
     target) would overwrite each other's outputs, and persisting would read one
     artifact set for both. Every row in such a group is refused, not processed.
+    Pass ``all_scans`` (every row in the database) when ``scans`` is filtered,
+    so a row excluded by a filter still counts against the rows it shares with.
     """
     from collections import Counter
 
-    counts = Counter((sol, tgt, scn) for sol, tgt, scn, _ in scans)
+    counts = Counter(
+        (sol, tgt, scn) for sol, tgt, scn, _ in (scans if all_scans is None else all_scans)
+    )
     runnable, errors = [], []
     for sol_num, tgt, scn, scan_row_id in scans:
         n = counts[(sol_num, tgt, scn)]
@@ -2660,7 +2664,9 @@ def backfill_cmd(
 
         service = FittingService(console=console, database_path=db_path)
 
-        runnable, refused = _refuse_shared_outputs(scans)
+        runnable, refused = _refuse_shared_outputs(
+            scans, all_scans=_iter_all_scans(db_path, console, with_ids=True),
+        )
 
         # Track totals per domain
         domain_stats: dict = {}

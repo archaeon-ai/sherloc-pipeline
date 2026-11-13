@@ -282,3 +282,30 @@ def test_fit_fluor_all_writes_nothing_for_scans_that_share_an_output_location(ru
     assert _fluor_peak_count(run.engine, twin_id) == 0
     fluor_dir = tmp_path / "results" / f"{SOL:04d}_{SCAN}" / "fluorescence_fit"
     assert not fluor_dir.exists() or not any(fluor_dir.iterdir())
+
+
+@pytest.mark.parametrize("flag", ["--no-engineering", "--science"])
+def test_filtered_backfill_counts_rows_the_filter_excludes(run, monkeypatch, flag):
+    """A filtered-out twin still shares the selected scan's output location."""
+    with get_session(run.engine) as session:
+        twin_id = _add_scan(session, None)
+        session.query(ScanORM).filter_by(id=twin_id).update({"target_type": "engineering"})
+    calls = []
+
+    def record(self, sol, target, scan, **kw):
+        calls.append(kw.get("scan_id"))
+        return ServiceResult(summary="ok", metadata={"peaks_inserted": 0})
+
+    monkeypatch.setattr(FittingService, "persist_raman_peaks", record)
+    monkeypatch.setattr(FittingService, "fit_fluorescence", record)
+    monkeypatch.setattr(FittingService, "__init__", lambda self, **kw: None)
+    result = CliRunner().invoke(cli.app, [
+        "--json", "backfill", "--domains", "minerals,fluorescence", flag,
+        "--database", str(run.database_path),
+    ])
+    assert result.exit_code == 1, result.output
+    errors = json.loads(result.stdout.strip().splitlines()[-1])["result"]["errors"]
+    assert len(errors) == 2 and all(
+        "share this output location" in e and run.scan_id in e for e in errors
+    ), errors
+    assert calls == []
