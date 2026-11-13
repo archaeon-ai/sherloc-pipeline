@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mineral component labeling</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <output id="progress" aria-live="polite">0 / 0</output>
+      <nav aria-label="Session">
+        <button id="back" type="button" disabled>Back</button>
+        <button id="finish" type="button" disabled>Finish</button>
+      </nav>
+    </header>
+    <div class="plots">
+      <canvas id="win" role="img" aria-label="Mineral window spectrum with fit A, fit B and the disputed band shaded"></canvas>
+      <div id="fits" aria-label="Components each fit keeps"></div>
+    </div>
+    <p class="question">Is there a mineral band in the shaded region?</p>
+    <div class="choices" aria-label="Label the shaded band">
+      <button type="button" data-label="present" disabled><kbd>1</kbd> Present</button>
+      <button type="button" data-label="absent" disabled><kbd>2</kbd> Absent</button>
+      <button type="button" data-label="spike" disabled><kbd>3</kbd> Spike</button>
+      <button type="button" data-label="unsure" disabled><kbd>4</kbd> Unsure</button>
+    </div>
+    <p id="status" role="status" hidden></p>
+  </main>
+</body>
+</html>

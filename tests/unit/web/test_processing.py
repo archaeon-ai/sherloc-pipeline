@@ -66,6 +66,36 @@ async def test_fit_provenance_resolves_default_fitting(synthetic_fit_client, mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("selection,expected", [("aicc", "aicc"), ("f-test", "ftest")])
+async def test_fit_keeps_configured_parsimony_settings(synthetic_fit_client, monkeypatch, selection, expected):
+    """The route overrides only the selection method: AICc settings such as
+    reject_merged_candidates and aicc_improve_threshold reach the fitter."""
+    from sherloc_pipeline.web.routes import processing
+
+    client, config = synthetic_fit_client
+    config.fitting = {"parsimony": {"model_selection": "aicc", "aicc_improve_threshold": 1.5,
+                                    "aicc_max_peaks": 4, "reject_merged_candidates": True}}
+    fitted = {}
+
+    def fit(x, y, cfg):
+        fitted["parsimony"] = cfg["parsimony"]
+        return SimpleNamespace(peaks=[], r2=0.6), np.zeros(len(x))
+
+    monkeypatch.setattr(processing, "fit_spectrum", fit)
+    monkeypatch.setattr(processing, "load_mineral_rules", lambda **kwargs: [])
+    response = await client.post("/api/process/fit", json={
+        "wavenumber": [11, 22, 33, 44], "intensity": [3, 5, 5, 3],
+        "params": {"fitting": {"model_selection": selection}},
+    })
+    assert response.status_code == 200, response.text
+    assert fitted["parsimony"]["model_selection"] == expected
+    assert fitted["parsimony"]["reject_merged_candidates"] is True
+    assert fitted["parsimony"]["aicc_improve_threshold"] == 1.5
+    assert fitted["parsimony"]["aicc_max_peaks"] == 4
+    assert config.fitting["parsimony"]["model_selection"] == "aicc"  # app config not mutated
+
+
+@pytest.mark.asyncio
 async def test_fluorescence_provenance_omits_skipped_baseline(synthetic_fit_client, monkeypatch):
     from sherloc_pipeline.web.routes import processing
 

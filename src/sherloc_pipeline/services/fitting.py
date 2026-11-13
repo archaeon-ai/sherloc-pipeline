@@ -168,7 +168,15 @@ def _fit_point_minerals(
     owned_artifacts = [peaks_csv, png_path]
 
     try:
-        result, y_model_full = fit_spectrum(x, y, fit_cfg, roi=fit_roi)
+        result, y_model_full = fit_spectrum(
+            x, y, fit_cfg, roi=fit_roi,
+            negative_spike_sigma=fit_cfg.get('minerals_negative_spike_sigma'),
+        )
+        # Data excluded from the fit must reach the scan result.
+        warnings.extend(
+            f"point {point_idx}: {w}" for w in (result.warnings or [])
+            if w.startswith("negative_spike_channels_masked:")
+        )
         mask = (x >= plot_roi[0]) & (x <= plot_roi[1])
 
         accepted_point = any(
@@ -214,14 +222,21 @@ def _fit_point_minerals(
                 })
 
         # AICc summary
-        fit_mask = (x >= fit_roi[0]) & (x <= fit_roi[1])
-        n = int(fit_mask.sum())
+        # n = channels the fit used (masked negative spikes excluded), as in model selection.
+        if result.n_samples is not None:
+            n = int(result.n_samples)
+        else:
+            fit_mask = (x >= fit_roi[0]) & (x <= fit_roi[1])
+            n = int(fit_mask.sum())
         k = int(3 * len(result.peaks)) if result.peaks else 3
         rss = float(result.rss)
         if rss <= 0:
             rss = 1e-12
-        aic = n * math.log(rss / max(n, 1)) + 2 * k
-        aicc = aic if (n - k - 1) <= 0 else aic + (2 * k * (k + 1)) / (n - k - 1)
+        if n == 0:
+            aicc = float('nan')  # every ROI channel masked: no fit, no criterion
+        else:
+            aic = n * math.log(rss / max(n, 1)) + 2 * k
+            aicc = aic if (n - k - 1) <= 0 else aic + (2 * k * (k + 1)) / (n - k - 1)
 
         summary_row = {
             'point': point_idx,

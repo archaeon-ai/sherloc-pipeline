@@ -427,7 +427,12 @@ def _fit_raman_domain(
 
     # Run fitting
     try:
-        fit_result, _ = fit_spectrum(x, y, cfg, roi=roi)
+        fit_result, _ = fit_spectrum(
+            x, y, cfg, roi=roi,
+            negative_spike_sigma=(
+                fitting_cfg.get("minerals_negative_spike_sigma") if domain == "minerals" else None
+            ),
+        )
     except Exception as exc:
         logger.debug("Raman fit failed for domain=%s: %s", domain, exc)
         return DomainResult(status="missing")

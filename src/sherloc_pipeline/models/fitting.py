@@ -47,6 +47,7 @@ class PeakFit:
     pass_r2: bool
     sharpness_ratio: float = 1.0   # data_at_center / amplitude (>>1 → cosmic ray)
     pass_sharpness: bool = True    # False if sharpness_ratio exceeds threshold
+    cr_mask_review: Optional[bool] = None  # a cosmic-ray mask channel lies within center +/- FWHM/2 (review flag, never a filter); None = no mask supplied
 
 
 @dataclass
@@ -56,6 +57,7 @@ class FitResult:
     rss: float
     dof: int
     warnings: List[str]
+    n_samples: Optional[int] = None  # channels the fit used (ROI minus masked channels); None = not recorded
 
 
 class PeakType(str, Enum):
