@@ -57,6 +57,7 @@ def test_valid_alembic_targets_are_exact_reviewed_revisions():
         "b7e4f3a9c1d2",
         "17db1a1940d6",
         "a13c4e5f6071",
+        "4f638701cf7c",
     }
 
 

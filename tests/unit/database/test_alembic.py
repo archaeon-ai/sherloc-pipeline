@@ -362,3 +362,35 @@ class TestRetainedPathCompatibilityEpoch:
             ))
         with pytest.raises(RuntimeError, match="byte-exact predecessor snapshot"):
             command.downgrade(config, "931df60632cb")
+
+
+class TestCrMaskReviewColumn:
+    """4f638701cf7c: nullable fitted_peaks.cr_mask_review, existing rows NULL."""
+
+    def test_adds_nullable_column_keeping_rows_and_downgrade_drops_it(self, alembic_config):
+        import sqlite3
+
+        config, db_path = alembic_config
+        command.upgrade(config, "a13c4e5f6071")
+        con = sqlite3.connect(db_path)
+        con.execute("PRAGMA foreign_keys=OFF")
+        con.execute(
+            "INSERT INTO fitted_peaks (id, spectrum_id, peak_type, amplitude, fit_modality, created_at) "
+            "VALUES ('p1', 's1', 'gaussian', 1.0, 'minerals', '2026-11-12 00:00:00')"
+        )
+        con.commit()
+        con.close()
+
+        command.upgrade(config, "4f638701cf7c")
+        con = sqlite3.connect(db_path)
+        cols = {r[1]: r for r in con.execute("PRAGMA table_info(fitted_peaks)")}
+        assert "cr_mask_review" in cols and cols["cr_mask_review"][3] == 0  # nullable
+        assert con.execute("SELECT id, cr_mask_review FROM fitted_peaks").fetchall() == [("p1", None)]
+        con.close()
+
+        command.downgrade(config, "a13c4e5f6071")
+        con = sqlite3.connect(db_path)
+        cols = {r[1] for r in con.execute("PRAGMA table_info(fitted_peaks)")}
+        assert "cr_mask_review" not in cols
+        assert con.execute("SELECT id FROM fitted_peaks").fetchall() == [("p1",)]
+        con.close()

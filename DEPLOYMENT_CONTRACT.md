@@ -114,7 +114,7 @@ When `SHERLOC_AUTH_MODE=auth0`, these are required:
 | `SHERLOC_AUTH0_AUDIENCE` | non-empty |
 | `SHERLOC_AUTH0_SPA_CLIENT_ID` | non-empty (surfaced via `/api/config`) |
 | `SHERLOC_AUTH0_IDENTITY_CLAIM_URI` | non-empty namespace URI (validated by `config_check` since v4.1.14) |
-| `SHERLOC_ALEMBIC_TARGET` | exact `b7e4f3a9c1d2` retained-path, `17db1a1940d6` cleanup, or `a13c4e5f6071` reference-catalog revision; symbolic `head` is rejected in auth0 mode |
+| `SHERLOC_ALEMBIC_TARGET` | exact `b7e4f3a9c1d2` retained-path, `17db1a1940d6` cleanup, `a13c4e5f6071` reference-catalog, or `4f638701cf7c` cr-mask-review revision; symbolic `head` is rejected in auth0 mode |
 | `PHASE_TIER` | ∈ `{team, public}` |
 | `AWS_ACCESS_KEY_ID` | non-empty |
 | `AWS_SECRET_ACCESS_KEY` | non-empty |
@@ -212,17 +212,21 @@ deliberate decision rather than silent drift. See
 
 | Element | Value |
 |---|---|
-| Current head | `a13c4e5f6071` (`add_reference_release_catalog`) |
+| Current head | `4f638701cf7c` (`add_cr_mask_review_to_fitted_peaks`) |
+| Reference-catalog revision | `a13c4e5f6071` (`add_reference_release_catalog`) |
 | Activation-compatible retained-path revision | `b7e4f3a9c1d2` (`prepare_context_images_retained_path_epoch`) |
 | Final cleanup revision | `17db1a1940d6` (`drop_file_path_from_context_images`) |
 | Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade "$SHERLOC_ALEMBIC_TARGET"` → uvicorn |
 | Contract guarantee | Single head (no fork); migrations idempotent; the head is in `config_check.VALID_ALEMBIC_TARGETS` |
 
-Auth0 deployments must set `SHERLOC_ALEMBIC_TARGET` to one of the three exact
+Auth0 deployments must set `SHERLOC_ALEMBIC_TARGET` to one of the four exact
 reviewed revisions above. The retained-path revision preserves legacy values
 while admitting `r2_rel_key`-only writers. Selecting `17db1a1940d6` is the
-separate destructive cleanup action; selecting the catalog head also
-includes that cleanup ancestor. The env template retains the activation-compatible
+separate destructive cleanup action; selecting the catalog revision or the
+cr-mask-review head also includes that cleanup ancestor. The head adds one
+nullable column (`fitted_peaks.cr_mask_review`); the web service never reads
+it, so serving is unaffected at the earlier targets, while data commands
+(which require the database at the code's head) need it applied first. The env template retains the activation-compatible
 revision. Missing, symbolic (`head`), stale, or
 unknown targets fail startup validation in auth0 mode.
 

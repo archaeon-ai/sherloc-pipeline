@@ -178,6 +178,15 @@ class FittedPeak(IdentifiableModel):
         description="Whether peak is saturated (fluorescence)"
     )
 
+    # Cosmic-ray review flag (Raman minerals)
+    cr_mask_review: Optional[bool] = Field(
+        default=None,
+        description=(
+            "A cosmic-ray mask channel lies within center +/- FWHM/2 "
+            "(review flag, never a filter); None = no masks were checked"
+        ),
+    )
+
     # Derived quantities
     area: Optional[float] = Field(
         default=None,

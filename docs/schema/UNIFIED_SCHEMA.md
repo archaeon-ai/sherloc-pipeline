@@ -457,6 +457,7 @@ Peak fitting results (analysis output). Supports four fitting domains via the `f
 | `fwhm_uncertainty` | FLOAT | YES | FWHM uncertainty (cm⁻¹) | Fitting |
 | `fwhm_nm` | FLOAT | YES | Full width half max (nm). Required for fluorescence, NULL for Raman | Fitting |
 | `is_saturated` | BOOLEAN | YES | CCD saturation flag (three-tier). Only used for fluorescence peaks | Fitting |
+| `cr_mask_review` | BOOLEAN | YES | Cosmic-ray review flag (review only, never a filter): TRUE when one of the run's R1 cosmic-ray mask channels lies within center ± FWHM/2, FALSE when masks were checked and none does, NULL when no masks were checked (non-mineral domains, runs without ML despike, rows written before `4f638701cf7c`) | Fitting |
 | `area` | FLOAT | YES | Integrated area | Fitting |
 | `snr` | FLOAT | YES | Signal to noise ratio | Fitting |
 | `fit_quality` | FLOAT | YES | Goodness of fit (R²) | Fitting |
@@ -954,7 +955,7 @@ The existing pipeline uses:
 
 ### Schema Evolution
 
-Use Alembic for migrations (batch mode for SQLite). Current head: `87cb884d3399` (11 migrations).
+Use Alembic for migrations (batch mode for SQLite). Current head: `4f638701cf7c` (20 migrations).
 
 ```python
 # Example migration
@@ -963,6 +964,8 @@ def upgrade():
 ```
 
 Recent migrations:
+- `4f638701cf7c`: Add nullable `fitted_peaks.cr_mask_review` (single ADD COLUMN; existing rows NULL)
+- `a13c4e5f6071`: Add immutable reference release catalog tables
 - `6cff8ea9cb06`: Add fit_modality, center_nm, fwhm_nm, is_saturated; relax cm1 nullability; remove duplicate indexes; add domain triggers
 
 ---
