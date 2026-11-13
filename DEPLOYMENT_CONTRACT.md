@@ -230,6 +230,17 @@ it, so serving is unaffected at the earlier targets, while data commands
 revision. Missing, symbolic (`head`), stale, or
 unknown targets fail startup validation in auth0 mode.
 
+**Downstream schema checks.** Some consumers read a SHERLOC database
+directly and check its tables and columns against a list they keep (for
+example a column ledger). Every migration changes what such a check sees,
+including additive ones: new tables, columns, indexes and triggers. Before
+you migrate a database that such a consumer reads, prepare the consumer's
+matching update, and approve and merge it in the same change window as the
+migration. Otherwise the consumer's checked reads refuse that database from
+the moment it is migrated until the update lands. This applies to each
+database separately (a team and a public database are two migrations, each
+with its own consumer update).
+
 A consumer who pins a SHERLOC tag pins a migration head. Downgrade across
 major migrations is not part of the contract — the v1.0 line is
 forward-only. The migration graph contains at least one merge migration
