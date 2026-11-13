@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cosmic-ray review flag reaches `fitted_peaks`.** Pipeline mineral fits
+  now pass this run's ML despike R1 masks to `fit_spectrum(cr_mask_cm1=...)`
+  (same channel-to-row mapping as the R1 despike frame), and peak
+  persistence stores the per-peak flag in the new nullable
+  `fitted_peaks.cr_mask_review` column (True / False when masks were
+  checked, NULL when none were). Review flag only: no peak is filtered,
+  added or changed. Masks come from this run, not from the
+  `cosmic_ray_masks` table, which is written after mineral fitting.
+- **Migration `4f638701cf7c` (new head).** Adds `fitted_peaks.cr_mask_review`
+  (single `ADD COLUMN`, existing rows NULL); `SCHEMA_HEADS` and
+  `VALID_ALEMBIC_TARGETS` include it. Data commands refuse a database not yet
+  upgraded to it.
+
 ## [5.7.7] - 2026-11-12
 
 ### Changed

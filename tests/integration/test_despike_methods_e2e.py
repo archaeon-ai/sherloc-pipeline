@@ -286,6 +286,44 @@ class TestPipelinePersistenceWiring:
             assert row.method == despike_meta["method"]
             assert row.model_sha256 == despike_meta["model_sha256"]
 
+    def test_mineral_fit_receives_this_runs_r1_masks(
+        self,
+        tmp_path,
+        fixtures_path,
+        ingested_db,
+        stub_detector_factory,
+        quiet_heavy_stages,
+        monkeypatch,
+    ):
+        from sherloc_pipeline.services.base import ServiceResult
+        from sherloc_pipeline.services.fitting import FittingService
+        from sherloc_pipeline.services.preprocessing import (
+            PreprocessingService,
+        )
+
+        db_path, _ = ingested_db
+        monkeypatch.setenv("SHERLOC_DB_PATH", str(db_path))
+        monkeypatch.setattr(
+            PreprocessingService,
+            "_build_ml_detector",
+            lambda self: stub_detector_factory(),
+        )
+        seen = {}
+
+        def record(self, *args, **kwargs):
+            seen.update(kwargs)
+            return ServiceResult(summary="stubbed", artifacts=[], warnings=[], metadata={})
+
+        monkeypatch.setattr(FittingService, "fit_minerals", record)
+
+        result = self._run_pipeline(tmp_path, fixtures_path)
+
+        masks = result.metadata["preprocessing"]["despike"]["masks"]
+        assert seen["cr_masks"] == {
+            int(point): regions["R1"] for point, regions in masks.items()
+        }
+        assert any(seen["cr_masks"].values())  # the stub detector flags R1
+
     def test_despiked_rows_exist_before_fluorescence_fitting(
         self,
         tmp_path,

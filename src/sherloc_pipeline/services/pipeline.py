@@ -447,6 +447,20 @@ def _build_narrative(
     return " ".join(parts)
 
 
+def _run_r1_cr_masks(metadata: Dict[str, Any]) -> Optional[Dict[int, List[int]]]:
+    """This run's R1 cosmic-ray masks as ``{point: channel indices}``, or None.
+
+    Read from the despike provenance this run's preprocessing recorded, never
+    from the database: mineral fitting runs before mask persistence, so stored
+    rows would belong to an earlier run. None when this run recorded no ml
+    masks or did not detect on R1, so peaks then carry no review flag.
+    """
+    masks = ((metadata.get("preprocessing") or {}).get("despike") or {}).get("masks")
+    if not masks or not all("R1" in regions for regions in masks.values()):
+        return None
+    return {int(point): [int(c) for c in regions["R1"]] for point, regions in masks.items()}
+
+
 class PipelineService:
     """Service that orchestrates the SHERLOC full pipeline workflow."""
 
@@ -690,6 +704,7 @@ class PipelineService:
                     results_dir=resolved_results_dir,
                     region="R1",
                     verbose=False,
+                    cr_masks=_run_r1_cr_masks(metadata),
                 )
             except Exception as exc:
                 stage_warnings.append(str(exc))

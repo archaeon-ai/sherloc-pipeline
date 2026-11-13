@@ -112,6 +112,47 @@ def _in_window_channels(
     return arr[(arr >= lo) & (arr < hi)]
 
 
+def r1_mask_wavenumbers(
+    channels: Optional[Sequence[int]],
+    raman_shift: np.ndarray,
+    r1_channel_mask: np.ndarray,
+    r1_window: Tuple[int, int],
+) -> np.ndarray:
+    """Raman shifts of one point's R1 mask channels on an R1 frame's axis.
+
+    Same channel-to-row mapping as :func:`apply_masks_to_r1_frame`: frame
+    rows are the channels ``r1_channel_mask`` selects, in channel order, and
+    only channels inside the certified R1 window count. Channels outside the
+    window or not exported to the frame (R2/R3, unselected R1) are dropped.
+
+    Args:
+        channels: The point's flagged channel indices on the 2148-channel plane.
+        raman_shift: The frame's ``raman_shift`` column (one value per row).
+        r1_channel_mask: Boolean (2148,) R1 channel-selection mask.
+        r1_window: Certified R1 detection window ``[lo, hi)``.
+
+    Returns:
+        The flagged channels' Raman shifts, ascending by channel.
+
+    Raises:
+        ValueError: The frame's row count differs from the selected channel count.
+    """
+    selected_channels = np.where(np.asarray(r1_channel_mask, dtype=bool))[0]
+    shift = np.asarray(raman_shift, dtype=float)
+    if len(shift) != len(selected_channels):
+        raise ValueError(
+            f"R1 frame has {len(shift)} rows but the channel mask selects "
+            f"{len(selected_channels)} channels"
+        )
+    row_of_channel = {int(ch): row for row, ch in enumerate(selected_channels)}
+    rows = [
+        row_of_channel[int(ch)]
+        for ch in np.sort(_in_window_channels(channels, r1_window))
+        if int(ch) in row_of_channel
+    ]
+    return shift[np.asarray(rows, dtype=np.int64)] if rows else np.empty(0, dtype=float)
+
+
 def apply_masks_to_r1_frame(
     r1_df: pd.DataFrame,
     masks: MaskSet,

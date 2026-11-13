@@ -991,6 +991,9 @@ class FittedPeakORM(Base):
     center_nm: Mapped[Optional[float]] = mapped_column(Float, nullable=True, index=True)
     fwhm_nm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     is_saturated: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # Review flag, never a filter: a cosmic-ray mask channel lies within
+    # center +/- FWHM/2. NULL = the fit had no masks to check against.
+    cr_mask_review: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1024,6 +1027,7 @@ class FittedPeakORM(Base):
             fwhm_uncertainty=self.fwhm_uncertainty,
             fwhm_nm=self.fwhm_nm,
             is_saturated=self.is_saturated,
+            cr_mask_review=self.cr_mask_review,
             area=self.area,
             snr=self.snr,
             fit_quality=self.fit_quality,
@@ -1052,6 +1056,7 @@ class FittedPeakORM(Base):
             fwhm_uncertainty=peak.fwhm_uncertainty,
             fwhm_nm=peak.fwhm_nm,
             is_saturated=peak.is_saturated,
+            cr_mask_review=peak.cr_mask_review,
             area=peak.area,
             snr=peak.snr,
             fit_quality=peak.fit_quality,

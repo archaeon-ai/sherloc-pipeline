@@ -581,6 +581,42 @@ class TestMineralsDomain:
             assert len(p0) == 1
             assert p0[0].fit_quality == 0.95
 
+    def test_minerals_cr_mask_review_persists_tri_state(self, populated_db, results_all):
+        engine, spectrum_ids, _ = populated_db
+        d = results_all / "minerals_fit"
+        pd.DataFrame([
+            {"center_cm1": 1085.5, "fwhm_cm1": 30.0, "amplitude_a": 1500.0,
+             "area": 100.0, "snr": 15.0, "cr_mask_review": True},
+            {"center_cm1": 1300.0, "fwhm_cm1": 30.0, "amplitude_a": 900.0,
+             "area": 60.0, "snr": 12.0, "cr_mask_review": None},
+        ]).to_csv(d / "0851_Lake_Haiyaha_detail_1_R1_point0_fit_peaks.csv", index=False)
+        pd.DataFrame([
+            {"center_cm1": 700.0, "fwhm_cm1": 35.0, "amplitude_a": 600.0,
+             "area": 40.0, "snr": 5.0, "cr_mask_review": False},
+        ]).to_csv(d / "0851_Lake_Haiyaha_detail_1_R1_point1_fit_peaks.csv", index=False)
+        service = _make_service(engine)
+        result = _call_persist_raman(service, results_all, "minerals")
+        assert result.metadata["peaks_inserted"] == 3
+
+        with get_session(engine) as session:
+            got = sorted(
+                (p.spectrum_id == spectrum_ids[0], p.center_cm1, p.cr_mask_review)
+                for p in session.query(FittedPeakORM).all()
+            )
+            assert got == [
+                (False, 700.0, False),
+                (True, 1085.5, True),
+                (True, 1300.0, None),
+            ]
+            assert session.query(FittedPeakORM).first().to_pydantic() is not None
+
+    def test_minerals_without_review_column_persist_null(self, populated_db, results_all):
+        engine, _, _ = populated_db
+        service = _make_service(engine)
+        _call_persist_raman(service, results_all, "minerals")
+        with get_session(engine) as session:
+            assert {p.cr_mask_review for p in session.query(FittedPeakORM).all()} == {None}
+
 
 # ---------------------------------------------------------------------------
 # AC 2 — Organics domain (discovers CSVs, classifies bands)

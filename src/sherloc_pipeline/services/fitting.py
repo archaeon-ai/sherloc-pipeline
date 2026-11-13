@@ -49,7 +49,7 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
-from typing import Optional, Dict, List, Any, Set, Tuple
+from typing import Optional, Dict, List, Any, Mapping, Sequence, Set, Tuple
 from uuid import uuid4
 
 import numpy as np
@@ -87,6 +87,15 @@ def _to_bool_safe(value) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return str(value).strip().lower() in ("true", "1", "t", "yes")
+
+
+def _optional_bool(value) -> Optional[bool]:
+    """A CSV tri-state flag: blank/NaN/absent -> None, else as _to_bool_safe."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return _to_bool_safe(value)
 
 
 def _is_blank_peak_table(csv_path: Path) -> bool:
@@ -171,6 +180,7 @@ def _fit_point_minerals(
         result, y_model_full = fit_spectrum(
             x, y, fit_cfg, roi=fit_roi,
             negative_spike_sigma=fit_cfg.get('minerals_negative_spike_sigma'),
+            cr_mask_cm1=point_data.get('cr_mask_cm1'),
         )
         # Data excluded from the fit must reach the scan result.
         warnings.extend(
@@ -468,6 +478,42 @@ def _read_fit_run_marker(marker_path: Path) -> Optional[Dict[str, Any]]:
     if not isinstance(payload.get("points_fitted"), int):
         return invalid
     return payload
+
+
+def _attach_cr_mask_wavenumbers(
+    point_inputs: List[Dict[str, Any]],
+    cr_masks: Optional[Mapping[int, Sequence[int]]],
+    x: np.ndarray,
+    cfg,
+) -> Optional[str]:
+    """Give each point input its R1 cosmic-ray mask wavenumbers (``cr_mask_cm1``).
+
+    No masks: nothing is attached and peaks carry no review flag. Masks whose
+    channels cannot be placed on this input's rows: nothing is attached and
+    the returned warning says why; the fit itself is unaffected.
+    """
+    if cr_masks is None:
+        return None
+    from sherloc_pipeline.core.mask_application import (
+        derive_region_channel_masks,
+        r1_mask_wavenumbers,
+    )
+    from sherloc_pipeline.ml_despike.manifest import DEFAULT_MANIFEST
+
+    _, channel_masks = derive_region_channel_masks(cfg, DEFAULT_MANIFEST.n_channels)
+    window = DEFAULT_MANIFEST.region_windows["R1"]
+    try:
+        per_point = {
+            inp['point_idx']: r1_mask_wavenumbers(
+                cr_masks.get(inp['point_idx']), x, channel_masks["R1"], window,
+            ).tolist()
+            for inp in point_inputs
+        }
+    except ValueError as exc:
+        return f"cr_mask_review not set: {exc}"
+    for inp in point_inputs:
+        inp['cr_mask_cm1'] = per_point[inp['point_idx']]
+    return None
 
 
 def _despike_params_from_config(cfg) -> DespikeParams:
@@ -949,6 +995,7 @@ class FittingService:
         roi_override: Optional[str] = None,
         max_peaks: Optional[int] = None,
         verbose: bool = False,
+        cr_masks: Optional[Mapping[int, Sequence[int]]] = None,
     ) -> ServiceResult:
         """Fit mineral-related peaks across all points in a scan.
 
@@ -970,6 +1017,13 @@ class FittingService:
             roi_override: Override fit ROI as 'lo,hi' cm^-1
             max_peaks: Maximum peaks to consider
             verbose: Enable verbose logging
+            cr_masks: This run's cosmic-ray masks, ``{point: R1 channel
+                indices on the 2148-channel plane}``. When given, every peak
+                carries ``cr_mask_review`` (a mask channel lies within
+                center +/- FWHM/2; a review flag, never a filter); a point
+                absent from the mapping has no flagged channels. None (or an
+                input whose rows do not match the R1 channel selection)
+                leaves the flag unset.
         
         Returns:
             ServiceResult with summary, artifacts, warnings, and metadata
@@ -1137,6 +1191,8 @@ class FittingService:
                 int((cfg.fitting or {}).get("parallel_workers", 0)),
                 len(point_inputs),
             )
+            mask_warning = _attach_cr_mask_wavenumbers(point_inputs, cr_masks, x, cfg)
+
             _worker = partial(
                 _fit_point_minerals,
                 x=x, fit_cfg=fit_cfg, fit_roi=fit_roi, plot_roi=plot_roi,
@@ -1156,6 +1212,8 @@ class FittingService:
             accepted_rows = []
             count = 0
 
+            if mask_warning:
+                warnings.append(mask_warning)
             for r in results:
                 artifacts.extend(r['artifacts'])
                 warnings.extend(r['warnings'])
@@ -2895,6 +2953,7 @@ class FittingService:
                             fit_quality=r2_map.get(point_idx),
                             mineral_assignment=assignment,
                             # assignment_confidence left as NULL (rule-based)
+                            cr_mask_review=_optional_bool(row.get('cr_mask_review')),
                         )
                         all_peaks.append(peak)
 
