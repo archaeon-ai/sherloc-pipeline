@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **Upgrade notes: migrations and downstream schema checks.** A tool that
+  reads a SHERLOC database directly and checks its tables and columns
+  against a list it keeps refuses the database after any migration that
+  changes what it checks, additive ones included, until its list is
+  updated. 5.7.8's `4f638701cf7c` (with `a13c4e5f6071` when coming from
+  `17db1a1940d6`) is such a change: four new, empty `reference_*` tables
+  (with indexes and triggers, for a consumer that inventories those) and
+  the nullable `fitted_peaks.cr_mask_review` column. Approve and merge the
+  consumer's update in the same change window as the migration, for each
+  database. Added to `DEPLOYMENT_CONTRACT.md` §7.
+
 ## [5.7.8] - 2026-11-12
 
 ### Upgrade notes
@@ -18,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PHASE_DATABASE_PATH=/path/to/your/phase.db alembic upgrade head`. The new
   column is added in place (no table rebuild); existing peaks keep a NULL
   flag until their scans are refit. New databases from `sherloc init` are
-  created at the new head.
+  created at the new head. If another tool reads this database directly
+  and checks its columns, update that tool in the same change window (see
+  `DEPLOYMENT_CONTRACT.md` §7, "Downstream schema checks").
 - **Deploy the image before the database (container operators).** A container
   image older than this release cannot start on a database upgraded to
   `4f638701cf7c`: its boot migration step fails with `Can't locate revision
