@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import hashlib
 import http.client
 import json
+import socket
 import math
 from pathlib import Path
 import re
@@ -305,6 +306,28 @@ def test_dns_rebinding_host_and_foreign_origin_are_refused(manifest_file, tmp_pa
             assert request(app, "/api/item/0", extra=good)[0] == 200
         assert request(app, "/api/label", {"id": opaque, "label": "absent"},
                        {"Origin": f"http://127.0.0.1:{port}"})[0] == 200
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "0", "0.0.0", "0x0"])
+def test_wildcard_refused_even_when_nonloopback_allowed(manifest_file, tmp_path, host):
+    path, _ = manifest_file
+    with pytest.raises(ValueError, match="wildcard"):
+        server.create_server(str(path), str(tmp_path / "out"), "tester", host=host, port=0,
+                             allow_nonloopback=True)
+    assert not (tmp_path / "out").exists()
+
+
+def test_duplicate_origin_refused(manifest_file, tmp_path):
+    path, _ = manifest_file
+    with running(path, tmp_path / "out") as app:
+        port = app.server_address[1]
+        with socket.create_connection(app.server_address, timeout=2) as connection:
+            connection.sendall(f"GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                               f"Origin: http://127.0.0.1:{port}\r\nOrigin: http://attacker.example\r\n\r\n".encode())
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            assert response.status == 403
+            response.read()
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "192.0.2.1", "example.org"])
