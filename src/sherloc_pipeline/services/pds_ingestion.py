@@ -20,6 +20,7 @@ Example:
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,6 +136,10 @@ class PDSIngestionStats:
         )
 
 
+# A curated key exactly as TargetNameResolver.resolve() builds it (#176).
+_CANONICAL_CURATED_KEY = re.compile(r"(0|[1-9][0-9]*)_(0|[1-9][0-9]*)")
+
+
 class TargetNameResolver:
     """Resolves geological target names for PDS observations.
 
@@ -196,19 +201,15 @@ class TargetNameResolver:
         """Split a curated key ``"{sol}_{sclk}"`` into ints, or None.
 
         Only the exact form :meth:`resolve` looks up is accepted, so a key
-        that parses here is one that can match. Zero-padded, signed or
-        space-padded parts (``"0921_0748731411"``) return None.
+        that parses here is one that can match: two unsigned ASCII
+        integers with no leading zeros.
+        Zero-padded, signed (``+`` or ``-``) or space-padded parts
+        (``"0921_0748731411"``, ``"-921_748731411"``) return None.
         """
-        parts = str(key).split("_")
-        if len(parts) != 2:
+        match = _CANONICAL_CURATED_KEY.fullmatch(str(key))
+        if match is None:
             return None
-        try:
-            sol, sclk = int(parts[0]), int(parts[1])
-        except ValueError:
-            return None
-        if f"{sol}_{sclk}" != key:
-            return None
-        return sol, sclk
+        return int(match.group(1)), int(match.group(2))
 
     def reset_label_sclks(self, sol: int) -> None:
         """Forget label ``sclk_start`` values recorded for ``sol``.

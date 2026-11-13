@@ -982,6 +982,7 @@ class TestUnmatchedCuratedKeys:
     @pytest.mark.parametrize("key", [
         "0921_748731411", "921_0748731411", "+921_748731411",
         " 921_748731411", "921_748731411 ",
+        "-921_748731411", "921_-748731411", "921_+748731411",
     ])
     def test_noncanonical_numeric_key_warned_at_load(self, tmp_path, caplog, key):
         """Review r1 F2: int()-parsable but non-canonical keys never resolve,
