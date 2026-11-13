@@ -238,3 +238,47 @@ def test_persist_peaks_single_scan_without_target(run, monkeypatch):
     ])
     assert result.exit_code == 0, result.output
     assert calls == [(f"{SOL:04d}", "", SCAN, run.scan_id)]
+
+
+# --- shared output location ---------------------------------------------------
+
+def test_bulk_loops_refuse_scans_that_share_an_output_location(run, monkeypatch):
+    """Two NULL-target rows with one (sol, scan) would share one results dir."""
+    with get_session(run.engine) as session:
+        twin_id = _add_scan(session, None)
+        other_id = _add_scan(session, None, scan_name="synthetic_other")
+    calls = []
+
+    def record(self, sol, target, scan, **kw):
+        calls.append(kw.get("scan_id"))
+        return ServiceResult(summary="ok", metadata={"peaks_inserted": 0})
+
+    monkeypatch.setattr(FittingService, "persist_raman_peaks", record)
+    monkeypatch.setattr(FittingService, "fit_fluorescence", record)
+    monkeypatch.setattr(FittingService, "__init__", lambda self, **kw: None)
+    for args in (
+        ("persist-peaks", "--domain", "minerals", "--all"),
+        ("fit-fluor", "--all", "--no-plots"),
+        ("backfill", "--domains", "minerals,fluorescence"),
+    ):
+        result = CliRunner().invoke(cli.app, [
+            "--json", *args, "--database", str(run.database_path),
+        ])
+        assert result.exit_code == 1, result.output
+        errors = json.loads(result.stdout.strip().splitlines()[-1])["result"]["errors"]
+        refused = [e for e in errors if "share this output location" in e]
+        assert len(refused) == (4 if args[0] == "backfill" else 2), errors
+        assert any(run.scan_id in e for e in refused)
+        assert any(twin_id in e for e in refused)
+    assert calls == [other_id] * 4
+
+
+def test_fit_fluor_all_writes_nothing_for_scans_that_share_an_output_location(run, tmp_path):
+    with get_session(run.engine) as session:
+        twin_id = _add_scan(session, None)
+    result = run.invoke("fit-fluor", "--all")
+    assert result.exit_code == 1, result.output
+    assert _fluor_peak_count(run.engine, run.scan_id) == 0
+    assert _fluor_peak_count(run.engine, twin_id) == 0
+    fluor_dir = tmp_path / "results" / f"{SOL:04d}_{SCAN}" / "fluorescence_fit"
+    assert not fluor_dir.exists() or not any(fluor_dir.iterdir())

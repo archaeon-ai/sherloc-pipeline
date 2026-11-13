@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<results>/<sol>_<scan>/` (no target folder). Fits of such scans still
   need their inputs: `persist-peaks` reports a missing fit directory, since
   `full-pipeline` does not run scans without a target (#170).
+  In the `--all` loops and `backfill`, scans that would share one output
+  location (same sol, target and scan name, e.g. two scans without a
+  target) are refused and listed as errors, so neither overwrites the
+  other's results.
 
 ### Documentation
 - **Mineral fit input** stated in `docs/METHODS.md`: the original

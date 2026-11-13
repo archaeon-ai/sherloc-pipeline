@@ -2182,6 +2182,30 @@ def _iter_all_scans(
     return rows if with_ids else [row[:3] for row in rows]
 
 
+def _refuse_shared_outputs(scans):
+    """Split bulk rows into (runnable, errors) by output identity (#175).
+
+    Result artifacts live under ``<target>/<sol>_<scan>``, so two rows with the
+    same sol, normalized target and scan name (e.g. two scans stored without a
+    target) would overwrite each other's outputs, and persisting would read one
+    artifact set for both. Every row in such a group is refused, not processed.
+    """
+    from collections import Counter
+
+    counts = Counter((sol, tgt, scn) for sol, tgt, scn, _ in scans)
+    runnable, errors = [], []
+    for sol_num, tgt, scn, scan_row_id in scans:
+        n = counts[(sol_num, tgt, scn)]
+        if n > 1:
+            errors.append(
+                f"Sol {sol_num} {tgt} {scn}: refused, {n} scans share this "
+                f"output location (scan id {scan_row_id})"
+            )
+        else:
+            runnable.append((sol_num, tgt, scn, scan_row_id))
+    return runnable, errors
+
+
 def _resolve_single_scan(
     database_path: Path, sol: str, target: Optional[str], scan: str,
 ) -> Tuple[str, Optional[str]]:
@@ -2272,7 +2296,7 @@ def fit_fluor_cmd(
             console.print(f"[bold]Fluorescence fitting[/bold] — {len(scans)} scan(s)")
 
             total_peaks = 0
-            errors: List[str] = []
+            runnable, errors = _refuse_shared_outputs(scans)
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -2280,8 +2304,8 @@ def fit_fluor_cmd(
                 TaskProgressColumn(),
                 console=console,
             ) as progress:
-                task = progress.add_task("Fitting fluorescence...", total=len(scans))
-                for sol_num, tgt, scn, scan_row_id in scans:
+                task = progress.add_task("Fitting fluorescence...", total=len(runnable))
+                for sol_num, tgt, scn, scan_row_id in runnable:
                     progress.update(task, description=f"Sol {sol_num} {tgt} {scn}")
                     try:
                         result = service.fit_fluorescence(
@@ -2450,7 +2474,7 @@ def persist_peaks_cmd(
             console.print(f"[bold]Persisting {domain} peaks[/bold] — {len(scans)} scan(s)")
 
             total_peaks = 0
-            errors: List[str] = []
+            runnable, errors = _refuse_shared_outputs(scans)
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -2458,8 +2482,8 @@ def persist_peaks_cmd(
                 TaskProgressColumn(),
                 console=console,
             ) as progress:
-                task = progress.add_task(f"Persisting {domain}...", total=len(scans))
-                for sol_num, tgt, scn, scan_row_id in scans:
+                task = progress.add_task(f"Persisting {domain}...", total=len(runnable))
+                for sol_num, tgt, scn, scan_row_id in runnable:
                     progress.update(task, description=f"Sol {sol_num} {tgt} {scn}")
                     try:
                         result = service.persist_raman_peaks(
@@ -2636,6 +2660,8 @@ def backfill_cmd(
 
         service = FittingService(console=console, database_path=db_path)
 
+        runnable, refused = _refuse_shared_outputs(scans)
+
         # Track totals per domain
         domain_stats: dict = {}
         all_errors: List[str] = []
@@ -2645,7 +2671,7 @@ def backfill_cmd(
             label = "Fitting fluorescence" if is_fluor else f"Persisting {domain_name}"
 
             domain_peaks = 0
-            domain_errors: List[str] = []
+            domain_errors: List[str] = list(refused)
 
             with Progress(
                 SpinnerColumn(),
@@ -2654,8 +2680,8 @@ def backfill_cmd(
                 TaskProgressColumn(),
                 console=console,
             ) as progress:
-                task = progress.add_task(f"{label}...", total=len(scans))
-                for sol_num, tgt, scn, scan_row_id in scans:
+                task = progress.add_task(f"{label}...", total=len(runnable))
+                for sol_num, tgt, scn, scan_row_id in runnable:
                     progress.update(task, description=f"{label}: Sol {sol_num} {tgt} {scn}")
                     try:
                         if is_fluor:
