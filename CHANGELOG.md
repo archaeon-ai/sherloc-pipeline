@@ -22,10 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deploy the image before the database (container operators).** A container
   image older than this release cannot start on a database upgraded to
   `4f638701cf7c`: its boot migration step fails with `Can't locate revision
-  identified by '4f638701cf7c'`. Roll out this image first. It serves a
-  database at your current pinned `SHERLOC_ALEMBIC_TARGET` unchanged, because
-  the boot step is then a no-op. Only after that, upgrade or replace the
-  database it serves.
+  identified by '4f638701cf7c'`. Roll out this image first, with
+  `SHERLOC_ALEMBIC_TARGET` pinned to the database's current exact revision:
+  the boot step is then a no-op and the database is served unchanged. If
+  `SHERLOC_ALEMBIC_TARGET` is unset, the entrypoint defaults it to `head`, so
+  the first boot of this image upgrades the database to `4f638701cf7c` and any
+  remaining or rolled-back older container can no longer start on it. Back up
+  the database first, and set the pin before rollout if you need image-first
+  order. Only after every container runs this image, upgrade or replace the
+  database it serves (and move the pin to `4f638701cf7c` if you upgrade in
+  place).
 
 ### Added
 - **Cosmic-ray review flag reaches `fitted_peaks`.** Pipeline mineral fits
