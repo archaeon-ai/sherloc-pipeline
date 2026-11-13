@@ -326,7 +326,10 @@ def test_ingested_bytes_bind_release_evidence(engine, tmp_path, monkeypatch, cap
     service._public_release_index = index
     service._spectral_parser = PDSSpectralParser()
     service._label_parser = SimpleNamespace(parse_label=lambda _: metadata)
-    service._target_resolver = SimpleNamespace(resolve=lambda **_: "Synthetic")
+    service._target_resolver = SimpleNamespace(
+        resolve=lambda **_: "Synthetic",
+        note_label_sclk=lambda *_: None,
+    )
     monkeypatch.setattr(service, "_enrich_sol_metadata", lambda *_: None)
     # Hash and parse the same byte snapshot, even if the file changes during parsing.
     split = service._spectral_parser._split_sections

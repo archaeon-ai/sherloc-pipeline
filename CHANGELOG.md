@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **PDS ingest reports curated target keys that never match, and names
+  targetless science scans (#176).** Curated mapping keys
+  (`{sol}_{sclk}`) use the label `sclk_start`, which can differ by 1-2 s
+  from the SCLK in the product filename; a key written from the filename
+  silently never matched. After each sol, a key for that sol that matched
+  no observation is now listed in the ingestion warnings, with the nearest
+  label `sclk_start` within ±5 s. Matching stays exact. A detail, survey,
+  line or HDR scan with no resolved target is named in the warnings too:
+  it is stored as `target_type="engineering"`, so `science_only` skips it.
+  Already-ingested scans that a re-run skips are named as well. Keys
+  with zero-padded, signed or space-padded parts never match and are
+  warned about when the mapping loads.
+  Classification is unchanged. The PDS ingestion guide documents the key
+  format and shows both SCLKs for the Sol 921 example.
 - **Scans stored without a target are reachable by `fit-fluor`,
   `persist-peaks` and `backfill` (#175).** PDS ingest stores a NULL target
   when no target name resolves; the `--all` loops looked every scan up by

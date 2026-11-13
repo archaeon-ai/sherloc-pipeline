@@ -131,14 +131,19 @@ pds:
 
 Sol 921 (2023-09-23, L_s = 122.871) at the "Amherst Point" target contains 6 SCLK-grouped observations:
 
-| SCLK | Type | Points | Products | Notes |
-|------|------|--------|----------|-------|
-| 748731011 | Calibration | 1 | RCS, RMO, RLI, RCC, RLS | AlGaN calibration |
-| 748731413 | Detail | 100 | RRS, RMO, RLI, RLS, RM1-6 | |
-| 748732975 | Detail | 100 | RRS, RMO, RLI, RLS, RM1-6 | |
-| 748735042 | Survey | 1296 | RRS, RMO, RLI, RLS, RM1-6 | De-duped from 2592 raw positions |
-| 748735903 | (zpz) | — | RLI, RLS only | zpz products filtered; no RRS/RCS |
-| 748736149 | Calibration | 1 | RCS, RLI, RCC, RLS | No RMO (index fallback) |
+| Filename SCLK | Label `sclk_start` | Type | Points | Products | Notes |
+|---------------|--------------------|------|--------|----------|-------|
+| 748731011 | 748731010 | Calibration | 1 | RCS, RMO, RLI, RCC, RLS | AlGaN calibration |
+| 748731413 | 748731411 | Detail | 100 | RRS, RMO, RLI, RLS, RM1-6 | |
+| 748732975 | 748732974 | Detail | 100 | RRS, RMO, RLI, RLS, RM1-6 | |
+| 748735042 | 748735041 | Survey | 1296 | RRS, RMO, RLI, RLS, RM1-6 | De-duped from 2592 raw positions |
+| 748735903 | — | (zpz) | — | RLI, RLS only | zpz products filtered; no RRS/RCS |
+| 748736149 | 748736148 | Calibration | 1 | RCS, RLI, RCC, RLS | No RMO (index fallback) |
+
+The filename SCLK and the label `sclk_start` (integer part of the XML label's
+start clock) can differ by 1-2 s. Stored scans, SCLK cross-reference and
+curated mapping keys all use the label value, so a curated key for detail_1
+is `921_748731411`, not `921_748731413`.
 
 After ingestion: 5 scans, 1498 scan points, 4494 spectra (3 regions per point), 5 context images.
 
@@ -166,8 +171,18 @@ PDS data lives in `phase_pds.db`, never in `phase.db`. The Loupe database is ope
 Target names are resolved via a three-tier strategy:
 
 1. **SCLK cross-reference** — Match PDS SCLK to Loupe scans within ±3s (Pass 1) or ±5s (Pass 2). Nearest match wins; site_drive breaks ties.
-2. **Curated mapping** — Optional JSON file at `$SHERLOC_HOME/configs/pds_target_mapping.json` with `{sol}_{sclk}` keys (CWD-relative when `SHERLOC_HOME` is unset). The repo does not ship a default copy; missing or malformed files are treated as an empty mapping. Operators can add a personal copy if they have curated entries.
+2. **Curated mapping** — Optional JSON file at `$SHERLOC_HOME/configs/pds_target_mapping.json` with `{sol}_{sclk}` keys (CWD-relative when `SHERLOC_HOME` is unset). `sclk` is the integer label `sclk_start`, not the SCLK in the product filename (see the Sol 921 table). Keys match exactly; there is no tolerance. After each sol, a key for that sol that matched no observation's label `sclk_start` is reported as a warning, naming the nearest label `sclk_start` within ±5 s when there is one. A key that is not `{integer}_{integer}` written as plain integers (no zero padding, signs or spaces) can never match and is warned about when the file loads. The repo does not ship a default copy; missing or malformed files are treated as an empty mapping. Operators can add a personal copy if they have curated entries.
 3. **NULL fallback** — If no match, target is set to NULL with a log message for manual curation.
+
+A scan with no target is stored as `target_type="engineering"`
+(`classify_target_type`), so `science_only` iterators and refits skip it. For
+a detail, survey, line or HDR scan this hides science-geometry data, so the
+ingestion result names each one in its warnings ("... scan has no resolved
+target ...; stored as engineering, so science_only skips it."), including
+scans already in the database that a re-run skips. Resolve its
+target (Loupe database or a curated key) and re-ingest with `--force`. How
+targetless PDS scans should be classified is an open question (#176);
+classification is unchanged.
 
 ### zpz filtering
 
@@ -192,7 +207,11 @@ The observation contains only zpz-filtered products with no usable spectral data
 
 ### Target names are NULL
 
-The Loupe database is either missing or doesn't contain matching SCLK data for the PDS observations. Ensure `--loupe-database` points to a valid `phase.db`, or create `$SHERLOC_HOME/configs/pds_target_mapping.json` with curated `{sol}_{sclk}` entries.
+The Loupe database is either missing or doesn't contain matching SCLK data for the PDS observations. Ensure `--loupe-database` points to a valid `phase.db`, or create `$SHERLOC_HOME/configs/pds_target_mapping.json` with curated `{sol}_{sclk}` entries keyed by the label `sclk_start`.
+
+### "Curated target mapping key ... matched no observation"
+
+The key's SCLK is not the label `sclk_start` of any observation on that sol, usually because it was copied from a product filename. Replace it with the value the warning names as "Nearest label sclk_start", then re-ingest the sol with `--force`.
 
 ### "UNIQUE constraint failed: scans.scan_id"
 
