@@ -162,6 +162,9 @@ class TargetNameResolver:
     ):
         self.loupe_engine = loupe_engine
         self._curated_map: Dict[str, str] = {}
+        # Label sclk_start values seen per sol, so curated keys that can
+        # never match can be reported (#176).
+        self._label_sclks: Dict[int, set] = {}
 
         if curated_path is not None:
             curated = Path(curated_path)
@@ -178,6 +181,63 @@ class TargetNameResolver:
                         "Failed to load curated target mapping %s: %s",
                         curated, e,
                     )
+                for key in self._curated_map:
+                    if self._parse_curated_key(key) is None:
+                        logger.warning(
+                            "Curated target mapping key %r is not "
+                            "'{sol}_{sclk}' with integer sol and label "
+                            "sclk_start; it can never match.",
+                            key,
+                        )
+
+    @staticmethod
+    def _parse_curated_key(key: str) -> Optional[Tuple[int, int]]:
+        """Split a curated key ``"{sol}_{sclk}"`` into ints, or None."""
+        parts = str(key).split("_")
+        if len(parts) != 2:
+            return None
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError:
+            return None
+
+    def note_label_sclk(self, sol: int, label_sclk: int) -> None:
+        """Record the label ``sclk_start`` of an observation on ``sol``.
+
+        Called for every observation whose label was parsed, including
+        observations later skipped as already ingested, so a key for a
+        skipped observation is not reported as unmatched.
+        """
+        self._label_sclks.setdefault(sol, set()).add(label_sclk)
+
+    def unmatched_curated_keys(self, sol: int) -> List[str]:
+        """Messages for curated keys on ``sol`` that match no label sclk_start.
+
+        Curated keys use the integer label ``sclk_start``, not the SCLK in
+        the product filename, which can differ by 1-2 s (#176). Each message
+        names the key and, when one lies within ``PASS2_TOLERANCE`` seconds,
+        the nearest label ``sclk_start`` on that sol. Nothing is matched by
+        tolerance; the message only helps the operator fix the key.
+        """
+        seen = self._label_sclks.get(sol, set())
+        messages: List[str] = []
+        for key in sorted(self._curated_map):
+            parsed = self._parse_curated_key(key)
+            if parsed is None or parsed[0] != sol or parsed[1] in seen:
+                continue
+            msg = (
+                f"Curated target mapping key {key} matched no observation on "
+                f"sol {sol}; keys use the label sclk_start, not the "
+                f"filename SCLK."
+            )
+            near = [
+                s for s in seen if abs(s - parsed[1]) <= self.PASS2_TOLERANCE
+            ]
+            if near:
+                nearest = min(near, key=lambda s: (abs(s - parsed[1]), s))
+                msg += f" Nearest label sclk_start: {sol}_{nearest}."
+            messages.append(msg)
+        return messages
 
     def resolve(
         self,
@@ -456,6 +516,11 @@ class PDSIngestionService:
                     "Error ingesting observation %s", group.observation_key
                 )
 
+        # Curated keys for this sol that can never match (#176)
+        stats.warnings.extend(
+            self._target_resolver.unmatched_curated_keys(sol_number)
+        )
+
         # Build summary
         summary = (
             f"Ingested sol {sol_number}: "
@@ -575,6 +640,9 @@ class PDSIngestionService:
             return stats
 
         metadata = self._label_parser.parse_label(xml_path)
+        self._target_resolver.note_label_sclk(
+            group.sol, metadata.sclk_start_int
+        )
 
         # Step 1: Idempotency — PDS LID as scan_id
         scan_id = metadata.logical_identifier
@@ -631,6 +699,12 @@ class PDSIngestionService:
                 site_drive=metadata.site_drive_str,
             )
 
+            msg = self._targetless_science_warning(
+                group, resolved_target, metadata.sclk_start_int
+            )
+            if msg is not None:
+                stats.warnings.append(msg)
+
             # Step 3: Create Scan from metadata (synthesis rules, spec s9)
             scan = self._build_scan(group, metadata, target=resolved_target)
             scan_orm = ScanORM.from_pydantic(scan)
@@ -666,6 +740,31 @@ class PDSIngestionService:
             stats.observations_ingested += 1
 
         return stats
+
+    @staticmethod
+    def _targetless_science_warning(
+        group: PDSObservationGroup,
+        target: Optional[str],
+        label_sclk: int,
+    ) -> Optional[str]:
+        """Warning for a science-geometry PDS scan with no resolved target.
+
+        Such a scan is stored as ``target_type='engineering'`` by
+        :func:`classify_target_type`, so ``science_only`` iterators skip
+        it. The warning names it so it can be curated (#176); how such
+        scans should be classified is not decided here. Calibration scans
+        and scans without a scan type are not named.
+        """
+        if target is not None and str(target).strip():
+            return None
+        if group.scan_type in (None, ScanType.CALIBRATION.value):
+            return None
+        return (
+            f"{group.observation_key}: {group.scan_type} scan has no "
+            f"resolved target (sol {group.sol}, label sclk_start "
+            f"{label_sclk}); stored as engineering, so science_only "
+            f"skips it."
+        )
 
     def _get_spectral_product_key(
         self, group: PDSObservationGroup

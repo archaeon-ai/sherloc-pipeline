@@ -903,3 +903,180 @@ class TestInitPdsDatabase:
                     data_source="pds4",
                     created_at=datetime.now(timezone.utc),
                 ))
+
+
+# ===========================================================================
+# #176: curated keys that never match; targetless science-geometry scans
+# ===========================================================================
+
+from types import SimpleNamespace
+
+from sherloc_pipeline.core.pds_parsers import PDSObservationGroup
+from sherloc_pipeline.models.pds import PDSProductId
+
+# Sol 921 detail_1: filename SCLK 748731413, label sclk_start 748731411.
+_SOL921_DETAIL_CSV = (
+    "ss__0921_0748731413_045rrs__0450000srlc11374w104cgnj01.csv"
+)
+_SOL921_DETAIL_LID = (
+    "urn:nasa:pds:mars2020_sherloc:data_processed:"
+    "ss__0921_0748731413_045rrs__0450000srlc11374w104cgnj01"
+)
+
+
+def _curated_resolver(tmp_path, mapping):
+    path = tmp_path / "mapping.json"
+    path.write_text(json.dumps(mapping))
+    return TargetNameResolver(loupe_engine=None, curated_path=path)
+
+
+def _group(scan_type="detail"):
+    pid = PDSProductId.from_filename(_SOL921_DETAIL_CSV)
+    return PDSObservationGroup(
+        observation_key="0921_0748731413_045",
+        sol=921,
+        sclk=748731413,
+        obs_id="045",
+        sequence_code="srlc11374",
+        scan_type=scan_type,
+        products={"rrs": pid},
+        filtered_zpz=[],
+    )
+
+
+class TestUnmatchedCuratedKeys:
+    """Curated keys are reported when no label sclk_start matches (#176)."""
+
+    def test_filename_sclk_key_reported_with_nearest_label_sclk(self, tmp_path):
+        resolver = _curated_resolver(tmp_path, {"921_748731413": "Amherst Point"})
+        resolver.note_label_sclk(921, 748731411)
+        msgs = resolver.unmatched_curated_keys(921)
+        assert len(msgs) == 1
+        assert "921_748731413" in msgs[0]
+        assert "label sclk_start" in msgs[0]
+        assert "Nearest label sclk_start: 921_748731411" in msgs[0]
+
+    def test_no_tolerance_match(self, tmp_path):
+        """A key 2 s off is reported, never used to resolve a target."""
+        resolver = _curated_resolver(tmp_path, {"921_748731413": "Amherst Point"})
+        assert resolver.resolve(sol=921, pds_sclk=748731411) is None
+
+    def test_label_sclk_key_not_reported(self, tmp_path):
+        resolver = _curated_resolver(tmp_path, {"921_748731411": "Amherst Point"})
+        resolver.note_label_sclk(921, 748731411)
+        assert resolver.unmatched_curated_keys(921) == []
+        assert resolver.resolve(sol=921, pds_sclk=748731411) == "Amherst Point"
+
+    def test_far_key_reported_without_nearest(self, tmp_path):
+        resolver = _curated_resolver(tmp_path, {"921_748739999": "X"})
+        resolver.note_label_sclk(921, 748731411)
+        msgs = resolver.unmatched_curated_keys(921)
+        assert len(msgs) == 1
+        assert "Nearest" not in msgs[0]
+
+    def test_keys_for_other_sols_ignored(self, tmp_path):
+        resolver = _curated_resolver(tmp_path, {"100_700000000": "X"})
+        resolver.note_label_sclk(921, 748731411)
+        assert resolver.unmatched_curated_keys(921) == []
+
+    def test_malformed_key_warned_at_load(self, tmp_path, caplog):
+        with caplog.at_level(logging.WARNING):
+            resolver = _curated_resolver(tmp_path, {"921-748731411": "X"})
+        assert any("can never match" in m for m in caplog.messages)
+        assert resolver.unmatched_curated_keys(921) == []
+
+
+class TestUnmatchedCuratedKeysInIngestSol:
+    """ingest_sol reports never-matched keys, counting skipped observations."""
+
+    def _service(self, tmp_path, monkeypatch, mapping):
+        home = tmp_path / "home"
+        (home / "configs").mkdir(parents=True)
+        (home / "configs" / "pds_target_mapping.json").write_text(
+            json.dumps(mapping)
+        )
+        monkeypatch.setenv("SHERLOC_HOME", str(home))
+        service = PDSIngestionService(
+            create_missing=True, pds_db_path=tmp_path / "pds.db"
+        )
+        # Seed the observation as already ingested, so it is skipped.
+        with get_session(service.pds_engine) as session:
+            session.add(SolORM(
+                sol_number=921, data_source="pds4",
+                created_at=datetime.now(timezone.utc),
+            ))
+            session.flush()
+            session.add(ScanORM(
+                id=str(uuid.uuid4()), sol_number=921,
+                scan_name="pds_0921_748731413_045", scan_id=_SOL921_DETAIL_LID,
+                sclk_start=748731411, n_points=100, n_channels=2148,
+                laser_wavelength_nm=248.6, data_source="pds4",
+                pds4_metadata={"version": "1.0"},
+                created_at=datetime.now(timezone.utc),
+            ))
+        sol_dir = tmp_path / "sol_0921"
+        sol_dir.mkdir()
+        (sol_dir / PDSProductId.from_filename(_SOL921_DETAIL_CSV).xml_filename).write_text("")
+        meta = SimpleNamespace(
+            logical_identifier=_SOL921_DETAIL_LID, version_id="1.0",
+            sclk_start_int=748731411, site_drive_str="0450000",
+        )
+        monkeypatch.setattr(
+            service._grouper, "group_sol_directory",
+            lambda *a, **k: [_group()],
+        )
+        monkeypatch.setattr(
+            service._label_parser, "parse_label", lambda *a, **k: meta,
+        )
+        return service, sol_dir
+
+    def test_filename_sclk_key_warned(self, tmp_path, monkeypatch):
+        service, sol_dir = self._service(
+            tmp_path, monkeypatch, {"921_748731413": "Amherst Point"}
+        )
+        result = service.ingest_sol(sol_dir)
+        assert result.metadata["observations_skipped"] == 1
+        hits = [w for w in result.warnings if "921_748731413" in w]
+        assert len(hits) == 1
+        assert "Nearest label sclk_start: 921_748731411" in hits[0]
+
+    def test_label_sclk_key_for_skipped_observation_not_warned(
+        self, tmp_path, monkeypatch
+    ):
+        service, sol_dir = self._service(
+            tmp_path, monkeypatch, {"921_748731411": "Amherst Point"}
+        )
+        result = service.ingest_sol(sol_dir)
+        assert result.metadata["observations_skipped"] == 1
+        assert not [w for w in result.warnings if "Curated" in w]
+
+
+class TestTargetlessScienceWarning:
+    """Targetless science-geometry PDS scans are named (#176)."""
+
+    @pytest.mark.parametrize("scan_type", ["detail", "survey", "line", "HDR"])
+    def test_science_geometry_without_target_warned(self, scan_type):
+        msg = PDSIngestionService._targetless_science_warning(
+            _group(scan_type), None, 748731411
+        )
+        assert msg is not None
+        assert "0921_0748731413_045" in msg
+        assert "748731411" in msg
+        assert "engineering" in msg
+
+    @pytest.mark.parametrize("target", ["Amherst Point"])
+    def test_resolved_target_not_warned(self, target):
+        assert PDSIngestionService._targetless_science_warning(
+            _group("detail"), target, 748731411
+        ) is None
+
+    @pytest.mark.parametrize("scan_type", ["calibration", None])
+    def test_calibration_or_untyped_not_warned(self, scan_type):
+        assert PDSIngestionService._targetless_science_warning(
+            _group(scan_type), None, 748731411
+        ) is None
+
+    def test_target_type_unchanged(self):
+        """Classification is not changed by #176: targetless stays engineering."""
+        from sherloc_pipeline.models.spectra import classify_target_type
+        assert classify_target_type(None, "pds_0921_748731413_045") == "engineering"
