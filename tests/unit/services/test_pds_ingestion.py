@@ -979,6 +979,28 @@ class TestUnmatchedCuratedKeys:
         resolver.note_label_sclk(921, 748731411)
         assert resolver.unmatched_curated_keys(921) == []
 
+    @pytest.mark.parametrize("key", [
+        "0921_748731411", "921_0748731411", "+921_748731411",
+        " 921_748731411", "921_748731411 ",
+    ])
+    def test_noncanonical_numeric_key_warned_at_load(self, tmp_path, caplog, key):
+        """Review r1 F2: int()-parsable but non-canonical keys never resolve,
+        so they are warned about at load and not treated as matched."""
+        with caplog.at_level(logging.WARNING):
+            resolver = _curated_resolver(tmp_path, {key: "X"})
+        assert any("can never match" in m for m in caplog.messages)
+        resolver.note_label_sclk(921, 748731411)
+        assert resolver.resolve(sol=921, pds_sclk=748731411) is None
+        assert resolver.unmatched_curated_keys(921) == []
+
+    def test_reset_forgets_earlier_label_sclks(self, tmp_path):
+        resolver = _curated_resolver(tmp_path, {"921_100": "X"})
+        resolver.note_label_sclk(921, 100)
+        assert resolver.unmatched_curated_keys(921) == []
+        resolver.reset_label_sclks(921)
+        resolver.note_label_sclk(921, 200)
+        assert len(resolver.unmatched_curated_keys(921)) == 1
+
     def test_malformed_key_warned_at_load(self, tmp_path, caplog):
         with caplog.at_level(logging.WARNING):
             resolver = _curated_resolver(tmp_path, {"921-748731411": "X"})
@@ -989,7 +1011,7 @@ class TestUnmatchedCuratedKeys:
 class TestUnmatchedCuratedKeysInIngestSol:
     """ingest_sol reports never-matched keys, counting skipped observations."""
 
-    def _service(self, tmp_path, monkeypatch, mapping):
+    def _service(self, tmp_path, monkeypatch, mapping, stored_target=None):
         home = tmp_path / "home"
         (home / "configs").mkdir(parents=True)
         (home / "configs" / "pds_target_mapping.json").write_text(
@@ -1011,6 +1033,7 @@ class TestUnmatchedCuratedKeysInIngestSol:
                 scan_name="pds_0921_748731413_045", scan_id=_SOL921_DETAIL_LID,
                 sclk_start=748731411, n_points=100, n_channels=2148,
                 laser_wavelength_nm=248.6, data_source="pds4",
+                target=stored_target,
                 pds4_metadata={"version": "1.0"},
                 created_at=datetime.now(timezone.utc),
             ))
@@ -1049,6 +1072,42 @@ class TestUnmatchedCuratedKeysInIngestSol:
         result = service.ingest_sol(sol_dir)
         assert result.metadata["observations_skipped"] == 1
         assert not [w for w in result.warnings if "Curated" in w]
+
+    def test_skipped_targetless_detail_scan_warned(self, tmp_path, monkeypatch):
+        """Review r1 F1: an ordinary re-run names stored targetless scans."""
+        service, sol_dir = self._service(tmp_path, monkeypatch, {})
+        result = service.ingest_sol(sol_dir, force=False)
+        assert result.metadata["observations_skipped"] == 1
+        hits = [w for w in result.warnings if "has no resolved target" in w]
+        assert len(hits) == 1
+        assert "0921_0748731413_045" in hits[0]
+
+    def test_skipped_targeted_detail_scan_not_warned(self, tmp_path, monkeypatch):
+        service, sol_dir = self._service(
+            tmp_path, monkeypatch, {}, stored_target="Amherst Point"
+        )
+        result = service.ingest_sol(sol_dir, force=False)
+        assert result.metadata["observations_skipped"] == 1
+        assert not [w for w in result.warnings if "has no resolved target" in w]
+
+    def test_earlier_call_does_not_hide_unmatched_key(self, tmp_path, monkeypatch):
+        """Review r1 F3: label SCLKs seen by an earlier call are forgotten."""
+        service, sol_dir = self._service(
+            tmp_path, monkeypatch, {"921_748731411": "Amherst Point"}
+        )
+        first = service.ingest_sol(sol_dir)
+        assert not [w for w in first.warnings if "Curated" in w]
+        # Second run of sol 921 sees a different observation only.
+        other = SimpleNamespace(
+            logical_identifier=_SOL921_DETAIL_LID + "_other", version_id="1.0",
+            sclk_start_int=748739000, site_drive_str="0450000",
+        )
+        monkeypatch.setattr(
+            service._label_parser, "parse_label", lambda *a, **k: other,
+        )
+        second = service.ingest_sol(sol_dir)
+        hits = [w for w in second.warnings if "921_748731411" in w]
+        assert len(hits) == 1
 
 
 class TestTargetlessScienceWarning:

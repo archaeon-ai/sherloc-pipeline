@@ -185,21 +185,38 @@ class TargetNameResolver:
                     if self._parse_curated_key(key) is None:
                         logger.warning(
                             "Curated target mapping key %r is not "
-                            "'{sol}_{sclk}' with integer sol and label "
-                            "sclk_start; it can never match.",
+                            "'{sol}_{sclk}' written as plain integers (no "
+                            "padding, signs or spaces), the label "
+                            "sclk_start form; it can never match.",
                             key,
                         )
 
     @staticmethod
     def _parse_curated_key(key: str) -> Optional[Tuple[int, int]]:
-        """Split a curated key ``"{sol}_{sclk}"`` into ints, or None."""
+        """Split a curated key ``"{sol}_{sclk}"`` into ints, or None.
+
+        Only the exact form :meth:`resolve` looks up is accepted, so a key
+        that parses here is one that can match. Zero-padded, signed or
+        space-padded parts (``"0921_0748731411"``) return None.
+        """
         parts = str(key).split("_")
         if len(parts) != 2:
             return None
         try:
-            return int(parts[0]), int(parts[1])
+            sol, sclk = int(parts[0]), int(parts[1])
         except ValueError:
             return None
+        if f"{sol}_{sclk}" != key:
+            return None
+        return sol, sclk
+
+    def reset_label_sclks(self, sol: int) -> None:
+        """Forget label ``sclk_start`` values recorded for ``sol``.
+
+        Called at the start of each sol ingestion, so observations seen
+        by an earlier call cannot hide a key that matches nothing now.
+        """
+        self._label_sclks.pop(sol, None)
 
     def note_label_sclk(self, sol: int, label_sclk: int) -> None:
         """Record the label ``sclk_start`` of an observation on ``sol``.
@@ -502,6 +519,7 @@ class PDSIngestionService:
 
         # Ensure sol record exists in phase_pds.db
         self._ensure_sol(sol_number, groups)
+        self._target_resolver.reset_label_sclks(sol_number)
 
         # Ingest each observation
         for group in groups:
@@ -681,6 +699,15 @@ class PDSIngestionService:
                         ))
                     else:
                         stats.observations_skipped += 1
+                        # An already-ingested targetless science scan is
+                        # named too, so an ordinary re-run lists every
+                        # stored one (#176).
+                        msg = self._targetless_science_warning(
+                            group, existing_scan.target,
+                            metadata.sclk_start_int,
+                        )
+                        if msg is not None:
+                            stats.warnings.append(msg)
                         return stats
                 else:
                     # force=True: cascade delete and re-ingest

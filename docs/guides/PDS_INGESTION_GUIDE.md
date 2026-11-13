@@ -171,14 +171,15 @@ PDS data lives in `phase_pds.db`, never in `phase.db`. The Loupe database is ope
 Target names are resolved via a three-tier strategy:
 
 1. **SCLK cross-reference** — Match PDS SCLK to Loupe scans within ±3s (Pass 1) or ±5s (Pass 2). Nearest match wins; site_drive breaks ties.
-2. **Curated mapping** — Optional JSON file at `$SHERLOC_HOME/configs/pds_target_mapping.json` with `{sol}_{sclk}` keys (CWD-relative when `SHERLOC_HOME` is unset). `sclk` is the integer label `sclk_start`, not the SCLK in the product filename (see the Sol 921 table). Keys match exactly; there is no tolerance. After each sol, a key for that sol that matched no observation's label `sclk_start` is reported as a warning, naming the nearest label `sclk_start` within ±5 s when there is one. A key that is not `{integer}_{integer}` is warned about when the file loads. The repo does not ship a default copy; missing or malformed files are treated as an empty mapping. Operators can add a personal copy if they have curated entries.
+2. **Curated mapping** — Optional JSON file at `$SHERLOC_HOME/configs/pds_target_mapping.json` with `{sol}_{sclk}` keys (CWD-relative when `SHERLOC_HOME` is unset). `sclk` is the integer label `sclk_start`, not the SCLK in the product filename (see the Sol 921 table). Keys match exactly; there is no tolerance. After each sol, a key for that sol that matched no observation's label `sclk_start` is reported as a warning, naming the nearest label `sclk_start` within ±5 s when there is one. A key that is not `{integer}_{integer}` written as plain integers (no zero padding, signs or spaces) can never match and is warned about when the file loads. The repo does not ship a default copy; missing or malformed files are treated as an empty mapping. Operators can add a personal copy if they have curated entries.
 3. **NULL fallback** — If no match, target is set to NULL with a log message for manual curation.
 
 A scan with no target is stored as `target_type="engineering"`
 (`classify_target_type`), so `science_only` iterators and refits skip it. For
 a detail, survey, line or HDR scan this hides science-geometry data, so the
 ingestion result names each one in its warnings ("... scan has no resolved
-target ...; stored as engineering, so science_only skips it."). Resolve its
+target ...; stored as engineering, so science_only skips it."), including
+scans already in the database that a re-run skips. Resolve its
 target (Loupe database or a curated key) and re-ingest with `--force`. How
 targetless PDS scans should be classified is an open question (#176);
 classification is unchanged.

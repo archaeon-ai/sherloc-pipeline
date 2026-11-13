@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label `sclk_start` within ±5 s. Matching stays exact. A detail, survey,
   line or HDR scan with no resolved target is named in the warnings too:
   it is stored as `target_type="engineering"`, so `science_only` skips it.
+  Already-ingested scans that a re-run skips are named as well. Keys
+  with zero-padded, signed or space-padded parts never match and are
+  warned about when the mapping loads.
   Classification is unchanged. The PDS ingestion guide documents the key
   format and shows both SCLKs for the Sol 921 example.
 - **Scans stored without a target are reachable by `fit-fluor`,
