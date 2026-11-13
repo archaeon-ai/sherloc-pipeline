@@ -601,6 +601,8 @@ With `parsimony.reject_merged_candidates: true` (default), a candidate is skippe
 
 **Cosmic-ray review flag:** when a spectrum's cosmic-ray mask positions are supplied, each fitted peak carries `cr_mask_review` (a mask channel lies within center ± FWHM/2). It is a review flag only: it never removes a peak and never changes the fit input.
 
+**Mineral fit input:** the original dark-subtracted spectrum, not despiked (domain owner 2026-10-21, reconfirmed 2026-11-12: "despiked mineral input: no"); spikes are handled by negative-spike exclusion and the cosmic-ray review flag, never by a despiked input.
+
 ```python
 def compute_aicc(n_samples: int, rss: float, num_params: int) -> float:
     """Compute AICc for model selection."""
