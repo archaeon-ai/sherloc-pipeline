@@ -279,8 +279,10 @@ class Handler(BaseHTTPRequestHandler):
         hosts = self.headers.get_all("Host", [])
         if len(hosts) != 1 or hosts[0].lower() not in self.server.allowed_hosts:
             return False
-        origin = self.headers.get("Origin")
-        return origin is None or origin.lower() in {"http://" + h for h in self.server.allowed_hosts}
+        origins = self.headers.get_all("Origin", [])
+        if len(origins) > 1:
+            return False
+        return not origins or origins[0].lower() in {"http://" + h for h in self.server.allowed_hosts}
 
     def do_GET(self):
         if not self._host_ok():
@@ -366,6 +368,15 @@ class LabelingServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
+def _wildcard(host):
+    """True when any address the host resolves to is unspecified (0.0.0.0, ::, or a shorthand like "0")."""
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return False  # unresolvable: the bind itself fails later, before any request is served
+    return any(ipaddress.ip_address(info[4][0].split("%")[0]).is_unspecified for info in infos)
+
+
 def create_server(manifest, out, labeler, host="127.0.0.1", port=8591,
                   allow_nonloopback=False):
     """Validate the binding before touching session data or opening a socket."""
@@ -377,6 +388,9 @@ def create_server(manifest, out, labeler, host="127.0.0.1", port=8591,
         address = None
     if not allow_nonloopback and (address is None or not address.is_loopback):
         raise ValueError("Non-loopback binding requires --allow-nonloopback")
+    if _wildcard(host):
+        # The Host check needs the address clients will use; a wildcard bind has none.
+        raise ValueError("Non-loopback wildcard binding is refused; bind the concrete interface address")
     session = Session(manifest, out, labeler)
     assets = {}
     for name, content_type in (("index.html", "text/html; charset=utf-8"),

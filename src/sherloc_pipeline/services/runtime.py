@@ -22,16 +22,21 @@ def _normalize_path(path: Optional[PathLike]) -> Optional[Path]:
         return resolved if resolved.is_absolute() else resolved.absolute()
 
 
-def _extract_path(config: Config, key: str, fallback: str) -> Path:
+def _extract_path(config: Config, key: str, fallback: str, legacy_key: Optional[str] = None) -> Path:
+    """Read ``paths.<key>`` (already env-resolved by the config loader), else
+    ``paths.<legacy_key>``, else ``fallback``."""
     candidate: Optional[Any] = None
-    try:
-        paths_section = getattr(config, "paths", None)
-        if isinstance(paths_section, dict):
-            candidate = paths_section.get(key)
-        elif paths_section is not None:
-            candidate = getattr(paths_section, key, None)
-    except Exception:
-        candidate = None
+    for name in (key, legacy_key):
+        if name is None or candidate is not None:
+            continue
+        try:
+            paths_section = getattr(config, "paths", None)
+            if isinstance(paths_section, dict):
+                candidate = paths_section.get(name)
+            elif paths_section is not None:
+                candidate = getattr(paths_section, name, None)
+        except Exception:
+            candidate = None
 
     raw = candidate if candidate is not None else fallback
     normalized = _normalize_path(raw)
@@ -82,8 +87,10 @@ class RuntimeContext:
         run_id: Optional[str] = None,
     ) -> RuntimeContext:
         cfg = config if config is not None else get_runtime_config()
-        default_data = _extract_path(cfg, "data_dir", "../data/loupe")
-        default_results = _extract_path(cfg, "results_dir", "../results")
+        # paths.data_root / paths.results_root are the configured roots (#173);
+        # data_dir / results_dir are read only if an older config still uses them.
+        default_data = _extract_path(cfg, "data_root", "../data/loupe", legacy_key="data_dir")
+        default_results = _extract_path(cfg, "results_root", "../results", legacy_key="results_dir")
         overrides = RuntimeOverrides(data_root=data_dir, results_root=results_dir)
 
         data_root = overrides.data_root or default_data
