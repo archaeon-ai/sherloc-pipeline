@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - **Upgrade notes: migrations and downstream schema checks.** A tool that
-  reads a SHERLOC database directly and checks its columns against a list it
-  keeps sees every migration, additive ones included, and refuses the
-  database until its list is updated. 5.7.8's `4f638701cf7c` (with
-  `a13c4e5f6071` when coming from `17db1a1940d6`) is such a change: four
-  new, empty `reference_*` tables with their indexes and triggers, and the
-  nullable `fitted_peaks.cr_mask_review` column. Approve and merge the
+  reads a SHERLOC database directly and checks its tables and columns
+  against a list it keeps refuses the database after any migration that
+  changes what it checks, additive ones included, until its list is
+  updated. 5.7.8's `4f638701cf7c` (with `a13c4e5f6071` when coming from
+  `17db1a1940d6`) is such a change: four new, empty `reference_*` tables
+  (with indexes and triggers, for a consumer that inventories those) and
+  the nullable `fitted_peaks.cr_mask_review` column. Approve and merge the
   consumer's update in the same change window as the migration, for each
   database. Added to `DEPLOYMENT_CONTRACT.md` §7.
 

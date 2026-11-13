@@ -232,11 +232,13 @@ unknown targets fail startup validation in auth0 mode.
 
 **Downstream schema checks.** Some consumers read a SHERLOC database
 directly and check its tables and columns against a list they keep (for
-example a column ledger). Every migration changes what such a check sees,
-including additive ones: new tables, columns, indexes and triggers. Before
-you migrate a database that such a consumer reads, prepare the consumer's
-matching update, and approve and merge it in the same change window as the
-migration. Otherwise the consumer's checked reads refuse that database from
+example a column ledger). A migration that changes any schema element the
+consumer checks changes what that check sees, even when it only adds (a
+new table or column; also an index or trigger, if the consumer inventories
+those). A revision that changes no schema, such as a no-op merge revision,
+does not. Before you apply such a migration to a database that such a
+consumer reads, prepare the consumer's matching update, and approve and
+merge it in the same change window as the migration. Otherwise the consumer's checked reads refuse that database from
 the moment it is migrated until the update lands. This applies to each
 database separately (a team and a public database are two migrations, each
 with its own consumer update).
