@@ -21,7 +21,9 @@ def bulk(tmp_path, monkeypatch):
         assert not str(tmp_path).startswith(root)
     database = tmp_path / "synthetic.db"
     database.write_bytes(b"")
-    monkeypatch.setattr(cli, "_iter_all_scans", lambda *a, **kw: list(SCANS))
+    monkeypatch.setattr(cli, "_iter_all_scans", lambda *a, with_ids=False, **kw: [
+        (*row, f"synthetic-id-{i}") for i, row in enumerate(SCANS)
+    ] if with_ids else list(SCANS))
     monkeypatch.setattr(FittingService, "__init__", lambda self, **kw: None)
 
     def persist(self, sol, target, scan, domain, **kw):

@@ -904,6 +904,46 @@ def _fit_point_organics(
     }
 
 
+def _find_scan(session, sol: str, target: str, scan: str, scan_id: Optional[str] = None):
+    """The ScanORM a fit or persist call names, or None (#175).
+
+    With ``scan_id`` the row is read by id and must match ``sol`` and ``scan``
+    (and ``target`` when one is given). Otherwise the target is matched with
+    spaces or underscores; an empty target matches a NULL or empty stored
+    target, and must then name exactly one scan.
+    """
+    from sherloc_pipeline.database.models import ScanORM
+    from sqlalchemy import or_
+
+    if scan_id is not None:
+        row = session.get(ScanORM, scan_id)
+        if row is None or row.sol_number != int(sol) or row.scan_name != scan:
+            return None
+        if target and (row.target or "").replace(" ", "_") != target.replace(" ", "_"):
+            return None
+        return row
+    if not target:
+        rows = session.query(ScanORM).filter(
+            ScanORM.sol_number == int(sol), ScanORM.scan_name == scan,
+            or_(ScanORM.target.is_(None), ScanORM.target == ""),
+        ).all()
+        if len(rows) > 1:
+            raise FittingError(
+                f"{len(rows)} scans without a target match sol={sol}, scan={scan}; "
+                f"select one by scan id",
+                exit_code=1,
+                context={"sol": sol, "target": target, "scan": scan},
+            )
+        return rows[0] if rows else None
+    for name in dict.fromkeys((target.replace("_", " "), target)):
+        row = session.query(ScanORM).filter_by(
+            sol_number=int(sol), target=name, scan_name=scan
+        ).first()
+        if row is not None:
+            return row
+    return None
+
+
 class FittingService:
     """Service for orchestrating SHERLOC scan fitting operations.
     
@@ -2586,6 +2626,7 @@ class FittingService:
         region: str = "R1",
         data_dir: Optional[Path] = None,
         results_dir: Optional[Path] = None,
+        scan_id: Optional[str] = None,
     ) -> ServiceResult:
         """Persist Raman peaks from CSV artifacts into the phase.db database.
 
@@ -2608,6 +2649,8 @@ class FittingService:
             region: Spectral region (default "R1")
             data_dir: Base data directory. If None, uses config default.
             results_dir: Results directory. If None, uses config default.
+            scan_id: The scan's row id. Given, the scan is read by id, which
+                reaches a scan stored without a target (empty ``target``).
 
         Returns:
             ServiceResult with summary, metadata including peak counts
@@ -2618,7 +2661,7 @@ class FittingService:
                 peak CSVs raise after unaffected points' writes have committed.
         """
         from sherloc_pipeline.core.data_ingestion import normalize_target_name
-        target = normalize_target_name(target)
+        target = normalize_target_name(target or "")
 
         if domain not in ("minerals", "organics", "hydration"):
             raise FittingError(
@@ -2815,15 +2858,8 @@ class FittingService:
 
             # Database session
             with get_session(self._engine) as session:
-                # Look up scan -- target may use underscores (filesystem) or spaces (DB)
-                db_target = target.replace('_', ' ')
-                scan_orm = session.query(ScanORM).filter_by(
-                    sol_number=int(sol), target=db_target, scan_name=scan
-                ).first()
-                if scan_orm is None and db_target != target:
-                    scan_orm = session.query(ScanORM).filter_by(
-                        sol_number=int(sol), target=target, scan_name=scan
-                    ).first()
+                # Look up scan: by id when given, else target with underscores or spaces
+                scan_orm = _find_scan(session, sol, target, scan, scan_id)
                 if scan_orm is None:
                     raise FittingError(
                         f"Scan not found in database: sol={sol}, target={target}, scan={scan}",
@@ -3066,6 +3102,7 @@ class FittingService:
         generate_plots: bool = True,
         use_despiked_inputs: bool = True,
         despiked_row_ids: Optional[List[str]] = None,
+        scan_id: Optional[str] = None,
     ) -> ServiceResult:
         """Fit fluorescence spectra for a scan and persist peaks to database.
 
@@ -3102,6 +3139,8 @@ class FittingService:
                 not refresh them this run).
             despiked_row_ids: If given, only these despiked rows may be used
                 (the pipeline passes the rows its own refresh wrote).
+            scan_id: The scan's row id. Given, the scan is read by id, which
+                reaches a scan stored without a target (empty ``target``).
 
         Returns:
             ServiceResult with summary and metadata including peak counts.
@@ -3111,7 +3150,7 @@ class FittingService:
                 or stored spectra are unreadable (readable points commit first).
         """
         from sherloc_pipeline.core.data_ingestion import normalize_target_name
-        target = normalize_target_name(target)
+        target = normalize_target_name(target or "")
 
         try:
             import zlib
@@ -3167,15 +3206,8 @@ class FittingService:
                     fluor_dir = None  # graceful skip if results dir doesn't exist
 
             with get_session(self._engine) as session:
-                # Look up scan (target may use underscores in filesystem, spaces in DB)
-                db_target = target.replace("_", " ")
-                scan_orm = session.query(ScanORM).filter_by(
-                    sol_number=int(sol), target=db_target, scan_name=scan
-                ).first()
-                if scan_orm is None and db_target != target:
-                    scan_orm = session.query(ScanORM).filter_by(
-                        sol_number=int(sol), target=target, scan_name=scan
-                    ).first()
+                # Look up scan: by id when given, else target with underscores or spaces
+                scan_orm = _find_scan(session, sol, target, scan, scan_id)
                 if scan_orm is None:
                     raise FittingError(
                         f"Scan not found in database: sol={sol}, target={target}, scan={scan}",
