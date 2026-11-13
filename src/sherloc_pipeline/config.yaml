@@ -98,7 +98,7 @@ fitting:
   r1_plot_range: [700, 1300]          # default R1 plot ROI (cm^-1)
   fit_fwhm_min_initial_cm1: 22        # allow optimizer to explore >=22 to avoid hard edge artifacts
   reviewable_fwhm_min_cm1: 25.0       # FWHM gate for reviewable / persist eligibility (cm^-1)
-  filter_fwhm_min_cm1: 30             # post-fit filter threshold
+  filter_fwhm_min_cm1: 25             # pass_fwhm flag; = reviewable_fwhm_min_cm1 (Ken 11/12: fwhm 25)
   fwhm_max_cm1: 90                    # minerals upper bound; organics/hydration override below
   slit_width_cm1_default: 34.1        # preferred slit-centered width
   slit_pref_weight: 0.2               # soft bias toward slit width in objective/sorting
@@ -107,7 +107,8 @@ fitting:
   min_snr: 3.0
   min_seed_snr: 2.0                 # do not seed peaks below this SNR
   min_display_snr: 2.0              # do not plot/report components below this SNR
-  r_squared_min: 0.25
+  r_squared_min: 0.0                # pass_r2 flag dropped to R2 >= 0 (Ken 11/12: r2 none); posthoc_filters.r2_min (R2 > 0) still gates persistence
+  minerals_negative_spike_sigma: 10.0  # mineral fit: ROI channels below -10 x noise_std get zero weight (negative spikes); null = off
   
   # Noise estimation for SNR calculation
   noise_estimation:
@@ -134,7 +135,8 @@ fitting:
     use_aicc: false                   # deprecated — use model_selection instead
     aicc_min_peaks: 1
     aicc_max_peaks: 5                 # capped by max_peaks and seeds
-    aicc_improve_threshold: 0.0       # require ΔAICc < threshold relative to best (0 keeps strict min)
+    aicc_improve_threshold: 0.0       # a larger model must lower AICc by more than this (0 = strict minimum)
+    reject_merged_candidates: true    # skip candidates whose components the merge step would drop (Ken 11/12: p88 rule on)
 
   # Per-scan slit estimation from laser line (600–700 cm^-1)
   dynamic_slit:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Sequence
 import numpy as np
 from scipy.signal import find_peaks
 from scipy.optimize import least_squares
@@ -120,8 +120,18 @@ def fit_spectrum(
     roi: Optional[Tuple[float, float]] = None,
     seed_centers: Optional[List[float]] = None,
     noise_std: Optional[float] = None,
+    negative_spike_sigma: Optional[float] = None,
+    cr_mask_cm1: Optional[Sequence[float]] = None,
 ) -> Tuple[FitResult, np.ndarray]:
-    """Fit multiple Gaussians to a single spectrum with soft slit preference and low-FWHM penalty."""
+    """Fit multiple Gaussians to a single spectrum with soft slit preference and low-FWHM penalty.
+
+    negative_spike_sigma: when set, ROI channels below ``-negative_spike_sigma * noise_std``
+    get zero weight: they are left out of seeding, the least-squares residual, RSS, AICc and R2.
+    The returned model still covers every ROI channel.
+    cr_mask_cm1: wavenumbers of cosmic-ray mask channels for this spectrum. When given, each
+    returned peak carries ``cr_mask_review`` (a mask channel lies within center +/- FWHM/2).
+    It is a review flag only: it never removes a peak and never changes the fit input.
+    """
     # ROI selection
     if roi is None:
         roi = tuple(cfg.get('r1_fit_range', [x_cm1.min(), x_cm1.max()]))
@@ -139,10 +149,26 @@ def fit_spectrum(
     peak_sep = float(cfg.get('peak_separation_cm1', 25))
     r2_min = float(cfg.get('r_squared_min', 0.25))
     snr_min = float(cfg.get('min_snr', 2.0))
+    min_display_snr = float(cfg.get('min_display_snr', 2.0))
+    amp_sigma_mult = float(cfg.get('min_amp_sigma_multiplier', 0.5))
 
     # Detect seed peaks and prefilter by seed SNR, unless explicit seed centers provided
     if noise_std is None:
         noise_std = compute_noise_std(x_cm1, y, cfg=cfg)
+
+    # Negative-spike channels get zero weight (they cannot be Raman signal).
+    x_roi_all = x
+    n_negative_masked = 0
+    if negative_spike_sigma is not None and x.size:
+        keep = y_roi >= -float(negative_spike_sigma) * float(noise_std)
+        n_negative_masked = int(np.count_nonzero(~keep))
+        if n_negative_masked:
+            x, y_roi = x[keep], y_roi[keep]
+    mask_warnings = [f"negative_spike_channels_masked:{n_negative_masked}"] if n_negative_masked else []
+    if x.size == 0:
+        # Every ROI channel was masked (or the ROI is empty): nothing to fit.
+        return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=0, warnings=mask_warnings + ["no_peaks_detected"],
+                         n_samples=0), np.zeros_like(y)
     if seed_centers is not None and len(seed_centers) > 0:
         # Map seed centers to nearest indices within ROI
         centers = sorted(seed_centers)
@@ -157,7 +183,8 @@ def fit_spectrum(
         pre_snr_min = float(cfg.get('min_seed_snr', 2.0))
         seed_idxs_all = [i for i in seed_idxs_all if (y_roi[i] >= pre_snr_min * noise_std)]
         if not seed_idxs_all:
-            return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1), warnings=["no_peaks_detected"]), np.zeros_like(y)
+            return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1),
+                             warnings=mask_warnings + ["no_peaks_detected"], n_samples=int(x.size)), np.zeros_like(y)
 
     # Model selection configuration
     parsimony_cfg = dict(cfg.get('parsimony', {}))
@@ -168,7 +195,13 @@ def fit_spectrum(
     ftest_alpha = float(parsimony_cfg.get('ftest_alpha', 0.01))
     aicc_min = int(parsimony_cfg.get('aicc_min_peaks', 1))
     aicc_max = int(parsimony_cfg.get('aicc_max_peaks', max_peaks))
-    aicc_thresh = float(parsimony_cfg.get('aicc_improve_threshold', 0.0))
+    # A larger model must lower AICc by more than this to replace the current best (0 = strict minimum).
+    aicc_thresh = max(float(parsimony_cfg.get('aicc_improve_threshold', 0.0)), 1e-9)
+    # Skip a candidate the merge step below would shrink (two kept components closer than
+    # half the seed separation): its AICc was earned by a component the output drops.
+    reject_merged = bool(parsimony_cfg.get('reject_merged_candidates', False))
+    min_amp = amp_sigma_mult * noise_std
+    min_sep = 0.5 * peak_sep
 
     # Prepare candidate peak sets
     if seed_centers is not None and len(seed_centers) > 0:
@@ -245,19 +278,22 @@ def fit_spectrum(
                     y_model = multi_gaussian(x, params)
                     rss = float(np.sum((y_roi - y_model) ** 2))
                     aicc = _compute_aicc(n_samples=x.size, rss=rss, num_params=params.size)
-                    if best is None or aicc < best[0] - 1e-9:
+                    if reject_merged and _merge_would_drop(params, min_amp, min_display_snr, noise_std, min_sep):
+                        continue
+                    if best is None or aicc < best[0] - aicc_thresh:
                         best = (aicc, params, rss)
                 except Exception:
                     continue
 
     # Fallback if nothing succeeded
     if best is None:
-        return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1), warnings=["fit_failed"]), np.zeros_like(y)
+        return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1),
+                         warnings=mask_warnings + ["fit_failed"], n_samples=int(x.size)), np.zeros_like(y)
 
     params = best[1]
     y_model = multi_gaussian(x, params)
     full_model = np.zeros_like(y)
-    full_model[mask] = y_model
+    full_model[mask] = multi_gaussian(x_roi_all, params) if n_negative_masked else y_model
 
     r2 = compute_r2(y_roi, y_model)
     rss = best[2]
@@ -282,21 +318,21 @@ def fit_spectrum(
         data_at_center = float(y_roi[nearest_idx])
         sharpness_ratio = data_at_center / (float(a) + 1e-12)
         pass_sharpness = bool(sharpness_ratio < sharpness_max)
+        cr_review = None
+        if cr_mask_cm1 is not None:
+            cr_review = bool(any(abs(float(c) - float(m)) <= 0.5 * float(f) for c in cr_mask_cm1))
         peaks.append(PeakFit(m_cm1=float(m), a=float(a), fwhm=float(f), sigma=float(fwhm_to_sigma(f)), area=area,
                              snr=snr, pass_snr=pass_snr, pass_fwhm=pass_fwhm, pass_r2=pass_r2,
-                             sharpness_ratio=sharpness_ratio, pass_sharpness=pass_sharpness))
+                             sharpness_ratio=sharpness_ratio, pass_sharpness=pass_sharpness,
+                             cr_mask_review=cr_review))
 
     # Prune obviously spurious components: extremely low amplitude or below display SNR threshold
-    min_display_snr = float(cfg.get('min_display_snr', 2.0))
-    amp_sigma_mult = float(cfg.get('min_amp_sigma_multiplier', 0.5))
-    min_amp = amp_sigma_mult * noise_std  # amplitude threshold relative to noise
     peaks = [p for p in peaks if (p.a >= min_amp and p.snr >= min_display_snr)]
 
     # Merge peaks that are closer than half the configured separation: keep the larger amplitude
     if len(peaks) > 1:
         peaks.sort(key=lambda p: p.m_cm1)
         merged: List[PeakFit] = []
-        min_sep = 0.5 * peak_sep
         for p in peaks:
             if not merged:
                 merged.append(p)
@@ -310,12 +346,23 @@ def fit_spectrum(
 
     # Final sort by position
     peaks.sort(key=lambda p: p.m_cm1)
-    return FitResult(peaks=peaks, r2=float(r2), rss=rss, dof=dof, warnings=[]), full_model
+    return FitResult(peaks=peaks, r2=float(r2), rss=rss, dof=dof, warnings=list(mask_warnings),
+                     n_samples=int(x.size)), full_model
+
+
+def _merge_would_drop(params: np.ndarray, min_amp: float, min_display_snr: float,
+                      noise_std: float, min_sep: float) -> bool:
+    """True when fit_spectrum's prune + merge steps would drop a component of this candidate."""
+    kept = sorted(
+        float(params[i]) for i in range(0, params.size, 3)
+        if params[i + 1] >= min_amp and params[i + 1] / (noise_std + 1e-12) >= min_display_snr
+    )
+    return any(b - a < min_sep for a, b in zip(kept, kept[1:]))
 
 
 PEAK_TABLE_COLUMNS = [
     'center_cm1', 'fwhm_cm1', 'amplitude_a', 'area', 'snr',
-    'pass_snr', 'pass_fwhm', 'pass_r2', 'sharpness_ratio', 'pass_sharpness',
+    'pass_snr', 'pass_fwhm', 'pass_r2', 'sharpness_ratio', 'pass_sharpness', 'cr_mask_review',
 ]
 
 
@@ -335,6 +382,7 @@ def save_peak_table(peaks: List[PeakFit], output_csv_path: str) -> None:
             'pass_r2': p.pass_r2,
             'sharpness_ratio': p.sharpness_ratio,
             'pass_sharpness': p.pass_sharpness,
+            'cr_mask_review': p.cr_mask_review,
         }
         for p in peaks
     ]

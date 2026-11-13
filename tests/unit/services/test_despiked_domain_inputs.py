@@ -248,7 +248,7 @@ def test_hydration_veto_scores_the_non_despiked_spectrum(tmp_path, monkeypatch):
 def _captured_fit_input(monkeypatch, domain, x, y):
     captured = []
 
-    def fake_fit(x_arr, y_arr, cfg, roi=None):
+    def fake_fit(x_arr, y_arr, cfg, roi=None, **_kwargs):
         captured.append(np.asarray(y_arr).copy())
         return SimpleNamespace(peaks=[]), None
 
