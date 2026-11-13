@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Scans stored without a target are reachable by `fit-fluor`,
+  `persist-peaks` and `backfill` (#175).** PDS ingest stores a NULL target
+  when no target name resolves; the `--all` loops looked every scan up by
+  name with an empty target, which never matched NULL, so each such scan
+  failed with "Scan not found". The loops now look scans up by row id. In
+  single-scan mode `--target` may be left out when `--sol` and `--scan`
+  name exactly one scan. Results for a scan without a target go under
+  `<results>/<sol>_<scan>/` (no target folder). Fits of such scans still
+  need their inputs: `persist-peaks` reports a missing fit directory, since
+  `full-pipeline` does not run scans without a target (#170).
+
 ### Documentation
+- **Mineral fit input** stated in `docs/METHODS.md`: the original
+  dark-subtracted spectrum, not despiked.
 - **Upgrade notes: migrations and downstream schema checks.** A tool that
   reads a SHERLOC database directly and checks its tables and columns
   against a list it keeps refuses the database after any migration that

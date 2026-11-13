@@ -2126,6 +2126,7 @@ def _iter_all_scans(
     target_type: Optional[str] = None,
     exclude_type: Optional[str] = None,
     science_only: bool = False,
+    with_ids: bool = False,
 ):
     """Yield (sol_number, target, scan_name) for all scans in the database.
 
@@ -2137,6 +2138,8 @@ def _iter_all_scans(
         exclude_type: Optional exclusion — e.g. 'engineering' to skip engineering scans.
         science_only: If True, return mars_target scans + cal meteorite (SAU-008) scans.
             Overrides target_type and exclude_type.
+        with_ids: If True, append each scan's row id, so a caller can reach a
+            scan stored without a target (#175). Its target is then "".
     """
     from sherloc_pipeline.database.connection import get_engine, get_session
     from sherloc_pipeline.database.models import ScanORM
@@ -2146,7 +2149,7 @@ def _iter_all_scans(
     with get_session(engine) as session:
         query = (
             session.query(
-                ScanORM.sol_number, ScanORM.target, ScanORM.scan_name
+                ScanORM.sol_number, ScanORM.target, ScanORM.scan_name, ScanORM.id
             )
             .order_by(ScanORM.sol_number, ScanORM.target, ScanORM.scan_name)
         )
@@ -2175,7 +2178,39 @@ def _iter_all_scans(
                 query = query.filter(ScanORM.target_type != exclude_type)
         scans = query.all()
     # Normalize target names: DB stores spaces, filesystem/CLI uses underscores
-    return [(sol, (tgt or "").replace(" ", "_"), scn) for sol, tgt, scn in scans]
+    rows = [(sol, (tgt or "").replace(" ", "_"), scn, sid) for sol, tgt, scn, sid in scans]
+    return rows if with_ids else [row[:3] for row in rows]
+
+
+def _resolve_single_scan(
+    database_path: Path, sol: str, target: Optional[str], scan: str,
+) -> Tuple[str, Optional[str]]:
+    """(target, scan id) for single-scan mode (#175).
+
+    With ``--target`` the services look the scan up by name, as before.
+    Without it, (sol, scan) must name exactly one scan; that scan's id is
+    returned so a scan stored without a target is reachable.
+    """
+    if target:
+        return target, None
+    from sherloc_pipeline.database.connection import get_engine, get_session
+    from sherloc_pipeline.database.models import ScanORM
+
+    engine = get_engine(database_path)
+    with get_session(engine) as session:
+        rows = session.query(ScanORM.id, ScanORM.target).filter(
+            ScanORM.sol_number == int(sol), ScanORM.scan_name == scan,
+        ).all()
+    if not rows:
+        console.print(f"[red]No scan found for sol {sol}, scan {scan}[/red]")
+        raise typer.Exit(code=1)
+    if len(rows) > 1:
+        console.print(
+            f"[red]{len(rows)} scans match sol {sol}, scan {scan}; pass --target[/red]"
+        )
+        raise typer.Exit(code=1)
+    scan_id, tgt = rows[0]
+    return (tgt or "").replace(" ", "_"), scan_id
 
 
 @app.command("fit-fluor")
@@ -2198,6 +2233,7 @@ def fit_fluor_cmd(
 
     SINGLE SCAN:
         sherloc fit-fluor --sol 293 --target Quartier --scan HDR_1
+        sherloc fit-fluor --sol 293 --scan HDR_1   (when sol and scan name one scan)
 
     ALL SCANS:
         sherloc fit-fluor --all
@@ -2215,8 +2251,11 @@ def fit_fluor_cmd(
         if all_scans and any([sol, target, scan]):
             console.print("[red]--all is mutually exclusive with --sol/--target/--scan[/red]")
             raise typer.Exit(code=1)
-        if not all_scans and not all([sol, target, scan]):
-            console.print("[red]Provide --sol, --target, and --scan, or use --all[/red]")
+        if not all_scans and not all([sol, scan]):
+            console.print(
+                "[red]Provide --sol and --scan (and --target unless they name one scan), "
+                "or use --all[/red]"
+            )
             raise typer.Exit(code=1)
 
         db_path = database or Path("./phase.db")
@@ -2229,7 +2268,7 @@ def fit_fluor_cmd(
         service = FittingService(console=console, database_path=db_path)
 
         if all_scans:
-            scans = _iter_all_scans(db_path, console)
+            scans = _iter_all_scans(db_path, console, with_ids=True)
             console.print(f"[bold]Fluorescence fitting[/bold] — {len(scans)} scan(s)")
 
             total_peaks = 0
@@ -2242,12 +2281,12 @@ def fit_fluor_cmd(
                 console=console,
             ) as progress:
                 task = progress.add_task("Fitting fluorescence...", total=len(scans))
-                for sol_num, tgt, scn in scans:
+                for sol_num, tgt, scn, scan_row_id in scans:
                     progress.update(task, description=f"Sol {sol_num} {tgt} {scn}")
                     try:
                         result = service.fit_fluorescence(
-                            sol=f"{sol_num:04d}", target=tgt or "", scan=scn,
-                            generate_plots=not no_plots,
+                            sol=f"{sol_num:04d}", target=tgt, scan=scn,
+                            generate_plots=not no_plots, scan_id=scan_row_id,
                         )
                         total_peaks += (result.metadata or {}).get("peaks_inserted", 0)
                     except Exception as e:
@@ -2277,9 +2316,10 @@ def fit_fluor_cmd(
                         console.print(f"  ... and {len(errors) - 20} more")
             sys.exit(1 if errors else 0)
         else:
+            target, scan_row_id = _resolve_single_scan(db_path, sol, target, scan)
             result = service.fit_fluorescence(
                 sol=sol, target=target, scan=scan,
-                generate_plots=not no_plots,
+                generate_plots=not no_plots, scan_id=scan_row_id,
             )
             if json_mode:
                 import json as json_mod
@@ -2362,6 +2402,7 @@ def persist_peaks_cmd(
 
     SINGLE SCAN:
         sherloc persist-peaks --domain minerals --sol 921 --target Amherst_Point --scan detail_1
+        sherloc persist-peaks --domain minerals --sol 921 --scan detail_1   (when sol and scan name one scan)
 
     ALL SCANS (backfill):
         sherloc persist-peaks --domain minerals --all
@@ -2388,8 +2429,11 @@ def persist_peaks_cmd(
         if all_scans and any([sol, target, scan]):
             console.print("[red]--all is mutually exclusive with --sol/--target/--scan[/red]")
             raise typer.Exit(code=1)
-        if not all_scans and not all([sol, target, scan]):
-            console.print("[red]Provide --sol, --target, and --scan, or use --all[/red]")
+        if not all_scans and not all([sol, scan]):
+            console.print(
+                "[red]Provide --sol and --scan (and --target unless they name one scan), "
+                "or use --all[/red]"
+            )
             raise typer.Exit(code=1)
 
         db_path = database or Path("./phase.db")
@@ -2402,7 +2446,7 @@ def persist_peaks_cmd(
         service = FittingService(console=console, database_path=db_path)
 
         if all_scans:
-            scans = _iter_all_scans(db_path, console)
+            scans = _iter_all_scans(db_path, console, with_ids=True)
             console.print(f"[bold]Persisting {domain} peaks[/bold] — {len(scans)} scan(s)")
 
             total_peaks = 0
@@ -2415,14 +2459,15 @@ def persist_peaks_cmd(
                 console=console,
             ) as progress:
                 task = progress.add_task(f"Persisting {domain}...", total=len(scans))
-                for sol_num, tgt, scn in scans:
+                for sol_num, tgt, scn, scan_row_id in scans:
                     progress.update(task, description=f"Sol {sol_num} {tgt} {scn}")
                     try:
                         result = service.persist_raman_peaks(
-                            sol=f"{sol_num:04d}", target=tgt or "", scan=scn,
+                            sol=f"{sol_num:04d}", target=tgt, scan=scn,
                             domain=domain,
                             data_dir=data_dir,
                             results_dir=results_dir,
+                            scan_id=scan_row_id,
                         )
                         total_peaks += (result.metadata or {}).get("peaks_inserted", 0)
                     except Exception as e:
@@ -2453,9 +2498,10 @@ def persist_peaks_cmd(
                         console.print(f"  ... and {len(errors) - 20} more")
             sys.exit(1 if errors else 0)
         else:
+            target, scan_row_id = _resolve_single_scan(db_path, sol, target, scan)
             result = service.persist_raman_peaks(
                 sol=sol, target=target, scan=scan, domain=domain,
-                data_dir=data_dir, results_dir=results_dir,
+                data_dir=data_dir, results_dir=results_dir, scan_id=scan_row_id,
             )
             if json_mode:
                 import json as json_mod
@@ -2578,6 +2624,7 @@ def backfill_cmd(
             db_path, console,
             exclude_type="engineering" if no_engineering else None,
             science_only=science,
+            with_ids=True,
         )
         console.print(f"[bold]Backfill[/bold] — {len(scans)} scan(s), {len(selected)} domain(s): {', '.join(selected)}")
 
@@ -2608,20 +2655,22 @@ def backfill_cmd(
                 console=console,
             ) as progress:
                 task = progress.add_task(f"{label}...", total=len(scans))
-                for sol_num, tgt, scn in scans:
+                for sol_num, tgt, scn, scan_row_id in scans:
                     progress.update(task, description=f"{label}: Sol {sol_num} {tgt} {scn}")
                     try:
                         if is_fluor:
                             result = service.fit_fluorescence(
-                                sol=f"{sol_num:04d}", target=tgt or "", scan=scn,
+                                sol=f"{sol_num:04d}", target=tgt, scan=scn,
+                                scan_id=scan_row_id,
                             )
                             domain_peaks += (result.metadata or {}).get("peaks_inserted", 0)
                         else:
                             result = service.persist_raman_peaks(
-                                sol=f"{sol_num:04d}", target=tgt or "", scan=scn,
+                                sol=f"{sol_num:04d}", target=tgt, scan=scn,
                                 domain=domain_name,
                                 data_dir=data_dir,
                                 results_dir=results_dir,
+                                scan_id=scan_row_id,
                             )
                             domain_peaks += (result.metadata or {}).get("peaks_inserted", 0)
                     except Exception as e:

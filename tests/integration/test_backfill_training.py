@@ -308,7 +308,7 @@ class TestBackfillDiscovery:
             summary="OK", metadata={"peaks_inserted": 3}
         )
 
-        scans = [(293, "Quartier", "HDR_1")]
+        scans = [(293, "Quartier", "HDR_1", "synthetic-id-1")]
 
         # Create a real file so db_path.exists() passes
         db_file = tmp_path / "test.db"
@@ -347,7 +347,7 @@ class TestBackfillDiscovery:
             summary="OK", metadata={"peaks_inserted": 5}
         )
 
-        scans = [(293, "Quartier", "HDR_1")]
+        scans = [(293, "Quartier", "HDR_1", "synthetic-id-1")]
         db_file = tmp_path / "test.db"
         db_file.touch()
 
@@ -380,7 +380,7 @@ class TestBackfillDiscovery:
         """Backfill --dry-run does not call any service methods."""
         import typer
 
-        scans = [(293, "Quartier", "HDR_1")]
+        scans = [(293, "Quartier", "HDR_1", "synthetic-id-1")]
         db_file = tmp_path / "test.db"
         db_file.touch()
 
@@ -422,7 +422,7 @@ class TestBackfillDiscovery:
             summary="OK", metadata={"peaks_inserted": 0}
         )
 
-        scans = [(293, "Quartier", "HDR_1"), (310, "Dourbes", "detail_1")]
+        scans = [(293, "Quartier", "HDR_1", "synthetic-id-1"), (310, "Dourbes", "detail_1", "synthetic-id-2")]
         db_file = tmp_path / "test.db"
         db_file.touch()
 
