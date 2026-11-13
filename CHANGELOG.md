@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.7.8] - 2026-11-12
+
+### Upgrade notes
+- **Existing databases need one migration before data commands run.** This
+  release adds Alembic revision `4f638701cf7c`. On a database created by an
+  earlier version, `sherloc` data commands stop with `schema is at <revision>;
+  this code expects 4f638701cf7c. Nothing was changed.` and print the fix. Back
+  up the database, then run from your sherloc-pipeline checkout:
+  `PHASE_DATABASE_PATH=/path/to/your/phase.db alembic upgrade head`. The new
+  column is added in place (no table rebuild); existing peaks keep a NULL
+  flag until their scans are refit. New databases from `sherloc init` are
+  created at the new head.
+- **Deploy the image before the database (container operators).** A container
+  image older than this release cannot start on a database upgraded to
+  `4f638701cf7c`: its boot migration step fails with `Can't locate revision
+  identified by '4f638701cf7c'`. Roll out this image first. It serves a
+  database at your current pinned `SHERLOC_ALEMBIC_TARGET` unchanged, because
+  the boot step is then a no-op. Only after that, upgrade or replace the
+  database it serves.
+
 ### Added
 - **Cosmic-ray review flag reaches `fitted_peaks`.** Pipeline mineral fits
   now pass this run's ML despike R1 masks to `fit_spectrum(cr_mask_cm1=...)`
