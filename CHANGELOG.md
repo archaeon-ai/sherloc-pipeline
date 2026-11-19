@@ -13,9 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected scan refuses before a journal is created. The target joins the
   journal's scan selection, so a resume must name the same target;
   journals written without `--target` resume unchanged. The `--json`
-  result adds `selected` and `completed` lists (sol, target, scan, scan
-  row ids); `completed` includes scans skipped because the journal lists
-  them.
+  result adds `selected` and `completed` lists (sol, target, scan, and the
+  id of the scan row the run writes); `completed` includes scans skipped
+  because the journal lists them.
 
 ### Changed
 - **`scans.processing_pipeline_version` records the git commit.** When the

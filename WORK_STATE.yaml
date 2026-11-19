@@ -1,6 +1,6 @@
 work_package: refit --target and per-scan commit identity (refit, public pipeline half)
-branch: refit-target
-head: uncommitted
+branch: refit-target  # PR https://github.com/archaeon-ai/sherloc-pipeline/pull/200
+head: a7af9eb (r1 fixes pending commit)
 open_decisions: []
-next_action: run tests and the sol-921 regression, commit, open the PR, one Codex review
-last_verified: 2026-11-18T16:14-08:00 — targeted refit, scan-processing and identity tests run locally
+next_action: commit the Codex r1 fixes (F1-F4), post the response table, run Codex r2
+last_verified: 2026-11-18T16:21-08:00 — r1 NO-GO (2 Major, 2 Minor) read; sol-921 slow golden fails identically on main 276988b (minerals 30 vs 21), not caused by this branch

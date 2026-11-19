@@ -78,6 +78,40 @@ def current_pipeline_identity() -> str:
     return pipeline_identity()
 
 
+def _find_scan_row(session, *, sol, target: str, scan: str):
+    """The scan row a run writes: target with spaces, then as given; first match."""
+    from sherloc_pipeline.database.models import ScanORM
+
+    db_target = target.replace("_", " ")
+    row = session.query(ScanORM).filter_by(
+        sol_number=int(sol), target=db_target, scan_name=scan,
+    ).first()
+    if row is None and db_target != target:
+        row = session.query(ScanORM).filter_by(
+            sol_number=int(sol), target=target, scan_name=scan,
+        ).first()
+    return row
+
+
+def written_scan_ids(database_path: Path, keys) -> dict:
+    """Map each (sol, target, scan) key to the id of the row a run of it writes, or None.
+
+    Rows that share a key with that row are not written by the run.
+    """
+    from sherloc_pipeline.database.connection import get_engine, get_session
+
+    engine = get_engine(database_path)
+    try:
+        with get_session(engine) as session:
+            ids = {}
+            for sol, target, scan in keys:
+                row = _find_scan_row(session, sol=sol, target=target or "", scan=scan)
+                ids[(int(sol), target or "", scan)] = row.id if row is not None else None
+            return ids
+    finally:
+        engine.dispose()
+
+
 def record_scan_processing(
     database_path: Path,
     *,
@@ -103,14 +137,7 @@ def record_scan_processing(
     engine = get_engine(database_path)
     try:
         with get_session(engine) as session:
-            db_target = target.replace("_", " ")
-            row = session.query(ScanORM).filter_by(
-                sol_number=int(sol), target=db_target, scan_name=scan,
-            ).first()
-            if row is None and db_target != target:
-                row = session.query(ScanORM).filter_by(
-                    sol_number=int(sol), target=target, scan_name=scan,
-                ).first()
+            row = _find_scan_row(session, sol=sol, target=target, scan=scan)
             if row is None:
                 return False
             row.processing_status = status

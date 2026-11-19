@@ -2848,7 +2848,7 @@ def refit_cmd(
 
     The --json result lists the selected scans and the completed ones
     (including those an earlier run of the batch journaled), each with its
-    sol, target, scan name and scan row ids.
+    sol, target, scan name and the id of the scan row the run writes.
 
     Exit code 1 if any scan failed.
 
@@ -2929,9 +2929,6 @@ def refit_cmd(
         rows = [row for row in rows if row[1] == target_key]
         if not rows:
             fail(f"No selected scan has target {target!r}")
-    scan_ids: Dict[Tuple[int, str, str], List[str]] = {}
-    for sol_num, tgt, scn, sid in rows:
-        scan_ids.setdefault((int(sol_num), tgt or "", scn), []).append(sid)
     scans = [row[:3] for row in rows]
     selection: Dict[str, Any] = {"science": science, "no_engineering": no_engineering}
     if target_key is not None:
@@ -2958,6 +2955,8 @@ def refit_cmd(
     duplicate_labels = [f"{sol_num:04d} {tgt} {scn}" for sol_num, tgt, scn in duplicates]
     to_run, skipped = pending(runnable, batch.done)
     skipped_keys = set(skipped)
+    from sherloc_pipeline.services.scan_processing import written_scan_ids
+    scan_ids = written_scan_ids(db_path, runnable)
     out.print(
         f"[bold]Refit[/bold]: {len(scans)} scan(s), {len(skipped)} already in the journal, "
         f"{len(unrunnable)} without a target, {len(duplicates)} duplicate key(s), "
@@ -2967,7 +2966,7 @@ def refit_cmd(
     def listed(keys) -> List[Dict[str, Any]]:
         return [
             {"sol": int(sol_num), "target": tgt, "scan": scn,
-             "scan_ids": scan_ids.get((int(sol_num), tgt or "", scn), [])}
+             "scan_id": scan_ids.get((int(sol_num), tgt or "", scn))}
             for sol_num, tgt, scn in keys
         ]
 

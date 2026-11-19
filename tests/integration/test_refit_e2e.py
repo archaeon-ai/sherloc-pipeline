@@ -116,8 +116,8 @@ def test_records_complete_scans_and_resume_skips_them(
         "journal": None, "scans": 1, "processed": 1, "skipped": 0, "failed": 0, "errors": [],
         "unrunnable": [], "duplicates": []}
     assert listed["selected"] == listed["completed"]
-    assert [(e["sol"], e["target"], e["scan"], len(e["scan_ids"])) for e in listed["selected"]] == [
-        (921, TARGET, "detail_1", 1)]
+    assert [(e["sol"], e["target"], e["scan"]) for e in listed["selected"]] == [(921, TARGET, "detail_1")]
+    assert listed["selected"][0]["scan_id"]
     assert [(e["sol"], e["scan"]) for e in _journal_scans(journal)] == [(921, "detail_1")]
     assert stub_persistence == [str(loupe_db.resolve())] * 3
 
@@ -376,7 +376,7 @@ def test_complete_run_is_not_journaled_when_fields_cannot_be_written(
 
 
 def _add_scan_of_other_target(db_path, target="Other Target"):
-    """A second scan row on the same sol with another target and no Loupe inputs."""
+    """A second scan row on the same sol (another target by default) with no Loupe inputs."""
     engine = get_engine(db_path)
     try:
         with get_session(engine) as session:
@@ -399,7 +399,7 @@ def test_target_selects_one_targets_scans_and_lists_them(
 
     result, payload = _refit(*common, "--journal", str(journal))
     assert result.exit_code == 0, result.output
-    entry = {"sol": 921, "target": TARGET, "scan": "detail_1", "scan_ids": [scan_id]}
+    entry = {"sol": 921, "target": TARGET, "scan": "detail_1", "scan_id": scan_id}
     assert payload["result"]["scans"] == 1
     assert payload["result"]["selected"] == [entry]
     assert payload["result"]["completed"] == [entry]
@@ -459,3 +459,27 @@ def test_target_combines_with_science(tmp_path, fixtures_path, loupe_db, restore
     )
     assert result.exit_code == 1
     assert TARGET in result.stderr
+
+
+def test_duplicate_key_lists_only_the_row_the_run_writes(
+    tmp_path, fixtures_path, loupe_db, stub_heavy_stages, stub_persistence, restore_config,
+):
+    first = _add_scan_of_other_target(loupe_db, target=TARGET.replace("_", " "))
+    result, payload = _refit(
+        "--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+        "--results-dir", str(tmp_path / "results"), "--target", TARGET, "--journal", str(tmp_path / "b.jsonl"),
+    )
+    assert result.exit_code == 0, result.output
+    assert len(payload["result"]["duplicates"]) == 1
+    [entry] = payload["result"]["completed"]
+    engine = get_engine(loupe_db)
+    try:
+        with get_session(engine) as session:
+            status = {s.id: s.processing_status for s in session.query(ScanORM).all()}
+    finally:
+        engine.dispose()
+    assert len(status) == 2
+    # The listed row is the one the run wrote; the other row sharing the key was not written.
+    assert entry["scan_id"] == first
+    assert status[entry["scan_id"]] == "completed"
+    assert [v for k, v in status.items() if k != entry["scan_id"]] == [None]
