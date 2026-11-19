@@ -1,6 +1,0 @@
-work_package: refit --target and per-scan commit identity (refit, public pipeline half)
-branch: refit-target  # PR https://github.com/archaeon-ai/sherloc-pipeline/pull/200
-head: adc5d27 (r1 fixes; this commit only refreshes this file)
-open_decisions: []
-next_action: Codex r2 on the PR head; merge on exact-head GO + CI green; remove this file before merge
-last_verified: 2026-11-18T16:21-08:00 — r1 NO-GO (2 Major, 2 Minor) read; sol-921 slow golden fails identically on main 276988b (minerals 30 vs 21), not caused by this branch
