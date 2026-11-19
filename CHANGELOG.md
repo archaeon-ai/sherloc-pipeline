@@ -23,8 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `process-new`, `refit`) writes the full commit of that checkout, with
   `-dirty` appended when tracked files are modified; an installed package
   writes its version as before. Package versions alone cannot tell apart
-  commits between releases. The model declares the column `String(64)`; no
-  migration, because SQLite does not enforce the width and existing
+  commits between releases. The column keeps its declared `VARCHAR(20)`
+  and no migration: SQLite does not enforce the width, so existing and new
   databases hold the longer value as they are.
 
 ### Fixed
