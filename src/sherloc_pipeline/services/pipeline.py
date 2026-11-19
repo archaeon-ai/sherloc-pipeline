@@ -505,14 +505,14 @@ class PipelineService:
         db_path = Path(os.environ.get("SHERLOC_DB_PATH", "./phase.db"))
 
         def record(status: str, error: Optional[str]) -> bool:
-            from sherloc_pipeline import __version__
             from sherloc_pipeline.services.refit_journal import config_digest
+            from sherloc_pipeline.services.scan_processing import current_pipeline_identity
 
             return record_scan_processing(
                 db_path, sol=sol, target=target, scan=scan,
                 status=status, error=error,
                 config_hash=config_digest(self.context.config),
-                pipeline_version=__version__,
+                pipeline_version=current_pipeline_identity(),
             )
 
         try:

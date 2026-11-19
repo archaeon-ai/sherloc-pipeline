@@ -1,0 +1,6 @@
+work_package: refit --target and per-scan commit identity (refit, public pipeline half)
+branch: refit-target
+head: uncommitted
+open_decisions: []
+next_action: run tests and the sol-921 regression, commit, open the PR, one Codex review
+last_verified: 2026-11-18T16:14-08:00 — targeted refit, scan-processing and identity tests run locally

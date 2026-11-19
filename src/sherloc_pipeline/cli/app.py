@@ -21,7 +21,7 @@ import time
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 import sys
 import typer
 from rich.console import Console
@@ -2798,6 +2798,10 @@ def refit_cmd(
     ),
     science: bool = typer.Option(False, "--science", help="Mars targets + cal meteorite (SAU-008) only"),
     no_engineering: bool = typer.Option(False, "--no-engineering", help="Exclude engineering scans"),
+    target: Optional[str] = typer.Option(
+        None, "--target",
+        help="Only scans of this target (spaces or underscores). Refuses if no scan matches.",
+    ),
     journal: Optional[Path] = typer.Option(
         None, "--journal",
         help="Journal for a new batch (default: <results>/refit-<UTC time>.jsonl). Must not exist.",
@@ -2839,10 +2843,18 @@ def refit_cmd(
     unfinished scans run again. Do not run other writers against the
     database during a batch.
 
+    --target limits the batch to one target's scans, combined with the
+    other selection options; the target is part of the batch identity.
+
+    The --json result lists the selected scans and the completed ones
+    (including those an earlier run of the batch journaled), each with its
+    sol, target, scan name and scan row ids.
+
     Exit code 1 if any scan failed.
 
     Examples:
         sherloc refit --science
+        sherloc refit --science --target Some_Target
         sherloc refit --science --journal refit-science.jsonl
         sherloc refit --science --resume refit-science.jsonl
     """
@@ -2876,6 +2888,11 @@ def refit_cmd(
 
     if journal is not None and resume is not None:
         fail("--journal and --resume are mutually exclusive")
+    target_key = None
+    if target is not None:
+        target_key = target.strip().replace(" ", "_")
+        if not target_key:
+            fail("--target must name a target")
     db_path = Path(database or os.environ.get("SHERLOC_DB_PATH") or "./phase.db").resolve()
     if not db_path.exists():
         fail(f"Database not found: {db_path}")
@@ -2902,11 +2919,29 @@ def refit_cmd(
     data_dir = data_dir or Path(paths_cfg.get("data_root") or "./data")
     results_dir = results_dir or Path(paths_cfg.get("results_root") or "./results")
     context = RuntimeContext.bootstrap(data_dir=data_dir, results_dir=results_dir)
+    rows = _iter_all_scans(
+        db_path, out,
+        exclude_type="engineering" if no_engineering else None,
+        science_only=science,
+        with_ids=True,
+    )
+    if target_key is not None:
+        rows = [row for row in rows if row[1] == target_key]
+        if not rows:
+            fail(f"No selected scan has target {target!r}")
+    scan_ids: Dict[Tuple[int, str, str], List[str]] = {}
+    for sol_num, tgt, scn, sid in rows:
+        scan_ids.setdefault((int(sol_num), tgt or "", scn), []).append(sid)
+    scans = [row[:3] for row in rows]
+    selection: Dict[str, Any] = {"science": science, "no_engineering": no_engineering}
+    if target_key is not None:
+        # Only when given, so journals of batches without --target resume as before.
+        selection["target"] = target_key
     identity = batch_identity(
         database=db_path,
         data_root=context.data_root,
         results_root=context.results_root,
-        selection={"science": science, "no_engineering": no_engineering},
+        selection=selection,
         config_digest=config_digest(config),
     )
     try:
@@ -2918,22 +2953,26 @@ def refit_cmd(
     except JournalError as e:
         fail(str(e))
 
-    scans = _iter_all_scans(
-        db_path, out,
-        exclude_type="engineering" if no_engineering else None,
-        science_only=science,
-    )
     runnable, no_target, duplicates = select_runnable(scans)
     unrunnable = [f"{sol_num:04d} {scn}: no target" for sol_num, _, scn in no_target]
     duplicate_labels = [f"{sol_num:04d} {tgt} {scn}" for sol_num, tgt, scn in duplicates]
     to_run, skipped = pending(runnable, batch.done)
+    skipped_keys = set(skipped)
     out.print(
         f"[bold]Refit[/bold]: {len(scans)} scan(s), {len(skipped)} already in the journal, "
         f"{len(unrunnable)} without a target, {len(duplicates)} duplicate key(s), "
         f"{len(to_run)} to run. Journal: {batch.path}"
     )
 
+    def listed(keys) -> List[Dict[str, Any]]:
+        return [
+            {"sol": int(sol_num), "target": tgt, "scan": scn,
+             "scan_ids": scan_ids.get((int(sol_num), tgt or "", scn), [])}
+            for sol_num, tgt, scn in keys
+        ]
+
     processed: List[str] = []
+    done_now: Set[Tuple[int, str, str]] = set()
     failed: List[str] = []
     previous_db = os.environ.get("SHERLOC_DB_PATH")
     os.environ["SHERLOC_DB_PATH"] = str(db_path)
@@ -2959,6 +2998,7 @@ def refit_cmd(
             except OSError as e:
                 fail(f"{label} completed but could not be recorded in {batch.path}: {e}. Batch stopped.")
             processed.append(label)
+            done_now.add((sol_num, tgt, scn))
     finally:
         batch.close()
         if previous_db is None:
@@ -2980,6 +3020,8 @@ def refit_cmd(
                 "errors": failed,
                 "unrunnable": unrunnable,
                 "duplicates": duplicate_labels,
+                "selected": listed(runnable),
+                "completed": listed([k for k in runnable if k in done_now or k in skipped_keys]),
             },
         )
         print(json_mod.dumps(output.model_dump(), default=str))
