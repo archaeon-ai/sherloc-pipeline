@@ -210,7 +210,7 @@ class ScanORM(Base):
     processing_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     processing_config_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    processing_pipeline_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    processing_pipeline_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # holds up to 46 characters (a git commit + "-dirty"); SQLite does not enforce the width
     processing_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

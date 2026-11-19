@@ -618,9 +618,16 @@ Scans need Loupe working directories, as for `full-pipeline`. A scan without the
 
 A scan with no target cannot be run and is listed as not run (no target); it is not counted as a failure. Scans that share a sol, target and scan name (after spaces in the target become underscores) run once, and the extra rows are listed as duplicates. The `--json` result carries both lists as `unrunnable` and `duplicates`.
 
+`--target NAME` limits the batch to the scans of one target (spaces and underscores in the name are equivalent), combined with `--science` and `--no-engineering`. If no selected scan has that target the command refuses before creating a journal. The target is part of the journal's scan selection, so a `--resume` must name the same target.
+
+The `--json` result also lists `selected` (every runnable scan of the batch) and `completed` (the selected scans this run completed plus those the journal already listed), each as `{sol, target, scan, scan_id}`, where `scan_id` is the scan row the run writes peaks and processing fields to. Other rows that share the key are listed under `duplicates` and are not written.
+
+Every scan a run fits records `processing_status`, `processed_at`, `processing_config_hash` (the same config digest the journal records) and `processing_pipeline_version`: the full git commit when the package runs from a git checkout (`-dirty` appended when tracked files are modified), otherwise the installed package version.
+
 **Options:**
 - `--database PATH` - Database (default: `$SHERLOC_DB_PATH`, else `./phase.db`). The run writes to this database.
 - `--science` / `--no-engineering` - Scan selection, as for `backfill`
+- `--target NAME` - Only the scans of this target
 - `--journal PATH` - Journal for a new batch (default: `<results>/refit-<UTC time>.jsonl`)
 - `--resume PATH` - Continue a batch
 - `--data-dir`, `--results-dir` - Default: `paths.data_root` and `paths.results_root` in config.yaml (`$SHERLOC_DATA_DIR`, `$SHERLOC_RESULTS_DIR`)

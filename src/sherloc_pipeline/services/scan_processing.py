@@ -12,7 +12,10 @@ persists, how that run ended:
   effective config, the same digest a refit batch journal records. It leaves
   out the database and root paths, so the same config on another host or
   copy hashes the same.
-- ``processing_pipeline_version``: the installed package version.
+- ``processing_pipeline_version``: the code identity (``pipeline_identity``):
+  the full git commit when the package runs from a git checkout, with
+  ``-dirty`` appended when tracked files differ from it; otherwise the
+  installed package version.
 - ``processing_error``: the failure reasons, or NULL when completed.
 
 The scan row is found the way peak persistence finds it (target with spaces,
@@ -22,12 +25,91 @@ run's peaks.
 
 from __future__ import annotations
 
+import functools
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
+
+
+def _git(repo: Path, *args: str) -> Optional[str]:
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def pipeline_identity(package_root: Optional[Path] = None) -> str:
+    """The code identity written on each scan a run fits.
+
+    When the package sits in a git work tree (an editable install of a
+    checkout), this is the full commit of that tree's HEAD, with ``-dirty``
+    appended when any tracked file differs from it. An installed wheel has no
+    work tree, so the identity is the package version.
+    """
+    from sherloc_pipeline import __version__
+
+    if package_root is None:
+        package_root = Path(__file__).resolve().parents[1]
+    top = _git(package_root, "rev-parse", "--show-toplevel")
+    if not top:
+        return __version__
+    # The package must belong to that tree, not sit in an unrelated repository.
+    tracked = _git(Path(top), "ls-files", "--error-unmatch", "--", str(package_root / "__init__.py"))
+    commit = _git(Path(top), "rev-parse", "--verify", "HEAD")
+    if tracked is None or not commit:
+        return __version__
+    status = _git(Path(top), "status", "--porcelain", "--untracked-files=no")
+    if status is None or status:
+        return f"{commit}-dirty"
+    return commit
+
+
+@functools.lru_cache(maxsize=1)
+def current_pipeline_identity() -> str:
+    """``pipeline_identity()`` of this process's code, computed once."""
+    return pipeline_identity()
+
+
+def _find_scan_row(session, *, sol, target: str, scan: str):
+    """The scan row a run writes: target with spaces, then as given; first match."""
+    from sherloc_pipeline.database.models import ScanORM
+
+    db_target = target.replace("_", " ")
+    row = session.query(ScanORM).filter_by(
+        sol_number=int(sol), target=db_target, scan_name=scan,
+    ).first()
+    if row is None and db_target != target:
+        row = session.query(ScanORM).filter_by(
+            sol_number=int(sol), target=target, scan_name=scan,
+        ).first()
+    return row
+
+
+def written_scan_ids(database_path: Path, keys) -> dict:
+    """Map each (sol, target, scan) key to the id of the row a run of it writes, or None.
+
+    Rows that share a key with that row are not written by the run.
+    """
+    from sherloc_pipeline.database.connection import get_engine, get_session
+
+    engine = get_engine(database_path)
+    try:
+        with get_session(engine) as session:
+            ids = {}
+            for sol, target, scan in keys:
+                row = _find_scan_row(session, sol=sol, target=target or "", scan=scan)
+                ids[(int(sol), target or "", scan)] = row.id if row is not None else None
+            return ids
+    finally:
+        engine.dispose()
 
 
 def record_scan_processing(
@@ -55,14 +137,7 @@ def record_scan_processing(
     engine = get_engine(database_path)
     try:
         with get_session(engine) as session:
-            db_target = target.replace("_", " ")
-            row = session.query(ScanORM).filter_by(
-                sol_number=int(sol), target=db_target, scan_name=scan,
-            ).first()
-            if row is None and db_target != target:
-                row = session.query(ScanORM).filter_by(
-                    sol_number=int(sol), target=target, scan_name=scan,
-                ).first()
+            row = _find_scan_row(session, sol=sol, target=target, scan=scan)
             if row is None:
                 return False
             row.processing_status = status

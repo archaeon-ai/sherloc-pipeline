@@ -111,9 +111,13 @@ def test_records_complete_scans_and_resume_skips_them(
 
     result, payload = _refit(*common, "--journal", str(journal))
     assert result.exit_code == 0, result.output
+    listed = {k: payload["result"].pop(k) for k in ("selected", "completed")}
     assert payload["result"] | {"journal": None} == {
         "journal": None, "scans": 1, "processed": 1, "skipped": 0, "failed": 0, "errors": [],
         "unrunnable": [], "duplicates": []}
+    assert listed["selected"] == listed["completed"]
+    assert [(e["sol"], e["target"], e["scan"]) for e in listed["selected"]] == [(921, TARGET, "detail_1")]
+    assert listed["selected"][0]["scan_id"]
     assert [(e["sol"], e["scan"]) for e in _journal_scans(journal)] == [(921, "detail_1")]
     assert stub_persistence == [str(loupe_db.resolve())] * 3
 
@@ -300,7 +304,7 @@ def test_refit_writes_scan_processing_fields(
     case, tmp_path, fixtures_path, loupe_db, stub_heavy_stages, restore_config, monkeypatch, request,
 ):
     """A refit writes every processing field, and the status agrees with the peak rows and the journal."""
-    from sherloc_pipeline import __version__
+    from sherloc_pipeline.services.scan_processing import current_pipeline_identity
 
     if case == "peaks":
         request.getfixturevalue("peak_writing_persistence")
@@ -320,7 +324,7 @@ def test_refit_writes_scan_processing_fields(
 
     assert fields["processed_at"] is not None
     assert fields["config_hash"] == header["config_digest"]
-    assert fields["version"] == __version__
+    assert fields["version"] == current_pipeline_identity()
     if case == "incomplete":
         assert result.exit_code == 1
         assert fields["status"] == "failed"
@@ -369,3 +373,113 @@ def test_complete_run_is_not_journaled_when_fields_cannot_be_written(
     assert result.exit_code == 1
     assert "processing fields not written" in payload["result"]["errors"][0]
     assert _journal_scans(journal) == []
+
+
+def _add_scan_of_other_target(db_path, target="Other Target"):
+    """A second scan row on the same sol (another target by default) with no Loupe inputs."""
+    engine = get_engine(db_path)
+    try:
+        with get_session(engine) as session:
+            src = session.query(ScanORM).one()
+            columns = {c.key: getattr(src, c.key) for c in ScanORM.__table__.columns}
+            columns.update(id=str(uuid.uuid4()), target=target, scan_id=f"{src.scan_id}-other")
+            session.add(ScanORM(**columns))
+            return src.id
+    finally:
+        engine.dispose()
+
+
+def test_target_selects_one_targets_scans_and_lists_them(
+    tmp_path, fixtures_path, loupe_db, stub_heavy_stages, stub_persistence, restore_config, monkeypatch,
+):
+    scan_id = _add_scan_of_other_target(loupe_db)
+    journal = tmp_path / "batch.jsonl"
+    common = ["--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+              "--results-dir", str(tmp_path / "results"), "--target", "Refit E2E"]
+
+    result, payload = _refit(*common, "--journal", str(journal))
+    assert result.exit_code == 0, result.output
+    entry = {"sol": 921, "target": TARGET, "scan": "detail_1", "scan_id": scan_id}
+    assert payload["result"]["scans"] == 1
+    assert payload["result"]["selected"] == [entry]
+    assert payload["result"]["completed"] == [entry]
+    header = json.loads(journal.read_text().splitlines()[0])
+    assert header["selection"]["target"] == TARGET
+
+    # A resume lists the journaled scan as completed without running it.
+    from sherloc_pipeline.services.pipeline import PipelineService
+
+    calls = []
+    monkeypatch.setattr(PipelineService, "run_full_pipeline", lambda self, **kw: calls.append(kw))
+    result, payload = _refit(*common, "--resume", str(journal))
+    assert result.exit_code == 0, result.output
+    assert calls == []
+    assert (payload["result"]["processed"], payload["result"]["skipped"]) == (0, 1)
+    assert payload["result"]["completed"] == [entry]
+
+
+def test_target_is_part_of_the_batch_identity(
+    tmp_path, fixtures_path, loupe_db, stub_heavy_stages, stub_persistence, restore_config,
+):
+    _add_scan_of_other_target(loupe_db)
+    journal = tmp_path / "batch.jsonl"
+    common = ["--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+              "--results-dir", str(tmp_path / "results")]
+    assert _refit(*common, "--target", TARGET, "--journal", str(journal))[0].exit_code == 0
+
+    for other in (["--target", "Other_Target"], []):
+        result = CliRunner().invoke(app, ["refit", *common, *other, "--resume", str(journal)])
+        assert result.exit_code == 1
+        assert "selection" in result.output
+    assert len(_journal_scans(journal)) == 1
+
+
+def test_target_without_a_scan_refuses_before_the_journal(tmp_path, fixtures_path, loupe_db, restore_config):
+    journal = tmp_path / "batch.jsonl"
+    result, _ = _refit(
+        "--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+        "--results-dir", str(tmp_path / "results"), "--target", "No_Such_Target", "--journal", str(journal),
+    )
+    assert result.exit_code == 1
+    assert "No_Such_Target" in result.stderr
+    assert not journal.exists()
+
+
+def test_target_combines_with_science(tmp_path, fixtures_path, loupe_db, restore_config):
+    # The fixture scan is a cal-target scan, so --science leaves nothing for its target.
+    engine = get_engine(loupe_db)
+    try:
+        with get_session(engine) as session:
+            session.query(ScanORM).one().target_type = "engineering"
+    finally:
+        engine.dispose()
+    result, _ = _refit(
+        "--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+        "--results-dir", str(tmp_path / "results"), "--science", "--target", TARGET,
+    )
+    assert result.exit_code == 1
+    assert TARGET in result.stderr
+
+
+def test_duplicate_key_lists_only_the_row_the_run_writes(
+    tmp_path, fixtures_path, loupe_db, stub_heavy_stages, stub_persistence, restore_config,
+):
+    first = _add_scan_of_other_target(loupe_db, target=TARGET.replace("_", " "))
+    result, payload = _refit(
+        "--database", str(loupe_db), "--data-dir", str(fixtures_path / "loupe"),
+        "--results-dir", str(tmp_path / "results"), "--target", TARGET, "--journal", str(tmp_path / "b.jsonl"),
+    )
+    assert result.exit_code == 0, result.output
+    assert len(payload["result"]["duplicates"]) == 1
+    [entry] = payload["result"]["completed"]
+    engine = get_engine(loupe_db)
+    try:
+        with get_session(engine) as session:
+            status = {s.id: s.processing_status for s in session.query(ScanORM).all()}
+    finally:
+        engine.dispose()
+    assert len(status) == 2
+    # The listed row is the one the run wrote; the other row sharing the key was not written.
+    assert entry["scan_id"] == first
+    assert status[entry["scan_id"]] == "completed"
+    assert [v for k, v in status.items() if k != entry["scan_id"]] == [None]
