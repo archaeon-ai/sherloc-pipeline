@@ -192,6 +192,26 @@ fitting:
   organics_d_roi: [1250, 1500]        # D-band search window
   organics_g_fwhm_accept: [40, 100]   # acceptance band for G detection
   organics_d_fwhm_accept: [100, 200]  # acceptance band for D detection
+
+  # O-H bend vs G band (docs/METHODS.md, "O-H bend in the G window"). On a
+  # point whose hydration fit accepted an O-H stretch, a G-window peak is
+  # compared with the bend the stretch predicts: ratio x stretch height (the
+  # maximum of the stretch model). The stretch class is chosen by the largest
+  # stretch component, first match wins. Noise is the peak's amplitude / SNR.
+  #   amplitude <= predicted + bend_sigma x noise      -> H2O_bend
+  #   amplitude - predicted >= excess_sigma x noise    -> G_band
+  #   otherwise                                        -> G_band_or_H2O_bend
+  # Ratios are the upper ends of the measured bend/stretch height ratios
+  # (stacked mission spectra, leave-one-scan-out range). PROPOSED values,
+  # awaiting the science lead's ratification.
+  organics_oh_bend:
+    bend_sigma: 2.0
+    excess_sigma: 3.0
+    stretch_classes:
+      - {name: water_broad,  center_max: 3500.0, fwhm_min: 150.0, ratio: 0.041}
+      - {name: narrow_low,   center_max: 3500.0, fwhm_max: 150.0, ratio: 0.001}
+      - {name: mid_3500_3650, center_min: 3500.0, center_max: 3650.0, ratio: 0.010}
+      - {name: high_3650,    center_min: 3650.0, ratio: 0.004}
   organics_rebaseline:
     enabled: false
     method: poly

@@ -1,0 +1,7 @@
+work_package: O-H bend vs G band in the organics fit (stretch-to-bend rule) — PARKED AS DRAFT
+branch: oh-bend-rule (draft PR; must not merge)
+head: (the commit that adds this file; see the PR)
+open_decisions:
+  - operator 2026-11-18 19:1x "Bend rule is not ready for prime time -- needs more study": no label change ships; what is studied is the operator's call
+next_action: none until the operator picks the further study; this draft relabels G-window peaks and must not merge as is
+last_verified: 2026-11-18T19:13:11-08:00 — new unit tests pass locally (synthetic bend/carbon/both, rule outcomes, persistence label); full not-slow suite not completed; Codex review not run; sol-921 anchors not touched (separate PR on the operator's anchors word)

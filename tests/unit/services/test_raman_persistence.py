@@ -648,6 +648,45 @@ class TestOrganicsDomain:
             for p in p0:
                 assert p.fit_quality == 0.91
 
+    def test_organics_stores_the_bend_rule_label(self, populated_db, tmp_path):
+        """A fit-time ``assignment`` (O-H bend rule) is what persistence stores.
+
+        Rows without one keep the center label; the width gate still uses the
+        center label, so a relabeled G-window peak keeps the G minimum.
+        """
+        engine, _spectrum_ids, _ = populated_db
+        base = tmp_path / "results_bend"
+        d = base / "organics_fit"
+        d.mkdir(parents=True)
+        _write_marker(d)
+        rows = {
+            0: [{"center_cm1": 1640.0, "fwhm_cm1": 70.0, "amplitude_a": 300.0, "area": 1.0, "snr": 6.0,
+                 "assignment": "H2O_bend"}],
+            1: [{"center_cm1": 1600.0, "fwhm_cm1": 60.0, "amplitude_a": 300.0, "area": 1.0, "snr": 6.0,
+                 "assignment": "G_band_or_H2O_bend"}],
+            2: [{"center_cm1": 1590.0, "fwhm_cm1": 60.0, "amplitude_a": 300.0, "area": 1.0, "snr": 6.0,
+                 "assignment": ""},
+                {"center_cm1": 1620.0, "fwhm_cm1": 30.0, "amplitude_a": 300.0, "area": 1.0, "snr": 6.0,
+                 "assignment": "H2O_bend"}],
+        }
+        for point, peaks in rows.items():
+            pd.DataFrame(peaks).to_csv(
+                d / f"0851_Lake_Haiyaha_detail_1_R1_point{point}_organics_g_peaks.csv", index=False
+            )
+        pd.DataFrame([{"point": p, "r2": 0.9} for p in rows]).to_csv(
+            d / "0851_Lake_Haiyaha_detail_1_R1_organics_accepted_peaks.csv", index=False
+        )
+
+        result = _call_persist_raman(_make_service(engine), base, "organics")
+
+        assert result.metadata["peaks_inserted"] == 3   # the FWHM-30 peak fails the G minimum (40)
+        with get_session(engine) as session:
+            labels = sorted(
+                (round(p.center_cm1), p.mineral_assignment)
+                for p in session.query(FittedPeakORM).filter_by(fit_modality="organics")
+            )
+        assert labels == [(1590, "G_band"), (1600, "G_band_or_H2O_bend"), (1640, "H2O_bend")]
+
     def test_organics_prefers_dg_over_g(self, populated_db, tmp_path):
         """When both DG and G CSVs exist, only DG CSV is used."""
         engine, spectrum_ids, _ = populated_db
