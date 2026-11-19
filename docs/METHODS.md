@@ -624,6 +624,21 @@ Domain overrides (organics, hydration, fluorescence) are defined in the same `fi
 - F-test for nested models: standard derivation; implementation in `core/fitting.py:_f_test_pvalue`.
 - AICc: Burnham & Anderson (2002), *Model Selection and Multimodel Inference*; implementation in `core/fitting.py:_compute_aicc`.
 
+### 3.5 O-H Bend in the G Window
+
+The organics fit searches 1500–1700 cm⁻¹ for the G band. The H₂O bending mode (near 1600–1650 cm⁻¹) falls in the same window, so on a point with molecular water a peak there may be the bend, carbon, or both. The organics step therefore reads the same point's hydration result (the pipeline fits hydration before organics) and compares every G-window peak with the bend the point's O-H stretch predicts (`core/oh_bend.py`, config `fitting.organics_oh_bend`):
+
+1. **Stretch class.** The largest accepted stretch component picks a class by its center and FWHM. Each class carries a `ratio`, the bend height divided by the stretch height. The ratios are the upper ends of the ratios measured by stacking mission spectra: about 0.04 for broad stretches (FWHM ≥ 150 cm⁻¹) centered below 3500 cm⁻¹, about 0.01 for 3500–3650 cm⁻¹, and at most 0.004 for structural O-H (≥ 3650 cm⁻¹) and for narrow stretches below 3500 cm⁻¹.
+2. **Predicted bend.** `ratio × stretch height`, where the stretch height is the maximum of the summed stretch model.
+3. **Verdict.** With the peak's noise taken as `amplitude / SNR`:
+   - `amplitude ≤ predicted + bend_sigma × noise` → **`H2O_bend`** (the stretch accounts for the peak);
+   - `amplitude − predicted ≥ excess_sigma × noise` → **`G_band`** (the excess over the predicted bend is what the carbon label rests on);
+   - otherwise → **`G_band_or_H2O_bend`**: the row is named as uncertain rather than given either label.
+
+A point without an accepted stretch is not touched, and its G-window peaks keep the label their center gives them. The verdict is written to the per-point peak table (column `assignment`, which persistence stores as `mineral_assignment`), and to the organics accepted-peaks table, where `band` holds the label and `bend_rule`, `oh_stretch_class`, `oh_stretch_height`, `bend_predicted` and `bend_excess_snr` carry the numbers. The `band` label is what the unified review table shows as `label_id`. A relabeled peak keeps `fit_modality = organics`, and its width gate is still the G-band minimum. When the scan has no completed hydration run, the rule does not run, and the organics run says so in its warnings, its metadata (`oh_bend_rule`) and its run marker.
+
+The ratios and the two sigma thresholds are config values, proposed from the mission data and awaiting the science lead's ratification.
+
 ---
 
 ## 4. Machine Learning Methods

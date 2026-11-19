@@ -366,10 +366,21 @@ PEAK_TABLE_COLUMNS = [
 ]
 
 
-def save_peak_table(peaks: List[PeakFit], output_csv_path: str) -> None:
+def save_peak_table(
+    peaks: List[PeakFit],
+    output_csv_path: str,
+    assignments: Optional[Sequence[str]] = None,
+) -> None:
     """Write a point's peak table. A point with no peaks gets a header-only
-    table, so readers see zero rows instead of an unparseable empty file."""
+    table, so readers see zero rows instead of an unparseable empty file.
+
+    ``assignments`` (one per peak, "" for none) adds an ``assignment`` column:
+    a label decided at fit time that persistence stores instead of the label
+    the peak's center would give (the organics O-H bend rule).
+    """
     import pandas as pd
+    if assignments is not None and len(assignments) != len(peaks):
+        raise ValueError("assignments must have one entry per peak")
     rows = [
         {
             'center_cm1': p.m_cm1,
@@ -386,7 +397,12 @@ def save_peak_table(peaks: List[PeakFit], output_csv_path: str) -> None:
         }
         for p in peaks
     ]
-    pd.DataFrame(rows, columns=PEAK_TABLE_COLUMNS).to_csv(output_csv_path, index=False)
+    columns = list(PEAK_TABLE_COLUMNS)
+    if assignments is not None:
+        columns.append('assignment')
+        for row, label in zip(rows, assignments):
+            row['assignment'] = label
+    pd.DataFrame(rows, columns=columns).to_csv(output_csv_path, index=False)
 
 
 

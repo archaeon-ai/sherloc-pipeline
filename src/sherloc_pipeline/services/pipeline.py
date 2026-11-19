@@ -690,8 +690,8 @@ class PipelineService:
                     stage_extra["metadata"] = pre_result.metadata
                 metadata["preprocessing"] = pre_result.metadata
 
-        # Step 2/7 - Raman Fitting (minerals, organics, hydration) ----------------
-        self.console.print("[bold cyan]Step 2/7: Raman Fitting (minerals, organics, hydration)[/bold cyan]")
+        # Step 2/7 - Raman Fitting (minerals, hydration, organics) ----------------
+        self.console.print("[bold cyan]Step 2/7: Raman Fitting (minerals, hydration, organics)[/bold cyan]")
         fitting_service = FittingService(console=self.console, context=run_context)
         fitting_metadata: Dict[str, Any] = {}
         with capture_stage("fitting_modality") as (stage_artifacts, stage_warnings, stage_extra):
@@ -719,28 +719,9 @@ class PipelineService:
                     fitting_metadata["minerals"] = minerals_result.metadata
                     stage_extra["minerals"] = minerals_result.metadata
 
-            try:
-                organics_result = fitting_service.fit_organics(
-                    sol=sol,
-                    target=target,
-                    scan=scan,
-                    data_dir=resolved_data_dir,
-                    results_dir=resolved_results_dir,
-                    verbose=False,
-                )
-            except Exception as exc:
-                stage_warnings.append(str(exc))
-                stage_extra["organics_error"] = str(exc)
-                self._raise_stage_error("Fitting (organics)", exc, sol, target, scan)
-            else:
-                artifacts.extend(organics_result.artifacts)
-                warnings.extend(organics_result.warnings)
-                stage_artifacts.extend(organics_result.artifacts)
-                stage_warnings.extend(organics_result.warnings)
-                if organics_result.metadata:
-                    fitting_metadata["organics"] = organics_result.metadata
-                    stage_extra["organics"] = organics_result.metadata
-
+            # Hydration runs before organics: the organics fit reads this
+            # scan's accepted O-H stretches for the O-H bend rule
+            # (core/oh_bend.py).
             try:
                 hydration_result = fitting_service.fit_hydration(
                     sol=sol,
@@ -762,6 +743,28 @@ class PipelineService:
                 if hydration_result.metadata:
                     fitting_metadata["hydration"] = hydration_result.metadata
                     stage_extra["hydration"] = hydration_result.metadata
+
+            try:
+                organics_result = fitting_service.fit_organics(
+                    sol=sol,
+                    target=target,
+                    scan=scan,
+                    data_dir=resolved_data_dir,
+                    results_dir=resolved_results_dir,
+                    verbose=False,
+                )
+            except Exception as exc:
+                stage_warnings.append(str(exc))
+                stage_extra["organics_error"] = str(exc)
+                self._raise_stage_error("Fitting (organics)", exc, sol, target, scan)
+            else:
+                artifacts.extend(organics_result.artifacts)
+                warnings.extend(organics_result.warnings)
+                stage_artifacts.extend(organics_result.artifacts)
+                stage_warnings.extend(organics_result.warnings)
+                if organics_result.metadata:
+                    fitting_metadata["organics"] = organics_result.metadata
+                    stage_extra["organics"] = organics_result.metadata
 
         db_path_str = os.environ.get("SHERLOC_DB_PATH", "./phase.db")
         db_path = Path(db_path_str)

@@ -65,6 +65,9 @@ from sherloc_pipeline.core.hydration_veto import (
     rebuild_post_veto_fit,
 )
 from sherloc_pipeline.core.preprocessing import DespikeParams, despike_params_from_config
+from sherloc_pipeline.core.oh_bend import (
+    G_LABEL, SHORT_LABEL, OhBendRule, load_hydration_stretches,
+)
 
 from .base import ServiceResult
 from .errors import FittingError, enrich
@@ -745,15 +748,42 @@ def _fit_point_organics(
     sol: str,
     target: str,
     scan: str,
+    bend_rule: Optional[OhBendRule] = None,
 ) -> Dict[str, Any]:
-    """Fit organics for a single point (picklable worker)."""
+    """Fit organics for a single point (picklable worker).
+
+    With ``bend_rule`` and an accepted O-H stretch on this point
+    (``point_data['oh_stretch']``), every G-window peak is compared with the
+    bend the stretch predicts (core/oh_bend.py). The verdict becomes the
+    peak's ``assignment`` in the per-point peak table (what persistence
+    stores) and its ``band`` in the accepted-peaks summary (what the review
+    table shows).
+    """
     from sherloc_pipeline.core.fitting import fit_spectrum, save_peak_table
     from sherloc_pipeline.visualization.fitting_plots import plot_fit_overlay
     from sherloc_pipeline.core.mineral_id import classify_organic_band
 
     point_idx = point_data['point_idx']
     y = point_data['y'].copy()
+    stretch = list(point_data.get('oh_stretch') or [])
     out_path = Path(out_dir)
+
+    def _bend_verdict(p):
+        if bend_rule is None or not stretch:
+            return None
+        if classify_organic_band(p.m_cm1) != G_LABEL:
+            return None
+        return bend_rule.evaluate(p.a, p.snr, stretch)
+
+    def _assignments(peaks):
+        verdicts = [_bend_verdict(p) for p in peaks]
+        return verdicts, [v.label if v is not None else "" for v in verdicts]
+
+    def _bend_fields(verdict):
+        if verdict is None:
+            return {'bend_rule': '', 'oh_stretch_class': '', 'oh_stretch_height': np.nan,
+                    'bend_predicted': np.nan, 'bend_excess_snr': np.nan}
+        return verdict.as_row()
     artifacts: List[Path] = []
     warnings: List[str] = []
 
@@ -817,7 +847,8 @@ def _fit_point_organics(
             # This run is DG; a previous run's G-only export must not survive.
             _remove_stale_artifacts(g_artifacts)
 
-            save_peak_table(result_dg.peaks, str(dg_peaks_csv))
+            dg_verdicts, dg_assign = _assignments(result_dg.peaks)
+            save_peak_table(result_dg.peaks, str(dg_peaks_csv), assignments=dg_assign)
             artifacts.append(dg_peaks_csv)
 
             plot_fit_overlay(
@@ -827,10 +858,14 @@ def _fit_point_organics(
             )
             artifacts.append(dg_png_path)
 
+            verdict_of = {id(p): v for p, v in zip(result_dg.peaks, dg_verdicts)}
             for p in dg_accepted:
                 if p.snr < persist_min_snr:
                     continue
                 label = 'D' if (d_roi[0] <= p.m_cm1 < d_roi[1]) else 'G'
+                verdict = verdict_of.get(id(p))
+                if verdict is not None:
+                    label = SHORT_LABEL[verdict.label]
                 band_label = classify_organic_band(p.m_cm1)
                 min_fwhm_for_band = float(organics_fwhm_mins.get(band_label, 0.0))
                 if p.fwhm < min_fwhm_for_band:
@@ -845,6 +880,7 @@ def _fit_point_organics(
                     'r2': result_dg.r2,
                     'sharpness_ratio': p.sharpness_ratio,
                     'pass_sharpness': p.pass_sharpness,
+                    **_bend_fields(verdict),
                 })
         else:
             # Fall back to G-only. Dropping a previous run's DG export is not
@@ -856,7 +892,8 @@ def _fit_point_organics(
 
             # Not guarded: a failed peak-table write must fail the fit rather
             # than let the run be recorded as completed with no current G CSV.
-            save_peak_table(result_g.peaks, str(g_peaks_csv))
+            g_verdicts, g_assign = _assignments(result_g.peaks)
+            save_peak_table(result_g.peaks, str(g_peaks_csv), assignments=g_assign)
             artifacts.append(g_peaks_csv)
 
             try:
@@ -869,9 +906,11 @@ def _fit_point_organics(
             except Exception:
                 pass
 
+            verdict_of = {id(p): v for p, v in zip(result_g.peaks, g_verdicts)}
             for p in g_accepted:
                 if p.snr < persist_min_snr:
                     continue
+                verdict = verdict_of.get(id(p))
                 band_label = classify_organic_band(p.m_cm1)
                 min_fwhm_for_band = float(organics_fwhm_mins.get(band_label, 0.0))
                 if p.fwhm < min_fwhm_for_band:
@@ -882,10 +921,11 @@ def _fit_point_organics(
                     'amplitude_a': p.a,
                     'fwhm_cm1': p.fwhm,
                     'snr': p.snr,
-                    'band': 'G',
+                    'band': SHORT_LABEL[verdict.label] if verdict is not None else 'G',
                     'r2': result_g.r2,
                     'sharpness_ratio': p.sharpness_ratio,
                     'pass_sharpness': p.pass_sharpness,
+                    **_bend_fields(verdict),
                 })
 
     summary_row = {
@@ -1753,6 +1793,33 @@ class FittingService:
             )
             raise enrich(error, sol=sol, target=target, scan=scan)
 
+    def _load_oh_bend_inputs(
+        self, fit_cfg: Dict, base: Path, sol: str, target: str, scan: str,
+    ) -> Tuple[Optional[OhBendRule], Dict[int, List[Tuple[float, float, float]]], str]:
+        """Rule and per-point O-H stretches for the organics fit of one scan.
+
+        Returns (rule, {point: [(center, amplitude, fwhm), ...]}, status).
+        ``status`` is "applied" when the rule runs; otherwise it says why not
+        (no config block, or no completed hydration run for this scan), and the
+        organics fit labels G-window peaks by center alone, as before.
+        """
+        rule = OhBendRule.from_fitting_config(fit_cfg)
+        if rule is None:
+            return None, {}, "no fitting.organics_oh_bend config"
+        h_dir = base / "hydration_fit"
+        marker = _read_fit_run_marker(
+            _fit_run_marker_path(h_dir, sol, target, scan, "R1", "hydration")
+        )
+        if marker is None or marker.get("status") != RUN_MARKER_COMPLETED:
+            state = "absent" if marker is None else marker.get("status")
+            return None, {}, f"no completed hydration run for this scan (marker {state})"
+        h_csv = h_dir / f"{sol}_{target}_{scan}_R1_hydration_accepted_peaks.csv"
+        if not h_csv.exists():
+            # A completed hydration run with no accepted stretch anywhere.
+            return rule, {}, "applied"
+        rows = pd.read_csv(h_csv).to_dict("records")
+        return rule, load_hydration_stretches(rows), "applied"
+
     def fit_organics(
         self,
         sol: str,
@@ -1896,9 +1963,25 @@ class FittingService:
                 )
                 raise enrich(error, sol=sol, target=target, scan=scan)
 
+            # O-H bend rule: read this scan's hydration result (the pipeline
+            # fits hydration before organics) so a G-window peak on a point
+            # with an accepted O-H stretch is compared with the bend that
+            # stretch predicts (core/oh_bend.py).
+            input_warnings: List[str] = []
+            bend_rule, stretches, bend_rule_status = self._load_oh_bend_inputs(
+                fit_cfg, base, sol, target, scan
+            )
+            if bend_rule_status != "applied":
+                input_warnings.append(f"O-H bend rule not applied: {bend_rule_status}")
+                self.console.print(f"[yellow]O-H bend rule not applied: {bend_rule_status}[/yellow]")
+
             # --- Phase 1: Prepare per-point inputs ---
             point_inputs = [
-                {'point_idx': int(col), 'y': df[col].to_numpy(float)}
+                {
+                    'point_idx': int(col),
+                    'y': df[col].to_numpy(float),
+                    'oh_stretch': stretches.get(int(col), []),
+                }
                 for col in point_cols
             ]
 
@@ -1918,6 +2001,7 @@ class FittingService:
                 use_norm_input=use_norm_input,
                 rebaseline_cfg=dict(fit_cfg.get('organics_rebaseline', {})),
                 out_dir=str(multifits_dir), sol=sol, target=target, scan=scan,
+                bend_rule=bend_rule,
             )
 
             results = self._run_parallel(
@@ -1927,7 +2011,7 @@ class FittingService:
 
             # --- Phase 3: Aggregate results ---
             artifacts: List[Path] = []
-            warnings: List[str] = []
+            warnings: List[str] = list(input_warnings)
             summary = []
             accepted_rows = []
 
@@ -1985,6 +2069,7 @@ class FittingService:
             _write_fit_run_marker(
                 run_marker, domain="organics",
                 points_fitted=len(point_cols), accepted_peaks=len(accepted_rows),
+                fit_input={"oh_bend_rule": bend_rule_status},
             )
             artifacts.append(run_marker)
 
@@ -1996,6 +2081,10 @@ class FittingService:
                 "scan": scan,
                 "points_fitted": len(point_cols),
                 "total_accepted_peaks": len(accepted_rows),
+                "oh_bend_rule": bend_rule_status,
+                "oh_bend_relabeled": sum(
+                    1 for row in accepted_rows if row.get('bend_rule') not in (None, '', 'G_band')
+                ),
             }
 
             return ServiceResult(
@@ -2954,15 +3043,24 @@ class FittingService:
                     total_reviewable += len(reviewable)
 
                     for _, row in reviewable.iterrows():
-                        assignment = assigner(float(row['center_cm1']))
+                        center_label = assigner(float(row['center_cm1']))
+                        assignment = center_label
+                        # A label decided at fit time (the organics O-H bend
+                        # rule, core/oh_bend.py) replaces the center label.
+                        if domain == "organics" and 'assignment' in peaks_df.columns:
+                            fixed = row.get('assignment')
+                            if isinstance(fixed, str) and fixed.strip():
+                                assignment = fixed.strip()
 
                         # Domain-specific post-hoc FWHM filter for organics
+                        # (keyed by the center label: the bend rule relabels a
+                        # G-window peak, it does not change its width gate)
                         if domain == "organics" and organics_fwhm_mins:
-                            min_fwhm_for_band = float(organics_fwhm_mins.get(assignment, 0.0))
+                            min_fwhm_for_band = float(organics_fwhm_mins.get(center_label, 0.0))
                             if float(row['fwhm_cm1']) < min_fwhm_for_band:
                                 logger.info(
                                     f"Filtered organics peak at {row['center_cm1']:.1f} cm⁻¹ "
-                                    f"({assignment}): FWHM {row['fwhm_cm1']:.1f} < {min_fwhm_for_band}"
+                                    f"({center_label}): FWHM {row['fwhm_cm1']:.1f} < {min_fwhm_for_band}"
                                 )
                                 continue
 
@@ -3848,6 +3946,8 @@ def _build_phase_label(
             if "phosphate" not in phase_parts:
                 phase_parts.append("phosphate")
             evidence.append(f"phosphate {label} Raman")
+        elif label == "G_band_or_H2O_bend":
+            evidence.append("G band or H2O bend (uncertain)")
         elif "D_band" in label or "G_band" in label:
             if "organic carbon" not in phase_parts:
                 phase_parts.append("organic carbon")
