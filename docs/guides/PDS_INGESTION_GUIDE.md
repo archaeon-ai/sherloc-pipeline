@@ -37,7 +37,9 @@ Sol 921: 5 observations ingested, 0 skipped, 1 without spectral data (zpz)
   Points: 1498  Spectra: 4494  Context images: 5
 ```
 
-The one zpz-only observation has no RRS/RCS spectral product. This is an
+The one zpz-only observation's only RRS product is a zpz (on-board
+Process_Data) RDR, which ingestion filters out (see "zpz filtering" below), so
+no RRS/RCS spectral product remains. This is an
 expected, non-fatal skip — it is reported as a warning and does **not** cause
 a non-zero exit code.
 
@@ -137,7 +139,7 @@ Sol 921 (2023-09-23, L_s = 122.871) at the "Amherst Point" target contains 6 SCL
 | 748731413 | 748731411 | Detail | 100 | RRS, RMO, RLI, RLS, RM1-6 | |
 | 748732975 | 748732974 | Detail | 100 | RRS, RMO, RLI, RLS, RM1-6 | |
 | 748735042 | 748735041 | Survey | 1296 | RRS, RMO, RLI, RLS, RM1-6 | De-duped from 2592 raw positions |
-| 748735903 | — | (zpz) | — | RLI, RLS only | zpz products filtered; no RRS/RCS |
+| 748735903 | — | (zpz) | — | RLI, RLS only (after filtering) | archive also has a zpz RRS (`...665rrs...108zpzj01`), filtered; no other RRS/RCS |
 | 748736149 | 748736148 | Calibration | 1 | RCS, RLI, RCC, RLS | No RMO (index fallback) |
 
 The filename SCLK and the label `sclk_start` (integer part of the XML label's
