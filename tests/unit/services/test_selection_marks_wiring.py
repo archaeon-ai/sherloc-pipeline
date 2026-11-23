@@ -142,6 +142,25 @@ class TestPersistRead:
         with get_session(engine) as session:
             assert {p.kept_by for p in session.query(FittedPeakORM).all()} == {None}
 
+    @pytest.mark.parametrize("text", [
+        "[1, 2]",                                                                    # root not an object
+        json.dumps({"version": SIZE_LOG_VERSION, "ftest_peaks": "x"}),                # rows not a list
+        json.dumps({"version": SIZE_LOG_VERSION, "ftest_peaks": [{"center_cm1": 1085.5, "fwhm_cm1": 30.0}]}),  # no snr
+        json.dumps({"version": SIZE_LOG_VERSION, "ftest_peaks": [{"center_cm1": "a", "fwhm_cm1": 30.0, "snr": 9.0}]}),
+        '{"version": "%s", "ftest_peaks": [{"center_cm1": NaN, "fwhm_cm1": 30.0, "snr": 9.0}]}' % SIZE_LOG_VERSION,
+        json.dumps({"version": SIZE_LOG_VERSION, "ftest_r2": "high", "ftest_peaks": [_row(1085.5)]}),
+    ])
+    def test_a_malformed_log_is_a_warning_not_a_failure(self, populated_db, results_all, text):
+        engine, _, _ = populated_db
+        p0 = results_all / "minerals_fit" / "0851_Lake_Haiyaha_detail_1_R1_point0_fit_peaks.csv"
+        pd.DataFrame([_row(1085.5)]).to_csv(p0, index=False)
+        size_sidecar_path(p0).write_text(text)
+        result = _call_persist_raman(_make_service(engine), results_all, "minerals")
+        assert any("unreadable" in w for w in result.warnings)
+        with get_session(engine) as session:
+            kept = {p.center_cm1: p.kept_by for p in session.query(FittedPeakORM).all()}
+        assert kept[1085.5] is None
+
     def test_tables_without_the_columns_persist_null_marks(self, populated_db, results_all):
         engine, _, _ = populated_db
         _call_persist_raman(_make_service(engine), results_all, "minerals")

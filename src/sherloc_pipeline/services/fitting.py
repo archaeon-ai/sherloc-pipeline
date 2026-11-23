@@ -215,21 +215,42 @@ def _ftest_persisted_centers(peaks_csv: Path, gate: _PersistGate,
     sidecar = size_sidecar_path(peaks_csv)
     if not sidecar.exists():
         return None
+    from sherloc_pipeline.core.fitting import SIZE_LOG_VERSION
+
+    def unreadable(reason: str) -> None:
+        warnings_list.append(f"size log {sidecar.name} unreadable ({reason}); kept_by left NULL")
+
     try:
         rec = json.loads(sidecar.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        warnings_list.append(f"size log {sidecar.name} unreadable ({type(exc).__name__}); kept_by left NULL")
+        unreadable(type(exc).__name__)
         return None
-    from sherloc_pipeline.core.fitting import SIZE_LOG_VERSION
+    if not isinstance(rec, dict):
+        unreadable("not a JSON object")
+        return None
     if rec.get("version") != SIZE_LOG_VERSION or rec.get("ftest_peaks") is None:
         return None
-    rows = rec["ftest_peaks"]
-    r2 = rec.get("ftest_r2")
+    rows, r2 = rec["ftest_peaks"], rec.get("ftest_r2")
+    if not isinstance(rows, list) or not all(
+            isinstance(r, dict) and all(_finite_number(r.get(k)) for k in _FTEST_ROW_NUMBERS) for r in rows):
+        unreadable("malformed ftest_peaks")
+        return None
+    if r2 is not None and not _finite_number(r2):
+        unreadable("malformed ftest_r2")
+        return None
     if not rows or (r2 is not None and r2 <= gate.r2_floor):
         return []
     df = pd.DataFrame(rows)
     return [float(r['center_cm1']) for _, r in gate.reviewable(df).iterrows()
             if gate.assignment_if_kept(r) is not None]
+
+
+#: The F-test row fields the persist gates read; each must be a finite number.
+_FTEST_ROW_NUMBERS = ("center_cm1", "fwhm_cm1", "snr")
+
+
+def _finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _kept_by(center_cm1: float, ftest_centers: Optional[List[float]]) -> Optional[str]:
