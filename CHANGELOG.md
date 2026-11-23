@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Selection marks on fitted peaks (records only; nothing kept changes).**
-  The mineral fitter's AICc size search now keeps every model size it fits
-  (each size's parameters, RSS, AICc, seed ranks and merge-skip flag) and
+  The mineral fitter's AICc size search now fits and keeps every model size
+  from 1 (each size's parameters, RSS, AICc, seed ranks, merge-skip flag, and
+  whether it may compete for AICc, false below `aicc_min_peaks`) and
   writes it per point to a sidecar beside the peak table,
   `..._point<N>_fit_sizes.json` (organics G: `..._organics_g_sizes.json`),
   never to a database. The F-test pick is derived from the same fits, at no

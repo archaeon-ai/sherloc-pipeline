@@ -264,7 +264,10 @@ def fit_spectrum(
             # AICc model selection (legacy)
             min_p = min(aicc_min, max_p)
             size_rows: List[Dict] = []
-            for p in range(min_p, max_p + 1):
+            # Every size from 1 is fitted and logged, so the F-test pick and each component's
+            # step can be read from the log; sizes below aicc_min_peaks never compete for AICc.
+            for p in range(1, max_p + 1):
+                eligible = p >= min_p
                 sel = sorted(seeds_sorted_by_height[:p])
                 # Slot j of the parameter vector holds seed sel[j]; its height rank (1 = tallest).
                 ranks = [seeds_sorted_by_height.index(i) + 1 for i in sel]
@@ -285,15 +288,15 @@ def fit_spectrum(
                     # The log records every size, the merge-skip included; it decides nothing.
                     would_drop = _merge_would_drop(params, min_amp, min_display_snr, noise_std, min_sep)
                     size_rows.append(dict(p=p, seed_ranks=ranks, params=[float(v) for v in params],
-                                          rss=rss, aicc=float(aicc), merge_skip=bool(reject_merged and would_drop),
-                                          failed=False))
-                    if reject_merged and would_drop:
+                                          rss=rss, aicc=float(aicc), aicc_eligible=eligible,
+                                          merge_skip=bool(reject_merged and would_drop), failed=False))
+                    if not eligible or (reject_merged and would_drop):
                         continue
                     if best is None or aicc < best[0] - aicc_thresh:
                         best = (aicc, params, rss)
                 except Exception:
                     size_rows.append(dict(p=p, seed_ranks=ranks, params=None, rss=None, aicc=None,
-                                          merge_skip=False, failed=True))
+                                          aicc_eligible=eligible, merge_skip=False, failed=True))
                     continue
             size_log = SizeLog(n=int(x.size), rss0=float(np.sum(y_roi ** 2)), rows=size_rows,
                                ftest_alpha=ftest_alpha)
@@ -398,8 +401,8 @@ class SizeLog:
     """Every model size the AICc search fitted at one point, and both rules' picks from it.
 
     Rows hold, per size p: the seed height rank of each parameter slot, the fitted parameters,
-    RSS and AICc (None when the fit raised), and whether ``reject_merged_candidates`` skipped
-    it. Both rules choose from these same fits (the F-test path refits size p from the same
+    RSS and AICc (None when the fit raised), whether the size may compete for AICc (False below
+    ``aicc_min_peaks``) and whether ``reject_merged_candidates`` skipped it. Both rules choose from these same fits (the F-test path refits size p from the same
     start with the same bounds), so the F-test pick needs no extra fit: the longest run of sizes
     from 1 whose step p-value is below alpha, stopping at a failed fit or no degrees of freedom,
     as ``fit_spectrum``'s F-test branch does. Size 0 is the null model y = 0.

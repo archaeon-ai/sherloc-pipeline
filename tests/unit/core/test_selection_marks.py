@@ -65,7 +65,7 @@ def test_the_aicc_pick_is_the_lowest_aicc_size_the_merge_rule_admits(golden_fits
         sel = res.selection
         if sel is None:
             continue
-        admissible = [r for r in sel["sizes"] if not r["failed"] and not r["merge_skip"]]
+        admissible = [r for r in sel["sizes"] if r["aicc_eligible"] and not r["failed"] and not r["merge_skip"]]
         if not admissible:
             assert sel["aicc_size"] is None and res.peaks == []
             continue
@@ -131,3 +131,24 @@ def test_a_failed_size_is_logged_and_stops_the_ftest_pick(monkeypatch):
     assert res.selection["ftest_size"] == 1
     ft = fit_spectrum(x, y, _cfg(model_selection="ftest"), roi=ROI)[0]
     assert _triples(res.selection["ftest_peaks"]) == _triples(ft.peaks)
+
+
+@pytest.mark.parametrize("aicc_min", [2, 3])
+def test_sizes_below_the_aicc_minimum_are_logged_but_never_picked(aicc_min):
+    """aicc_min_peaks limits which sizes AICc may pick, not which the log records: the derived
+    F-test pick still equals the F-test rule, every component still has its step, and the AICc
+    pick is the one the minimum alone gives."""
+    x = np.linspace(700.0, 1200.0, 300)
+    g = lambda c, a: a * np.exp(-4 * np.log(2) * (x - c) ** 2 / 30.0 ** 2)
+    y = g(820.0, 500.0) + g(1010.0, 350.0) + np.random.default_rng(5).normal(0, 3.0, x.size)
+    cfg = _cfg(aicc_min_peaks=aicc_min)
+    res = _fit(x, y, cfg)
+    sel = res.selection
+    rows = {r["p"]: r for r in sel["sizes"]}
+    min_p = min(aicc_min, max(rows))  # as on main: a minimum above the largest size means the largest
+    assert rows[1]["aicc_eligible"] is False and all(rows[p]["aicc_eligible"] == (p >= min_p) for p in rows)
+    assert sel["aicc_size"] >= min_p
+    assert _triples(sel["ftest_peaks"]) == _triples(_fit(x, y, _cfg(model_selection="ftest")).peaks)
+    assert res.peaks and all(p.aicc_gain is not None and p.step_p is not None for p in res.peaks)
+    eligible = [r for r in sel["sizes"] if r["aicc_eligible"] and not r["failed"] and not r["merge_skip"]]
+    assert sel["aicc_size"] == min(eligible, key=lambda r: (r["aicc"], r["p"]))["p"]
