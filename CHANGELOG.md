@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+- **Existing databases need one migration before data commands run.** This
+  change adds Alembic revision `a4d795f0a25e` (three nullable columns on
+  `fitted_peaks`). Data commands on an older database stop with the schema
+  message and print the fix: back up the database, then
+  `PHASE_DATABASE_PATH=/path/to/your/phase.db alembic upgrade head`. Existing
+  peaks keep NULL marks until their scans are refit. Container operators
+  deploy the image before upgrading the database, as for `4f638701cf7c`.
+
 ### Added
+- **Selection marks on fitted peaks (records only; nothing kept changes).**
+  The mineral fitter's AICc size search now keeps every model size it fits
+  (each size's parameters, RSS, AICc, seed ranks and merge-skip flag) and
+  writes it per point to a sidecar beside the peak table,
+  `..._point<N>_fit_sizes.json` (organics G: `..._organics_g_sizes.json`),
+  never to a database. The F-test pick is derived from the same fits, at no
+  extra fit. Each persisted component gets three new `fitted_peaks` columns:
+  `aicc_gain` (AICc(k-1) - AICc(k) at its seed height rank k), `step_p` (that
+  step's F-test p-value), both also in the point peak tables, and `kept_by`
+  (`aicc`, or `both` when the F-test pick persists a component within
+  2 cm-1 through the same persist gates), decided at the persist read. Fits
+  with no size search (the hydration F-test rule, the organics D+G fit with
+  fixed seeds, `--model-selection ftest`) leave the marks NULL. The
+  persisted set and every existing column are unchanged.
 - **`sherloc refit --target NAME`** re-fits the scans of one target,
   combined with `--science` / `--no-engineering`. A target with no
   selected scan refuses before a journal is created. The target joins the
