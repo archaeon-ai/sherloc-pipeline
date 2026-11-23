@@ -108,6 +108,139 @@ def _is_blank_peak_table(csv_path: Path) -> bool:
         return False
 
 
+def size_sidecar_path(peaks_csv: Path) -> Path:
+    """The per-point size log beside a peak table: ``..._peaks.csv`` -> ``..._sizes.json``."""
+    name = peaks_csv.name
+    if not name.endswith("_peaks.csv"):
+        raise ValueError(f"not a peak table name: {name}")
+    return peaks_csv.with_name(name[: -len("_peaks.csv")] + "_sizes.json")
+
+
+def _write_size_sidecar(peaks_csv: Path, selection: Optional[Dict[str, Any]]) -> Optional[Path]:
+    """Write the fit's size log beside its peak table, or drop an earlier run's when this fit
+    ran no size search. Written to a temporary name and moved into place, so a reader never
+    sees a partial file. Never read into a database."""
+    sidecar = size_sidecar_path(peaks_csv)
+    if selection is None:
+        _remove_stale_artifacts([sidecar])
+        return None
+    tmp = sidecar.with_name(sidecar.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(selection, fh, separators=(",", ":"), allow_nan=False)
+    os.replace(tmp, sidecar)
+    return sidecar
+
+
+#: A persisted component is ``both`` when the F-test pick persists a component whose
+#: center is within this many cm-1 of it. The two picks refit the same seeds at different
+#: model sizes, so one band's fitted center moves slightly between them; the tolerance
+#: absorbs that shift while staying far below the minimum peak separation.
+KEPT_BY_MATCH_CM1 = 2.0
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    """A peak-table float cell, or None when empty or NaN (older tables lack the column)."""
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(out) else out
+
+
+class _PersistGate:
+    """The persist read's gates on peak-table rows, in one place, so that the F-test pick's
+    rows from a size log go through exactly the gates the persisted rows do: the reviewable
+    filter (SNR, FWHM, sharpness), the organics per-band FWHM minimum and the hydration center
+    range. The point-level R2 floor is applied by the caller to the persisted rows and by
+    ``_ftest_persisted_centers`` to the F-test pick's own R2."""
+
+    def __init__(self, *, domain, assigner, min_snr, fwhm_min, r2_floor, organics_fwhm_mins,
+                 hydration_center_range):
+        self.domain, self.assigner = domain, assigner
+        self.min_snr, self.fwhm_min, self.r2_floor = min_snr, fwhm_min, r2_floor
+        self.organics_fwhm_mins = organics_fwhm_mins
+        self.hydration_center_range = hydration_center_range
+
+    def reviewable(self, peaks_df: pd.DataFrame) -> pd.DataFrame:
+        # Filter to reviewable peaks: SNR >= min_snr AND FWHM >= reviewable_fwhm_min_cm1
+        # Also apply sharpness filter if column present (cosmic ray rejection)
+        sharpness_mask = True
+        if 'pass_sharpness' in peaks_df.columns:
+            sharpness_mask = peaks_df['pass_sharpness'].apply(_to_bool_safe)
+        return peaks_df[
+            (peaks_df['snr'] >= self.min_snr) &
+            (peaks_df['fwhm_cm1'] >= self.fwhm_min) &
+            sharpness_mask
+        ]
+
+    def assignment_if_kept(self, row, *, log: bool = False) -> Optional[str]:
+        """The row's assignment when it passes the domain gates, else None."""
+        assignment = self.assigner(float(row['center_cm1']))
+
+        # Domain-specific post-hoc FWHM filter for organics
+        if self.domain == "organics" and self.organics_fwhm_mins:
+            min_fwhm_for_band = float(self.organics_fwhm_mins.get(assignment, 0.0))
+            if float(row['fwhm_cm1']) < min_fwhm_for_band:
+                if log:
+                    logger.info(
+                        f"Filtered organics peak at {row['center_cm1']:.1f} cm⁻¹ "
+                        f"({assignment}): FWHM {row['fwhm_cm1']:.1f} < {min_fwhm_for_band}"
+                    )
+                return None
+
+        # Hydration center range gate
+        if self.domain == "hydration" and self.hydration_center_range:
+            center = float(row['center_cm1'])
+            rng = self.hydration_center_range
+            if center < rng[0] or center > rng[1]:
+                if log:
+                    logger.info(
+                        f"Filtered hydration peak at {center:.1f} cm⁻¹: "
+                        f"outside [{rng[0]}, {rng[1]}]"
+                    )
+                return None
+        return assignment
+
+
+def _ftest_persisted_centers(peaks_csv: Path, gate: _PersistGate,
+                             warnings_list: List[str]) -> Optional[List[float]]:
+    """Centers of the components the F-test pick would persist at this point, read from the
+    table's size log and passed through ``gate``. None when there is no usable log (no size
+    search ran, or an older run): the persisted rows then carry kept_by NULL. A log that
+    cannot be read is a warning, never a failure: the marks are records, not the result."""
+    sidecar = size_sidecar_path(peaks_csv)
+    if not sidecar.exists():
+        return None
+    try:
+        rec = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        warnings_list.append(f"size log {sidecar.name} unreadable ({type(exc).__name__}); kept_by left NULL")
+        return None
+    from sherloc_pipeline.core.fitting import SIZE_LOG_VERSION
+    if rec.get("version") != SIZE_LOG_VERSION or rec.get("ftest_peaks") is None:
+        return None
+    rows = rec["ftest_peaks"]
+    r2 = rec.get("ftest_r2")
+    if not rows or (r2 is not None and r2 <= gate.r2_floor):
+        return []
+    df = pd.DataFrame(rows)
+    return [float(r['center_cm1']) for _, r in gate.reviewable(df).iterrows()
+            if gate.assignment_if_kept(r) is not None]
+
+
+def _kept_by(center_cm1: float, ftest_centers: Optional[List[float]]) -> Optional[str]:
+    """``both`` when the F-test pick persists a component within KEPT_BY_MATCH_CM1, ``aicc``
+    when it does not, None when the F-test pick is unknown. Only the AICc pick's components are
+    persisted, so ``ftest`` (a component only the F-test pick keeps) does not occur here."""
+    if ftest_centers is None:
+        return None
+    return "both" if any(abs(c - center_cm1) <= KEPT_BY_MATCH_CM1 for c in ftest_centers) else "aicc"
+
+
 # Domain-specific CSV filename patterns for Raman peak discovery
 RAMAN_CSV_PATTERNS = {
     "minerals":  r"_point(\d+)_fit_peaks\.csv$",
@@ -174,7 +307,7 @@ def _fit_point_minerals(
     # previous run's copy rather than let it read as current.
     peaks_csv = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit_peaks.csv"
     png_path = out_path / f"{sol}_{target}_{scan}_{region}_point{point_idx}_fit.png"
-    owned_artifacts = [peaks_csv, png_path]
+    owned_artifacts = [peaks_csv, png_path, size_sidecar_path(peaks_csv)]
 
     try:
         result, y_model_full = fit_spectrum(
@@ -204,6 +337,9 @@ def _fit_point_minerals(
         # while this run still reported the point as fitted.
         save_peak_table(result.peaks, str(peaks_csv))
         artifacts.append(peaks_csv)
+        sidecar = _write_size_sidecar(peaks_csv, result.selection)
+        if sidecar is not None:
+            artifacts.append(sidecar)
 
         # Export plot when strictly accepted OR reviewable
         if accepted_point or reviewable_point:
@@ -766,8 +902,8 @@ def _fit_point_organics(
     dg_png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_dg_fit.png"
     g_peaks_csv = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_g_peaks.csv"
     g_png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_organics_g_fit.png"
-    dg_artifacts = [dg_peaks_csv, dg_png_path]
-    g_artifacts = [g_peaks_csv, g_png_path]
+    dg_artifacts = [dg_peaks_csv, dg_png_path, size_sidecar_path(dg_peaks_csv)]
+    g_artifacts = [g_peaks_csv, g_png_path, size_sidecar_path(g_peaks_csv)]
 
     # Optional local re-baseline
     rb = rebaseline_cfg
@@ -819,6 +955,8 @@ def _fit_point_organics(
 
             save_peak_table(result_dg.peaks, str(dg_peaks_csv))
             artifacts.append(dg_peaks_csv)
+            # The DG fit takes fixed seeds (no size search): no log, and none left from before.
+            _write_size_sidecar(dg_peaks_csv, result_dg.selection)
 
             plot_fit_overlay(
                 x, y, org_mask, result_dg, y_model_dg,
@@ -858,6 +996,9 @@ def _fit_point_organics(
             # than let the run be recorded as completed with no current G CSV.
             save_peak_table(result_g.peaks, str(g_peaks_csv))
             artifacts.append(g_peaks_csv)
+            g_sidecar = _write_size_sidecar(g_peaks_csv, result_g.selection)
+            if g_sidecar is not None:
+                artifacts.append(g_sidecar)
 
             try:
                 plot_fit_overlay(
@@ -2943,40 +3084,19 @@ class FittingService:
                         })
                         continue
 
-                    # Filter to reviewable peaks: SNR >= min_snr AND FWHM >= reviewable_fwhm_min_cm1
-                    # Also apply sharpness filter if column present (cosmic ray rejection)
-                    sharpness_mask = True
-                    if 'pass_sharpness' in peaks_df.columns:
-                        sharpness_mask = peaks_df['pass_sharpness'].apply(_to_bool_safe)
-                    reviewable = peaks_df[
-                        (peaks_df['snr'] >= min_snr) &
-                        (peaks_df['fwhm_cm1'] >= fwhm_min) &
-                        sharpness_mask
-                    ]
+                    gate = _PersistGate(domain=domain, assigner=assigner, min_snr=min_snr, fwhm_min=fwhm_min,
+                                        r2_floor=r2_floor, organics_fwhm_mins=organics_fwhm_mins,
+                                        hydration_center_range=hydration_center_range)
+                    reviewable = gate.reviewable(peaks_df)
                     total_reviewable += len(reviewable)
+                    # Centers the F-test pick would persist at this point, through the same
+                    # gates (None: no size log for this table, so kept_by stays NULL).
+                    ftest_centers = _ftest_persisted_centers(csv_path, gate, warnings_list)
 
                     for _, row in reviewable.iterrows():
-                        assignment = assigner(float(row['center_cm1']))
-
-                        # Domain-specific post-hoc FWHM filter for organics
-                        if domain == "organics" and organics_fwhm_mins:
-                            min_fwhm_for_band = float(organics_fwhm_mins.get(assignment, 0.0))
-                            if float(row['fwhm_cm1']) < min_fwhm_for_band:
-                                logger.info(
-                                    f"Filtered organics peak at {row['center_cm1']:.1f} cm⁻¹ "
-                                    f"({assignment}): FWHM {row['fwhm_cm1']:.1f} < {min_fwhm_for_band}"
-                                )
-                                continue
-
-                        # Hydration center range gate
-                        if domain == "hydration" and hydration_center_range:
-                            center = float(row['center_cm1'])
-                            if center < hydration_center_range[0] or center > hydration_center_range[1]:
-                                logger.info(
-                                    f"Filtered hydration peak at {center:.1f} cm⁻¹: "
-                                    f"outside [{hydration_center_range[0]}, {hydration_center_range[1]}]"
-                                )
-                                continue
+                        assignment = gate.assignment_if_kept(row, log=True)
+                        if assignment is None:
+                            continue
 
                         peak = FittedPeakORM(
                             id=str(uuid4()),
@@ -2992,6 +3112,9 @@ class FittingService:
                             mineral_assignment=assignment,
                             # assignment_confidence left as NULL (rule-based)
                             cr_mask_review=_optional_bool(row.get('cr_mask_review')),
+                            kept_by=_kept_by(float(row['center_cm1']), ftest_centers),
+                            aicc_gain=_optional_float(row.get('aicc_gain')),
+                            step_p=_optional_float(row.get('step_p')),
                         )
                         all_peaks.append(peak)
 

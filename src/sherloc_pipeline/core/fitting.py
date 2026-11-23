@@ -302,9 +302,9 @@ def fit_spectrum(
                  sharpness_max=float(cfg.get('posthoc_filters', {}).get('sharpness_max', 3.0)),
                  min_amp=min_amp, min_display_snr=min_display_snr, min_sep=min_sep, cr_mask_cm1=cr_mask_cm1)
 
-    def _ftest_peaks(prm: np.ndarray) -> List[PeakFit]:
-        return _finalize_peaks(prm, x, y_roi, compute_r2(y_roi, multi_gaussian(x, prm)), gates,
-                               size_log.ranks_for(prm), size_log)
+    def _ftest_peaks(prm: np.ndarray) -> Tuple[List[PeakFit], float]:
+        r2_f = float(compute_r2(y_roi, multi_gaussian(x, prm)))
+        return _finalize_peaks(prm, x, y_roi, r2_f, gates, size_log.ranks_for(prm), size_log), r2_f
 
     # Fallback if nothing succeeded
     if best is None:
@@ -450,7 +450,7 @@ class SizeLog:
         r = self.by_p.get(params.size // 3)
         return list(r['seed_ranks']) if r is not None else None
 
-    def record(self, aicc_params: Optional[np.ndarray], ftest_peaks_fn) -> Dict:
+    def record(self, aicc_params: Optional[np.ndarray], ftest_peaks_fn) -> Dict:  # fn(params) -> (peaks, r2)
         """The sidecar record: every size with its step statistics, and both picks
         (``aicc_size`` None: no size was admissible, the fit returned no peaks)."""
         sizes = []
@@ -458,19 +458,20 @@ class SizeLog:
             gain, pval = self.step(r['p'])
             sizes.append({**r, 'step_aicc_gain': gain, 'step_p': pval})
         fsize = self.ftest_size()
-        ftest_peaks = None
+        ftest_peaks = ftest_r2 = None
         if fsize:
+            fpeaks, ftest_r2 = ftest_peaks_fn(np.asarray(self.by_p[fsize]['params'], dtype=float))
             ftest_peaks = [dict(center_cm1=p.m_cm1, fwhm_cm1=p.fwhm, amplitude_a=p.a, area=p.area, snr=p.snr,
                                 pass_snr=p.pass_snr, pass_fwhm=p.pass_fwhm, pass_r2=p.pass_r2,
                                 sharpness_ratio=p.sharpness_ratio, pass_sharpness=p.pass_sharpness,
                                 seed_rank=p.seed_rank, aicc_gain=p.aicc_gain, step_p=p.step_p)
-                           for p in ftest_peaks_fn(np.asarray(self.by_p[fsize]['params'], dtype=float))]
+                           for p in fpeaks]
         elif fsize == 0:
             ftest_peaks = []
         return dict(version=SIZE_LOG_VERSION, n=self.n, rss0=self.rss0, aicc0=self._aicc(0),
                     ftest_alpha=self.alpha, sizes=sizes,
                     aicc_size=None if aicc_params is None else int(aicc_params.size // 3),
-                    ftest_size=fsize, ftest_peaks=ftest_peaks)
+                    ftest_size=fsize, ftest_r2=ftest_r2, ftest_peaks=ftest_peaks)
 
 
 def _merge_would_drop(params: np.ndarray, min_amp: float, min_display_snr: float,
@@ -486,6 +487,7 @@ def _merge_would_drop(params: np.ndarray, min_amp: float, min_display_snr: float
 PEAK_TABLE_COLUMNS = [
     'center_cm1', 'fwhm_cm1', 'amplitude_a', 'area', 'snr',
     'pass_snr', 'pass_fwhm', 'pass_r2', 'sharpness_ratio', 'pass_sharpness', 'cr_mask_review',
+    'aicc_gain', 'step_p',
 ]
 
 
@@ -506,6 +508,8 @@ def save_peak_table(peaks: List[PeakFit], output_csv_path: str) -> None:
             'sharpness_ratio': p.sharpness_ratio,
             'pass_sharpness': p.pass_sharpness,
             'cr_mask_review': p.cr_mask_review,
+            'aicc_gain': p.aicc_gain,
+            'step_p': p.step_p,
         }
         for p in peaks
     ]
