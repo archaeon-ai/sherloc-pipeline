@@ -31,8 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Organics keep their own R2 minimum** (Ken 2026-11-23: "organics keeps
   r2"). The organics fit config is copied from the mineral one, so the
   11/12 `r_squared_min` 0.0 reached the organics G gate by inheritance.
-  New `fitting.organics_r2_min` (0.25) sets it for the batch organics fit
-  and the map organics fit; the mineral setting stays 0.0. The sol 921
+  New `fitting.organics_r2_min` (0.25) sets it for the batch organics fit;
+  the mineral setting stays 0.0. The map refit's organics config takes it
+  too, but the map path applies no R2 gate in any domain, so map output is
+  unchanged. The sol 921
   Amherst Point detail_1 golden sets (modz and ml) are regenerated under
   the 11/12 rules: nine mineral peaks added, none removed; hydration and
   organics unchanged.
