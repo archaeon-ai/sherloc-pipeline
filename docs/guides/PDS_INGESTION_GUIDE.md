@@ -186,7 +186,9 @@ classification is unchanged.
 
 ### zpz filtering
 
-Products with "zpz" in the filename middle section are zero-point-zero calibration intermediates. They are filtered out during ingestion. If an observation has only zpz spectral products (no RRS/RCS), it is skipped non-fatally — reported as a warning and counted under `observations_no_spectral`, without affecting the exit code.
+Products with "zpz" in the filename middle section are the RDRs of the instrument's on-board Process_Data product. The release-16 SHERLOC RDR SIS (JPL D-104819, Version 1.12, `document/sherloc_rdr_sis.pdf`) defines these letters as the 2nd to 4th processing flags (Table 5, "RDR File Naming Fields", positions 49-51): "Z" cosmic ray correction skipped, "“P” : denotes that the on-board Process_Data algorithm has been applied (no gain correction is ever applied to Process_Data algorithms)", and "Z" laser normalization skipped. Section 4.4.12, "Process_Data RDRs": "Prod ID: RRA or RRS special processing flag “P” in the filename." (An earlier version of this guide called them "zero-point-zero calibration intermediates"; no mission document supports that reading.)
+
+They are filtered out during ingestion. If an observation has only zpz spectral products (no other RRS/RCS), it is skipped non-fatally — reported as a warning and counted under `observations_no_spectral`, without affecting the exit code.
 
 ## Troubleshooting
 
