@@ -351,8 +351,9 @@ class PDSZpzProductError(ValueError):
     signals (spec s8):
     1. Filename contains 'zpz' in the processing suffix field
     2. Section headers use PROCESS_DATA format instead of LASER-NORMALIZED
-    3. Exactly 2 spectra per region (the release-16 Process_Data products
-       hold 1, 2, 100 or 1296 per region, so this signal alone misses most)
+    3. Exactly 2 spectra per region (the SIS gives N x 2148 per region;
+       measured on the 190 release-16 P-flag rrs/rcs labels, 2026-11-22,
+       N is 1, 2, 100 or 1296, so this signal alone misses most)
 
     If any signal is present, the product is rejected.
     """
@@ -393,7 +394,8 @@ class PDSSpectralParser:
 
     zpz products (on-board Process_Data RDRs, RDR SIS section 4.4.12) use
     PROCESS_DATA_SPECTRUM_REGION_N headers; their spectra per region vary
-    (1, 2, 100 or 1296 in release 16). They are detected and rejected via
+    (measured on the release-16 labels, 2026-11-22: 1, 2, 100 or 1296; the
+    SIS gives N x 2148). They are detected and rejected via
     PDSZpzProductError (spec s8).
 
     Example:
