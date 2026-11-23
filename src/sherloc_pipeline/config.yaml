@@ -188,6 +188,7 @@ fitting:
   organics_max_peaks: 2               # up to two components (D and G)
   organics_fwhm_bounds: [40, 200]     # broader than mineral peaks; D can exceed 100
   organics_min_snr: 2.0
+  organics_r2_min: 0.25                # organics keep their own pass_r2 minimum; not inherited from r_squared_min (Ken 11/23: organics keeps r2)
   organics_g_roi: [1500, 1700]        # G-band search window
   organics_d_roi: [1250, 1500]        # D-band search window
   organics_g_fwhm_accept: [40, 100]   # acceptance band for G detection

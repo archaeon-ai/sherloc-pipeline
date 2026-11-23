@@ -1877,6 +1877,8 @@ class FittingService:
             fit_cfg_org['fit_fwhm_min_initial_cm1'] = float(max(fit_cfg_org.get('fit_fwhm_min_initial_cm1', 22.0), f_lo))
             fit_cfg_org['fwhm_max_cm1'] = float(f_hi)
             fit_cfg_org['min_snr'] = float(fit_cfg.get('organics_min_snr', fit_cfg.get('min_snr', 3.0)))
+            # Organics keep their own R2 minimum; the mineral r_squared_min must not reach them.
+            fit_cfg_org['r_squared_min'] = float(fit_cfg.get('organics_r2_min', 0.25))
 
             # Post-hoc filters: match DB persistence thresholds
             posthoc = fit_cfg.get('posthoc_filters', {})

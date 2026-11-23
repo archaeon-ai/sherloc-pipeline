@@ -618,7 +618,7 @@ For fluorescence fitting (`domain="fluorescence"`), AICc is used for model selec
 - **SNR:** ≥ 3.0 (`min_snr`)
 - **FWHM:** initial-search lower bound 22 cm⁻¹ (`fit_fwhm_min_initial_cm1`), upper bound 90 cm⁻¹ (`fwhm_max_cm1`); post-fit `pass_fwhm` flag ≥ 25 cm⁻¹ (`filter_fwhm_min_cm1`); reviewable/persist eligibility ≥ 25 cm⁻¹ (`reviewable_fwhm_min_cm1`)
 
-Domain overrides (organics, hydration, fluorescence) are defined in the same `fitting:` block of `config.yaml` and may relax or tighten these defaults. The fluorescence `posthoc_filters` block sets `r2_min: 0.0` and `fwhm_min_cm1: 0.0`, disabling those post-hoc R² and FWHM rejection gates for the fluorescence domain.
+Organics use their own R² minimum, `organics_r2_min` (0.25), for the G gate and the D+G fit; the mineral `r_squared_min` does not apply to them. Domain overrides (organics, hydration, fluorescence) are defined in the same `fitting:` block of `config.yaml` and may relax or tighten these defaults. The fluorescence `posthoc_filters` block sets `r2_min: 0.0` and `fwhm_min_cm1: 0.0`, disabling those post-hoc R² and FWHM rejection gates for the fluorescence domain.
 
 **References:**
 - F-test for nested models: standard derivation; implementation in `core/fitting.py:_f_test_pvalue`.

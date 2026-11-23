@@ -385,7 +385,7 @@ def _fit_raman_domain(
             "low_fwhm_edge_penalty": 0.0,
             "max_peaks": fitting_cfg.get("organics_max_peaks", 2),
             "peak_separation_cm1": fitting_cfg.get("peak_separation_cm1", 25),
-            "r_squared_min": fitting_cfg.get("r_squared_min", 0.25),
+            "r_squared_min": fitting_cfg.get("organics_r2_min", 0.25),
             "min_snr": fitting_cfg.get("organics_min_snr", 2.0),
             "min_seed_snr": fitting_cfg.get("organics_min_snr", 2.0),
             "min_display_snr": fitting_cfg.get("min_display_snr", 2.0),
