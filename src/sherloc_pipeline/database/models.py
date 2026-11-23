@@ -994,6 +994,12 @@ class FittedPeakORM(Base):
     # Review flag, never a filter: a cosmic-ray mask channel lies within
     # center +/- FWHM/2. NULL = the fit had no masks to check against.
     cr_mask_review: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # Selection marks (records, never filters): which rule keeps the component
+    # ('aicc' | 'ftest' | 'both'), its step's AICc gain and F-test p-value.
+    # NULL = not computed (older rows, fits with no size search).
+    kept_by: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    aicc_gain: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    step_p: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1028,6 +1034,9 @@ class FittedPeakORM(Base):
             fwhm_nm=self.fwhm_nm,
             is_saturated=self.is_saturated,
             cr_mask_review=self.cr_mask_review,
+            kept_by=self.kept_by,
+            aicc_gain=self.aicc_gain,
+            step_p=self.step_p,
             area=self.area,
             snr=self.snr,
             fit_quality=self.fit_quality,
@@ -1057,6 +1066,9 @@ class FittedPeakORM(Base):
             fwhm_nm=peak.fwhm_nm,
             is_saturated=peak.is_saturated,
             cr_mask_review=peak.cr_mask_review,
+            kept_by=peak.kept_by,
+            aicc_gain=peak.aicc_gain,
+            step_p=peak.step_p,
             area=peak.area,
             snr=peak.snr,
             fit_quality=peak.fit_quality,

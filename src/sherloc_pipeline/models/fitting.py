@@ -196,6 +196,20 @@ class FittedPeak(IdentifiableModel):
         ),
     )
 
+    # Selection marks (records, never filters; see docs/METHODS.md §3.4)
+    kept_by: Optional[Literal["aicc", "ftest", "both"]] = Field(
+        default=None,
+        description="Which model-selection rule keeps this component; None = not computed",
+    )
+    aicc_gain: Optional[float] = Field(
+        default=None,
+        description="AICc(k-1) - AICc(k) at the component's seed height rank k; None = not computed",
+    )
+    step_p: Optional[float] = Field(
+        default=None,
+        description="F-test p-value of the step from k-1 to k peaks; None = not computed",
+    )
+
     # Derived quantities
     area: Optional[float] = Field(
         default=None,
