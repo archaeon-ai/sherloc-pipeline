@@ -106,8 +106,9 @@ class PDSIngestionStats:
     sols_skipped: int = 0
     observations_ingested: int = 0
     observations_skipped: int = 0
-    # Observations skipped because they carry no RRS/RCS spectral product
-    # (zpz-only calibration intermediates). This is an expected, non-fatal
+    # Observations skipped because no RRS/RCS spectral product is left after
+    # the zpz filter (zpz-only: on-board Process_Data RDRs, RDR SIS section
+    # 4.4.12). This is an expected, non-fatal
     # condition tracked separately from genuine errors so it does not drive a
     # non-zero exit code.
     observations_no_spectral: int = 0
@@ -635,10 +636,11 @@ class PDSIngestionService:
         stats = PDSIngestionStats()
 
         # Require spectral product (RRS or RCS). An observation with no
-        # RRS/RCS product is a zpz-only calibration intermediate: this is an
-        # expected, non-fatal condition (it carries no science spectra), so it
-        # is recorded as a skip with a reason rather than an error. It must not
-        # drive a non-zero exit code.
+        # RRS/RCS product left after the zpz filter has only zpz products, the
+        # RDRs of the on-board Process_Data product (RDR SIS section 4.4.12).
+        # Ingestion leaves them out, so this is an expected, non-fatal
+        # condition, recorded as a skip with a reason rather than an error. It
+        # must not drive a non-zero exit code.
         spectral_key = self._get_spectral_product_key(group)
         if spectral_key is None:
             stats.observations_no_spectral += 1

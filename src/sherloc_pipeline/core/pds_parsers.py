@@ -342,12 +342,18 @@ _SECTION_PREFIXES = (
 
 
 class PDSZpzProductError(ValueError):
-    """Raised when a CSV file is a zpz summary product that should be skipped.
+    """Raised when a CSV file is a zpz product, which ingestion skips.
 
-    zpz products are detected via three reinforcing signals (spec s8):
+    A zpz product is the RDR of the instrument's on-board Process_Data
+    product (release-16 SHERLOC RDR SIS, JPL D-104819 v1.12, Table 5
+    positions 49-51 and section 4.4.12: "P" denotes that the on-board
+    Process_Data algorithm has been applied). It is detected via three
+    signals (spec s8):
     1. Filename contains 'zpz' in the processing suffix field
     2. Section headers use PROCESS_DATA format instead of LASER-NORMALIZED
-    3. Exactly 2 spectra per region (summary, not point-by-point)
+    3. Exactly 2 spectra per region (the SIS gives N x 2148 per region;
+       measured on the 190 release-16 P-flag rrs/rcs labels, 2026-11-22,
+       N is 1, 2, 100 or 1296, so this signal alone misses most)
 
     If any signal is present, the product is rejected.
     """
@@ -386,8 +392,10 @@ class PDSSpectralParser:
     Each section has a header line followed by a column-name line (skipped),
     then data rows of comma-separated floats.
 
-    zpz summary products use PROCESS_DATA_SPECTRUM_REGION_N headers and contain
-    exactly 2 spectra per region. These are detected and rejected via
+    zpz products (on-board Process_Data RDRs, RDR SIS section 4.4.12) use
+    PROCESS_DATA_SPECTRUM_REGION_N headers; their spectra per region vary
+    (measured on the release-16 labels, 2026-11-22: 1, 2, 100 or 1296; the
+    SIS gives N x 2148). They are detected and rejected via
     PDSZpzProductError (spec s8).
 
     Example:
@@ -409,7 +417,7 @@ class PDSSpectralParser:
             ParsedSpectralCSV with product metadata and region data arrays.
 
         Raises:
-            PDSZpzProductError: If the file is a zpz summary product.
+            PDSZpzProductError: If the file is a zpz (on-board Process_Data) product.
             FileNotFoundError: If the CSV file doesn't exist.
             ValueError: If the file structure is invalid.
         """
@@ -478,7 +486,7 @@ class PDSSpectralParser:
         # Reject if any zpz signal present
         if zpz_signals:
             raise PDSZpzProductError(
-                f"zpz summary product detected in {csv_path.name}: "
+                f"zpz (on-board Process_Data) product detected in {csv_path.name}: "
                 + "; ".join(zpz_signals)
             )
 
@@ -671,10 +679,10 @@ class PDSRMOParser:
 
         product_id = PDSProductId.from_filename(csv_path.name)
 
-        # Reject zpz summary products (same logic as spectral parser)
+        # Reject zpz (on-board Process_Data) products (same logic as spectral parser)
         if "zpz" in product_id.middle.lower():
             raise PDSZpzProductError(
-                f"zpz summary product detected in {csv_path.name}: "
+                f"zpz (on-board Process_Data) product detected in {csv_path.name}: "
                 "filename contains 'zpz' in processing suffix"
             )
 
@@ -913,7 +921,7 @@ class PDSPhotodiodeParser:
     3. Data rows: one float per line
 
     Calibration scans: 1 value. Detail scans: ~100 values.
-    Survey scans: ~1296 values. zpz summary observations may have
+    Survey scans: ~1296 values. zpz (on-board Process_Data) observations may have
     sentinel values of -1.0.
 
     Example:
@@ -1189,7 +1197,7 @@ class PDSObservationGroup:
     """Grouped and classified PDS products from a single observation.
 
     Products sharing (sol, sclk, obs_id) belong to the same observation (spec s8).
-    After grouping, zpz summary products are filtered out, latest versions are
+    After grouping, zpz (on-board Process_Data) products are filtered out, latest versions are
     selected per product type, and the observation is classified.
 
     Attributes:
@@ -1202,7 +1210,7 @@ class PDSObservationGroup:
                    None if n_spectra unavailable for detail/survey distinction
         products: Dict of product_type string → PDSProductId (highest version).
                   Keys are lowercase type codes (e.g., 'rrs', 'rmo').
-        filtered_zpz: List of PDSProductId instances filtered as zpz summaries
+        filtered_zpz: List of PDSProductId instances filtered as zpz (on-board Process_Data) products
     """
     observation_key: str
     sol: int
@@ -1220,7 +1228,7 @@ class PDSObservationGrouper:
     Implements the observation grouping pipeline:
     1. Discover CSV products in a sol directory
     2. Group by observation_key (sol, sclk, obs_id)
-    3. Filter zpz summary products by filename
+    3. Filter zpz (on-board Process_Data) products by filename
     4. Keep latest version per product type
     5. Verify RRS/RCS mutual exclusivity
     6. Classify: calibration (SRLC10000/16000), survey (>200), detail (≤200)
@@ -1271,7 +1279,7 @@ class PDSObservationGrouper:
         for obs_key in sorted(obs_groups.keys()):
             obs_products = obs_groups[obs_key]
 
-            # Filter zpz summary products
+            # Filter zpz (on-board Process_Data) products
             clean, zpz_filtered = self.filter_zpz(obs_products)
             if not clean:
                 continue  # All products were zpz — skip observation
@@ -1359,7 +1367,7 @@ class PDSObservationGrouper:
     def filter_zpz(
         products: List[PDSProductId],
     ) -> tuple:
-        """Separate zpz summary products from normal products.
+        """Separate zpz (on-board Process_Data) products from the other products.
 
         zpz products are identified by the presence of 'zpz' in the
         filename's middle section (processing suffix). This is signal 1
