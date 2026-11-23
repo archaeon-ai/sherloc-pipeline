@@ -158,7 +158,7 @@ ss__SSSS_CCCCCCCCCC_NNNxxx__DDDDDDDsrlcQQQQQ_WNNNsssssVV.csv
 |----------|---------|-----|--------|---------|
 | `ss__0921_0748731413_045rrs__0450000srlc11374_104cgnj01.csv` | RRS | Detail scan | w104 | 100 |
 | `ss__0921_0748735042_800rrs__0450000srlc11420_108cgnj01.csv` | RRS | Fine scan | w108 | 1296 |
-| `ss__0921_0748735903_665rrs__0450000srlc11420_108zpzj01.csv` | RRS | Summary | b108zpz | 2 |
+| `ss__0921_0748735903_665rrs__0450000srlc11420_108zpzj01.csv` | RRS | On-board Process_Data | b108zpz | 2 |
 | `ss__0921_0748731011_645rcs__0450000srlc10000_0cgnj01.csv` | RCS | Calibration | w0 | 1 |
 | `ss__0921_0748731413_045rmo__0450000srlc11374_104cgnj01.csv` | RMO | Positions | — | 100 |
 | `ss__0921_0748731011_645rcc__0450000srlc10000_0cgnj02.csv` | RCC | Cal. fits | — | 47 |
@@ -181,7 +181,7 @@ SS__<SOL>_<SCLK>_<INST_CODE>__<PRODUCT_ID>_<VER>_____J<VV>.CSV
 |--------|---------|-------|
 | `cgnj` | Calibrated, gain-corrected, normalized | Standard processed (most products) |
 | `cgzj` | Calibrated, gain-corrected, zeroed | Variant processing |
-| `zpzj` | Summary/derived processing | Produces "PROCESS DATA SPECTRA" tables; only 2 records |
+| `zpzj` | On-board Process_Data RDR (RDR SIS Table 5, section 4.4.12): Z cosmic ray correction skipped, P "the on-board Process_Data algorithm has been applied", Z laser normalization skipped | Produces "PROCESS DATA SPECTRA" tables; release 16: 3 regions, 1, 2, 100 or 1296 records per region |
 | `cg_j` | Calibrated, gain-corrected (no normalization) | Intermediate product |
 
 ### Sequence Code Classification
@@ -417,10 +417,10 @@ Tables are concatenated in a single CSV file, with byte offsets defined in the X
 |------|----------------|----------------|----------------|-------------|
 | Detail scan | `w104` | 104 | 100 | ~1 shot/position, some dropped |
 | Fine scan | `w108` | 108 | 1296 | 108 columns x 12 rows |
-| Summary | `b108zpz` | 108 | 2 | Derived summary product |
+| On-board Process_Data | `b108zpz` | 108 | 2 | RDR of the on-board Process_Data product |
 | Calibration | `w0` | 1 | 1 | Single calibration point |
 
-**zpz summary products:** Uses table name "PROCESS DATA SPECTRA REGION N" instead of "LASER-NORMALIZED SPECTRA REGION N". Only 2 records. These are post-processed summaries (likely mean + uncertainty), not raw observations.
+**zpz products (on-board Process_Data RDRs):** Uses table name "PROCESS DATA SPECTRA REGION N" instead of "LASER-NORMALIZED SPECTRA REGION N". The release-16 SHERLOC RDR SIS (JPL D-104819 v1.12) defines them. Table 5, positions 49-51: "Z" cosmic ray correction skipped, "“P” : denotes that the on-board Process_Data algorithm has been applied", "Z" laser normalization skipped. Section 4.4.12, "Process_Data RDRs": "Prod ID: RRA or RRS special processing flag “P” in the filename. The process_data unpack algorithm characterizes and further processes (if necessary) the process_data EDR." In release 16 they hold 3 regions of 1, 2, 100 or 1296 records each (not always 2). An earlier version of this page called them "post-processed summaries (likely mean + uncertainty)"; no mission document supports that.
 
 #### RCS — Reduced Calibrated Spectra (Calibration — same format as RRS)
 
@@ -717,7 +717,7 @@ Sol 921 contains **6 observations**:
 
 **Key findings:**
 - Mars surface scans produce **RRS** (not RCS). Only calibration observations get RCS.
-- Observation 665 is a derived summary of observation 800 (same sequence code SRLC11420, different suffix `zpz`).
+- Observation 665 is an on-board Process_Data product in the same sequence as observation 800 (SRLC11420, suffix `zpz`); the SIS does not say it is derived from 800.
 - Observation 380 (AlGaN internal) does not produce RMO (no spatial coordinates for internal calibration).
 
 ### Downloaded Products (134 files, 106 MB)
@@ -741,7 +741,7 @@ All 5 Loupe scans matched to PDS observations via SCLK (1-2 second consistent of
 | survey_1296 | 748735041 | 748735042 | +1s | 1296 = 1296 |
 | AlGaN_2 | 748736148 | 748736149 | +1s | 1 = 1 |
 
-**Unmatched:** PDS observation 665 (zpz summary) has no Loupe counterpart.
+**Unmatched:** PDS observation 665 (zpz, on-board Process_Data) has no Loupe counterpart.
 
 ### Product File Sizes
 
