@@ -85,3 +85,27 @@ def test_low_r2_g_fit_is_not_detected_but_a_good_one_is(tmp_path):
     )
     assert summary.loc[1, "g_r2"] >= 0.25
     assert bool(summary.loc[1, "g_detected"])
+
+
+def test_map_organics_fit_uses_the_organics_r2_min(monkeypatch):
+    """The map refit's organics config takes organics_r2_min, not r_squared_min.
+
+    The map path keeps peaks on pass_snr and pass_fwhm only, so this setting
+    changes no map output today; the test pins the config wiring.
+    """
+    from sherloc_pipeline.services import map_fitting
+
+    seen = {}
+
+    def spy(x, y, cfg, roi=None, **kwargs):
+        seen["r_squared_min"] = cfg["r_squared_min"]
+        raise RuntimeError("stop after capturing the config")
+
+    monkeypatch.setattr(map_fitting, "fit_spectrum", spy)
+    x, y = _g_point(window_noise=0.0)
+    config = {"fitting": {**SHIPPED}}
+    result = map_fitting._fit_raman_domain(x, y, config, "organics", preprocessed=True)
+
+    assert result.status == "missing"
+    assert config["fitting"]["r_squared_min"] == 0.0
+    assert seen["r_squared_min"] == 0.25
