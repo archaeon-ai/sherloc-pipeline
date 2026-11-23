@@ -380,22 +380,22 @@
       "user_keep": true
     },
     {
-      "amplitude": 162.981847367,
-      "fwhm": 27.0285435523,
-      "keep": false,
-      "label_id": "hi-carb",
-      "mean": 1089.6322846635,
+      "amplitude": 190.2660299554,
+      "fwhm": 26.6860159658,
+      "keep": true,
+      "label_id": "unidentified",
+      "mean": 874.7322701362,
       "modality": "minerals",
       "peak_ID": "f21",
       "point": 23,
-      "r_squared": 0.0088147942,
+      "r_squared": 0.1923022941,
       "reject_reason": null,
       "reviewed": false,
       "scan": "detail_1",
-      "snr": 3.0710371286,
+      "snr": 3.5851479888,
       "sol": 921,
       "target": "Amherst_Point",
-      "user_keep": false
+      "user_keep": true
     },
     {
       "amplitude": 205.2583901469,
@@ -436,7 +436,7 @@
     {
       "amplitude": 181.8350798374,
       "fwhm": 28.2534519517,
-      "keep": false,
+      "keep": true,
       "label_id": "olivine",
       "mean": 840.7442466501,
       "modality": "minerals",
@@ -449,7 +449,7 @@
       "snr": 3.0082504638,
       "sol": 921,
       "target": "Amherst_Point",
-      "user_keep": false
+      "user_keep": true
     },
     {
       "amplitude": 110.7138868246,
@@ -490,7 +490,7 @@
     {
       "amplitude": 189.030371854,
       "fwhm": 27.0776288718,
-      "keep": false,
+      "keep": true,
       "label_id": "hi-carb",
       "mean": 1094.0910875919,
       "modality": "minerals",
@@ -503,7 +503,7 @@
       "snr": 3.4035631592,
       "sol": 921,
       "target": "Amherst_Point",
-      "user_keep": false
+      "user_keep": true
     },
     {
       "amplitude": 140.9326556513,
@@ -524,40 +524,40 @@
       "user_keep": true
     },
     {
-      "amplitude": 189.8898177137,
-      "fwhm": 29.2142622366,
-      "keep": false,
+      "amplitude": 189.8968284547,
+      "fwhm": 29.2120830224,
+      "keep": true,
       "label_id": "olivine",
-      "mean": 815.8227558494,
+      "mean": 815.822117535,
       "modality": "minerals",
       "peak_ID": "f29",
       "point": 57,
-      "r_squared": 0.3751310992,
+      "r_squared": 0.4997476762,
       "reject_reason": null,
       "reviewed": false,
       "scan": "detail_1",
-      "snr": 7.8728313189,
+      "snr": 7.8731219842,
       "sol": 921,
       "target": "Amherst_Point",
-      "user_keep": false
+      "user_keep": true
     },
     {
-      "amplitude": 146.7982322592,
-      "fwhm": 28.4928449919,
-      "keep": false,
+      "amplitude": 146.7986859855,
+      "fwhm": 28.4926813156,
+      "keep": true,
       "label_id": "unidentified",
-      "mean": 1106.7217949604,
+      "mean": 1106.7217817931,
       "modality": "minerals",
       "peak_ID": "f30",
       "point": 57,
-      "r_squared": 0.3751310992,
+      "r_squared": 0.4997476762,
       "reject_reason": null,
       "reviewed": false,
       "scan": "detail_1",
-      "snr": 6.0862543047,
+      "snr": 6.0862731162,
       "sol": 921,
       "target": "Amherst_Point",
-      "user_keep": false
+      "user_keep": true
     },
     {
       "amplitude": 585.8594342008,
@@ -796,7 +796,7 @@
     {
       "amplitude": 257.9407475979,
       "fwhm": 28.319238819,
-      "keep": false,
+      "keep": true,
       "label_id": "hi-carb",
       "mean": 1087.7345407647,
       "modality": "minerals",
@@ -809,7 +809,7 @@
       "snr": 4.5551344946,
       "sol": 921,
       "target": "Amherst_Point",
-      "user_keep": false
+      "user_keep": true
     },
     {
       "amplitude": 184.7589770135,

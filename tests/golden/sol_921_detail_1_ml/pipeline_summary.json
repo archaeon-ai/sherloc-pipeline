@@ -1,10 +1,10 @@
 {
-  "config_hash": "5e55800fa4bad42b77f1f764e50237112dfc78a2dcb4c487d401e0c81d56cc82",
-  "generated_at": "2026-10-21T18:17:02.407432+00:00",
+  "config_hash": "1dfb83a141d6761334e21ec724216c7d80ef9d1d6c8f885ebb8bb45d7bfcf766",
+  "generated_at": "2026-11-23T18:32:34.729884+00:00",
   "n_points": 100,
   "peak_counts": {
     "hydration": 13,
-    "minerals": 21,
+    "minerals": 30,
     "organics": 0
   },
   "raman_shift_shape": [
@@ -36,5 +36,5 @@
     523
   ],
   "target": "Amherst_Point",
-  "total_peaks": 34
+  "total_peaks": 43
 }
