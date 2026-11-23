@@ -149,6 +149,11 @@ class TestPersistRead:
         json.dumps({"version": SIZE_LOG_VERSION, "ftest_peaks": [{"center_cm1": "a", "fwhm_cm1": 30.0, "snr": 9.0}]}),
         '{"version": "%s", "ftest_peaks": [{"center_cm1": NaN, "fwhm_cm1": 30.0, "snr": 9.0}]}' % SIZE_LOG_VERSION,
         json.dumps({"version": SIZE_LOG_VERSION, "ftest_r2": "high", "ftest_peaks": [_row(1085.5)]}),
+        json.dumps({"version": SIZE_LOG_VERSION, "ftest_r2": None, "ftest_peaks": [_row(1085.5)]}),     # no R2: floor unapplied
+        json.dumps({"version": SIZE_LOG_VERSION, "ftest_peaks": [_row(1085.5)]}),                       # R2 absent
+        json.dumps({"version": SIZE_LOG_VERSION, "ftest_r2": 0.9,
+                    "ftest_peaks": [{k: v for k, v in _row(1085.5).items() if k != "pass_sharpness"}]}),  # no sharpness
+        json.dumps({"version": SIZE_LOG_VERSION, "ftest_r2": 0.9, "ftest_peaks": [_row(1085.5, pass_sharpness="yes")]}),
     ])
     def test_a_malformed_log_is_a_warning_not_a_failure(self, populated_db, results_all, text):
         engine, _, _ = populated_db
@@ -167,3 +172,12 @@ class TestPersistRead:
         with get_session(engine) as session:
             peaks = session.query(FittedPeakORM).all()
         assert peaks and {(p.kept_by, p.aicc_gain, p.step_p) for p in peaks} == {(None, None, None)}
+
+
+def test_a_non_finite_value_is_written_as_null(tmp_path):
+    from sherloc_pipeline.services.fitting import _write_size_sidecar
+    csv = tmp_path / "S_T_s_R1_point0_fit_peaks.csv"
+    side = _write_size_sidecar(csv, {"version": SIZE_LOG_VERSION, "aicc0": float("-inf"),
+                                     "sizes": [{"p": 1, "aicc": float("nan"), "params": [1.0, float("inf")]}]})
+    rec = json.loads(side.read_text())
+    assert rec["aicc0"] is None and rec["sizes"][0]["aicc"] is None and rec["sizes"][0]["params"] == [1.0, None]

@@ -116,6 +116,18 @@ def size_sidecar_path(peaks_csv: Path) -> Path:
     return peaks_csv.with_name(name[: -len("_peaks.csv")] + "_sizes.json")
 
 
+def _json_finite(value: Any) -> Any:
+    """``value`` with every non-finite float (an RSS of exactly 0 gives AICc -inf) as None,
+    so the log is strict JSON and writing it can never fail the fit it records."""
+    if isinstance(value, dict):
+        return {k: _json_finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_finite(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
 def _write_size_sidecar(peaks_csv: Path, selection: Optional[Dict[str, Any]]) -> Optional[Path]:
     """Write the fit's size log beside its peak table, or drop an earlier run's when this fit
     ran no size search. Written to a temporary name and moved into place, so a reader never
@@ -126,7 +138,7 @@ def _write_size_sidecar(peaks_csv: Path, selection: Optional[Dict[str, Any]]) ->
         return None
     tmp = sidecar.with_name(sidecar.name + ".tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(selection, fh, separators=(",", ":"), allow_nan=False)
+        json.dump(_json_finite(selection), fh, separators=(",", ":"), allow_nan=False)
     os.replace(tmp, sidecar)
     return sidecar
 
@@ -232,20 +244,26 @@ def _ftest_persisted_centers(peaks_csv: Path, gate: _PersistGate,
         return None
     rows, r2 = rec["ftest_peaks"], rec.get("ftest_r2")
     if not isinstance(rows, list) or not all(
-            isinstance(r, dict) and all(_finite_number(r.get(k)) for k in _FTEST_ROW_NUMBERS) for r in rows):
+            isinstance(r, dict) and all(_finite_number(r.get(k)) for k in _FTEST_ROW_NUMBERS)
+            and isinstance(r.get("pass_sharpness"), bool) for r in rows):
         unreadable("malformed ftest_peaks")
         return None
-    if r2 is not None and not _finite_number(r2):
+    if not rows:
+        return []
+    # A written F-test pick with components always has its R2; without it the R2 floor
+    # could not be applied, so the record is malformed rather than unfiltered.
+    if not _finite_number(r2):
         unreadable("malformed ftest_r2")
         return None
-    if not rows or (r2 is not None and r2 <= gate.r2_floor):
+    if r2 <= gate.r2_floor:
         return []
     df = pd.DataFrame(rows)
     return [float(r['center_cm1']) for _, r in gate.reviewable(df).iterrows()
             if gate.assignment_if_kept(r) is not None]
 
 
-#: The F-test row fields the persist gates read; each must be a finite number.
+#: The F-test row fields the persist gates read as numbers; each must be finite (the
+#: sharpness gate's pass_sharpness must be a boolean).
 _FTEST_ROW_NUMBERS = ("center_cm1", "fwhm_cm1", "snr")
 
 

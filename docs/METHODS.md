@@ -621,7 +621,7 @@ For fluorescence fitting (`domain="fluorescence"`), AICc is used for model selec
 
 The F-test pick needs no extra fit (with `aicc_min_peaks` above 1, the sizes below it are fitted for the log only): both rules refit a given size from the same start with the same bounds, so the sequential F-test's stopping point can be read from the AICc search's sizes (size 0 is the null model y = 0). All three marks are NULL when not computed: rows fitted before this change, fits with no size search (the hydration F-test rule, the organics D+G fit with fixed seeds, `model_selection: "ftest"`), and a step whose size failed to fit. `aicc_gain` and `step_p` also appear as columns of each point's peak table.
 
-For the mineral fit and the organics G fit, the size log is written per point, as compact JSON, beside the peak table: `..._point<N>_fit_peaks.csv` → `..._point<N>_fit_sizes.json` (organics G fit: `..._organics_g_sizes.json`). It is never loaded into a database. Format `fit-sizes/1`:
+For the mineral fit and the organics G fit, the size log is written per point, as compact JSON, beside the peak table: `..._point<N>_fit_peaks.csv` → `..._point<N>_fit_sizes.json` (organics G fit: `..._organics_g_sizes.json`). It is never loaded into a database; a non-finite number (for example AICc at an RSS of exactly 0) is written as null. Format `fit-sizes/1`:
 
 | Field | Meaning |
 |---|---|
