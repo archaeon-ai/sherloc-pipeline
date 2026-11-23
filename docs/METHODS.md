@@ -613,6 +613,27 @@ def compute_aicc(n_samples: int, rss: float, num_params: int) -> float:
 
 For fluorescence fitting (`domain="fluorescence"`), AICc is used for model selection regardless of the UI selection.
 
+**Selection marks and the size log:** the AICc search fits the candidate sizes anyway, so it records every size from 1 (including any below `aicc_min_peaks`, which AICc may not pick), and each persisted component carries three marks of how model selection treated it. The marks are records only: they never add, remove or change a kept component. A component's seed height rank is k (1 = tallest seed); its marks describe the step from k−1 to k peaks:
+
+- `aicc_gain` = AICc(k−1) − AICc(k). Positive means adding this component lowered AICc.
+- `step_p` = the F-test p-value of the same step (the statistic above, Δk = 3).
+- `kept_by` = `both` when the F-test pick, derived from the same fits, also persists a component within 2 cm⁻¹ of this one through the same persist gates (SNR, FWHM, sharpness, the domain gates, and the R² floor applied to the F-test pick's own R²); `aicc` when it does not. `ftest` is reserved for a component only the F-test pick keeps; those are not persisted.
+
+The F-test pick needs no extra fit (with `aicc_min_peaks` above 1, the sizes below it are fitted for the log only): both rules refit a given size from the same start with the same bounds, so the sequential F-test's stopping point can be read from the AICc search's sizes (size 0 is the null model y = 0). All three marks are NULL when not computed: rows fitted by earlier versions, fits with no size search (the hydration F-test rule, the organics D+G fit with fixed seeds, `model_selection: "ftest"`), and a step whose size failed to fit. `aicc_gain` and `step_p` also appear as columns of each point's peak table.
+
+For the mineral fit and the organics G fit, the size log is written per point, as compact JSON, beside the peak table: `..._point<N>_fit_peaks.csv` → `..._point<N>_fit_sizes.json` (organics G fit: `..._organics_g_sizes.json`). It is never loaded into a database; a non-finite number (for example AICc at an RSS of exactly 0) is written as null. Format `fit-sizes/1`:
+
+| Field | Meaning |
+|---|---|
+| `version` | `"fit-sizes/1"` |
+| `n` | channels the fit used |
+| `rss0`, `aicc0` | RSS and AICc of the null model y = 0 |
+| `ftest_alpha` | the F-test significance level |
+| `sizes[]` | one entry per size `p`: `seed_ranks` (seed height rank of each parameter slot), `params` (center, amplitude, FWHM per peak), `rss`, `aicc`, `aicc_eligible` (false below `aicc_min_peaks`: logged for the F-test pick and the steps, never picked by AICc), `merge_skip` (skipped by `reject_merged_candidates`), `failed` (the fit raised; `params`, `rss`, `aicc` are null), `step_aicc_gain`, `step_p` |
+| `aicc_size` | the size AICc kept (null: no size was admissible) |
+| `ftest_size` | the size the sequential F-test keeps (0: no step passes) |
+| `ftest_r2`, `ftest_peaks` | the F-test pick's R² and its output components after the same prune and merge steps (center, FWHM, amplitude, area, SNR, pass flags, sharpness ratio, `seed_rank`, `aicc_gain`, `step_p`) |
+
 **Quality Thresholds (defaults from `src/sherloc_pipeline/config.yaml`, minerals domain):**
 - **R²:** per-peak `pass_r2` flag at ≥ 0 (`r_squared_min`); persistence still requires R² > 0 (`posthoc_filters.r2_min`)
 - **SNR:** ≥ 3.0 (`min_snr`)

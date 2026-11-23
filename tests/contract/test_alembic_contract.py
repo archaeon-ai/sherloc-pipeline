@@ -19,7 +19,7 @@ from typing import Optional, Sequence, Union
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERSIONS_DIR = REPO_ROOT / "alembic" / "versions"
 
-EXPECTED_HEAD = "4f638701cf7c"  # add_cr_mask_review_to_fitted_peaks
+EXPECTED_HEAD = "a4d795f0a25e"  # add_selection_marks_to_fitted_peaks
 
 DownRevision = Union[None, str, Sequence[str]]
 

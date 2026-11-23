@@ -394,3 +394,37 @@ class TestCrMaskReviewColumn:
         assert "cr_mask_review" not in cols
         assert con.execute("SELECT id FROM fitted_peaks").fetchall() == [("p1",)]
         con.close()
+
+
+class TestSelectionMarksColumns:
+    """a4d795f0a25e: nullable fitted_peaks.kept_by / aicc_gain / step_p, existing rows NULL."""
+
+    def test_adds_nullable_columns_keeping_rows_and_downgrade_drops_them(self, alembic_config):
+        import sqlite3
+
+        config, db_path = alembic_config
+        command.upgrade(config, "4f638701cf7c")
+        con = sqlite3.connect(db_path)
+        con.execute("PRAGMA foreign_keys=OFF")
+        con.execute(
+            "INSERT INTO fitted_peaks (id, spectrum_id, peak_type, amplitude, fit_modality, created_at) "
+            "VALUES ('p1', 's1', 'gaussian', 1.0, 'minerals', '2026-11-23 00:00:00')"
+        )
+        con.commit()
+        con.close()
+
+        command.upgrade(config, "a4d795f0a25e")
+        con = sqlite3.connect(db_path)
+        cols = {r[1]: r for r in con.execute("PRAGMA table_info(fitted_peaks)")}
+        for name in ("kept_by", "aicc_gain", "step_p"):
+            assert name in cols and cols[name][3] == 0  # nullable
+        assert con.execute("SELECT id, kept_by, aicc_gain, step_p FROM fitted_peaks").fetchall() == [
+            ("p1", None, None, None)]
+        con.close()
+
+        command.downgrade(config, "4f638701cf7c")
+        con = sqlite3.connect(db_path)
+        cols = {r[1] for r in con.execute("PRAGMA table_info(fitted_peaks)")}
+        assert not {"kept_by", "aicc_gain", "step_p"} & cols
+        assert con.execute("SELECT id FROM fitted_peaks").fetchall() == [("p1",)]
+        con.close()
