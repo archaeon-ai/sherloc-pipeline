@@ -48,6 +48,12 @@ class PeakFit:
     sharpness_ratio: float = 1.0   # data_at_center / amplitude (>>1 → cosmic ray)
     pass_sharpness: bool = True    # False if sharpness_ratio exceeds threshold
     cr_mask_review: Optional[bool] = None  # a cosmic-ray mask channel lies within center +/- FWHM/2 (review flag, never a filter); None = no mask supplied
+    # Selection marks (records only; they never change what is kept). The component's seed
+    # height rank is k: aicc_gain = AICc(k-1) - AICc(k), step_p = the F-test p-value of the
+    # step from k-1 to k peaks. None when the fit ran no size search or a needed size failed.
+    seed_rank: Optional[int] = None
+    aicc_gain: Optional[float] = None
+    step_p: Optional[float] = None
 
 
 @dataclass
@@ -58,6 +64,9 @@ class FitResult:
     dof: int
     warnings: List[str]
     n_samples: Optional[int] = None  # channels the fit used (ROI minus masked channels); None = not recorded
+    # The AICc size search's record (core.fitting.SizeLog), or None when no size search ran
+    # (explicit seed centers, the F-test rule). Written to a per-point sidecar, never to a database.
+    selection: Optional[dict] = None
 
 
 class PeakType(str, Enum):

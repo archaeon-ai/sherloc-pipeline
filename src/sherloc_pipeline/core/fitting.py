@@ -202,6 +202,7 @@ def fit_spectrum(
     reject_merged = bool(parsimony_cfg.get('reject_merged_candidates', False))
     min_amp = amp_sigma_mult * noise_std
     min_sep = 0.5 * peak_sep
+    size_log: Optional[SizeLog] = None  # set by the AICc size search only
 
     # Prepare candidate peak sets
     if seed_centers is not None and len(seed_centers) > 0:
@@ -262,8 +263,11 @@ def fit_spectrum(
         else:
             # AICc model selection (legacy)
             min_p = min(aicc_min, max_p)
+            size_rows: List[Dict] = []
             for p in range(min_p, max_p + 1):
                 sel = sorted(seeds_sorted_by_height[:p])
+                # Slot j of the parameter vector holds seed sel[j]; its height rank (1 = tallest).
+                ranks = [seeds_sorted_by_height.index(i) + 1 for i in sel]
                 p0 = build_initial_params(x, y_roi, sel, initial_fwhm=max(fit_min, slit_w))
                 lb, ub = [], []
                 for _ in range(0, p0.size, 3):
@@ -278,17 +282,36 @@ def fit_spectrum(
                     y_model = multi_gaussian(x, params)
                     rss = float(np.sum((y_roi - y_model) ** 2))
                     aicc = _compute_aicc(n_samples=x.size, rss=rss, num_params=params.size)
-                    if reject_merged and _merge_would_drop(params, min_amp, min_display_snr, noise_std, min_sep):
+                    # The log records every size, the merge-skip included; it decides nothing.
+                    would_drop = _merge_would_drop(params, min_amp, min_display_snr, noise_std, min_sep)
+                    size_rows.append(dict(p=p, seed_ranks=ranks, params=[float(v) for v in params],
+                                          rss=rss, aicc=float(aicc), merge_skip=bool(reject_merged and would_drop),
+                                          failed=False))
+                    if reject_merged and would_drop:
                         continue
                     if best is None or aicc < best[0] - aicc_thresh:
                         best = (aicc, params, rss)
                 except Exception:
+                    size_rows.append(dict(p=p, seed_ranks=ranks, params=None, rss=None, aicc=None,
+                                          merge_skip=False, failed=True))
                     continue
+            size_log = SizeLog(n=int(x.size), rss0=float(np.sum(y_roi ** 2)), rows=size_rows,
+                               ftest_alpha=ftest_alpha)
+
+    gates = dict(noise_std=noise_std, filt_min=filt_min, snr_min=snr_min, r2_min=r2_min,
+                 sharpness_max=float(cfg.get('posthoc_filters', {}).get('sharpness_max', 3.0)),
+                 min_amp=min_amp, min_display_snr=min_display_snr, min_sep=min_sep, cr_mask_cm1=cr_mask_cm1)
+
+    def _ftest_peaks(prm: np.ndarray) -> List[PeakFit]:
+        return _finalize_peaks(prm, x, y_roi, compute_r2(y_roi, multi_gaussian(x, prm)), gates,
+                               size_log.ranks_for(prm), size_log)
 
     # Fallback if nothing succeeded
     if best is None:
+        selection = size_log.record(aicc_params=None, ftest_peaks_fn=_ftest_peaks) if size_log is not None else None
         return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1),
-                         warnings=mask_warnings + ["fit_failed"], n_samples=int(x.size)), np.zeros_like(y)
+                         warnings=mask_warnings + ["fit_failed"], n_samples=int(x.size),
+                         selection=selection), np.zeros_like(y)
 
     params = best[1]
     y_model = multi_gaussian(x, params)
@@ -302,32 +325,50 @@ def fit_spectrum(
     if noise_std is None:
         noise_std = compute_noise_std(x_cm1, y, cfg=cfg)
 
-    # Sharpness threshold for cosmic ray rejection
-    sharpness_max = float(cfg.get('posthoc_filters', {}).get('sharpness_max', 3.0))
+    selection = None
+    slot_ranks = None
+    if size_log is not None:
+        slot_ranks = size_log.ranks_for(params)
+        selection = size_log.record(aicc_params=params, ftest_peaks_fn=_ftest_peaks)
+    peaks = _finalize_peaks(params, x, y_roi, r2, gates, slot_ranks, size_log)
+    return FitResult(peaks=peaks, r2=float(r2), rss=rss, dof=dof, warnings=list(mask_warnings),
+                     n_samples=int(x.size), selection=selection), full_model
 
+
+def _finalize_peaks(params: np.ndarray, x: np.ndarray, y_roi: np.ndarray, r2: float, gates: Dict,
+                    slot_ranks: Optional[List[int]], size_log: Optional["SizeLog"]) -> List[PeakFit]:
+    """One chosen model's output components: pass flags, then the prune and merge steps.
+
+    The same steps for the AICc pick (what persists) and the F-test pick derived from the size
+    log, so the two can be compared component for component. ``slot_ranks`` gives each parameter
+    slot's seed height rank (None: no size search ran, and the marks stay None).
+    """
+    noise_std = gates['noise_std']
     peaks: List[PeakFit] = []
-    for i in range(0, params.size, 3):
+    for j, i in enumerate(range(0, params.size, 3)):
         m, a, f = params[i : i + 3]
         area = float(a * fwhm_to_sigma(f) * np.sqrt(2 * np.pi))
         snr = float(a / (noise_std + 1e-12))
-        pass_fwhm = bool(f >= filt_min)
-        pass_snr = bool(snr >= snr_min)
-        pass_r2 = bool(r2 >= r2_min)
+        pass_fwhm = bool(f >= gates['filt_min'])
+        pass_snr = bool(snr >= gates['snr_min'])
+        pass_r2 = bool(r2 >= gates['r2_min'])
         # Sharpness ratio: data_at_center / amplitude (>>1 for cosmic rays)
         nearest_idx = int(np.argmin(np.abs(x - float(m))))
         data_at_center = float(y_roi[nearest_idx])
         sharpness_ratio = data_at_center / (float(a) + 1e-12)
-        pass_sharpness = bool(sharpness_ratio < sharpness_max)
+        pass_sharpness = bool(sharpness_ratio < gates['sharpness_max'])
         cr_review = None
-        if cr_mask_cm1 is not None:
-            cr_review = bool(any(abs(float(c) - float(m)) <= 0.5 * float(f) for c in cr_mask_cm1))
+        if gates['cr_mask_cm1'] is not None:
+            cr_review = bool(any(abs(float(c) - float(m)) <= 0.5 * float(f) for c in gates['cr_mask_cm1']))
+        rank = slot_ranks[j] if slot_ranks is not None else None
+        gain, step_p = size_log.step(rank) if (size_log is not None and rank is not None) else (None, None)
         peaks.append(PeakFit(m_cm1=float(m), a=float(a), fwhm=float(f), sigma=float(fwhm_to_sigma(f)), area=area,
                              snr=snr, pass_snr=pass_snr, pass_fwhm=pass_fwhm, pass_r2=pass_r2,
                              sharpness_ratio=sharpness_ratio, pass_sharpness=pass_sharpness,
-                             cr_mask_review=cr_review))
+                             cr_mask_review=cr_review, seed_rank=rank, aicc_gain=gain, step_p=step_p))
 
     # Prune obviously spurious components: extremely low amplitude or below display SNR threshold
-    peaks = [p for p in peaks if (p.a >= min_amp and p.snr >= min_display_snr)]
+    peaks = [p for p in peaks if (p.a >= gates['min_amp'] and p.snr >= gates['min_display_snr'])]
 
     # Merge peaks that are closer than half the configured separation: keep the larger amplitude
     if len(peaks) > 1:
@@ -337,7 +378,7 @@ def fit_spectrum(
             if not merged:
                 merged.append(p)
             else:
-                if abs(p.m_cm1 - merged[-1].m_cm1) < min_sep:
+                if abs(p.m_cm1 - merged[-1].m_cm1) < gates['min_sep']:
                     if p.a > merged[-1].a:
                         merged[-1] = p
                 else:
@@ -346,8 +387,90 @@ def fit_spectrum(
 
     # Final sort by position
     peaks.sort(key=lambda p: p.m_cm1)
-    return FitResult(peaks=peaks, r2=float(r2), rss=rss, dof=dof, warnings=list(mask_warnings),
-                     n_samples=int(x.size)), full_model
+    return peaks
+
+
+#: Sidecar format version; bump when a field changes meaning.
+SIZE_LOG_VERSION = "fit-sizes/1"
+
+
+class SizeLog:
+    """Every model size the AICc search fitted at one point, and both rules' picks from it.
+
+    Rows hold, per size p: the seed height rank of each parameter slot, the fitted parameters,
+    RSS and AICc (None when the fit raised), and whether ``reject_merged_candidates`` skipped
+    it. Both rules choose from these same fits (the F-test path refits size p from the same
+    start with the same bounds), so the F-test pick needs no extra fit: the longest run of sizes
+    from 1 whose step p-value is below alpha, stopping at a failed fit or no degrees of freedom,
+    as ``fit_spectrum``'s F-test branch does. Size 0 is the null model y = 0.
+    """
+
+    def __init__(self, n: int, rss0: float, rows: List[Dict], ftest_alpha: float):
+        self.n, self.rss0, self.rows, self.alpha = n, rss0, rows, ftest_alpha
+        self.by_p = {r['p']: r for r in rows}
+
+    def _rss(self, p: int) -> Optional[float]:
+        if p == 0:
+            return self.rss0
+        r = self.by_p.get(p)
+        return None if r is None or r['failed'] else r['rss']
+
+    def _aicc(self, p: int) -> Optional[float]:
+        if p == 0:
+            return float(_compute_aicc(n_samples=self.n, rss=self.rss0, num_params=0))
+        r = self.by_p.get(p)
+        return None if r is None or r['failed'] else r['aicc']
+
+    def step(self, k: int) -> Tuple[Optional[float], Optional[float]]:
+        """(AICc(k-1) - AICc(k), the F-test p-value of k-1 -> k peaks); None where a size is missing."""
+        a0, a1 = self._aicc(k - 1), self._aicc(k)
+        gain = None if a0 is None or a1 is None else float(a0 - a1)
+        r0, r1 = self._rss(k - 1), self._rss(k)
+        dof0, dof1 = self.n - 3 * (k - 1), self.n - 3 * k
+        pval = None
+        if r0 is not None and r1 is not None and dof1 > 0:
+            pval = float(_f_test_pvalue(r0, r1, dof0, dof1, delta_params=3))
+        return gain, pval
+
+    def ftest_size(self) -> Optional[int]:
+        """The size the sequential F-test keeps (0: none passes); None when size 1 was not fitted."""
+        if 1 not in self.by_p:
+            return None
+        kept = 0
+        p = 1
+        while p in self.by_p:
+            _, pval = self.step(p)
+            if pval is None or not (pval < self.alpha):
+                break
+            kept = p
+            p += 1
+        return kept
+
+    def ranks_for(self, params: np.ndarray) -> Optional[List[int]]:
+        r = self.by_p.get(params.size // 3)
+        return list(r['seed_ranks']) if r is not None else None
+
+    def record(self, aicc_params: Optional[np.ndarray], ftest_peaks_fn) -> Dict:
+        """The sidecar record: every size with its step statistics, and both picks
+        (``aicc_size`` None: no size was admissible, the fit returned no peaks)."""
+        sizes = []
+        for r in self.rows:
+            gain, pval = self.step(r['p'])
+            sizes.append({**r, 'step_aicc_gain': gain, 'step_p': pval})
+        fsize = self.ftest_size()
+        ftest_peaks = None
+        if fsize:
+            ftest_peaks = [dict(center_cm1=p.m_cm1, fwhm_cm1=p.fwhm, amplitude_a=p.a, area=p.area, snr=p.snr,
+                                pass_snr=p.pass_snr, pass_fwhm=p.pass_fwhm, pass_r2=p.pass_r2,
+                                sharpness_ratio=p.sharpness_ratio, pass_sharpness=p.pass_sharpness,
+                                seed_rank=p.seed_rank, aicc_gain=p.aicc_gain, step_p=p.step_p)
+                           for p in ftest_peaks_fn(np.asarray(self.by_p[fsize]['params'], dtype=float))]
+        elif fsize == 0:
+            ftest_peaks = []
+        return dict(version=SIZE_LOG_VERSION, n=self.n, rss0=self.rss0, aicc0=self._aicc(0),
+                    ftest_alpha=self.alpha, sizes=sizes,
+                    aicc_size=None if aicc_params is None else int(aicc_params.size // 3),
+                    ftest_size=fsize, ftest_peaks=ftest_peaks)
 
 
 def _merge_would_drop(params: np.ndarray, min_amp: float, min_display_snr: float,
