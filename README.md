@@ -310,7 +310,7 @@ fig = plot_overlay(
         {"df": ref_df, "label": "Forsterite", "color": "green", "linestyle": "--"},
     ],
     xlim=(700, 1200),
-    scale_to_peak=(800, 900),  # Normalize to olivine doublet
+    scale_to_peak=(800, 900),  # Normalize to olivine band
 )
 fig.savefig("comparison.png", dpi=300)
 ```

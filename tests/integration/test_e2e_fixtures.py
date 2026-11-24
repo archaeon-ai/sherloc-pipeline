@@ -123,7 +123,7 @@ class TestAmherstPointE2E:
 
 
 class TestLakeHaiyahaE2E:
-    """End-to-end tests for sol_0852 Lake_Haiyaha detail_1 (500 PPP, pure olivine)."""
+    """End-to-end tests for sol_0852 Lake_Haiyaha detail_1 (500 PPP, olivine-rich)."""
 
     def test_full_pipeline_with_fs_background(self, fixtures_path, tmp_path):
         """Test complete workflow with FS background on Lake Haiyaha."""
