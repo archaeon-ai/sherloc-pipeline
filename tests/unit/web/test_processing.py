@@ -96,6 +96,60 @@ async def test_fit_keeps_configured_parsimony_settings(synthetic_fit_client, mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("domain,expected", [("hydration", 0.0), ("minerals", 0.2), ("organics", 0.2)])
+async def test_hydration_fit_has_no_slit_preference(synthetic_fit_client, monkeypatch, domain, expected):
+    """The hydration point fit carries slit weight 0; other domains keep the configured weight."""
+    from sherloc_pipeline.web.routes import processing
+
+    client, config = synthetic_fit_client
+    config.fitting = {"slit_pref_weight": 0.2}
+    fitted = {}
+
+    def fit(x, y, cfg):
+        fitted["slit_pref_weight"] = cfg["slit_pref_weight"]
+        return SimpleNamespace(peaks=[], r2=0.6), np.zeros(len(x))
+
+    monkeypatch.setattr(processing, "fit_spectrum", fit)
+    monkeypatch.setattr(processing, "load_mineral_rules", lambda **kwargs: [])
+    response = await client.post("/api/process/fit", json={
+        "wavenumber": [11, 22, 33, 44], "intensity": [3, 5, 5, 3],
+        "params": {"fitting": {"domain": domain}},
+    })
+    assert response.status_code == 200, response.text
+    assert fitted["slit_pref_weight"] == expected
+    assert config.fitting["slit_pref_weight"] == 0.2  # app config not mutated
+
+
+@pytest.mark.asyncio
+async def test_hydration_point_fit_does_not_depend_on_spectrum_scale(synthetic_fit_client):
+    """Through the real fitter: a spectrum and the same spectrum times 50 return the same
+    centers and FWHM (within 0.01 cm-1) and amplitudes times 50 (within 1e-4 relative)."""
+    client, config = synthetic_fit_client
+    config.fitting = {"slit_pref_weight": 0.2}
+    x = np.linspace(1800.0, 4000.0, 600)
+    band = lambda c, a, f: a * np.exp(-4.0 * np.log(2.0) * (x - c) ** 2 / f ** 2)
+    y = band(3300.0, 40.0, 220.0) + band(3550.0, 25.0, 110.0) + np.random.default_rng(7).normal(0.0, 1.0, x.shape)
+
+    async def fit(scale):
+        response = await client.post("/api/process/fit", json={
+            "wavenumber": x.tolist(), "intensity": (scale * y).tolist(),
+            "params": {"fitting": {"domain": "hydration", "wavenumber_range": [2800.0, 3900.0],
+                                   "fwhm_bounds": [50.0, 300.0], "max_peaks": 2, "min_snr": 3.0,
+                                   "model_selection": "f-test"}, "baseline": None},
+        })
+        assert response.status_code == 200, response.text
+        return sorted(response.json()["peaks"], key=lambda p: p["center_cm1"])
+
+    base, scaled = await fit(1.0), await fit(50.0)
+    assert len(base) == 2, "precondition: both bands are fitted"
+    assert len(scaled) == len(base)
+    for b, s in zip(base, scaled):
+        assert s["center_cm1"] == pytest.approx(b["center_cm1"], abs=0.01)
+        assert s["fwhm_cm1"] == pytest.approx(b["fwhm_cm1"], abs=0.01)
+        assert s["amplitude"] == pytest.approx(50.0 * b["amplitude"], rel=1e-4)
+
+
+@pytest.mark.asyncio
 async def test_fluorescence_provenance_omits_skipped_baseline(synthetic_fit_client, monkeypatch):
     from sherloc_pipeline.web.routes import processing
 

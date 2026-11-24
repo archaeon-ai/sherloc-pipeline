@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **The batch hydration fit carries no slit-width preference** (`slit_pref_weight` 0, as the map fit does), so its centers and widths do not depend on the scale of the spectrum.
+- **The web point fit for hydration carries no slit-width preference** (`slit_pref_weight` 0 on `/api/process/fit` with domain `hydration`), as the batch and map hydration fits do.
 - **`scans.processing_pipeline_version` records the git commit.** When the
   package runs from a git checkout, every full-pipeline run (`full-pipeline`,
   `process-new`, `refit`) writes the full commit of that checkout, with
