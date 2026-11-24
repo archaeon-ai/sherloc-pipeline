@@ -80,6 +80,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the documented Python API (`sherloc_pipeline.api`) are unchanged.
 
 ### Fixed
+- **The local web UI opens scans that have a context image.** Run locally
+  without object storage (no `PHASE_TIER` set), the scan detail and scan
+  points requests failed with an error for any Loupe scan with an ACI, and the
+  ACI Viewer showed no image. Those requests now answer normally: the image
+  is read from `paths.data_root` (Loupe) or `pds.cache_dir` (PDS). A file
+  that is missing, or that a symbolic link places outside that directory,
+  answers 404. Locally the base image is shown; the Colorized control stays
+  off.
 - **Map RGB presets fill all three channels.** The "Sulfate Mineralogy" and
   "Organics + Hydration" presets named class ids the map has no layer for
   (`sulfate_v1`, `hi_carb`, `oh_stretch`): "Sulfate Mineralogy" showed only

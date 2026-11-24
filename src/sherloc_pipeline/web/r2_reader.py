@@ -215,11 +215,16 @@ def r2_get_bytes(key: str) -> bytes:
 
 
 def r2_head_exists(key: str) -> bool:
-    """HEAD probe; True if key exists, False on 404. Other errors propagate as False."""
+    """HEAD probe; True if key exists, False on 404. Other errors propagate as False.
+
+    With no object storage configured (``PHASE_TIER`` unset, as when the
+    web UI runs locally), the probe answers False: there is no variant to
+    offer, and the request it serves goes on.
+    """
     from botocore.exceptions import BotoCoreError, ClientError
 
-    client, cfg = get_r2_client_and_config()
     try:
+        client, cfg = get_r2_client_and_config()
         client.head_object(Bucket=cfg["bucket"], Key=key)
         return True
     except ClientError as exc:
@@ -238,6 +243,10 @@ def r2_head_exists(key: str) -> bool:
         return False
     except BotoCoreError:
         logger.warning("R2 HEAD network/SDK error for key=%s", key, exc_info=True)
+        return False
+    except HTTPException as exc:
+        # No usable object-storage configuration (for example PHASE_TIER unset).
+        logger.debug("R2 HEAD skipped for key=%s: %s", key, exc.detail)
         return False
 
 
