@@ -1038,7 +1038,7 @@ def plot_overlay(
         ...          "color": "#2ca02c", "linestyle": "--"},
         ...     ],
         ...     xlim=(700, 1200),
-        ...     scale_to_peak=(820, 870),  # Normalize to olivine doublet
+        ...     scale_to_peak=(820, 870),  # Normalize to olivine band
         ...     title="Olivine Identification"
         ... )
         >>> fig.savefig("olivine_comparison.png", dpi=300)

@@ -25,11 +25,11 @@ Each of R1, R2, R3 is a separate full-CCD readout (2148 channels). Only a subset
 of channels in each readout contains meaningful signal; the rest is detector noise
 from unilluminated regions. Regional masks extract the relevant channels:
 - R1 (Raman):        channels 52-574   (523 ch, 250-282 nm)  → Raman shift (cm⁻¹)
-- R2 (Fluorescence): channels 690-1668 (979 ch, 282-337.8 nm) → Wavelength (nm)
-- R3 (Fluorescence): channels 1690-2147 (458 ch, 337.8-357.4 nm) → Wavelength (nm)
+- R2 (Fluorescence): channels 575-1676 (1102 ch, 282-337.8 nm) → Wavelength (nm)
+- R3 (Fluorescence): channels 1677-2146 (470 ch, 337.8-357.4 nm) → Wavelength (nm)
 - R123 (Stitched):   2148 ch combined from R1+R2+R3 via Loupe overlap summation
 
-See docs/schema/SPECTRAL_REGIONS.md for the canonical region definitions.
+See docs/schema/SPECTRAL_REGIONS.md for a reference to the region definitions (the code governs).
 
 Image Processing:
 - ACI Images: 1648×1200 pixels, 10.1 μm/pixel scale
