@@ -22,20 +22,16 @@ from typing import Optional
 
 
 # Modality-specific FWHM plausibility bounds in cm⁻¹ (Raman) or nm (fluorescence).
-# Conservative literature-grounded starting points, to be refined with
-# real-target performance data.
 FWHM_BOUNDS_CM1: dict[str, tuple[float, float]] = {
-    "minerals":  (5.0, 100.0),    # mineral Raman bands, e.g. carbonate ν1 ~3–10
-    "organics":  (10.0, 60.0),    # D/G bands, CH stretches
-    "hydration": (50.0, 600.0),   # broad OH stretch envelope
+    "minerals":  (5.0, 100.0),
+    "organics":  (10.0, 60.0),
+    "hydration": (50.0, 600.0),
 }
 # Fluorescence is in nm space and the existing fluorescence fitter already
 # enforces a min_fwhm_nm gate at fit time; we do not double-gate here.
 
 
-# Calibration / engineering target types never auto-promote to "pass" because
-# there is no Mars-target ground truth being measured. See
-# models/spectra.py:TargetType.
+# Scan target types for which the classifier returns at most review.
 _NON_SCIENCE_TARGET_TYPES = frozenset({"cal_target", "engineering"})
 
 
@@ -58,8 +54,7 @@ def classify_fit_quality(
         modality: One of ``"minerals"``, ``"organics"``, ``"hydration"``,
             ``"fluorescence"``. Selects the FWHM plausibility band.
         target_type: Optional scan target_type from ``models/spectra.py``.
-            ``"cal_target"`` / ``"engineering"`` downgrade to ``"review"``
-            regardless of fit quality (no Mars-target ground truth).
+            Calibration and engineering scans receive at most ``"review"``.
         sharpness_ratio: Per-peak cosmic-ray descriptor
             (``data_at_center / amplitude``). ``>= sharpness_max`` → ``"fail"``
             (matches legacy ``pass_sharpness`` semantics).
@@ -74,7 +69,7 @@ def classify_fit_quality(
          interpretation).
       2. **fail** — sharpness exceeds ``sharpness_max`` (cosmic-ray hit on
          the peak center).
-      3. **review** — non-science target type (calibration/engineering).
+      3. **review** — calibration or engineering target type.
       4. **review** — ``r_squared`` is unknown or ``< 0.5``.
       5. **review** — FWHM outside modality-specific plausibility band.
       6. **pass** — ``r_squared >= 0.8`` and all gates above passed.

@@ -16,8 +16,7 @@ mask returned by :func:`despike_r1_spectrum` is the input; it is normally
 discarded at call sites.
 
 **Bound pinning** — a fit that converged within epsilon of the FWHM floor is
-unreliable by construction: the optimiser wanted a narrower peak than the model
-allows. This is a flag only, never a rejection.
+suspect. This flag alone does not reject a fit.
 
 Both mechanisms sit behind a feature flag that is off by default. The defaults
 below are starting values, not yet validated on a full sweep (see
@@ -274,8 +273,7 @@ def evaluate_hydration_peak(
     # A masked bin only counts against the candidate when the despiker actually
     # took a material bite out of it. Without this floor the veto also fires on
     # authentic broad bands, where the rolling-median despiker routinely nicks a
-    # single noise channel near the apex — a real false-positive risk measured
-    # during development, not a hypothetical one.
+    # single noise channel near the apex.
     mask_hit = bool(mask_ratio > float(config.mask_min_drop_ratio))
     amplitude_hit = ratio is not None and ratio > float(config.amplitude_drop_ratio_max)
 

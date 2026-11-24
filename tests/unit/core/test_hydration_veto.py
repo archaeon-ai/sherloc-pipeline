@@ -22,7 +22,7 @@ from sherloc_pipeline.models.fitting import FitResult, PeakFit
 
 
 def _broad_oh_spectrum(center=3400.0, fwhm=250.0, amplitude=500.0, noise=5.0):
-    """A wide, authentic-looking OH stretch band over the hydration window.
+    """A wide, synthetic OH stretch band over the hydration window.
 
     Detector noise is included deliberately: the despiker's threshold is a
     MAD-derived sigma, so a perfectly noiseless synthetic would make every
@@ -36,7 +36,7 @@ def _broad_oh_spectrum(center=3400.0, fwhm=250.0, amplitude=500.0, noise=5.0):
 
 
 def _with_cosmic_ray(x, y, center=3200.0, amplitude=4000.0):
-    """Add a two-channel spike — the intrinsic width of a cosmic ray."""
+    """Add a two-channel spike."""
     y = y.copy()
     idx = int(np.argmin(np.abs(x - center)))
     y[idx] += amplitude

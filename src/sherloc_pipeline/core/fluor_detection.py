@@ -33,7 +33,7 @@ class FeatureScanResult:
     """Result of scanning a fluorescence spectrum for known features."""
 
     group3_detected: bool = False
-    group1_detected: bool = False  # True only if both 1a and 1b found
+    group1_detected: bool = False  # Set when group1a is detected
     group2_detected: bool = False
     detections: List[FeatureDetection] = field(default_factory=list)
 
@@ -157,10 +157,7 @@ def scan_fluorescence_features(
     # Set group flags
     result.group3_detected = any(d.group == "group3" for d in result.detections)
     result.group2_detected = any(d.group == "group2" for d in result.detections)
-    # Group 1: detecting group1a implies the doublet — Ce3+ 5d→2F5/2
-    # (group1a) always has a 5d→2F7/2 partner (group1b). The feature scan
-    # often misses the broader/weaker group1b, but constrained DE will find
-    # it when the doublet model (M3) is enumerated.
+    # A group1a detection alone sets the group 1 flag.
     has_1a = any(d.group == "group1a" for d in result.detections)
     result.group1_detected = has_1a
 

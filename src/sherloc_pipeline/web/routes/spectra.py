@@ -750,10 +750,7 @@ def get_badpix_channels(region: str = Query("R1")) -> BadpixResponse:
     identity). This is a STATIC list — no scan, no DB, no despike interaction
     whatsoever. It is an annotation surface only: the analyst toggles it on to
     see "known-noisy channel" markers, and it never masks or alters any
-    spectral value (CR despiking is wholly separate, by design). The list was
-    rebuilt 2026-06-17 on a dark-plane veto: a real defect must fire with the
-    laser off, so active-only Raman/fluorescence bands (e.g. the carbonate nu1
-    apex at channel 137) are NOT flagged.
+    spectral value. Tier 1 identifies channels that are noisy in dark frames.
 
     Each item is ``{position, channel, tier, source}``: ``position`` indexes
     the served wavenumber/intensity arrays for this region; ``channel`` is the

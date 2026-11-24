@@ -666,9 +666,7 @@ class TestWavelengthCalibration:
 
         diff = np.abs(pds_wl - loupe_wl)
 
-        # Channel 500 is the Raman/Fluorescence polynomial switch point.
-        # Depending on the PDS file, deviation there may be up to ~0.4 nm.
-        # All other channels match within 0.001 nm.
+        # Compare channel 500 separately from the rest of the array.
         mask = np.ones(2148, dtype=bool)
         mask[500] = False
         max_diff_excl = diff[mask].max()

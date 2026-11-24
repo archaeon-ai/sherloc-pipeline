@@ -96,9 +96,7 @@ def _fluor_objective_ratio_constrained(
 ) -> float:
     """Sum-of-squares objective with amplitude ratio constraint on Ce3+ doublet.
 
-    Returns inf if amp_1a / amp_1b falls outside ratio_range, enforcing
-    physical Ce3+ branching ratio consistency. Used for hypothesis models
-    containing both group1a and group1b (M3, M5, M6, M7).
+    Returns inf if amp_1a / amp_1b falls outside ratio_range.
     """
     amp_1a = params[g1a_peak_idx * 3 + 1]
     amp_1b = params[g1b_peak_idx * 3 + 1]

@@ -108,7 +108,7 @@ canonical batch path. Seven steps:
 4. **Fluorescence fitting** (nm space) — agnostic AICc default, or
    an optional hypothesis-driven strategy with falling-back-to-agnostic
    when constrained models score poorly. Doublet detection only fires
-   in the Group-1 wavelength window (Ce³⁺ in anhydrite at Berry Hollow;
+   in the Group-1 wavelength window (Ce³⁺-bearing anhydrite;
    Haney et al. 2026, *JGR Planets*, https://doi.org/10.1029/2025JE009385).
    The fluorescence group names follow Sharma et al. 2023, *Nature*,
    https://doi.org/10.1038/s41586-023-06143-z.

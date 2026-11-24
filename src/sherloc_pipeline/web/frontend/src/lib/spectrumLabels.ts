@@ -37,8 +37,7 @@ export interface BuildPeakElementsOptions {
   shapeY1?: number;
   // Label format. SpectrumPlot uses bare `mineral_assignment`
   // falling back to the numeric center; RamanView prefers
-  // `mineral_assignment (center)` (matches the issue #18 reproduction
-  // screenshot's "sulf1 ν₁~1016 cm⁻¹" style).
+  // `mineral_assignment (center)`.
   labelFormat?: PeakLabelFormat;
 }
 

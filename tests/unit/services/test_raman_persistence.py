@@ -1223,8 +1223,8 @@ class TestHydrationCenterRangeGate:
         result = _call_persist_raman(service, base, "hydration")
         assert result.metadata["peaks_inserted"] == 1
 
-    def test_serpentine_oh_at_3700_passes(self, populated_db, tmp_path):
-        """Serpentine structural OH at ~3700 cm⁻¹ within [3000, 3900] should pass."""
+    def test_peak_at_3700_passes(self, populated_db, tmp_path):
+        """A peak centered at 3700 cm⁻¹ passes the center filter."""
         engine, _, _ = populated_db
         base = tmp_path / "results_hyd_serp"
         base.mkdir()

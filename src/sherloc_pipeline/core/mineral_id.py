@@ -59,9 +59,6 @@ def _load_default_rules_from_config() -> List[MineralRule]:
             "Expected list of dicts with 'label', 'lo', and 'hi' keys."
         )
 
-# Provenance: Mineral identification wavenumber ranges derived from published
-# spectral libraries and validated against laboratory standards by domain expert.
-
 # Load DEFAULT_RULES from config.yaml at module import time
 # This makes config.yaml the single source of truth
 DEFAULT_RULES: List[MineralRule] = _load_default_rules_from_config()

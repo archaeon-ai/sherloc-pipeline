@@ -937,7 +937,7 @@ Recent migrations:
 
 | Quantity | Unit | Description | Typical range |
 |----------|------|-------------|---------------|
-| Wavenumber | cm⁻¹ | Raman shift from laser line (R1) | ~640 – 4200 (usable R1 window) |
+| Wavenumber | cm⁻¹ | Raman shift from laser line (R1) | ~238–4765 (R1) |
 | Wavelength | nm | Fluorescence emission (R2/R3) | 282 – 357 |
 | Intensity | counts | Detector signal (16-bit DN) | 0 – 65535 |
 | FWHM (Raman) | cm⁻¹ | Spectral peak width | 5 – 100 |
@@ -1003,8 +1003,6 @@ class DespikeParams:
     sulfate_guard_max_halfwidth: float = 25.0
 ```
 
-The cosmic-ray detection algorithm (rolling-median + MAD with sulfate-band guard) is provenance-tagged in the source as domain-expert work, not AI-tuned.
-
 ### B.3 Baseline parameters
 
 Defined in `src/sherloc_pipeline/core/baseline.py`:
@@ -1019,7 +1017,7 @@ class BaselineParams:
     tol: float = 1e-3
 ```
 
-The R1 baseline path uses asPLS (`pybaselines.Baseline.aspls`); a `"poly"` linear fallback is available via `fit_baseline_window(method="poly")` for protected windows. asPLS hyperparameters and protected mineral windows are domain-expert calibrated.
+The R1 baseline path uses asPLS (`pybaselines.Baseline.aspls`); a `"poly"` linear fallback is available via `fit_baseline_window(method="poly")` for protected windows. asPLS hyperparameters and protected mineral windows are user calibrated.
 
 ### B.4 Fluorescence-fitting parameters
 

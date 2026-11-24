@@ -43,7 +43,7 @@ The PDS4 SHERLOC archive is the official NASA data repository for spectroscopy d
 ### Key Characteristics
 
 - **Laser Wavelength:** 248.5794 nm (deep UV)
-- **Spectrometer:** Deep UV Resonance Raman and Fluorescence
+- **Spectrometer:** Deep UV Raman and Fluorescence
 - **CCD Channels:** 2148 per region (full detector)
 - **Spectral Regions:** R1 (Raman, 250-282 nm), R2 (Fluorescence, 282-338 nm), R3 (Fluorescence, 338-357 nm)
 - **Science Domain:** Geosciences
@@ -477,7 +477,7 @@ Multi-sol calibration fit parameters tracking wavelength drift.
 | `AlGaN_275_peak_location` | ASCII_Real | `276.792` | AlGaN calibration peak (nm) |
 | `AlGaN_275_FWHM` | ASCII_Real | `9.368` | AlGaN peak width (nm) |
 
-Typically ~47 records spanning multiple sols. Provides wavelength calibration drift history. Sol 921 RCC shows 1.1 nm total AlGaN drift over 823 sols (rate: -0.32 nm per 1000 sols).
+Typically ~47 records spanning multiple sols.
 
 #### RLI — Reduced Laser Intensity (Photodiode)
 
@@ -659,20 +659,11 @@ Processed products reference source EDR and intermediate products:
 - Rows = spectra, columns = channels (wavelength-filtered subset only)
 - Wavelength derived from calibration polynomial (see [SPECTRAL_REGIONS.md](SPECTRAL_REGIONS.md) Section 3)
 
-### Wavelength Calibration Comparison (Sol 921 Validated)
+### Wavelength Calibration at Channel 500
 
-PDS wavelength arrays were compared against Loupe V5.1.5a polynomial coefficients:
-
-| Region | Channels | Max Difference | Notes |
-|--------|----------|---------------|-------|
-| Raman (0-499) | 500 | < 0.001 nm | Effectively identical |
-| Fluorescence (500-2147) | 1648 | ~0.001 nm | Very similar |
-| **Channel 500 (boundary)** | **1** | **0.393 nm** | Known discontinuity |
-
-At the Raman/Fluorescence boundary (channel 500):
-- PDS: 277.348 nm (continuous calibration bridging boundary)
-- Loupe: 277.741 nm (hard polynomial switch at `cutoff_channel=500`)
-- This is the **documented wavelength calibration discontinuity** from PDS Release Notes
+At channel 500 the Raman and fluorescence polynomials differ by 0.39 nm
+(277.348 and 277.741 nm). This pipeline applies the Raman polynomial through
+channel 500 and the fluorescence polynomial from 501.
 
 **All observations within a sol share the same wavelength array.** PDS wavelength calibration is fixed per processing version, not per-observation.
 
@@ -849,15 +840,9 @@ ACI filename prefix classification: `SC0` = calibration context, `SC1` = autofoc
 
 ### Wavelength Calibration Discontinuity
 
-A 0.393 nm discontinuity exists at SCCD channel 500 (Raman/Fluorescence polynomial boundary). This is an artifact of the dual-polynomial calibration:
-- Channels 0-499: Raman polynomial coefficients `[-7.85e-06, 6.524e-02, 2.467e+02]`
-- Channels 500-2147: Fluorescence polynomial coefficients `[-5.657e-06, 6.336e-02, 2.475e+02]`
-
-PDS wavelength arrays show a smooth bridge at this boundary; Loupe polynomial has a hard switch. The difference is only at channel 500.
-
-### Wavelength Calibration Drift
-
-RCC data shows measurable wavelength drift: AlGaN 275 nm peak drifted 1.1 nm over 823 sols (-0.32 nm per 1000 sols). This drift is monitored but NOT corrected in per-observation wavelength arrays. For precise peak position work, this corresponds to ~5-20 cm^-1 wavenumber shift at typical Raman positions.
+The pipeline uses two wavelength calibration polynomials:
+- Channels 0-500: Raman polynomial coefficients `[-7.85e-06, 6.524e-02, 2.467e+02]`
+- Channels 501-2147: Fluorescence polynomial coefficients `[-5.657e-06, 6.336e-02, 2.475e+02]`
 
 ### Dust Cover Malfunction (Sol 1024)
 

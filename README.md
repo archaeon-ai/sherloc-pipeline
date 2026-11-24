@@ -42,7 +42,7 @@ Workbench exposes the full per-point processing chain — ML cosmic-ray despikin
 
 ![Workbench — mineral detection](docs/img/workbench-minerals.png)
 
-*Autonomous sulfate and carbonate (ν₁) detections in a single SHERLOC spectrum, with the full processing chain applied (Amherst Point, Sol 921).*
+*Autonomous sulfate and carbonate (ν₁) detections in a single SHERLOC spectrum, after despiking and baseline correction (Amherst Point, Sol 921).*
 
 ![Workbench — hydration detection](docs/img/workbench-hydration.png)
 
@@ -406,9 +406,11 @@ src/sherloc_pipeline/
 
 ## Cosmic-Ray Despiking
 
-Deep-UV Raman spectra contain cosmic-ray spikes — narrow, high-amplitude detector
-artifacts that can mimic real mineral or organic bands — which are removed before
-fitting. The method is selectable via `--despike-method` (CLI),
+Raman spectra sometimes contain cosmic-ray spikes: commonly narrow, high-amplitude
+detector artifacts that can mimic real Raman features. They are removed from the
+input to the organics, hydration and fluorescence fits; the mineral fit reads
+the non-despiked spectrum to avoid the impact of despiking algorithms on
+authentic Raman features. The method is selectable via `--despike-method` (CLI),
 `preprocessing.despike.method` (`config.yaml`), or the web despike toggle:
 
 - **`ml`** (default) — a trained neural-network detector that classifies

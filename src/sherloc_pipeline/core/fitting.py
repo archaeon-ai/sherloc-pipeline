@@ -12,10 +12,6 @@ from sherloc_pipeline.models.fitting import PeakFit, FitResult
 # equal to the value in the shipped config.yaml.
 FILTER_FWHM_MIN_CM1_DEFAULT = 25.0
 
-# Provenance: Peak fitting parameters (slit-width 34.1 cm-1, FWHM 22-90 cm-1,
-# R2 >= 0.25) and SNR thresholds (>=3 standard, >=2 organics with human filtering)
-# established by domain expert from instrument specifications and literature.
-
 
 def multi_gaussian(x: np.ndarray, params: np.ndarray) -> np.ndarray:
     """Sum of Gaussians; params = [m1,a1,f1, m2,a2,f2, ...] where f is FWHM."""

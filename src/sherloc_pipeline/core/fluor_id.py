@@ -35,7 +35,7 @@ FLUORESCENCE_RULES: List[FluorescenceRule] = [
     FluorescenceRule("group3", 270.0, 295.0),  # Silicate defect
     FluorescenceRule("group1a", 300.0, 307.0),  # Ce3+ in anhydrite doublet (short-lambda)
     FluorescenceRule("group1b", 322.0, 329.0),  # Ce3+ in anhydrite doublet (long-lambda)
-    FluorescenceRule("group2", 329.0, 355.0),  # Ce3+ in phosphate; predicted ~340/~360nm doublet, single asymmetric band
+    FluorescenceRule("group2", 329.0, 355.0),  # Ce3+ in phosphate
 ]
 
 
@@ -45,8 +45,7 @@ def assign_fluor_group(center_nm: float) -> str:
     Rules (inclusive bounds):
         group1a: 300-307 nm  (Ce3+ in anhydrite doublet, short-lambda)
         group1b: 322-329 nm  (Ce3+ in anhydrite doublet, long-lambda)
-        group2:  329-355 nm  (Ce3+ in phosphate; predicted ~340/~360nm doublet
-                              observed as single asymmetric band, ~360nm unresolved)
+        group2:  329-355 nm  (Ce3+ in phosphate)
         group3:  270-295 nm  (Silicate defect)
 
     Returns 'unidentified' if the center falls outside all ranges.
@@ -207,16 +206,16 @@ def detect_doublets(
 # Cross-modal co-occurrence scoring
 # ---------------------------------------------------------------------------
 
-# Raman mineral labels that indicate Ca-sulfate (anhydrite/gypsum)
+# sulf1_v1 is generally Ca-sulfate and sulf2_v1 Mg-sulfate, with overlap.
 _SULFATE_LABELS = {"sulf1_v1", "sulf2_v1", "sulf_v3"}
 
-# Raman mineral labels that indicate phosphate (apatite/merrillite)
+# Raman labels treated as phosphate when scoring group 2
 _PHOSPHATE_LABELS = {"phosphate"}
 
 # Raman mineral labels that indicate perchlorate
 _PERCHLORATE_LABELS = {"perchlorate"}
 
-# Raman mineral labels that indicate silicate minerals (feldspar, pyroxene, etc.)
+# Raman labels treated as silicate when scoring group 3
 _SILICATE_LABELS = {"1050", "pyroxene", "silicate_hump"}
 
 
@@ -227,7 +226,7 @@ class CooccurrenceScore:
     fluor_group: str
     raman_support: str  # "confirmed", "unsupported", "contradicted", "no_raman"
     phase_interpretation: str  # e.g. "Ce3+-bearing anhydrite"
-    confidence_boost: float  # multiplier on assignment_confidence (1.0 = no change)
+    confidence_boost: float  # Stored as the peak's assignment_confidence.
     notes: List[str] = field(default_factory=list)
 
 
@@ -242,12 +241,11 @@ def score_cooccurrences(
     annotations. This is a post-hoc annotation step — it does not modify
     the fitting results, only adds interpretive context.
 
-    Co-occurrence rules (from plan):
-    - Ca-sulfate Raman + Group 1 doublet → "Ce3+-bearing anhydrite" (confirmed)
+    Co-occurrence rules:
+    - A sulfate Raman label (sulf1_v1, sulf2_v1, sulf_v3) + group1a or group1b
+      → "Ce3+-bearing anhydrite" (confirmed)
     - Phosphate Raman + Group 2 → "Ce3+-bearing phosphate" (confirmed)
-    - Phosphate Raman + no Group 2 → possibly perchlorate or Ce3+-free (unsupported)
     - No phosphate Raman + Group 2 → Ce3+ phosphate below Raman detection limit
-    - Perchlorate Raman + Group 2 → reassess: more likely phosphate than perchlorate
 
     Args:
         fluor_groups: Group labels for each fluorescence peak at this point.

@@ -1024,10 +1024,7 @@ class TestSol921CrossValidation:
         return get_engine(LOUPE_DB)
 
     def test_wavelength_calibration_match(self):
-        """PDS wavelength matches Loupe polynomial <0.001 nm (except ch500).
-
-        Channel 500 (Raman/Fluorescence boundary) has ~0.393 nm known deviation.
-        """
+        """Compare PDS and polynomial wavelengths with a separate tolerance at channel 500."""
         loupe_wl, _ = calculate_loupe_wavelength_wavenumber(n_channels=2148)
 
         parser = PDSSpectralParser()
@@ -1052,7 +1049,7 @@ class TestSol921CrossValidation:
             f"Max wavelength deviation (excl ch500): {max_diff_excl:.6f} nm"
         )
 
-        # Channel 500: known ~0.393 nm deviation at Raman/Fluorescence boundary
+        # Check channel 500 separately.
         assert diff[500] < 0.5, (
             f"Ch500 deviation: {diff[500]:.3f} nm (expected ~0.393)"
         )

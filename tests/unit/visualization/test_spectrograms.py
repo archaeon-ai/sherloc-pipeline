@@ -37,9 +37,8 @@ class TestSpectrogramVisualizationConfig:
 
         assert config.target_wavenumbers is not None
         assert len(config.target_wavenumbers) > 0
-        # Should include common Mars mineral bands
-        assert 1086 in config.target_wavenumbers  # Carbonate
-        assert 816 in config.target_wavenumbers   # Olivine
+        assert 1086 in config.target_wavenumbers
+        assert 816 in config.target_wavenumbers
 
     def test_default_band_ratios(self):
         """Test default band ratios are set."""

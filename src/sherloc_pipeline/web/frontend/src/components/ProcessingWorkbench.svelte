@@ -991,7 +991,7 @@
         <div class="ref-cite">Whitaker, D.A. &amp; Hayes, K. (2018). A simple algorithm for despiking Raman spectra. <i>Chemometrics Intell. Lab. Syst.</i>, 179, 82–84. <a href="https://doi.org/10.1016/j.chemolab.2018.06.009" target="_blank">doi:10.1016/j.chemolab.2018.06.009</a></div>
       </div>
       <div class="ref-section">
-        <b>2. Background</b> — Dark frame subtraction (arm-stowed / fused silica)
+        <b>2. Background subtraction</b> — Instrument background reference
         <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of SHERLOC Spectrometer Onboard Perseverance Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79, 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
       </div>
       <div class="ref-section">

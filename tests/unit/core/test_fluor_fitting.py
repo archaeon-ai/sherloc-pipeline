@@ -604,15 +604,9 @@ class TestResultStructure:
 
 class TestHypothesisDrivenFitting:
 
-    def test_hypothesis_group2_asymmetric_single_peak(self):
-        """Group 2 asymmetric band → hypothesis constrains to single peak.
-
-        This is the key scientific requirement: the Group 2 feature is a
-        single asymmetric band (partially-resolved doublet per Scheller),
-        not two narrow Gaussians.
-        """
+    def test_hypothesis_group2_single_peak(self):
+        """Group 2: the hypothesis strategy fits one peak."""
         wl = _make_wavelength(n=500)
-        # Broad asymmetric peak simulated as single Gaussian at 340nm
         intensity = _synth_spectrum(
             wl, [(340.0, 5000.0, 22.0)], noise_std=15.0
         )
@@ -704,7 +698,7 @@ class TestHypothesisDrivenFitting:
 class TestScoreCooccurrences:
 
     def test_sulfate_raman_confirms_group1(self):
-        """Ca-sulfate Raman + Group 1 → confirmed Ce3+-bearing anhydrite."""
+        """Sulfate Raman label + group 1 band → confirmed Ce3+-bearing anhydrite."""
         fluor_groups = ["group1a", "group1b"]
         raman_assignments = ["sulf1_v1"]
         scores = score_cooccurrences(fluor_groups, raman_assignments)
@@ -725,8 +719,7 @@ class TestScoreCooccurrences:
         assert scores[0].phase_interpretation == "Ce3+-bearing phosphate"
         assert scores[0].confidence_boost > 1.0
 
-    def test_perchlorate_contradicts_group2(self):
-        """Perchlorate Raman + Group 2 → contradicted (likely phosphate)."""
+    def test_group2_with_perchlorate_label(self):
         fluor_groups = ["group2"]
         raman_assignments = ["perchlorate"]
         scores = score_cooccurrences(fluor_groups, raman_assignments)

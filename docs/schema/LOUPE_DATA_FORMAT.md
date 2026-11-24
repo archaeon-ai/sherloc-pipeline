@@ -32,7 +32,7 @@ Loupe is a modular, interactive environment for visualizing, processing, and ana
 - **Laser Wavelength:** 248.5794 nm (deep UV)
 - **CCD Channels:** 2148 per spectrum
 - **CCD Regions:** 3 regions (R1, R2, R3) covering different wavelength ranges
-- **Spectral Range:** Raman shifts from ~0 to ~4000+ cm^-1
+- **Spectral Range:** R1 (Raman) 250-282 nm, Raman shift about 238 to 4765 cm^-1; R2 and R3 (fluorescence) 282-357.4 nm
 - **Map Points:** Typically 100 points per map, but variable
 - **Shots per Point:** Variable (10, 100, 300 common values)
 
@@ -596,9 +596,7 @@ This package stores the code as text (`scans.processing_applied`) and does not d
 ## References
 
 1. **SHERLOC Instrument:** Bhartia et al. (2021). "Perseverance's SHERLOC Investigation." Space Science Reviews, 217(4).
-2. **Cosmic Ray Removal:** Uckert et al. (2019). "A Semi-autonomous Method to Detect Cosmic Rays." Applied Spectroscopy 73.9.
-3. **SOFF Format:** Uckert & Deen (2020). "Spectrometer Open File Format." AGU Fall Meeting.
-4. **SPAR Library:** NASA-AMMOS/SPAR (https://github.com/NASA-AMMOS/SPAR)
+2. **SPAR Library:** NASA-AMMOS/SPAR (https://github.com/NASA-AMMOS/SPAR)
 
 ---
 

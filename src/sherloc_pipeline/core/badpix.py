@@ -11,20 +11,13 @@ cosmic-ray (CR) despiking: nothing here masks, replaces, or alters any
 spectral value; it only lets an analyst surface "known-noisy channel" on
 demand.
 
-Note (2026-06-17): tier 1 is a DARK-PLANE-confirmed defect class. The earlier
-epsilon=(active-dark) rate criterion was inverted — it flagged active-only REAL
-Raman bands (it wrongly listed the sulfate :math:`\\nu_1` channels 129/130/131
-and the carbonate :math:`\\nu_1` apex 137 near 1086.7 cm-1) and missed the true
-RTS defects flanking them. Those false positives were removed; a real defect
-must fire with the laser OFF (a Raman band cannot).
-
 Tier semantics (carried through verbatim from the asset header):
 
-- tier 1 = dark-plane-confirmed flickering / RTS defect (CR-confusable).
+- tier 1 = flickering / RTS defect detected in dark frames (CR-confusable).
 - tier 2 = stable hot pixels that cancel in dark subtraction (epsilon-quiet),
   documented in the published mission bad-pixel table.
 
-Source attribution: ``g5_eps`` (epsilon-observable characterization),
+Source attribution: ``dark_veto`` (dark frame detection),
 ``jb25`` (published mission bad-pixel table), or ``both``.
 """
 

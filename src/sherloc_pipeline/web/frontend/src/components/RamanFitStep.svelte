@@ -29,10 +29,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
   export let inputGeneration: number = 0;
   export let baselineParams: BaselineParams = { method: 'aspls', lam: 1e6, max_iter: 10 };
   export let collapsed: boolean = true;
-  // Scan target_type forwarded to /api/process/fit so the backend quality
-  // classifier downgrades calibration / engineering scans to "review"
-  // (no Mars-target ground truth). Null = no scan context (e.g. legacy
-  // callers); the backend treats this as mars_target.
+  // Scan target type for the fit-quality classifier.
   export let targetType: string | null = null;
 
   const dispatch = createEventDispatcher<{

@@ -205,7 +205,7 @@ export interface SpectrumResponse {
  * `position` indexes the served wavenumber/intensity arrays for the requested
  * region (same coordinate system as `masked_positions`); `channel` is the
  * absolute CCD index; `tier` 1 = CR-confusable elevated-noise, 2 = stable hot;
- * `source` ∈ g5_eps | jb25 | both.
+ * `source` ∈ dark_veto | jb25 | both.
  */
 export interface BadpixChannel {
   position: number;
@@ -267,10 +267,7 @@ export interface FitRequest {
   wavenumber: number[];
   intensity: number[];
   params?: ProcessingParams;
-  // Forwarded to the backend quality classifier. "cal_target" /
-  // "engineering" cap each peak's quality at "review" regardless of fit
-  // numerics (no Mars-target ground truth). Workbench passes the active
-  // scan's target_type from the ScanDetail response.
+  // Target type of the active scan, used by the fit-quality classifier.
   target_type?: string;
 }
 

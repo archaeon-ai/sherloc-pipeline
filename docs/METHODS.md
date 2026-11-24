@@ -48,7 +48,7 @@ Drawn from Bhartia et al. (2021) and the codebase's Loupe-derived calibration in
 |-----------|---------------|
 | **Laser** | Pulsed deep-UV neon-copper, 248.5794 nm (`wavelength.laser_wavelength` in `config.yaml`; 40 μs pulses) |
 | **Spectral Regions** | R1 (Raman), R2/R3 (Fluorescence) |
-| **R1 Range** | 250-282 nm; usable Raman shift ~640-4200 cm⁻¹ |
+| **R1 Range** | 250-282 nm |
 | **R2 Range** | 282-337.8 nm |
 | **R3 Range** | 337.8-357.4 nm |
 | **Spot Size** | ~100 μm diameter |
@@ -389,12 +389,10 @@ where the known-noisy channels fall, on demand, when the analyst opts in.
 
 The distinction matters because a known-noisy marker says nothing about
 whether a band at that channel is real. A tier 1 channel enters the table only
-when it is noisy with the laser off (in the dark plane), a test a Raman band
-cannot pass. Inside the hi-carb window (1075-1105 cm⁻¹ in `config.yaml`), R1
-channels 136 and 138 are listed and channel 137 between them is not: an
-earlier rate criterion flagged 137, but its excursions came from the carbonate
-band, not the detector (see the header of `data/badpix_channels.csv`). Turning
-the layer on marks the listed channels and changes no value.
+when it is noisy with the laser off (in a dark frame). Inside the hi-carb window
+(1075-1105 cm⁻¹ in `config.yaml`), R1 channels 136 and 138 are listed and
+channel 137 between them is not. Turning the layer on marks the listed
+channels and changes no value.
 
 The curated table carries two tiers. **Tier 1** channels are elevated-noise
 channels whose excursions a cosmic-ray detector could plausibly confuse for
@@ -597,7 +595,7 @@ With `parsimony.reject_merged_candidates: true` (default), a candidate is skippe
 
 **Cosmic-ray review flag:** when a spectrum's cosmic-ray mask positions are supplied, each fitted peak carries `cr_mask_review` (a mask channel lies within center ± FWHM/2). It is a review flag only: it never removes a peak and never changes the fit input.
 
-**Mineral fit input:** the original dark-subtracted spectrum, not despiked; spikes are handled by negative-spike exclusion and the cosmic-ray review flag, never by a despiked input.
+**Mineral fit input:** laser-normalized, dark-subtracted spectrum, asPLS-baselined (`normalized_baselined`); spikes are handled by negative-spike exclusion and the cosmic-ray review flag (not standard "despiked" as used for organics, hydration and fluorescence fitting).
 
 ```python
 def compute_aicc(n_samples: int, rss: float, num_params: int) -> float:
@@ -637,7 +635,7 @@ For the mineral fit and the organics G fit, the size log is written per point, a
 
 Organics use their own R² minimum, `organics_r2_min` (0.25), for the G gate and the D+G fit; the mineral `r_squared_min` does not apply to them. Domain overrides (organics, hydration, fluorescence) are defined in the same `fitting:` block of `config.yaml` and may relax or tighten these defaults. The fluorescence `posthoc_filters` block sets `r2_min: 0.0` and `fwhm_min_cm1: 0.0`, disabling those post-hoc R² and FWHM rejection gates for the fluorescence domain.
 
-**Hydration cosmic-ray veto (off by default, issue #38):** a cosmic ray inside 2800–3900 cm⁻¹ can pass the R² and F-test gates as an OH-stretch peak with its FWHM pinned at the 50 cm⁻¹ floor. `fitting.hydration_cr_veto` (implemented in `core/hydration_veto.py`, applied on the pipeline, map and web point-fit paths) adds two signals: (a) a despike-mask veto, which implicates a candidate when a positive-going masked bin within `center_window_cm1` (15) of its center accounts for at least `mask_min_drop_ratio` (0.10) of its local height, or when the despiker removes more than `amplitude_drop_ratio_max` (0.5) of that height; and (b) a bound-pinning flag for a FWHM within `fwhm_floor_epsilon_cm1` (0.5) of the floor, which never rejects on its own. `action: "reject"` drops an implicated candidate and `"flag"` only annotates it. On synthetic spectra a two-channel spike is caught by both signals and an authentic broad OH band (FWHM ≈ 280 cm⁻¹, drop ratio ≈ 0.013) survives; without the 0.10 floor the mask signal vetoes such a band on a single masked noise channel. The thresholds are starting values: the catch rate on floor-pinned rows and the false-positive rate on interior-width rows have not yet been measured on a mission database, which `scripts/hydration_cr_veto_report.py --db <phase.db> [--all-rows]` reports (aggregate counts only).
+**Hydration cosmic-ray veto (off by default, issue #38):** a cosmic ray inside 2800–3900 cm⁻¹ can pass the R² and F-test gates as an OH-stretch peak with its FWHM pinned at the 50 cm⁻¹ floor. `fitting.hydration_cr_veto` (implemented in `core/hydration_veto.py`, applied on the pipeline, map and web point-fit paths) adds two signals: (a) a despike-mask veto, which implicates a candidate when a positive-going masked bin within `center_window_cm1` (15) of its center accounts for at least `mask_min_drop_ratio` (0.10) of its local height, or when the despiker removes more than `amplitude_drop_ratio_max` (0.5) of that height; and (b) a bound-pinning flag for a FWHM within `fwhm_floor_epsilon_cm1` (0.5) of the floor, which never rejects on its own. `action: "reject"` drops an implicated candidate and `"flag"` only annotates it. On synthetic spectra a two-channel spike is caught by both signals and a broad OH band survives; without the 0.10 floor the mask signal vetoes such a band on a single masked noise channel. The thresholds are starting values: the catch rate on floor-pinned rows and the false-positive rate on interior-width rows have not yet been measured on a mission database, which `scripts/hydration_cr_veto_report.py --db <phase.db> [--all-rows]` reports (aggregate counts only).
 
 **References:**
 - F-test for nested models: standard derivation; implementation in `core/fitting.py:_f_test_pvalue`.

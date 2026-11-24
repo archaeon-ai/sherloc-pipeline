@@ -346,10 +346,7 @@ class TestStage3Parsing:
             )
 
     def test_pds_wavelength_matches_loupe_polynomial(self, groups):
-        """PDS wavelength matches Loupe polynomial <0.001 nm (except ch500).
-
-        Channel 500 (Raman/Fluorescence boundary) has ~0.393 nm known deviation.
-        """
+        """Compare PDS and polynomial wavelengths with a separate tolerance at channel 500."""
         spectral_parser = PDSSpectralParser()
         rrs_group = [g for g in groups if "rrs" in g.products][0]
         product = rrs_group.products["rrs"]
