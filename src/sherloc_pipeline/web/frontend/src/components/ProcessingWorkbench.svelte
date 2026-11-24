@@ -984,20 +984,20 @@
       <div class="ref-section">
         <b>0. SHERLOC instrument and Loupe software</b>
         <div class="ref-cite">Bhartia, R. et al. (2021). Perseverance's Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation. <i>Space Sci. Rev.</i>, 217, 58. <a href="https://doi.org/10.1007/s11214-021-00812-z" target="_blank">doi:10.1007/s11214-021-00812-z</a></div>
-        <div class="ref-cite">Uckert, K. et al. Loupe — SHERLOC data visualization and analysis tool (NASA/JPL). <a href="https://github.com/nasa/Loupe" target="_blank">github.com/nasa/Loupe</a></div>
+        <div class="ref-cite">Uckert, K. (2022). nasa/Loupe: LoupeV5.1.5 (version LoupeV5.1.5a). Zenodo. <a href="https://doi.org/10.5281/zenodo.7062998" target="_blank">doi:10.5281/zenodo.7062998</a></div>
       </div>
       <div class="ref-section">
-        <b>1. Despiking</b> — Rolling-median MAD z-score
+        <b>1. Despiking</b> — Rolling-median MAD z-score adapted from Whitaker &amp; Hayes (2018)
         <div class="ref-cite">Whitaker, D.A. &amp; Hayes, K. (2018). A simple algorithm for despiking Raman spectra. <i>Chemometrics Intell. Lab. Syst.</i>, 179, 82–84. <a href="https://doi.org/10.1016/j.chemolab.2018.06.009" target="_blank">doi:10.1016/j.chemolab.2018.06.009</a></div>
       </div>
       <div class="ref-section">
-        <b>2. Background</b> — Dark frame subtraction (arm-stowed / fused silica)
-        <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of SHERLOC Spectrometer Onboard Perseverance Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79, 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
+        <b>2. Background subtraction</b> — Instrument background reference
+        <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79, 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
       </div>
       <div class="ref-section">
         <b>3. Baseline</b> — Adaptive smoothness penalized least squares (asPLS)
         <div class="ref-cite">Zhang, F. et al. (2020). Baseline correction for infrared spectra using adaptive smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>, 53(3), 222–233. <a href="https://doi.org/10.1080/00387010.2020.1730908" target="_blank">doi:10.1080/00387010.2020.1730908</a></div>
-        <div class="ref-cite">Implementation: pybaselines (Erb, 2022). <a href="https://doi.org/10.5281/zenodo.5608581" target="_blank">doi:10.5281/zenodo.5608581</a></div>
+        <div class="ref-cite">Erb, D. pybaselines. <a href="https://doi.org/10.5281/zenodo.5608581" target="_blank">doi:10.5281/zenodo.5608581</a></div>
       </div>
       <div class="ref-section">
         <b>4. Raman Fit</b> — Multi-Gaussian with sequential F-test

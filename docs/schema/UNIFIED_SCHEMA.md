@@ -708,7 +708,7 @@ The `mineral_assignment` column stores feature labels whose meaning varies by `f
 | `hydration` | `OH_stretch` (3000-4000 cm⁻¹), `H2O_bend` (1500-1700 cm⁻¹), `unidentified` | `classify_hydration_band()`: center position range |
 | `fluorescence` | Group labels: `group1a` (300-307 nm), `group1b` (322-329 nm), `group2` (329-355 nm), `group3` (270-295 nm), `unidentified` | `assign_fluor_group()`: center wavelength range |
 
-Fluorescence group attributions: group 1a and 1b, the 304/325 nm doublet, Ce³⁺ in anhydrite (Haney et al. 2026, *JGR Planets*, https://doi.org/10.1029/2025JE009385); group 2, Ce³⁺ in phosphate, and group 3, silicate defect luminescence (Scheller et al. 2024, *Science Advances*, https://doi.org/10.1126/sciadv.adm8241). The group names follow Sharma et al. 2023, *Nature*, https://doi.org/10.1038/s41586-023-06143-z.
+Fluorescence group attributions: group 1a and 1b, the 304/325 nm doublet, Ce³⁺ in anhydrite (Haney et al. 2026, *JGR Planets*, https://doi.org/10.1029/2025JE009385); group 2, Ce³⁺ in phosphate, and group 3, silicate defect luminescence (Scheller et al. 2024, *Science Advances*, https://doi.org/10.1126/sciadv.adm8241). The group numbers follow Sharma et al. 2023, *Nature*, https://doi.org/10.1038/s41586-023-06143-z. This pipeline splits group 1 into 1a and 1b.
 
 The composite index `ix_fitted_peaks_modality_assignment` enables efficient cross-domain queries such as co-occurrence analysis (e.g., "find scan points with both Ca-sulfate Raman peaks and Ce³⁺ fluorescence emission").
 
@@ -937,7 +937,7 @@ Recent migrations:
 
 | Quantity | Unit | Description | Typical range |
 |----------|------|-------------|---------------|
-| Wavenumber | cm⁻¹ | Raman shift from laser line (R1) | ~640 – 4200 (usable R1 window) |
+| Wavenumber | cm⁻¹ | Raman shift from laser line (R1) | ~238–4765 (R1) |
 | Wavelength | nm | Fluorescence emission (R2/R3) | 282 – 357 |
 | Intensity | counts | Detector signal (16-bit DN) | 0 – 65535 |
 | FWHM (Raman) | cm⁻¹ | Spectral peak width | 5 – 100 |
@@ -1003,8 +1003,6 @@ class DespikeParams:
     sulfate_guard_max_halfwidth: float = 25.0
 ```
 
-The cosmic-ray detection algorithm (rolling-median + MAD with sulfate-band guard) is provenance-tagged in the source as domain-expert work, not AI-tuned.
-
 ### B.3 Baseline parameters
 
 Defined in `src/sherloc_pipeline/core/baseline.py`:
@@ -1019,7 +1017,7 @@ class BaselineParams:
     tol: float = 1e-3
 ```
 
-The R1 baseline path uses asPLS (`pybaselines.Baseline.aspls`); a `"poly"` linear fallback is available via `fit_baseline_window(method="poly")` for protected windows. asPLS hyperparameters and protected mineral windows are domain-expert calibrated.
+The R1 baseline path uses asPLS (`pybaselines.Baseline.aspls`); a `"poly"` linear fallback is available via `fit_baseline_window(method="poly")` for protected windows. asPLS hyperparameters and protected mineral windows are user calibrated.
 
 ### B.4 Fluorescence-fitting parameters
 

@@ -190,7 +190,7 @@ class TestSinglePeakOnRealData:
         bg_subtracted = service._apply_background_subtraction(avg_df, "fs", scale)
         corrected = service._apply_baseline(bg_subtracted)
         
-        # Target potential carbonate peak region (~1090 cm^-1)
+        # Single-peak fit seeded at 1090 cm^-1 (inside the config's hi-carb window)
         fit_result, model = service._apply_fitting(
             corrected,
             fit_range=(1000, 1200),

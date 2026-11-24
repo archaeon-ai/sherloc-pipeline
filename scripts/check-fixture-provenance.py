@@ -18,7 +18,7 @@ git index), so staged deletions keep the ledger honest at commit time.
 (including rename destinations); ``--tree`` checks every indexed file.
 
 Exits 0 if clean, 1 on violation, 2 on usage/ledger schema errors.
-See CONTRIBUTING.md "Fixture provenance". Stdlib-only by design so the
+See CONTRIBUTING.md "Checks run in CI". Stdlib-only by design so the
 pre-commit hook needs no virtualenv.
 """
 
@@ -159,7 +159,7 @@ def check_files(files: list[str], ledger: dict) -> list[str]:
         if entry is None:
             violations.append(
                 f"{path}: no provenance entry in {LEDGER_PATH} — every tracked "
-                "data file needs a category (see CONTRIBUTING.md)"
+                "data file needs a category (see CONTRIBUTING.md, 'Checks run in CI')"
             )
             continue
 

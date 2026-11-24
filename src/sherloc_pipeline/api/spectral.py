@@ -145,7 +145,7 @@ def process_scan_average(
         Peak at 855.3 cm^-1, FWHM=45.2
         Peak at 1003.7 cm^-1, FWHM=38.9
         
-        >>> # Single-peak fitting for carbonate
+        >>> # Single-peak fit seeded at 1090 cm^-1 (inside the config's hi-carb window)
         >>> df, fit = process_scan_average(
         ...     sol="0921", target="Amherst_Point", scan="detail_1",
         ...     background="fs", baseline=True, fit=True,
@@ -271,7 +271,7 @@ def process_subset_average(
         SpectralPlotError: If processing fails
         
     Example:
-        >>> # Average specific points identified as high-carbonate
+        >>> # Average a chosen subset of points
         >>> df, fit = process_subset_average(
         ...     sol="0921", target="Amherst_Point", scan="detail_1",
         ...     points=[21, 41, 49, 71, 86, 87, 88, 90, 91, 92, 98],

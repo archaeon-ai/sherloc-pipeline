@@ -6,10 +6,10 @@
   import InfoTooltip from './InfoTooltip.svelte';
 
   const despikeRef = `<div class="ref-title">Cosmic-ray despiking</div>
-<b>ML</b> — certified cosmic-ray classifier applied at ingest; the server returns
-the despiked spectrum from stored per-(point,region) masks (no inference on the
-serving host). Covers R1/R2/R3; composite views are all-or-none.
-<b>modz</b> — live rolling-median MAD z-score despike (R1 only), tunable below.
+<b>ML</b> — trained neural-network cosmic-ray detector, run once at processing time;
+the server returns the despiked spectrum from stored per-(point,region) masks
+and runs no model inference. Covers R1/R2/R3; composite views are all-or-none.
+<b>modz</b> — live rolling-median MAD z-score despike (R1 only), adapted from Whitaker &amp; Hayes (2018). The parameters below are tunable.
 Protected regions guard sulfate peaks and the laser line from false flagging.
 <div class="ref-cite">Whitaker, D.A. &amp; Hayes, K. (2018). A simple algorithm for despiking Raman spectra.
 <i>Chemometrics and Intelligent Laboratory Systems</i>, 179, 82&ndash;84.

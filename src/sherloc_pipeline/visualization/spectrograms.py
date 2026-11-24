@@ -67,38 +67,36 @@ class SpectrogramVisualizationConfig:
     def __post_init__(self):
         """Set default values after initialization."""
         if self.target_wavenumbers is None:
-            # Common Raman bands for Mars minerals
             self.target_wavenumbers = [
-                285,   # Fe-O stretch (hematite)
-                412,   # Fe-O stretch (hematite)
-                500,   # Si-O bend (olivine)
-                610,   # Fe-O stretch (magnetite)
-                816,   # Si-O stretch (olivine)
-                970,   # SO4 stretch (sulfates)
-                1086,  # CO3 stretch (carbonates)
-                1320,  # C-H/C-C (organics)
-                1600   # C=C stretch (organics)
+                285,
+                412,
+                500,
+                610,
+                816,
+                970,
+                1086,
+                1320,
+                1600
             ]
 
         if self.band_ratios is None:
-            # Common band ratio indicators
             self.band_ratios = [
                 {
                     "name": "Olivine_Index",
-                    "numerator": [800, 830],    # Olivine Si-O stretch
-                    "denominator": [980, 1020], # Background
+                    "numerator": [800, 830],
+                    "denominator": [980, 1020],
                     "description": "Olivine detection ratio"
                 },
                 {
                     "name": "Carbonate_Index",
-                    "numerator": [1080, 1090],  # CO3 stretch
-                    "denominator": [1050, 1060], # Background
+                    "numerator": [1080, 1090],
+                    "denominator": [1050, 1060],
                     "description": "Carbonate detection ratio"
                 },
                 {
                     "name": "Organic_Index",
-                    "numerator": [1590, 1610],  # C=C stretch
-                    "denominator": [1400, 1420], # Background
+                    "numerator": [1590, 1610],
+                    "denominator": [1400, 1420],
                     "description": "Organic signature ratio"
                 }
             ]

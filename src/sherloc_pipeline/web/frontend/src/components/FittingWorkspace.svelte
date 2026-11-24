@@ -73,11 +73,7 @@
       fitResult = await postFit({
         wavenumber: spectrum.wavenumber,
         intensity: spectrum.intensity,
-        // Forward scan context so the backend quality classifier applies
-        // the calibration-scan downgrade rule (v4.1.12). Without this the
-        // legacy Fitting Workspace would render green "pass" pills for
-        // calibration scans, which is the exact failure the Workbench fix
-        // closes.
+        // Pass the scan target type to the fit-quality classifier.
         target_type: scan?.target_type ?? undefined,
         params: {
           baseline: $baselineParams,

@@ -115,8 +115,7 @@ class TestPPPScalingRealWorldScenarios:
         assert abs(scale - 500 / 900) < 1e-9
 
     def test_manual_correction_for_over_subtraction(self):
-        """User might reduce scale to correct for over-subtraction at ~800 cm⁻¹."""
-        # When instrument background causes anomalous dip, user may override
+        """A manual override replaces the automatic background scale."""
         auto_scale = calculate_background_scale(scan_ppp=500, bg_ppp=900)
         manual_scale = calculate_background_scale(scan_ppp=500, bg_ppp=900, override=0.4)
         

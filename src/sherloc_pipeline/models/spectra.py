@@ -55,8 +55,7 @@ class SpectralRegion(str, Enum):
     Reference: docs/schema/SPECTRAL_REGIONS.md
 
     Each region corresponds to a separate full-CCD readout (2148 channels).
-    Only a subset of channels in each readout contains meaningful signal;
-    the rest is detector noise from unilluminated regions.
+    Only a subset of channels in each readout contains meaningful signal.
 
     Regions:
         R1:   Raman region (250-282 nm, channels 52-574, 523 meaningful channels)
@@ -266,14 +265,11 @@ def is_fittable(
     Fitting eligibility is **decoupled from** ``target_type``: ``target_type``
     is a *provenance* axis (what/where), not a fit-eligibility flag. Every
     exploration-area rock/regolith scan (``mars_target``) is fit-eligible.
-    Among calibration targets, only the one natural geological sample — the
-    meteorite (SaU 008), a Mars rock mounted on the rover's cal target — is
-    scientifically fit-worthy; every other cal target is an engineered/
-    synthetic standard or instrument-diagnostic target (AlGaN lamp, Teflon,
-    vectran, Orthofabric, polycarbonate, Diffusil, nGimat, the ``maze`` focus
-    target) and is not fit. ``power_on``/``power_off`` housekeeping scans are
-    ``engineering`` (``classify_target_type``), not calibration targets, and
-    are not fit either.
+    Among calibration targets, only the meteorite (SaU 008) is fitted; every
+    other calibration target (AlGaN lamp, Teflon, Vectran, Orthofabric,
+    polycarbonate, Diffusil, nGimat, the maze target) is not.
+    ``power_on``/``power_off`` housekeeping scans are ``engineering``
+    (``classify_target_type``), not calibration targets, and are not fit either.
 
     The meteorite correctly stays ``target_type='cal_target'`` (it is *on the
     rover*, not in the exploration area); ``mars_target`` remains reserved for

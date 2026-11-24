@@ -7,9 +7,7 @@ no DB involvement. These tests pin:
 
 - position-mapping correctness per region: a known channel maps to the served
   position whose wavenumber matches the absolute channel's wavenumber;
-- the carbonate nu1 apex (channel 137) is NOT badpix — it carries real carbonate
-  and is dark-quiet; the 2026-06-17 dark-veto remediation removed it (with the
-  sulfate nu1 channels) as epsilon-rate-criterion false positives;
+- channel 137 (1086.7 cm-1) is absent from the R1 table;
 - R123 identity (full-stitch served array → position == channel);
 - per-region item set matches the curated table restricted to that region;
 - response shape ({position, channel, tier, source}) + tier/source domains;
@@ -30,9 +28,7 @@ from sherloc_pipeline.core.calibration import (
 from tests.unit.web.conftest import _FakeConfig
 
 N_CHANNELS = 2148
-# Carbonate nu1 apex (~1086.7 cm-1): REAL carbonate signal, dark-quiet — NOT a
-# bad pixel. The prior epsilon-rate criterion mis-flagged this active-only band;
-# the 2026-06-17 dark-veto remediation removed it (and the sulfate nu1 channels).
+# Channel 137 (1086.7 cm-1) is not in the table.
 CARBONATE_APEX_CHANNEL = 137
 # A genuine R1 defect that remains (JB25-attested, dark-firing, ~1307.1 cm-1),
 # used for the position-mapping checks that 137 previously anchored.
@@ -86,11 +82,8 @@ async def client(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_r1_carbonate_apex_not_badpix(client):
-    """The carbonate nu1 apex (137) carries real carbonate and is dark-quiet, so
-    it must NOT be in the badpix list. Pins the 2026-06-17 dark-veto remediation
-    that removed it — the prior epsilon-rate criterion was inverted (it flagged
-    active-only real bands and missed the true RTS defects flanking them)."""
+async def test_r1_channel_137_not_badpix(client):
+    """Channel 137 is absent from the R1 badpix list."""
     data = (await client.get("/api/spectra/badpix", params={"region": "R1"})).json()
     apex = [it for it in data["badpix"] if it["channel"] == CARBONATE_APEX_CHANNEL]
     assert apex == [], "carbonate apex 137 is real signal, must NOT be in the badpix list"

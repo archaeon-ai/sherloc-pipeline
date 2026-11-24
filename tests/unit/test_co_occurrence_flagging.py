@@ -16,7 +16,7 @@ class TestAggregatCoOccurrences:
     """Tests for scan-level co-occurrence aggregation."""
 
     def test_sulfate_group1_co_occurrence(self):
-        """sulf1_v1 + group1a at same point -> Ce3+-bearing Ca-sulfate."""
+        """The sulfate and group1a labels occur at the same point."""
         raman = [{"point_idx": 0, "mineral_assignment": "sulf1_v1"}]
         fluor = [{"point_idx": 0, "fluor_group": "group1a"}]
         result = aggregate_co_occurrences(raman, fluor)

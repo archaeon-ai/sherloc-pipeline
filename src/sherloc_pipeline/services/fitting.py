@@ -762,7 +762,7 @@ def _fit_point_hydration(
     baseline = np.linspace(left_avg, right_avg, len(y_oh))
     y_bl = y_oh - baseline
 
-    # Noise estimation from quiet 2800-3000 cm⁻¹ sub-window
+    # Estimate noise from the baselined 2800–3000 cm⁻¹ interval if it has at least three samples.
     quiet_mask = (x_oh >= 2800.0) & (x_oh <= 3000.0)
     if np.sum(quiet_mask) >= 3:
         noise_std = float(np.std(y_bl[quiet_mask]))
@@ -1754,7 +1754,8 @@ class FittingService:
                     )
                     raise enrich(error, sol=sol, target=target, scan=scan)
 
-            # Hydration fitting config (Phua et al. 2024 aligned)
+            # Phua et al. (2024) give the O-H search window and FWHM bounds.
+            # The pipeline sets the peak center range and pre-fit SNR gate.
             oh_roi = tuple(fit_cfg.get('hydration_fit_range', [2800.0, 3900.0]))
             oh_plot = tuple(fit_cfg.get('hydration_plot_range', [2600.0, 4000.0]))
             max_peaks = int(fit_cfg.get('hydration_max_peaks', 2))

@@ -6,7 +6,7 @@ from sherloc_pipeline.services.pipeline import detect_silicate_hump
 
 
 class TestDetectSilicateHump:
-    """Tests for broad silicate hump post-hoc detection."""
+    """Tests for the peak width and wavenumber criteria."""
 
     def test_broad_single_peak_detected(self):
         """Single peak with FWHM >= 70 in range -> detected."""

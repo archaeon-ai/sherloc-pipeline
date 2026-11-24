@@ -298,6 +298,27 @@ it('shows a temporary retry notice as a status beside the error area', async () 
   expect(screen.queryByRole('status')).toBeNull();
 });
 
+describe('ProcessingWorkbench references panel', () => {
+  it('names the background step and cites its sources as published', async () => {
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'References' }));
+    await tick();
+    const sections = Array.from(container.querySelectorAll('.ref-section')).map((s) => s.textContent ?? '');
+    const background = sections.find((t) => t.includes('2. Background subtraction'));
+    expect(background).toBeDefined();
+    // The instrument-background step is not dark frame subtraction (active minus dark).
+    expect(background).not.toMatch(/dark frame/i);
+    expect(background).toContain('Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover');
+    const cites = Array.from(container.querySelectorAll('.ref-cite')).map((c) => c.textContent ?? '');
+    const loupe = cites.find((t) => t.includes('nasa/Loupe'));
+    expect(loupe).toContain('Uckert, K. (2022). nasa/Loupe: LoupeV5.1.5 (version LoupeV5.1.5a). Zenodo.');
+    expect(loupe).not.toContain('et al.');
+    const baseline = sections.find((t) => t.includes('pybaselines'));
+    expect(baseline).not.toMatch(/Erb, 20\d\d/);
+  });
+});
+
 describe('ProcessingWorkbench deep links', () => {
   it('loads the requested subset before any average and updates selection state', async () => {
     vi.mocked(api.getScanPoints).mockResolvedValue({

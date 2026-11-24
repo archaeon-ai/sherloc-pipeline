@@ -205,7 +205,7 @@
     const lineWidth = Math.max(0.5, 1.5 / transform.scale);
 
     for (const pt of points) {
-      // Coordinate-frame discipline: only render points resolvable to
+      // Coordinate frame: only render points resolvable to
       // ACI image-pixel space. Loupe scanner_workspace values (~±0.5)
       // are NOT valid pixel coords and must be skipped (issue #16).
       const coord = getAciPixel(pt, colorized);

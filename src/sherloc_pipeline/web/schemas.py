@@ -481,12 +481,7 @@ class FitRequest(BaseModel):
     wavenumber: List[float]
     intensity: List[float]
     params: Optional[ProcessingParamsSchema] = None
-    # Optional scan context. When present, the per-peak quality classifier
-    # downgrades calibration / engineering scans to "review" regardless of
-    # fit quality (no Mars-target ground truth to validate against). Values
-    # match models/spectra.py:TargetType: "mars_target" | "cal_target" |
-    # "engineering". Absent → assume mars_target for backwards compatibility
-    # with callers that don't yet pass scan context.
+    # Optional scan target type for the fit-quality classifier.
     target_type: Optional[str] = None
 
 

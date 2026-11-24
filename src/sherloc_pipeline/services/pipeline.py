@@ -130,7 +130,7 @@ _SILICATE_HUMP_NARROW_EXCLUDE = 40.0
 
 
 def detect_silicate_hump(peaks: List[Dict]) -> Optional[Dict]:
-    """Detect broad silicate hump from fitted mineral peaks.
+    """Check fitted mineral peaks against the width and wavenumber criteria.
 
     Post-hoc detection — does NOT modify fitting results.
 
@@ -138,7 +138,7 @@ def detect_silicate_hump(peaks: List[Dict]) -> Optional[Dict]:
     - One or more peaks in 950-1060 cm-1 range
     - At least one peak with FWHM >= 70 cm-1 (near ceiling)
       OR two+ peaks in the range whose combined envelope spans >= 80 cm-1
-    - Not a single narrow pyroxene or sulfate peak (FWHM < 40 excludes)
+    - Exclude peaks with FWHM < 40 cm-1
 
     Args:
         peaks: List of peak dicts with keys ``center_cm1`` and ``fwhm_cm1``.
@@ -159,7 +159,7 @@ def detect_silicate_hump(peaks: List[Dict]) -> Optional[Dict]:
     if not in_range:
         return None
 
-    # Filter out single narrow peaks (< 40 cm-1) — those are pyroxene/sulfate
+    # Exclude peaks narrower than 40 cm-1.
     broad_enough = [p for p in in_range if p["fwhm_cm1"] >= _SILICATE_HUMP_NARROW_EXCLUDE]
     if not broad_enough:
         return None

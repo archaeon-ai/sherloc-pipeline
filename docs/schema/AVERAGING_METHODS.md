@@ -29,7 +29,7 @@ Given `n` data points and `proportiontocut = p`:
 3. Remove the lowest `m` and highest `m` values
 4. Return the mean of the remaining `n - 2m` values
 
-This is the same per-tail convention used by Loupe (verified against Loupe V5.1.7).
+This is the same per-tail convention used by Loupe.
 
 ### The small-scan problem
 
