@@ -17,14 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deploy the image before upgrading the database, as for `4f638701cf7c`.
 
 ### Added
-- **`sherloc refit --science-units`: one fit per science scan.** With the
-  option, a refit runs primary scans, a sub-scan (a downlink part of a scan)
-  only when its parent scan is not stored, and a composite only when one of
-  its member scans is not stored (or none is recorded). Without it, a refit
-  runs every selected scan as before, so a sub-scan or composite whose
-  parent or members are stored gets fits of its own that repeat theirs. The
-  option is part of the batch identity: a journal started with it resumes
-  only with it. Scans it leaves out are not run and keep the rows they hold.
+- **`sherloc refit --skip-sub-scans`: fit primary and composite scans.**
+  A sub-scan is a downlink part of a scan; its parent scan holds the same
+  spectra. Without the option, a refit runs every selected scan as before,
+  so a sub-scan gets fits of its own that repeat its parent's. With it, a
+  sub-scan whose parent scan is stored is not run. A sub-scan whose parent
+  is not stored is still run, so no stored spectra go unfitted: its journal
+  line carries `"sub_scan_without_parent": true` and the `--json` result
+  lists it under `sub_scans_without_parent`. The option is part of the batch
+  identity: a journal started with it resumes only with it. Scans it leaves
+  out keep the rows they already hold.
 - **Selection marks on fitted peaks (records only; nothing kept changes).**
   The mineral fitter's AICc size search now fits and keeps every model size
   from 1 (each size's parameters, RSS, AICc, seed ranks, merge-skip flag, and
