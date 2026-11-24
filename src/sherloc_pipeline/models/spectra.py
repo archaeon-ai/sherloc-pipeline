@@ -60,9 +60,9 @@ class SpectralRegion(str, Enum):
 
     Regions:
         R1:   Raman region (250-282 nm, channels 52-574, 523 meaningful channels)
-              Wavenumber range: ~238-4765 cm-1, usable: ~640-4200 cm-1
-        R2:   Fluorescence region 1 (282-337.8 nm, channels 690-1668, 979 channels)
-        R3:   Fluorescence region 2 (337.8-357.4 nm, channels 1690-2147, 458 channels)
+              Wavenumber range: ~238-4765 cm-1
+        R2:   Fluorescence region 1 (282-337.8 nm, channels 575-1676, 1102 channels)
+        R3:   Fluorescence region 2 (337.8-357.4 nm, channels 1677-2146, 470 channels)
         R123: Stitched full spectrum (all 2148 channels with overlap summation)
               Requires proper R1+R2+R3 stitching; see SPECTRAL_REGIONS.md Section 4.
 

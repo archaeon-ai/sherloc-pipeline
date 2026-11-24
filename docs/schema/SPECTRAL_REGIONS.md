@@ -2,9 +2,9 @@
 
 **Version:** 1.0.0
 **Date:** 2026-01-25
-**Status:** Canonical Reference (Single Source of Truth)
+**Status:** Reference
 
-This document defines the authoritative specification for SHERLOC spectral regions. All other documentation should reference this file for region definitions.
+This document describes the SHERLOC spectral regions as the code defines them (`src/sherloc_pipeline/config.yaml`, `core/calibration.py`, `core/r123_stitching.py`). Where this document and the code differ, the code governs.
 
 ---
 
@@ -16,7 +16,6 @@ This document defines the authoritative specification for SHERLOC spectral regio
 4. [R123 Stitching Algorithm](#4-r123-stitching-algorithm)
 5. [Database Schema](#5-database-schema)
 6. [Code Patterns](#6-code-patterns)
-7. [Validation Targets](#7-validation-targets)
 
 ---
 
@@ -28,10 +27,10 @@ The CCD is logically divided into three regions based on wavelength/spectral dom
 
 | Region | Domain | Primary Use |
 |--------|--------|-------------|
-| **R1** | Raman | Mineral identification via vibrational modes |
-| **R2** | Fluorescence | Aromatic/organic detection, rare earth fluorescence |
-| **R3** | Fluorescence | Extended fluorescence range |
-| **R123** | Combined | Cross-modal pattern discovery |
+| **R1** | Raman | Raman scattering |
+| **R2** | Fluorescence | Fluorescence emission |
+| **R3** | Fluorescence | Fluorescence emission |
+| **R123** | Combined | Stitched R1 to R3 |
 
 ---
 
@@ -42,9 +41,13 @@ The CCD is logically divided into three regions based on wavelength/spectral dom
 | Region | Wavelength (nm) | Channels | Channel Count | Wavenumber (cm⁻¹) | Domain |
 |--------|-----------------|----------|---------------|-------------------|--------|
 | **R1** | 250.0 - 282.0 | 52 - 574 | 523 | ~238 - 4765 | Raman |
-| **R2** | 282.0 - 337.8 | 690 - 1668 | 979 | N/A | Fluorescence |
-| **R3** | 337.8 - 357.4 | 1690 - 2147 | 458 | N/A | Fluorescence |
-| **R123** | 250.0 - 357.4 | 0 - 2147 | 2148 (stitched) | Mixed | Combined |
+| **R2** | 282.0 - 337.8 | 575 - 1676 | 1102 | N/A | Fluorescence |
+| **R3** | 337.8 - 357.4 | 1677 - 2146 | 470 | N/A | Fluorescence |
+| **R123** | 246.7 - 357.4 | 0 - 2147 | 2148 (stitched) | Mixed | Combined |
+
+Channel ranges and counts are those selected by the wavelength masks in
+`core/calibration.py` (`get_region_wavelength_mask`) on the calibrated axis of
+Section 3. The R123 stitch (Section 4) uses fixed channel boundaries instead.
 
 ### 2.2 R1 Raman Region (Primary Science Region)
 
@@ -55,18 +58,7 @@ Wavelength Range:  250.0 - 282.0 nm
 Channel Range:     52 - 574 (after wavelength filtering)
 Channel Count:     523 channels
 Wavenumber Range:  ~238 - 4765 cm⁻¹
-Usable Range:      ~640 - 4200 cm⁻¹ (below 640 is laser line region)
 ```
-
-**Key Raman Bands (Mars Minerals):**
-
-| Mineral Class | Wavenumber (cm⁻¹) | Example Targets |
-|---------------|-------------------|-----------------|
-| Sulfate ν1 | 1000-1018 | Uganik Island, Dragons Egg Rock |
-| Sulfate ν3 | 1130-1160 | Steamboat Mountain |
-| Carbonate ν1 | 1085 | Amherst Point, Bills Bay |
-| Olivine doublet | 820, 850 | Lake Haiyaha |
-| Phosphate ν1 | 960 | TBD |
 
 ### 2.3 R2 Fluorescence Region
 
@@ -74,14 +66,9 @@ The R2 region captures near-UV fluorescence emission.
 
 ```
 Wavelength Range:  282.0 - 337.8 nm
-Channel Range:     690 - 1668 (approximate)
-Channel Count:     ~979 channels
+Channel Range:     575 - 1676 (wavelength mask)
+Channel Count:     1102 channels
 ```
-
-**Key Fluorescence Features:**
-- Ce³⁺ doublet at 304/325 nm (anhydrite)
-- Aromatic organic signatures
-- Polycyclic aromatic hydrocarbons (PAHs)
 
 ### 2.4 R3 Fluorescence Region
 
@@ -89,27 +76,21 @@ The R3 region captures extended fluorescence emission.
 
 ```
 Wavelength Range:  337.8 - 357.4 nm
-Channel Range:     1690 - 2147 (approximate)
-Channel Count:     ~458 channels
+Channel Range:     1677 - 2146 (wavelength mask)
+Channel Count:     470 channels
 ```
-
-**Key Fluorescence Features:**
-- Ce³⁺ at 340 nm (apatite)
-- Extended organic fluorescence
 
 ### 2.5 R123 Combined Spectrum
 
 The R123 spectrum is a **stitched** combination of all three regions with overlap summation.
 
 ```
-Wavelength Range:  250.0 - 357.4 nm (full detector range)
+Wavelength Range:  246.7 - 357.4 nm (full detector range)
 Channel Count:     2148 channels (stitched)
 ```
 
 **Use Cases:**
 - Cross-modal Raman-Fluorescence correlation
-- Detecting mineral phases with both Raman and fluorescence signatures
-- Example: Anhydrite shows BOTH 1018 cm⁻¹ Raman AND 304/325 nm fluorescence
 
 ---
 
@@ -273,12 +254,12 @@ def validate_r123_stitching(loupe_r123: np.ndarray, computed_r123: np.ndarray) -
 
 The `spectra.region` column accepts these values:
 
-| Value | Meaning | Current Status |
-|-------|---------|----------------|
-| `R1` | R1 Raman region (523 channels after wavelength filter) | **Active** — all 524,181 spectra |
-| `R2` | R2 Fluorescence region | Planned |
-| `R3` | R3 Fluorescence region | Planned |
-| `R123` | Stitched full spectrum (overlap summation) | Planned (requires R2+R3 ingestion) |
+| Value | Meaning |
+|-------|---------|
+| `R1` | R1 Raman region (523 channels after wavelength filter) |
+| `R2` | R2 Fluorescence region |
+| `R3` | R3 Fluorescence region |
+| `R123` | Stitched full spectrum (overlap summation) |
 
 **Constraint enforcement:** Valid values enforced at application level via the `SpectralRegion`
 enum in `src/sherloc_pipeline/models/spectra.py`. SQLite does not support `ALTER TABLE ADD CONSTRAINT`,
@@ -355,33 +336,8 @@ wavenumber = np.linspace(200, 4000, 2148)  # NEVER DO THIS!
 r1_spectrum = full_spectrum[:501]  # cutoff_channel is NOT region boundary!
 
 # WRONG: Assuming region="R123" means stitched data
-# Historical data labeled R123 is actually R1-only (see Section 7)
+# Historical data labeled R123 is actually R1-only
 ```
-
----
-
-## 7. Validation Targets
-
-### 7.1 Known Mineral Targets for R1 Validation
-
-| Target | Expected Peaks (cm⁻¹) | Mineral | Notes |
-|--------|----------------------|---------|-------|
-| Uganik Island | 1018, 1130 | Anhydrite | + Fluorescence at 304/325 nm |
-| Dragons Egg Rock | 1000, 1018 | Sulfate | Strong sulfate signal |
-| Steamboat Mountain | 1018, 1130 | Sulfate | |
-| Amherst Point | 1085 | Carbonate | |
-| Bills Bay | 1085 | Carbonate | |
-| Lake Haiyaha | 820, 850 | Olivine | Doublet pattern |
-| AlGaN (calibration) | 575, 1435 | N/A | Calibration target |
-| Teflon (calibration) | 732, 1218, 1382 | PTFE | Calibration target |
-
-### 7.2 Cross-Modal Validation (R123)
-
-| Target | Raman Feature | Fluorescence Feature | Interpretation |
-|--------|---------------|----------------------|----------------|
-| Uganik Island | 1018 cm⁻¹ (ν1 sulfate) | 304/325 nm doublet | Ce³⁺ in anhydrite |
-| TBD | 960 cm⁻¹ (ν1 phosphate) | 340 nm | Ce³⁺ in apatite |
-| Lake Haiyaha | 820/850 cm⁻¹ (olivine) | None | Control (no REE) |
 
 ---
 
@@ -391,9 +347,9 @@ r1_spectrum = full_spectrum[:501]  # cutoff_channel is NOT region boundary!
 ┌─────────────────────────────────────────────────────────────────┐
 │                 SHERLOC SPECTRAL REGIONS                        │
 ├─────────────────────────────────────────────────────────────────┤
-│ R1 (Raman):     250-282 nm  │  523 ch  │  ~640-4200 cm⁻¹       │
-│ R2 (Fluor 1):   282-338 nm  │  979 ch  │  Fluorescence         │
-│ R3 (Fluor 2):   338-357 nm  │  458 ch  │  Fluorescence         │
+│ R1 (Raman):     250-282 nm  │  523 ch  │  ~238-4765 cm⁻¹       │
+│ R2 (Fluor 1):   282-338 nm  │ 1102 ch  │  Fluorescence         │
+│ R3 (Fluor 2):   338-357 nm  │  470 ch  │  Fluorescence         │
 │ R123 (Stitched): Full range │ 2148 ch  │  Overlap summation    │
 ├─────────────────────────────────────────────────────────────────┤
 │ CRITICAL: cutoff_channel=500 is POLYNOMIAL SWITCH not R1 bound │
@@ -409,7 +365,7 @@ r1_spectrum = full_spectrum[:501]  # cutoff_channel is NOT region boundary!
 
 ## Appendix B: Cross-References
 
-This document is the canonical reference. The following documents should reference this file:
+The following documents reference this file:
 
 | Document | Section to Update |
 |----------|-------------------|
