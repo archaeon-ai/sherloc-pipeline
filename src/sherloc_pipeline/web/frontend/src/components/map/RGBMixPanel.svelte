@@ -1,20 +1,20 @@
-<script lang="ts">
-  import { mapDisplayMode, mapLayers } from '../../lib/stores/mapStore';
-  import type { LayerRef, RGBChannelAssignment, ScalarLayer } from '../../lib/types/map';
+<script context="module" lang="ts">
+  import type { LayerRef } from '../../lib/types/map';
 
-  // Built-in presets
-  const PRESETS: { name: string; red: LayerRef; green: LayerRef; blue: LayerRef }[] = [
+  // Built-in presets. Each class_id must be one of the map's layer class ids
+  // (lib/mapClasses.ts DOMAIN_CLASSES), or the channel selects nothing.
+  export const PRESETS: { name: string; red: LayerRef; green: LayerRef; blue: LayerRef }[] = [
     {
       name: 'Sulfate Mineralogy',
-      red: { domain: 'minerals', class_id: 'sulfate_v1', value_type: 'snr' },
-      green: { domain: 'minerals', class_id: 'hi_carb', value_type: 'snr' },
+      red: { domain: 'minerals', class_id: 'sulf1_v1', value_type: 'snr' },
+      green: { domain: 'minerals', class_id: 'hi-carb', value_type: 'snr' },
       blue: { domain: 'fluorescence', class_id: 'group1a', value_type: 'snr' },
     },
     {
       name: 'Organics + Hydration',
       red: { domain: 'organics', class_id: 'D_band', value_type: 'snr' },
       green: { domain: 'organics', class_id: 'G_band', value_type: 'snr' },
-      blue: { domain: 'hydration', class_id: 'oh_stretch', value_type: 'snr' },
+      blue: { domain: 'hydration', class_id: 'OH_stretch', value_type: 'snr' },
     },
     {
       name: 'Fluorescence Groups',
@@ -23,6 +23,11 @@
       blue: { domain: 'fluorescence', class_id: 'group3', value_type: 'snr' },
     },
   ];
+</script>
+
+<script lang="ts">
+  import { mapDisplayMode, mapLayers } from '../../lib/stores/mapStore';
+  import type { RGBChannelAssignment, ScalarLayer } from '../../lib/types/map';
 
   // Channel state
   let redValue = '';
