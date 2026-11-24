@@ -410,7 +410,9 @@ Raman spectra sometimes contain cosmic-ray spikes: commonly narrow, high-amplitu
 detector artifacts that can mimic real Raman features. They are removed from the
 input to the organics, hydration and fluorescence fits; the mineral fit reads
 the non-despiked spectrum to avoid the impact of despiking algorithms on
-authentic Raman features. The method is selectable via `--despike-method` (CLI),
+authentic Raman features. When the method is `none`, or a scan has no despiked
+spectrum, those fits read the non-despiked spectrum; PDS fluorescence input is
+never despiked. The method is selectable via `--despike-method` (CLI),
 `preprocessing.despike.method` (`config.yaml`), or the web despike toggle:
 
 - **`ml`** (default) — a trained neural-network detector that classifies
