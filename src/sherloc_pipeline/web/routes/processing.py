@@ -264,8 +264,9 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
         fit_cfg["min_snr"] = fit_params_schema.min_snr
         fit_cfg["fit_fwhm_min_initial_cm1"] = fit_params_schema.fwhm_bounds[0]
         fit_cfg["fwhm_max_cm1"] = fit_params_schema.fwhm_bounds[1]
-        if domain == "hydration":
-            fit_cfg["slit_pref_weight"] = 0.0  # No slit preference for hydration
+        if domain in ("hydration", "organics"):
+            # No slit preference, as in the batch and map fits of both domains.
+            fit_cfg["slit_pref_weight"] = 0.0
         # Same posthoc_filters.sharpness_max value the fitter uses for its
         # own pass_sharpness gate (core/fitting.py:270). Reading it here
         # keeps the classifier's cosmic-ray fail threshold in sync if the
