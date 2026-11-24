@@ -40,9 +40,9 @@ from pathlib import Path
 
 LEDGER_PATH = "tests/fixtures/PROVENANCE.json"
 ALLOW_PATH = ".github/public-wording-allow.txt"
-# A sol is flagged when it lies past the archived envelope but within this many
-# sols of it: far larger numbers are placeholders, not observations.
-SOL_WINDOW = 1000
+# Sols at or above this value are reserved for invented examples (use sol 9999).
+# Every sol past the archived envelope and below it is flagged.
+SOL_PLACEHOLDER_MIN = 9000
 
 # Public sites a document may link to. A host is allowed when it equals one of
 # these or ends with "." plus one of them. Anything else, including a service
@@ -61,8 +61,16 @@ PUBLIC_HOSTS = (
     "pydantic.dev", "pytest.org", "auth0.com", "keepachangelog.com",
     "semver.org", "conventionalcommits.org", "spdx.org", "opensource.org",
     "creativecommons.org", "schema.org", "oclc.org", "apache.org",
-    "gstatic.com", "googleapis.com", "cloudflare.com", "cloudflareaccess.com",
-    "cloudflarestorage.com", "jsdelivr.net", "unpkg.com", "mit.edu", "rapids.ai",
+    "gstatic.com", "googleapis.com", "cloudflare.com", "jsdelivr.net", "unpkg.com", "mit.edu", "rapids.ai",
+)
+
+# Hosting services whose subdomains belong to one deployment: any subdomain is
+# reported (placeholders such as your-team.<service> pass).
+TENANT_SUFFIXES = (
+    "cloudflareaccess.com", "cloudflarestorage.com", "r2.dev", "workers.dev",
+    "pages.dev", "auth0.com", "amazonaws.com", "azurewebsites.net",
+    "herokuapp.com", "vercel.app", "netlify.app", "fly.dev", "ngrok.io",
+    "ngrok-free.app", "ts.net",
 )
 
 # Files where container and deployment paths such as /data are the subject.
@@ -92,23 +100,27 @@ _MONTHS_DAYS = (r"(?!(?:January|February|March|April|May|June|July|August|Septem
 
 RULES: tuple[Rule, ...] = (
     Rule("home-path",
-         _r(r"(?<![\w$.])(?:/home|/Users)/(?!<|\$|\{|user/|username/|runner/|you/)[A-Za-z0-9._-]+"
+         _r(r"(?<![\w$.])(?:/home|/Users)/(?!<|\$|\{|user/|username/|runner/|you/)[A-Za-z0-9._-]+[\w./-]*"
             r"|\b[A-Z]:\\\\?Users\\\\?(?!<|%)[A-Za-z0-9._-]+"),
          "home-directory path: use $HOME, ~ or a repository-relative path"),
     Rule("store-path",
-         _r(r"(?<![\w.~$/:-])/(?:nas|mnt|work|volume\d*)/[\w.$-]"
-            r"|(?<![\w.~$/:-])/(?:data|srv)/[\w.$-]+/[\w.$-]+/"),
+         _r(r"(?<![\w.~$/:-])/(?:nas|mnt|work|volume\d*)/[\w.$-][\w.$/-]*"
+            r"|(?<![\w.~$/:-])/(?:data|srv)/[\w.$-]+/[\w.$-]+/[\w.$/-]*"),
          "absolute data-store path: use a configured root (environment variable) or a repository-relative path"),
     Rule("host",
          _r(r"(?i)\b[a-z][a-z0-9+.-]*://(?:[^@/\s]+@)?([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)"
             r"|\b[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})\b"
-            r"|(?<![\w@./-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|io|edu|gov))\b(?![\w(/-])"),
+            r"|(?<![\w@./-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
+            r"(?:com|net|org|io|edu|gov|internal|corp|lan|intranet|localdomain))\b(?![\w(-])(?!\.\w)"),
          "host name that is not a public site: use an example domain (example.com) or configuration"),
     Rule("ip-address",
          _r(r"(?<![\w.\u00a7])(?!127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)"
             r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d)\.(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){2}"
             r"(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\w.])"),
          "public or shared IP address: use localhost, a documentation address (192.0.2.x) or configuration"),
+    Rule("ipv6-address",
+         _r(r"(?i)(?<![\w:.])(?!2001:db8:)[23][0-9a-f]{3}:(?:[0-9a-f]{0,4}:){2,6}[0-9a-f]{0,4}(?![\w:])"),
+         "public IPv6 address: use a documentation address (2001:db8::) or configuration"),
     Rule("review-label",
          _r(r"\b(?:[Rr]eview|[Rr]eviewer|Codex)\s+round\s*\d+|\b[Rr]ound[ -]?\d+\s+(?:F\d+|findings?|review|verdict)\b"
             r"|\b[Rr]\d+\s+(?:NO-GO|GO)\b|\bNO-GO\b|\bCONDITIONAL[_ ]GO\b"
@@ -133,8 +145,12 @@ RULES: tuple[Rule, ...] = (
             r"|\bGemini\b|claude\.ai|\bGenerated with\b|\U0001F916"),
          "AI tool name or attribution: leave tooling out of code, docs and history"),
     Rule("sol-ceiling",
-         _r(r"(?i)(?<![A-Za-z])sols?[ _-]?0*(\d{1,5})(?!\d)|\b[A-Z]{2,4}\d?_{1,2}(\d{4})_\d{9,10}"),
-         "sol above the newest archived PDS release (pds_envelope in tests/fixtures/PROVENANCE.json)"),
+         _r(r"(?i)(?<![A-Za-z])sols?[ _-]?0*(\d{1,5})(?!\d)"
+            r"|(?:^|(?<=[\s/\\\"'`(=,]))(\d{4})_(?=[A-Za-z])"
+            r"|\b[A-Z]{2,4}\d?_{1,2}(\d{4})_\d{9,10}"
+            r"|\b[a-z]{2,4}\d?_{1,2}(\d{4})_\d{9,10}"),
+         "sol past the newest archived PDS release (pds_envelope in tests/fixtures/PROVENANCE.json; "
+         "invented examples use sol 9999)"),
 )
 
 WORK_STATE_RULE = Rule(
@@ -149,6 +165,7 @@ class Finding:
     rule: str
     reason: str
     text: str
+    match: str = ""  # the text the rule matched; allow entries are compared with it
 
     def render(self) -> str:
         snippet = self.text.strip()
@@ -167,7 +184,7 @@ class Allow:
     def covers(self, f: Finding) -> bool:
         return (fnmatch.fnmatchcase(f.where, self.glob)
                 and self.rule in ("*", f.rule)
-                and (self.text == "*" or self.text in f.text))
+                and (self.text == "*" or self.text in (f.match or f.text)))
 
 
 def max_archived_sol(root: Path) -> int | None:
@@ -200,12 +217,14 @@ def load_allow(root: Path) -> list[Allow]:
 
 def _host_ok(host: str) -> bool:
     host = host.lower().rstrip(".")
-    if re.match(r"(?:your|my|<)", host):
+    if re.match(r"(?:your-|<|\{|\$)", host):
         return True     # a placeholder such as your-team.example
     if re.fullmatch(r"[\d.]+", host):
         return True     # an address: the ip-address rule decides
     if "." not in host:
         return True     # a single-label test host such as http://testserver
+    if any(host.endswith("." + h) for h in TENANT_SUFFIXES):
+        return False    # a deployment's own subdomain of a hosting service
     return any(host == h or host.endswith("." + h) for h in PUBLIC_HOSTS)
 
 
@@ -225,12 +244,10 @@ def scan_line(where: str, line_no: int, text: str, ceiling: int | None,
             if rule.name == "host" and _host_ok(next(g for g in m.groups() if g)):
                 continue
             if rule.name == "sol-ceiling":
-                value = int(m.group(1) or m.group(2))
-                # Sols far past the archive are placeholders (sol 9999), not observations.
-                if ceiling is None or not ceiling < value <= ceiling + SOL_WINDOW:
+                value = int(next(g for g in m.groups() if g))
+                if ceiling is None or not ceiling < value < SOL_PLACEHOLDER_MIN:
                     continue
-            found.append(Finding(where, line_no, rule.name, rule.reason, text))
-            break
+            found.append(Finding(where, line_no, rule.name, rule.reason, text, m.group(0)))
     return found
 
 
@@ -288,16 +305,27 @@ def scan_branch(root: Path, base: str, ceiling: int | None) -> list[Finding]:
                 f"{base}...HEAD")
     path: str | None = None
     line_no = 0
+    in_header = False
     for raw in diff.splitlines():
-        if raw.startswith("+++ "):
-            target = raw[4:]
-            path = None if target == "/dev/null" else target[2:] if target.startswith("b/") else target
+        if raw.startswith("diff --git "):
+            in_header, path = True, None
+            continue
+        if in_header:
+            # Header lines ("index", "---", "+++", mode lines) end at the first hunk.
+            if raw.startswith("+++ "):
+                target = raw[4:]
+                path = (None if target == "/dev/null"
+                        else target[2:] if target.startswith("b/") else target)
+            m = _HUNK.match(raw)
+            if m:
+                in_header = False
+                line_no = int(m.group(1))
             continue
         m = _HUNK.match(raw)
         if m:
             line_no = int(m.group(1))
             continue
-        if path is None or raw.startswith(("---", "diff ", "index ")):
+        if path is None:
             continue
         if raw.startswith("+"):
             out.extend(scan_line(path, line_no, raw[1:], ceiling, path))
@@ -307,8 +335,10 @@ def scan_branch(root: Path, base: str, ceiling: int | None) -> list[Finding]:
 
 
 def scan_messages(root: Path, rev_range: str, ceiling: int | None) -> list[Finding]:
+    """Check commit messages in A..B, or the one commit named when there is no '..'."""
     out: list[Finding] = []
-    log = _git(root, "log", "--format=%H%x1f%B%x1e", rev_range)
+    sel = [rev_range] if ".." in rev_range else ["-1", rev_range]
+    log = _git(root, "log", "--format=%H%x1f%B%x1e", *sel)
     for entry in log.split("\x1e"):
         entry = entry.strip("\n")
         if not entry:
@@ -327,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--commit-msg", metavar="FILE",
                       help="check one commit message file (the pre-commit commit-msg hook)")
     mode.add_argument("--messages", metavar="RANGE",
-                      help="check only the commit messages in RANGE (after a push to main)")
+                      help="check only the commit messages in RANGE (A..B), or one commit")
     ap.add_argument("--title", help="pull request title (default: $PR_TITLE)")
     ap.add_argument("--body-file", help="file holding the pull request body (default: $PR_BODY)")
     args = ap.parse_args(argv)
@@ -364,7 +394,13 @@ def main(argv: list[str] | None = None) -> int:
     findings += scan_text("PR title", title, ceiling)
     findings += scan_text("PR body", body, ceiling)
 
-    kept = [f for f in findings if not any(a.covers(f) for a in allows)]
+    kept: list[Finding] = []
+    seen: set[tuple[str, int, str]] = set()
+    for f in findings:  # one report per line and rule, from matches no allow entry covers
+        key = (f.where, f.line, f.rule)
+        if key not in seen and not any(a.covers(f) for a in allows):
+            seen.add(key)
+            kept.append(f)
     for f in kept:
         print(f.render())
     if kept:

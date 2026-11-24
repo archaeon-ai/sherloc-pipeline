@@ -55,6 +55,14 @@ def rules(text: str, path: str | None = None) -> set[str]:
         ("process sol 1900 next", "sol-ceiling"),
         ("data/loupe/sol_2100/survey", "sol-ceiling"),
         ("SC3_1900_0000000000_000ECM_N0000000SRLC00000_0000LMJ01", "sol-ceiling"),
+        ("ss__1900_0000000000_000rrs__x", "sol-ceiling"),
+        ('tmp_path / "1934_Target_line_R1_avg-4p_fit.png"', "sol-ceiling"),
+        ("new observation at sol 2860", "sol-ceiling"),
+        ("build.internal", "host"),
+        ("build.secret.corp/docs", "host"),
+        ("https://tenant.cloudflareaccess.com/admin", "host"),
+        ("https://mycompany.example-bad.net/x", "host"),
+        ("2001:4860:4860::8888", "ipv6-address"),
     ],
 )
 def test_flags(text, rule):
@@ -88,6 +96,11 @@ def test_flags(text, rule):
         "sol 1853 line_1 has 25 points",
         'sol_dir = tmp_path / "sol_9999"',
         "ss__9999_0000000000_000rrs__synthetic",
+        "run_2026_11_23.log",
+        "1234_",
+        "ports 8000:8000 and 3000:3000",
+        "the documentation address 2001:db8::1",
+        "see CLAUDE.local.md",
     ],
 )
 def test_passes(text):
@@ -195,3 +208,29 @@ def test_missing_ledger_is_a_usage_error(tmp_path):
     repo = _repo(tmp_path)
     (repo / "tests" / "fixtures" / "PROVENANCE.json").write_text("{}")
     assert _run(repo, "--tree").returncode == 2
+
+
+def test_an_allowed_match_does_not_hide_another_on_the_same_line():
+    allow = cpw.Allow("*", "host", "ok-site.org", "test")
+    found = cpw.scan_line("x.md", 1, "mail a@ok-site.org or https://build.secret.corp/", CEILING, "x.md")
+    kept = [f for f in found if not allow.covers(f)]
+    assert [f.match for f in kept] == ["https://build.secret.corp"]
+
+
+def test_an_added_line_that_looks_like_a_diff_header_is_still_read(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "a.py").write_text("x = 1\n++ /home/alice/one\npath = '/home/alice/two'\n")
+    subprocess.run(["git", "commit", "-qam", "fix: lines"], cwd=repo, check=True)
+    out = _run(repo, "--base", "main").stdout
+    assert "a.py:2: [home-path]" in out and "a.py:3: [home-path]" in out
+
+
+def test_messages_mode_reads_one_commit_even_the_root(tmp_path):
+    repo = _repo(tmp_path)
+    root = subprocess.run(["git", "rev-list", "--max-parents=0", "HEAD"], cwd=repo,
+                          capture_output=True, text=True, check=True).stdout.strip()
+    assert _run(repo, "--messages", root).returncode == 0
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "fix: x (review round 2)"],
+                   cwd=repo, check=True)
+    assert _run(repo, "--messages", "HEAD").returncode == 1
+    assert _run(repo, "--messages", "main..HEAD").returncode == 1

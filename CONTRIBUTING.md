@@ -69,8 +69,8 @@ Anyone can read this repository, its commit messages and its pull requests.
 Write all of them for a reader outside the project: no local paths or private
 host names, no notes on how a change was reviewed or decided (review rounds,
 finding labels, who decided what and when), no names of AI tools or session
-links, and no sol past the archived PDS release. State the rule and its
-reason instead.
+links, and no sol past the archived PDS release (an invented example uses
+sol 9999). State the rule and its reason instead.
 
 `scripts/check-public-wording.py` checks this. CI runs it on every pull
 request (added lines, commit messages, title and body) and on every push to

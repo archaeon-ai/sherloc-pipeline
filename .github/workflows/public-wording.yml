@@ -41,9 +41,14 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.event.after }}
         run: |
-          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            range="$AFTER~1..$AFTER"
+          # A normal push: every commit from the old tip to the new one. A new
+          # branch, or an old tip this checkout cannot reach (a forced push):
+          # the pushed commit only, with a warning that earlier ones were not read.
+          if [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+              && git merge-base --is-ancestor "$BEFORE" "$AFTER"; then
+            python3 scripts/check-public-wording.py --messages "$BEFORE..$AFTER"
           else
-            range="$BEFORE..$AFTER"
+            echo "::warning::old tip not reachable; checking the pushed commit's message only"
+            python3 scripts/check-public-wording.py --messages "$AFTER"
           fi
-          python3 scripts/check-public-wording.py --messages "$range"
