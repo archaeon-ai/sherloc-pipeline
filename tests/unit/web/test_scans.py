@@ -495,6 +495,48 @@ async def test_get_scan_colorized_aci_available_false_when_variant_missing(
     assert resp.json()["scan"]["colorized_aci_available"] is False
 
 
+@pytest.fixture()
+def no_object_storage(monkeypatch):
+    """Run as a local install does: no PHASE_TIER, no object-storage client."""
+    from sherloc_pipeline.web import r2_reader
+
+    monkeypatch.delenv("PHASE_TIER", raising=False)
+    r2_reader.reset_r2_client_for_tests()
+    yield
+    r2_reader.reset_r2_client_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_get_scan_with_aci_row_serves_locally_without_object_storage(
+    test_engine, client, no_object_storage
+):
+    """A local install has no PHASE_TIER: the scan detail still answers 200
+    and reports no colorized variant, rather than failing the request.
+    """
+    _seed_aci_context_image(
+        test_engine,
+        "/example/data/loupe/sol_0921/detail_1_aci.png",
+    )
+
+    resp = await client.get(f"/api/scans/{SCAN_UUID}")
+    assert resp.status_code == 200
+    assert resp.json()["scan"]["colorized_aci_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_scan_points_with_aci_row_serves_locally_without_object_storage(
+    test_engine, client, no_object_storage
+):
+    """Same local case for the scan points route, which runs the same probe."""
+    _seed_aci_context_image(
+        test_engine,
+        "/example/data/loupe/sol_0921/detail_1_aci.png",
+    )
+
+    resp = await client.get(f"/api/scans/{SCAN_UUID}/points")
+    assert resp.status_code == 200
+
+
 @pytest.mark.asyncio
 async def test_get_scan_colorized_probe_targets_base_aci_not_angle_range(
     test_engine, client, monkeypatch

@@ -464,6 +464,7 @@ async def test_gated_image_cannot_be_shared_or_browser_cached(app, engine, tmp_p
         session.commit()
     image = io.BytesIO()
     Image.new("RGB", (2, 2), (3, 4, 5)).save(image, format="PNG")
+    monkeypatch.setenv("PHASE_TIER", "public")
     monkeypatch.setattr(images, "select_served_aci", lambda *args: SimpleNamespace(r2_rel_key="synthetic.png"))
     monkeypatch.setattr(images, "derive_r2_key", lambda *args: "synthetic.png")
     monkeypatch.setattr(images, "r2_get_bytes", lambda *args: image.getvalue())

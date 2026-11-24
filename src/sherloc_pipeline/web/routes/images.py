@@ -27,10 +27,12 @@ from sqlalchemy.orm import Session
 
 from sherloc_pipeline.database.models import ContextImageORM, ScanORM
 from sherloc_pipeline.web.data_access import DataAccessService
+from sherloc_pipeline.core.r2_keys import resolve_disk_path
 from sherloc_pipeline.web.r2_reader import (
     colorized_variant_exists,
     derive_r2_key,
     find_colorized_key,
+    is_r2_mode,
     r2_get_bytes,
 )
 
@@ -220,11 +222,52 @@ def _get_data_access(request: Request) -> DataAccessService:
     )
 
 
+def _read_aci_from_disk(request: Request, rel_locator: Optional[str]) -> tuple[str, bytes]:
+    """Read the ACI from the configured data roots when no object storage is set.
+
+    The stored locator resolves under ``paths.data_root`` (Loupe tree) or
+    ``pds.cache_dir`` (PDS tree). The file must stay inside that root once
+    symbolic links are resolved. A locator that resolves to no such file
+    answers 404. Colorized variants are not looked up on disk: the base
+    image is served.
+    """
+    config = request.app.state.config
+    data_root = (getattr(config, "paths", None) or {}).get("data_root")
+    pds_cache_dir = getattr(getattr(config, "pds", None), "cache_dir", None)
+
+    path = resolve_disk_path(
+        rel_locator, data_root=data_root, pds_cache_dir=pds_cache_dir
+    )
+    if path is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    # The locator's layout selects its root, as in resolve_disk_path: the
+    # Loupe tree lives under data_root and the PDS tree under pds.cache_dir,
+    # which may itself sit inside data_root.
+    root_setting = data_root if rel_locator.split("/", 1)[0] == "loupe" else pds_cache_dir
+    root = Path(root_setting) if root_setting is not None else None
+    try:
+        resolved = path.resolve(strict=True)
+        contained = root is not None and resolved.is_relative_to(
+            root.resolve(strict=True)
+        )
+    except OSError:
+        contained = False
+    if not contained or not resolved.is_file():
+        raise HTTPException(status_code=404, detail="not_found")
+    return resolved.name, resolved.read_bytes()
+
+
 @router.get("/images/{scan_id}/aci")
 def get_aci_image(
     request: Request,
     scan_id: str,
-    colorized: bool = Query(False, description="Return colorized variant if available"),
+    colorized: bool = Query(
+        False,
+        description=(
+            "Return the colorized variant if available in object storage; "
+            "without object storage the base image is returned"
+        ),
+    ),
     enhanced: bool = Query(False, description="Apply adaptive histogram equalization and sharpening"),
     upscale: int = Query(1, ge=1, le=5, description="Lanczos upscaling factor (1–5, only used when enhanced=true)"),
 ):
@@ -233,8 +276,10 @@ def get_aci_image(
     Derives the R2 key from the ``context_images.r2_rel_key`` locator
     (hierarchical-key model). Optional query params:
 
-    - colorized: probe sibling ``sol_NNNN_colorized/<...>`` R2 key; serve
-      that variant if present, else the base.
+    - colorized: with object storage, probe the sibling
+      ``sol_NNNN_colorized/<...>`` R2 key and serve that variant if
+      present, else the base. Without object storage (no ``PHASE_TIER``)
+      the base image is read from disk and served.
     - enhanced: apply CLAHE + optional Lanczos upscale + unsharp mask.
       Results cached at ``/tmp/sherloc_aci_cache/`` for 24h.
     - upscale: integer 1–5 (only used when ``enhanced=true``).
@@ -266,17 +311,20 @@ def get_aci_image(
     # because an unresolved `pds:` ref in production IS broken
     # ingestion (the download step resolves LIDVIDs before R2
     # population). v1.1 may revisit the on-demand path; v1.0-beta rejects.
-    base_key = derive_r2_key(aci.r2_rel_key)
+    if is_r2_mode():
+        base_key = derive_r2_key(aci.r2_rel_key)
 
-    # Optional colorized variant — sibling sol_NNNN_colorized/ key.
-    key = base_key
-    if colorized:
-        colorized_key = find_colorized_key(base_key)
-        if colorized_key is not None:
-            key = colorized_key
+        # Optional colorized variant — sibling sol_NNNN_colorized/ key.
+        key = base_key
+        if colorized:
+            colorized_key = find_colorized_key(base_key)
+            if colorized_key is not None:
+                key = colorized_key
 
-    # R2 GET — surfaces 404/502 per spec §3.9.4.
-    bytes_data = r2_get_bytes(key)
+        # R2 GET — surfaces 404/502 per spec §3.9.4.
+        bytes_data = r2_get_bytes(key)
+    else:
+        key, bytes_data = _read_aci_from_disk(request, aci.r2_rel_key)
 
     suffix = Path(key).suffix.upper()
     if suffix == ".PNG":
