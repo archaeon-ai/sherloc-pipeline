@@ -9,6 +9,7 @@
   import ClassificationEditor from './ClassificationEditor.svelte';
   import MapSpectrumPanel from './MapSpectrumPanel.svelte';
   import { MapWebSocket } from '../../lib/mapWebSocket';
+  import { DOMAIN_CLASSES } from '../../lib/mapClasses';
   import {
     MapProgressTracker,
     MapJobPoller,
@@ -102,15 +103,6 @@
   let spectrumMode: 'empty' | 'class_average' | 'single_point' = 'empty';
   let spectrumClassInfo: { domain: string; class_id: string; label: string } | null = null;
   let spectrumPointIndex: number | null = null;
-
-  // Domain → class_id mapping (fitting engine canonical IDs)
-  const DOMAIN_CLASSES: Record<string, string[]> = {
-    minerals: ['olivine', 'phosphate', 'pyroxene', 'sulf1_v1', 'sulf2_v1',
-               '1050', 'lo-carb', 'hi-carb', 'sulf_v3'],
-    organics: ['D_band', 'G_band'],
-    hydration: ['OH_stretch'],
-    fluorescence: ['group3', 'group1a', 'group1b', 'group2'],
-  };
 
   // Store subscriptions
   let pointSet: PointSet | null = null;
