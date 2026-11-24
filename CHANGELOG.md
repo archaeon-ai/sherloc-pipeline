@@ -102,6 +102,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other's results.
 
 ### Documentation
+- **Docs corrected to the code.** README, QUICKSTART, CONTRIBUTING,
+  `docs/architecture.md`, `docs/API.md`, the PDS ingestion guide and the
+  schema docs now give the pipeline steps, output folders, config defaults,
+  command, route, table and migration counts, API signatures and data
+  sources as the code has them, and no longer describe features the package
+  does not have. QUICKSTART builds the web UI, which the source tree does not
+  ship built.
+- **Help text.** `sherloc plot --fwhm-min` no longer names a default of 30
+  (the config sets 25). The web background step describes the
+  pulses-per-point scaling it uses, and the web baseline step says its fit
+  has no protected windows.
 - **Mineral fit input** stated in `docs/METHODS.md`: the original
   dark-subtracted spectrum, not despiked.
 - **Upgrade notes: migrations and downstream schema checks.** A tool that
