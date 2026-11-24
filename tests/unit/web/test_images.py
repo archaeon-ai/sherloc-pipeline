@@ -552,6 +552,41 @@ async def test_aci_symlink_out_of_nested_pds_cache_returns_404(
 
 
 @pytest.mark.asyncio
+async def test_aci_symlink_to_sibling_with_root_name_prefix_returns_404(
+    client, test_engine, fake_config, tmp_path, monkeypatch
+):
+    """Containment compares path parts: a sibling ``<root>2`` is not inside ``<root>``."""
+    monkeypatch.delenv("PHASE_TIER", raising=False)
+    r2_reader.reset_r2_client_for_tests()
+    root = tmp_path / "data"
+    sibling = tmp_path / "data2"
+    sibling.mkdir()
+    (sibling / "SC3_0921_OUT.PNG").write_bytes(_make_png_bytes())
+    fake_config.paths["data_root"] = str(root)
+    (root / "loupe" / "sol_0921").mkdir(parents=True)
+    (root / "loupe" / "sol_0921" / "detail_1").symlink_to(sibling, target_is_directory=True)
+    _insert_aci(test_engine, "loupe/sol_0921/detail_1/SC3_0921_OUT.PNG")
+
+    resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
+    assert resp.status_code == 404
+    r2_reader.reset_r2_client_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_aci_locator_matching_no_layout_returns_404(
+    client, test_engine, local_disk_aci, tmp_path
+):
+    """A locator that is neither the Loupe nor the PDS layout is refused, even if a file exists."""
+    other = tmp_path / "other" / "sol_0921" / "SC3_0921_OTHER.PNG"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(_make_png_bytes())
+    _insert_aci(test_engine, "other/sol_0921/SC3_0921_OTHER.PNG")
+
+    resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_aci_served_from_pds_cache_on_disk(
     client, test_engine, local_disk_aci, fake_config, tmp_path_factory, monkeypatch
 ):
