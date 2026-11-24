@@ -115,7 +115,7 @@ RULES: tuple[Rule, ...] = (
             r"|\b(?:[Rr]eview|[Rr]eviewer|[Cc]onnector)\s+(?:[Rr]\d+\s+)?[FP]\d+(?:\.\d+)?\b"
             r"|\b[Rr]\d+\s+F\d+\b|\bPRIOR_RESOLVED\b|\b[Pp]rior round\b|\bexact head\b"),
          "review-round or finding label: describe the behavior, not how it was reviewed"),
-    Rule("ruling",
+    Rule("decision-note",
          _r(r"\b[Pp]er\s+(?:the\s+)?(?:operator|PM|domain owner|science lead)\b"
             r"|\b[Dd]omain[ -]owner\b|\b[Ss]cience lead\b"
             r"|\b[Oo]perator'?s\s+(?:go|word|ruling|ratification|approval|decision|sign-off)\b"
