@@ -14,7 +14,7 @@ Pins DEPLOYMENT_CONTRACT.md §3 (healthcheck) + §5 (validator gates) +
   E — negative, PHASE_DATABASE_PATH mismatch: container exits non-zero
       with `differ` error from config_check.
 
-Double-marked ``docker`` + ``slow`` so the cheap CI lane filters it out.
+Double-marked ``docker`` + ``slow`` so the default CI test job filters it out.
 The dedicated ``.github/workflows/contract-smoke.yml`` workflow opts it
 in. Skipped automatically when ``docker`` is not on PATH or when
 ``SKIP_DOCKER_TESTS=1``.

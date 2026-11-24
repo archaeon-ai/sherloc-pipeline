@@ -25,7 +25,7 @@ from typing import Any, Optional
 from fastapi import HTTPException
 
 # Pure key-derivation primitives live in core/ so core/coordinates.py can
-# derive diagnostic R2 keys (spec §3.9.8.3) without violating the
+# derive diagnostic R2 keys without violating the
 # cli/->api/->services/->core/->models/ layering rule. These names are
 # re-exported here for backward compat with existing importers
 # (web/routes/{images,map}.py, tests/unit/web/test_r2_reader.py).
@@ -39,7 +39,7 @@ from sherloc_pipeline.core.r2_keys import (
 
 logger = logging.getLogger(__name__)
 
-# R2 bucket per tier (spec §3.9.3). Bucket selection is the web layer's
+# R2 bucket per tier. Bucket selection is the web layer's
 # concern (client config); key derivation is tier-neutral.
 TIER_TO_BUCKET = {
     "team": "phase-team",

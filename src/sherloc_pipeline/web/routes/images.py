@@ -231,7 +231,7 @@ def get_aci_image(
     """Serve the ACI context image for a scan.
 
     Derives the R2 key from the ``context_images.r2_rel_key`` locator
-    (spec §3.9.3 hierarchical-key model). Optional query params:
+    (hierarchical-key model). Optional query params:
 
     - colorized: probe sibling ``sol_NNNN_colorized/<...>`` R2 key; serve
       that variant if present, else the base.
@@ -263,7 +263,7 @@ def get_aci_image(
     # Derive the R2 key from the stored locator. A missing locator (row
     # predates the backfill or matched no known ingestion layout) or an
     # unresolved `pds:` LIDVID ref surfaces as `misconfigured_path` 500
-    # per spec §3.9.4 — an unresolved `pds:` ref in production IS broken
+    # because an unresolved `pds:` ref in production IS broken
     # ingestion (the download step resolves LIDVIDs before R2
     # population). v1.1 may revisit the on-demand path; v1.0-beta rejects.
     base_key = derive_r2_key(aci.r2_rel_key)

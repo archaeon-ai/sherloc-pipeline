@@ -1,4 +1,4 @@
-"""Web stored-mask despike toggle round-trip tests (spec §4.6).
+"""Web stored-mask despike toggle round-trip tests.
 
 The serving host never runs inference: ``?despike=true`` looks up the
 persisted ``cosmic_ray_masks`` and applies the same interpolation helper the

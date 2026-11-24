@@ -161,9 +161,9 @@ def test_range_token_and_path_naming(tmp_path: Path):
     assert format_range_token((700.0, 1200.0)) == "700-1200"
     assert format_range_token((700.5, 1200.0)) == "700.5-1200"
 
-    full_range = tmp_path / "1934_La_Suize_line_R1_avg-4p_trim_mean_bkgsub_fit.png"
+    full_range = tmp_path / "0921_Testrock_line_R1_avg-4p_trim_mean_bkgsub_fit.png"
     assert zoomed_overlay_path(full_range, (700.0, 1200.0)) == (
-        tmp_path / "1934_La_Suize_line_R1_avg-4p_trim_mean_bkgsub_fit_700-1200.png"
+        tmp_path / "0921_Testrock_line_R1_avg-4p_trim_mean_bkgsub_fit_700-1200.png"
     )
 
 
@@ -306,7 +306,7 @@ def test_averaged_mode_companion_r2_describes_its_own_window(test_context):
     padded_r2 = 1.0 - float(np.sum((y[mask] - padded[mask]) ** 2)) / ss_tot
     assert zoom_r2 - padded_r2 > 0.01, (zoom_r2, padded_r2)
 
-    # And the JSON sidecar inventories the companion + its window (#30 F4).
+    # And the JSON sidecar inventories the companion + its window (#30).
     meta_path = next(p for p in result.artifacts if p.suffix == ".json")
     outputs = json.loads(meta_path.read_text())
     zoomed_name = outputs["outputs"]["files"]["png_zoomed"]

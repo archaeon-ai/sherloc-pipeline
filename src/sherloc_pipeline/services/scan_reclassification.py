@@ -58,7 +58,7 @@ AXIS_SCAN_CLASS = "scan_class"
 AXIS_PRODUCT_ROLE = "product_role"
 ALL_AXES: Tuple[str, ...] = (AXIS_SCAN_TYPE, AXIS_SCAN_CLASS, AXIS_PRODUCT_ROLE)
 
-# Named-union constituent rule (locked taxonomy, spec §4.1): a `cross` is the
+# Named-union constituent rule (locked taxonomy): a `cross` is the
 # union of line_1,line_2; an `asterisk` is line_1..line_4. Constituents are
 # matched by these canonical line names at the union's sol/target.
 _NAMED_UNION_LINE_COUNT: Dict[str, int] = {"cross": 2, "asterisk": 4}
@@ -386,7 +386,7 @@ def _derive_composite_sources(
         if members:
             return members
 
-    # Named union: the locked taxonomy (spec §4.1) fixes the constituents by
+    # Named union: the locked taxonomy fixes the constituents by
     # their canonical line names — `cross` = line_1,line_2; `asterisk` =
     # line_1..line_4 — so match those exact names at the sol/target (a cross
     # therefore never attaches line_3+, even when extra lines exist).

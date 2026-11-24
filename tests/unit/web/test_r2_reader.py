@@ -189,7 +189,7 @@ class TestGetWorkingFile:
 
         Covers the NULL-locator row (pre-backfill / unknown-layout), the
         unresolved ``pds:`` sentinel, path traversal, and locators too
-        shallow to contain a Loupe workspace — spec §3.9.4 / §3.9.8.3.
+        shallow to contain a Loupe workspace.
         """
         with pytest.raises(HTTPException) as excinfo:
             r2_reader.get_working_file(bad_locator, "spatial.csv")
@@ -463,7 +463,7 @@ class TestDeriveRelLocator:
         """A locator serving would reject must never be persisted.
 
         Mirrors the migration backfill's traversal exclusion for the
-        go-forward ingestion writers (review F2).
+        go-forward ingestion writers.
         """
         from sherloc_pipeline.core.r2_keys import derive_rel_locator
 

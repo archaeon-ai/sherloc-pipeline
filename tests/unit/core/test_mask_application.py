@@ -1,7 +1,7 @@
 """Mask application semantics on the three pipeline representations.
 
 Covers the contributor-set principle and certified-window applicability
-(spec §3.3) plus the R123 stitch-alignment test: the
+plus the R123 stitch-alignment test: the
 derived winning-region map must agree, channel by channel, with what
 ``create_r123_spectrum`` actually assigns (the map is
 derived from the construction's definition, never hardcoded separately).
@@ -228,7 +228,7 @@ class TestR1FrameMapping:
 
 
 class TestUncoveredContributorCount:
-    """Disclosure count for composite views (spec §3.3, review F1-R4).
+    """Disclosure count for composite views.
 
     The count is *derived* from the construction's segment map plus the
     certified windows — never a hardcoded constant. Today's certified

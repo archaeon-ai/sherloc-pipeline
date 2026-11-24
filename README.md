@@ -556,7 +556,7 @@ Fit fluorescence peaks on R2/R3 spectra using differential evolution optimizatio
 
 ```bash
 # Fit a single scan
-sherloc fit-fluor --sol 360 --target "Quartier" --scan 1
+sherloc fit-fluor --sol 293 --target "Quartier" --scan 1
 
 # Fit all scans in the database
 sherloc fit-fluor --all --database ./phase.db
@@ -573,7 +573,7 @@ Persist Raman peak CSVs to the database for a specific domain:
 
 ```bash
 sherloc persist-peaks --domain organics --all
-sherloc persist-peaks --domain hydration --sol 360 --target "Quartier" --scan 1
+sherloc persist-peaks --domain hydration --sol 293 --target "Quartier" --scan 1
 ```
 
 **Options:**
@@ -644,7 +644,7 @@ review decisions are left untouched. Requires the `ml-despike` extra
 (`onnxruntime`) and the Loupe workspace under `--data-dir`.
 
 ```bash
-# Canary: a single sol
+# One sol first
 sherloc backfill-masks --sol 0921 --data-dir /path/to/loupe --database ./phase.db
 
 # Full mission (science scans only)
@@ -658,7 +658,7 @@ sherloc backfill-masks --science --dry-run
 - `--database PATH` - Path to SQLite database
 - `--data-dir PATH` - Loupe workspace root containing `sol_XXXX` folders
 - `--results-dir PATH` - Scratch dir for preprocessing artifacts (default: temp dir)
-- `--sol` - Limit to a single sol (use for the canary rollout)
+- `--sol` - Limit to a single sol (for example, to try the backfill on one sol first)
 - `--science` - Mars targets + cal meteorite only
 - `--no-engineering` - Exclude engineering scans
 - `--dry-run` - Show scan count without processing

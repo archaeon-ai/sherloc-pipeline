@@ -112,15 +112,14 @@ def test_restructure_fluorescence_real_loupe_workspace():
 
     The slicing bug was introduced before this scan existed, so a real
     laser-normalized CSV is the highest-fidelity regression target.
-    Skipped when the data isn't available (e.g., CI without the NAS
-    snapshot mounted).
+    Skipped when the data isn't available (e.g., in CI).
     """
     # The default path can be overridden via SHERLOC_DATA_ROOT for an
     # alternative local layout.
     workspace = Path(
         os.environ.get(
             "SHERLOC_DATA_ROOT",
-            "/data/sherloc/data",
+            "./data",
         )
     ) / "loupe/sol_1853/line_1/SrlcSpecSpecSohRaw_0831466680-20319-1_Loupe_working"
     csv_path = workspace / "darkSubSpectraN.csv"

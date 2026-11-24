@@ -1303,9 +1303,8 @@ class FittingService:
             _begin_fit_run(run_marker, domain="minerals")
 
             # Expect normalized baselined CSV for region. Deliberately the
-            # non-despiked branch: sharp mineral peaks can be hit by despiking
-            # (Ken's ruling, 2026-10-21). Organics, hydration and fluorescence
-            # read despiked input.
+            # non-despiked branch: sharp mineral peaks can be hit by despiking.
+            # Organics, hydration and fluorescence read despiked input.
             input_csv = base / f"{sol}_{target}_{scan}_{region}_normalized_baselined.csv"
             if not input_csv.exists():
                 error = FittingError(
@@ -1613,8 +1612,7 @@ class FittingService:
         R1_normalized.csv (laser-normalized, background-subtracted, NO asPLS
         baseline), with a linear endpoint baseline over the hydration window.
         Broad O-H bands are hard to confuse with cosmic rays, so the fit reads
-        the despiked branch (Ken's ruling, 2026-10-21; minerals stay
-        non-despiked). Quality gates (R² ≥ 0.25, FWHM ≥ 50 cm⁻¹, F-test
+        the despiked branch (minerals stay non-despiked). Quality gates (R² ≥ 0.25, FWHM ≥ 50 cm⁻¹, F-test
         significance) still apply, plus the optional
         ``fitting.hydration_cr_veto`` (issue #38, default OFF), which scores
         candidates against the non-despiked spectrum.
@@ -1694,8 +1692,9 @@ class FittingService:
 
             # Select input: prefer pre-baseline (R1_normalized.csv) per audit
             # findings, and within each level prefer the despiked branch when
-            # preprocessing produced it (Ken's ruling, 2026-10-21: despiked for
-            # organics, hydration and fluorescence; minerals stay non-despiked).
+            # preprocessing produced it (despiked for organics, hydration and
+            # fluorescence, whose broad features are hard to confuse with cosmic
+            # rays; minerals stay non-despiked).
             use_prebaseline = bool(fit_cfg.get('hydration_use_prebaseline', True))
             input_csv_norm = base / f"{sol}_{target}_{scan}_R1_normalized.csv"
             input_csv_bl = base / f"{sol}_{target}_{scan}_R1_normalized_baselined.csv"

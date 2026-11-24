@@ -188,7 +188,7 @@ def backfill(
             raise BackfillRefused("give either an output copy or in_place, not both")
         if not allow_live:
             raise BackfillRefused(
-                "writing in place needs allow_live (the operator's explicit go)"
+                "writing in place needs allow_live (an explicit confirmation)"
             )
         target = source
     else:

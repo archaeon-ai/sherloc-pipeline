@@ -2003,7 +2003,7 @@ def pixl_ingest_cmd(
         sherloc pixl-ingest /path/to/pixl-exports
 
         # Ingest with custom database
-        sherloc pixl-ingest /path/to/pixl-exports --database /data/pixl/test.db
+        sherloc pixl-ingest /path/to/pixl-exports --database ./pixl_test.db
 
         # Ingest first 5 for testing
         sherloc pixl-ingest /path/to/pixl-exports --limit 5 --stats
@@ -3060,7 +3060,7 @@ def backfill_masks_cmd(
     ),
     sol: Optional[str] = typer.Option(
         None, "--sol",
-        help="Limit to a single sol (e.g. 0921) — use for the canary rollout."
+        help="Limit to a single sol (e.g. 0921), for example to try the backfill on one sol first."
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show scan count without running backfill"),
     no_engineering: bool = typer.Option(False, "--no-engineering", help="Exclude engineering scans"),
@@ -3084,7 +3084,7 @@ def backfill_masks_cmd(
     toggle behaves exactly as on a freshly full-pipeline'd scan.
 
     Examples:
-        # Canary: a single sol
+        # One sol first
         sherloc backfill-masks --sol 0921 --data-dir /path/to/loupe
 
         # Full mission (science scans only)
@@ -3107,7 +3107,7 @@ def backfill_masks_cmd(
             raise typer.Exit(code=1)
 
         # Discover scans (same selectors as `backfill`), then optionally
-        # narrow to a single sol for the canary.
+        # narrow to a single sol.
         scans = _iter_all_scans(
             db_path, console,
             exclude_type="engineering" if no_engineering else None,
@@ -3274,7 +3274,7 @@ def backfill_fluor_inputs_cmd(
     ),
     allow_live: bool = typer.Option(
         False, "--allow-live",
-        help="Confirms an in-place write; reserved for the operator's go on a live database",
+        help="Confirms an in-place write to the source database (no copy is made)",
     ),
     sol: Optional[int] = typer.Option(None, "--sol", help="Limit to one sol"),
     dry_run: bool = typer.Option(False, "--dry-run", help="List the scan count only"),
@@ -3526,7 +3526,7 @@ def _run_scan_reclassify(
 ) -> None:
     """Shared driver for the scan-classification reclassify commands.
 
-    Re-derives one classification axis in place with the WS-1 §4.5 operational
+    Re-derives one classification axis in place under one operational
     contract: dry-run by default, value-blind transition diff, single
     transaction, snapshot/backup gate before --apply, schema preflight, and a
     measurement-table no-mutation assertion. Value-blind: only names / counts /

@@ -1,8 +1,9 @@
 """Fluorescence fit inputs: ML-despiked R1-R3 rows and laser normalization.
 
 Fluorescence is fitted on the dark-subtracted R1-R3 spectra with the stored
-ML cosmic-ray masks applied (Ken's ruling, 2026-10-21: despiked for organics,
-hydration and fluorescence). The despiked spectra are persisted as their own
+ML cosmic-ray masks applied: organics, hydration and fluorescence fit
+despiked input, because their broad features are hard to confuse with cosmic
+rays. The despiked spectra are persisted as their own
 ``spectra`` rows (``spectrum_type = "dark_sub_despiked"``) so the point and map
 fitters read the same input, and an existing scan can be backfilled from its
 stored masks without reprocessing.

@@ -791,14 +791,13 @@ class _Control(enum.Enum):
     """Handler-internal items multiplexed onto a client's own stream.
 
     The client's socket and the fitting thread are two independent wake-up
-    sources, and the pump used to await both with a single
-    ``asyncio.wait`` over a queue task and a receive task. Re-arming those
-    two tasks around every branch is what let a client's ``cancel`` and a
-    freshly published frame wake the pump in an order that left the other
-    one sitting unread until the next timeout -- a queued terminal frame
-    with nobody looking at it is the stall this change exists to remove.
+    sources. Awaiting both with a single ``asyncio.wait`` over a queue task
+    and a receive task, re-armed around every branch, lets a client's
+    ``cancel`` and a freshly published frame wake the pump in an order that
+    leaves the other one sitting unread until the next timeout: a queued
+    terminal frame with nobody looking at it. This pump avoids that stall.
 
-    A dedicated reader task now turns client input into these control
+    A dedicated reader task turns client input into these control
     items and posts them to the same ``_ConnectionStream`` the fitting
     thread broadcasts to, so the pump has exactly one thing to read and
     the two sources are ordered rather than raced.

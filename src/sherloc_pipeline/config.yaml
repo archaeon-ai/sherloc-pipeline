@@ -98,7 +98,7 @@ fitting:
   r1_plot_range: [700, 1300]          # default R1 plot ROI (cm^-1)
   fit_fwhm_min_initial_cm1: 22        # allow optimizer to explore >=22 to avoid hard edge artifacts
   reviewable_fwhm_min_cm1: 25.0       # FWHM gate for reviewable / persist eligibility (cm^-1)
-  filter_fwhm_min_cm1: 25             # pass_fwhm flag; = reviewable_fwhm_min_cm1 (Ken 11/12: fwhm 25)
+  filter_fwhm_min_cm1: 25             # pass_fwhm flag; kept equal to reviewable_fwhm_min_cm1 so one FWHM bar applies
   fwhm_max_cm1: 90                    # minerals upper bound; organics/hydration override below
   slit_width_cm1_default: 34.1        # preferred slit-centered width
   slit_pref_weight: 0.2               # soft bias toward slit width in objective/sorting
@@ -107,7 +107,7 @@ fitting:
   min_snr: 3.0
   min_seed_snr: 2.0                 # do not seed peaks below this SNR
   min_display_snr: 2.0              # do not plot/report components below this SNR
-  r_squared_min: 0.0                # pass_r2 flag dropped to R2 >= 0 (Ken 11/12: r2 none); posthoc_filters.r2_min (R2 > 0) still gates persistence
+  r_squared_min: 0.0                # no point-R2 bar on pass_r2; posthoc_filters.r2_min (R2 > 0) still gates persistence
   minerals_negative_spike_sigma: 10.0  # mineral fit: ROI channels below -10 x noise_std get zero weight (negative spikes); null = off
   
   # Noise estimation for SNR calculation
@@ -136,7 +136,7 @@ fitting:
     aicc_min_peaks: 1
     aicc_max_peaks: 5                 # capped by max_peaks and seeds
     aicc_improve_threshold: 0.0       # a larger model must lower AICc by more than this (0 = strict minimum)
-    reject_merged_candidates: true    # skip candidates whose components the merge step would drop (Ken 11/12: p88 rule on)
+    reject_merged_candidates: true    # skip candidate sizes whose components the merge step would drop (their AICc would rest on a dropped component)
 
   # Per-scan slit estimation from laser line (600–700 cm^-1)
   dynamic_slit:
@@ -169,12 +169,11 @@ fitting:
   hydration_use_prebaseline: true     # use R1_normalized.csv, not _baselined
   hydration_center_range: [3000.0, 3900.0]  # peak center bounds (allows serpentine)
 
-  # Cosmic-ray veto for hydration fits (issue #38). DEFAULT OFF — the
-  # thresholds below are PROPOSED values awaiting operator ratification
-  # (evidence: docs/reports/HYDRATION_CR_VETO_EVIDENCE.md). Flipping
-  # `enabled` on is a science decision, not a code decision.
+  # Cosmic-ray veto for hydration fits (issue #38). Off by default: the
+  # thresholds below are starting values not yet validated on a full
+  # sweep (see docs/METHODS.md, hydration cosmic-ray veto).
   hydration_cr_veto:
-    enabled: false                    # feature flag; false = pre-#38 behaviour
+    enabled: false                    # feature flag; false = no veto
     action: "reject"                  # "reject" drops CR candidates, "flag" only annotates;
                                       # any other value is a hard config error
     center_window_cm1: 15.0           # half-width searched for masked spike bins
@@ -188,7 +187,7 @@ fitting:
   organics_max_peaks: 2               # up to two components (D and G)
   organics_fwhm_bounds: [40, 200]     # broader than mineral peaks; D can exceed 100
   organics_min_snr: 2.0
-  organics_r2_min: 0.25                # organics keep their own pass_r2 minimum; not inherited from r_squared_min (Ken 11/23: organics keeps r2)
+  organics_r2_min: 0.25                # organics keep their own pass_r2 minimum; not inherited from r_squared_min
   organics_g_roi: [1500, 1700]        # G-band search window
   organics_d_roi: [1250, 1500]        # D-band search window
   organics_g_fwhm_accept: [40, 100]   # acceptance band for G detection
@@ -267,8 +266,7 @@ fluorescence_fitting:
   # Laser normalization of the fluorescence input: each point's R1-R3 spectrum
   # is scaled by max photodiode / point photodiode (the Loupe convention) after
   # the ML-despiked input is chosen. OFF until it is switched on with the
-  # fluorescence re-fit sweep, so all stored fits change units together
-  # (domain owner, 2026-10-21).
+  # fluorescence re-fit sweep, so all stored fits change units together.
   laser_normalize: false
 
 # Spatial mapping parameters

@@ -2,7 +2,7 @@
 Cosmic-ray mask persistence service for the SHERLOC pipeline.
 
 Persists the per-(point, region) channel-index masks produced by the ML
-despike path into the ``cosmic_ray_masks`` satellite table (spec §4.5),
+despike path into the ``cosmic_ray_masks`` satellite table,
 attached to each (scan_point, region)'s DARK_SUBTRACTED
 spectrum row — the canonical serving representation (§3.4). Persistence
 follows parent-row existence: masks whose parent spectrum row was never

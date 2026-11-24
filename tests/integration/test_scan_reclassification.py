@@ -393,7 +393,7 @@ class TestValueBlindInvariants:
 
 
 # ---------------------------------------------------------------------------
-# Codex Round-1 finding regressions (F1, F3, F4, F5)
+# Reclassification edge cases on a blank migrated database
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -415,8 +415,8 @@ def blank_migrated_db(tmp_path):
         os.environ.pop("PHASE_DATABASE_PATH", None)
 
 
-class TestCodexFindings:
-    def test_f1_pds_missing_count_null_preserved(self, blank_migrated_db):
+class TestReclassificationEdgeCases:
+    def test_pds_missing_count_null_preserved(self, blank_migrated_db):
         """A PDS synthetic-name row left scan_type=NULL by a missing count
         (stored as the n_points=1 placeholder) must NOT be flipped to detail."""
         engine = get_engine(blank_migrated_db)
@@ -428,7 +428,7 @@ class TestCodexFindings:
         assert scans["pds_0100_123_001"]["scan_type"] is None  # preserved
         assert scans["detail_1"]["scan_type"] == "detail"       # corrected
 
-    def test_f3_alternate_only_group_not_tagged(self, blank_migrated_db):
+    def test_alternate_only_group_not_tagged(self, blank_migrated_db):
         """A multishot group with no canonical reduction is left untagged so
         its raw stays a counted primary (no silent undercount)."""
         engine = get_engine(blank_migrated_db)
@@ -450,7 +450,7 @@ class TestCodexFindings:
         assert scans["detail_3"]["scan_class"] == "primary"
         assert scans["detail_3_median_all"]["product_role"] is None
 
-    def test_f4_create_all_schema_has_product_role_check(self, tmp_path):
+    def test_create_all_schema_has_product_role_check(self, tmp_path):
         """The ORM (create_all) path produces the same product_role CHECK as
         Alembic, and reclassify's preflight accepts it."""
         from sherloc_pipeline.database.connection import create_all_tables
@@ -481,7 +481,7 @@ class TestCodexFindings:
         with engine.connect() as conn:
             preflight_schema(conn)
 
-    def test_f5_spatial_union_excludes_unrelated_base(self, blank_migrated_db):
+    def test_spatial_union_excludes_unrelated_base(self, blank_migrated_db):
         """A target-prefixed spatial union links only its own base family, not
         an unrelated different-base same-kind primary in the same group."""
         engine = get_engine(blank_migrated_db)
@@ -512,8 +512,8 @@ def _row(scan_id, name, n_points=100, scan_class="primary", product_role=None,
     )
 
 
-class TestCodexRound2Findings:
-    def test_f8_planner_requires_canonical(self):
+class TestPlannerLineageAndInvariants:
+    def test_planner_requires_canonical(self):
         """plan_product_roles tags a group only with exactly one canonical;
         an alternate-only group leaves the raw untagged (counted)."""
         # Complete group -> tagged.
@@ -533,7 +533,7 @@ class TestCodexRound2Findings:
         assert "a2" not in bad.updates
         assert "a2" in bad.quarantined
 
-    def test_f9_pds_real_count_reclassified(self, blank_migrated_db):
+    def test_pds_real_count_reclassified(self, blank_migrated_db):
         """A PDS row with a real count > 1 but stale/NULL scan_type IS
         reclassified via the permitted count fallback; only the n_points<=1
         missing-count NULL is preserved."""
@@ -548,7 +548,7 @@ class TestCodexRound2Findings:
         assert scans["pds_0100_1_002"]["scan_type"] == "detail"   # <= threshold
         assert scans["pds_0100_1_003"]["scan_type"] is None       # preserved
 
-    def test_f7_finalize_populates_lineage_and_roles(self, blank_migrated_db):
+    def test_finalize_populates_lineage_and_roles(self, blank_migrated_db):
         """finalize_sol_scans (the write-time hook) fills composite
         source_scan_ids, sub_scan parents, and multishot product_role for a
         sol whose scans were written without them."""
@@ -574,7 +574,7 @@ class TestCodexRound2Findings:
         assert scans["detail_2_sum_active_median_dark"]["product_role"] == "canonical"
         assert scans["detail_2_median_all"]["product_role"] == "alternate"
 
-    def test_f6_named_union_uses_locked_constituents(self, blank_migrated_db):
+    def test_named_union_uses_locked_constituents(self, blank_migrated_db):
         """The locked taxonomy (§4.1) fixes `cross` = line_1,line_2: a cross
         links exactly those, NOT an unrelated extra line in the same group."""
         engine = get_engine(blank_migrated_db)
@@ -593,7 +593,7 @@ class TestCodexRound2Findings:
         src = {by_id[i] for i in json.loads(cross[2])}
         assert src == {"line_1", "line_2"}  # line_3 excluded
 
-    def test_f6_asterisk_links_four_lines(self, blank_migrated_db):
+    def test_asterisk_links_four_lines(self, blank_migrated_db):
         """`asterisk` = line_1..line_4 per the locked taxonomy."""
         engine = get_engine(blank_migrated_db)
         with engine.begin() as conn:
@@ -610,7 +610,7 @@ class TestCodexRound2Findings:
         src = {by_id[i] for i in json.loads(ast[2])}
         assert src == {"line_1", "line_2", "line_3", "line_4"}
 
-    def test_f8_invariant_catches_incomplete_multishot_group(self):
+    def test_invariant_catches_incomplete_multishot_group(self):
         """The value-blind invariant flags a multishot group lacking its
         canonical (raw + alternate, no canonical) — the synthetic invalid case
         the V&V suite must reject."""
@@ -629,7 +629,7 @@ class TestCodexRound2Findings:
             (100, "T", "detail_3_median_all"),
         ]) == [(100, "T", "detail_3")]
 
-    def test_f10_invariant_is_sol_target_group_scoped(self):
+    def test_invariant_is_sol_target_group_scoped(self):
         """A raw base that recurs across sol/target groups cannot mask an
         incomplete group: an alternate-only group is flagged even when another
         group with the same raw base name has a canonical."""

@@ -129,7 +129,7 @@ where = ["src"]
 # this entry the wheel install path silently omits the file and any
 # import of sherloc_pipeline.web.app crashes at startup. Editable
 # installs (`pip install -e .`) work without it because they resolve
-# paths against src/ directly. B.14 G18.13 retry surfaced this gap.
+# paths against src/ directly. A wheel-install test run surfaced this gap.
 #
 # data/background/*.csv ships the arm-stowed + fused-silica baselines
 # consumed by the Workbench background subtraction route

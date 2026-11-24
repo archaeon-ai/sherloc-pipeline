@@ -17,7 +17,7 @@ them exactly like the pre-locator serve path did.
 
 This module is **pure** — no boto3, no I/O, no env reads. That also
 makes :func:`derive_workspace_key` usable from ``core/coordinates.py``
-for the R2-404 diagnostic key (spec §3.9.8.3) without violating the
+for the R2-404 diagnostic key without violating the
 ``cli/ -> api/ -> services/ -> core/ -> models/`` layering rule enforced
 by ``tests/architecture/test_layering.py``.
 
@@ -28,8 +28,7 @@ tier inference to undo that at serve time. The stored-locator model
 replaces all of it; the one-time translation now lives in the Alembic
 backfill migration.
 
-Contract: m2020-phase platform spec §3.9 (ACI bytes; key derivation)
-+ §3.9.8 (Loupe workspace files). Tier isolation is credential-side
+The keys cover ACI image bytes and Loupe workspace files. Tier isolation is credential-side
 (R2 bucket-scoped read tokens; per-tier team/public credentials) plus
 per-tier databases — the locator itself is tier-neutral.
 """

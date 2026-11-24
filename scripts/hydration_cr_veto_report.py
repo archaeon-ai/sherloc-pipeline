@@ -3,9 +3,9 @@
 
 Re-runs the veto over hydration rows already in a pipeline database and reports
 per-mechanism catch/flag counts and their overlap, so the thresholds can be
-ratified from measurement rather than from argument. It is read-only: nothing is
+chosen from measurement rather than from argument. It is read-only: nothing is
 written back to the database and no row is pruned. Pruning existing spurious
-rows is a separate, operator-gated activity.
+rows is a separate, deliberate step.
 
 The output is deliberately aggregate — counts, and distribution summaries of the
 veto's own derived ratios. No spectral intensities, centres, or target names are
@@ -15,8 +15,8 @@ Usage:
     python3 scripts/hydration_cr_veto_report.py --db /path/to/phase.db
     python3 scripts/hydration_cr_veto_report.py --db ... --scan <scan-uuid>
 
-Write the resulting table into the "Sweep results" section of
-docs/reports/HYDRATION_CR_VETO_EVIDENCE.md before proposing a default-on flip.
+The catch rate and false-positive rate it reports are what a default-on
+flip should rest on (see docs/METHODS.md §3.4, hydration cosmic-ray veto).
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
 
     config = _config_from_args(args)
     # The sweep must despike with the parameters the vetoing paths despike with,
-    # otherwise the ratified thresholds are measured against a different mask.
+    # otherwise the chosen thresholds are measured against a different mask.
     despike_params = despike_params_from_config(load_config(args.config))
 
     wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)

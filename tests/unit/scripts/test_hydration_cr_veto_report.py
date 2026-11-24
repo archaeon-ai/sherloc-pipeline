@@ -3,7 +3,7 @@
 ``--floor-tolerance`` selects which rows are swept AND is the epsilon the veto
 measures bound pinning with. If only the first were wired up, every sweep run
 with a non-default tolerance would report a bound-pinning count computed against
-the 0.5 cm-1 default — silently wrong evidence for a threshold-ratification
+the 0.5 cm-1 default — silently wrong evidence for a threshold
 decision.
 """
 

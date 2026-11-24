@@ -112,8 +112,8 @@ def test_pr_mode_version_not_behind_latest_tag():
     """PR mode (no tag in env). Three-state rule:
 
     - project.version EQUAL to latest tag → PASS.
-    - project.version AHEAD of latest tag → SKIP (operator-coordinated
-      tag-push window before the new tag is published).
+    - project.version AHEAD of latest tag → SKIP (the window between a
+      version bump and the publication of its tag).
     - project.version BEHIND latest tag → FAIL.
     """
     if os.environ.get("GITHUB_REF_TYPE") == "tag":
@@ -130,7 +130,7 @@ def test_pr_mode_version_not_behind_latest_tag():
     if proj_tuple > tag_tuple:
         pytest.skip(
             f"pyproject.toml version {version!r} is AHEAD of latest tag "
-            f"{latest!r} — awaiting operator tag publish"
+            f"{latest!r} — the tag is not published yet"
         )
     pytest.fail(
         f"pyproject.toml version {version!r} is BEHIND latest tag "

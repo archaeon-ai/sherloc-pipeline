@@ -11,9 +11,8 @@ ingestion (``services/image_ingestion.py``, ``services/pds_ingestion.py``,
 ``file_path`` had become write-only: still populated on ingestion for
 old-code rollback, never read.
 
-Both serving databases are fully backfilled (team 1107/1107, public
-1529/1529 including the 5 ``pds:`` sentinel rows — verified prior to
-this migration), so the column carries no information ``r2_rel_key``
+Every row of both serving databases is backfilled (the ``pds:``
+sentinel rows included; verified before this migration), so the column carries no information ``r2_rel_key``
 lacks. Dropping it retires the last of the machine-specific
 absolute-path bookkeeping described in ``core/r2_keys.py``'s module
 docstring.

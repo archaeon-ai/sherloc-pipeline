@@ -52,15 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   databases hold the longer value as they are.
 
 ### Fixed
-- **Organics keep their own R2 minimum** (Ken 2026-11-23: "organics keeps
-  r2"). The organics fit config is copied from the mineral one, so the
-  11/12 `r_squared_min` 0.0 reached the organics G gate by inheritance.
+- **Organics keep their own R2 minimum.** The organics fit config is copied
+  from the mineral one, so the 5.7.7 mineral `r_squared_min` of 0.0 reached
+  the organics G gate by inheritance.
   New `fitting.organics_r2_min` (0.25) sets it for the batch organics fit;
   the mineral setting stays 0.0. The map refit's organics config takes it
   too, but the map path applies no R2 gate in any domain, so map output is
   unchanged. The sol 921
   Amherst Point detail_1 golden sets (modz and ml) are regenerated under
-  the 11/12 rules: nine mineral peaks added, none removed; hydration and
+  the 5.7.7 mineral fit rules: nine mineral peaks added, none removed; hydration and
   organics unchanged.
 - **PDS ingest reports curated target keys that never match, and names
   targetless science scans (#176).** Curated mapping keys
@@ -101,9 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updated. 5.7.8's `4f638701cf7c` (with `a13c4e5f6071` when coming from
   `17db1a1940d6`) is such a change: four new, empty `reference_*` tables
   (with indexes and triggers, for a consumer that inventories those) and
-  the nullable `fitted_peaks.cr_mask_review` column. Approve and merge the
-  consumer's update in the same change window as the migration, for each
-  database. Added to `DEPLOYMENT_CONTRACT.md` §7.
+  the nullable `fitted_peaks.cr_mask_review` column. Update the consumer
+  together with the migration, for each database. Added to `DEPLOYMENT_CONTRACT.md` §7.
 
 ## [5.7.8] - 2026-11-12
 
@@ -117,7 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   column is added in place (no table rebuild); existing peaks keep a NULL
   flag until their scans are refit. New databases from `sherloc init` are
   created at the new head. If another tool reads this database directly
-  and checks its columns, update that tool in the same change window (see
+  and checks its columns, update that tool at the same time (see
   `DEPLOYMENT_CONTRACT.md` §7, "Downstream schema checks").
 - **Deploy the image before the database (container operators).** A container
   image older than this release cannot start on a database upgraded to
@@ -150,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [5.7.7] - 2026-11-12
 
 ### Changed
-- **Mineral fit rules of 2026-11-12.** `filter_fwhm_min_cm1` 30 -> 25 (the
+- **Mineral fit rules.** `filter_fwhm_min_cm1` 30 -> 25 (the
   persistence gate) and `r_squared_min` 0.25 -> 0.0 (the R2 > 0 persistence
   gate stays). `parsimony.aicc_improve_threshold` is now read by the AICc
   loop (default 0 = unchanged selection). Mineral fits give zero weight to
@@ -245,8 +244,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   public tier, and the web app polls health every 30 s per open tab. Every
   call now pings the database with `SELECT 1`. The response shape is
   unchanged, but `checks.database.n_spectra` is now always `null`. Signed-in
-  calls on the team tier still report `n_scans` (a small table, read by the
-  DB-refresh runbooks); on the public tier `n_scans` is `null` too.
+  calls on the team tier still report `n_scans` (a small table); on the public tier `n_scans` is `null` too.
 
 ### Fixed
 - **`sherloc refit` skips scans with no target and runs each scan key once** (#170).
@@ -304,11 +302,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - **Anonymous `/api/health` no longer counts the scans and spectra tables.**
-  An unauthenticated call (container healthchecks, load balancers, the VPS
-  sync and verify-deploy scripts) now answers from a one-row `SELECT 1`
+  An unauthenticated call (container healthchecks, load balancers,
+  deployment checks) now answers from a one-row `SELECT 1`
   ping: `status` still reports a dead database as `error`, and the body is
   status and version only, as before. The full spectra count on every
-  anonymous call took 9–16 s on the live stores, kept the public container
+  anonymous call took 9–16 s on full-size databases, kept the public container
   marked unhealthy (5 s healthcheck timeout) and let any visitor load the
   public host cheaply. Authenticated health keeps its counts. No index, no
   migration (#153).
@@ -391,8 +389,8 @@ between v5.7.4 and v5.7.5 but were missing from the entry above.
 - **The public access gate is an allowlist.** In public mode, direct scan access and scan lists now admit only
   `data_source` `pds4` (`PUBLIC_DATA_SOURCES`). A null, missing, `loupe`, differently cased or unknown value is
   denied: 403 on direct access with the same detail text, and the row is excluded from lists. Before, the gate was
-  a denylist that failed open. Internal mode is unchanged. All 1070 scans in the public DB are `pds4`, so nothing
-  leaves the public site (#107, fixes #106).
+  a denylist that failed open. Internal mode is unchanged. A public database built from PDS products holds only
+  `pds4` scans, so none of its scans is hidden (#107, fixes #106).
 - **Public responses expose less.** In public mode, a point-spectrum request for a spectrum type other than the
   scan's resolved representation gets 403, and scan detail leaves out linked scan IDs (which can be team-tier) and
   raw processing-error text (#105, #99).
@@ -450,7 +448,7 @@ between v5.7.4 and v5.7.5 but were missing from the entry above.
   screen even with a live session), using the same wording as the PHASE Worker's page. Unverified-email and
   team-request-under-review refusals get the Worker's wording for those cases, and any other `access_denied` gets
   the Worker's "Access denied" page; any other callback error gets a plain message with a sign-in retry. The callback URL is replaced by the page the visitor started from, so a
-  reload does not replay it, and a retry returns there (m2020-phase#308).
+  reload does not replay it, and a retry returns there.
 
 ## [5.7.1] - 2026-10-16
 
@@ -503,8 +501,8 @@ between v5.7.4 and v5.7.5 but were missing from the entry above.
   `services/fitting.py`, `services/map_fitting.py`, and the web point-fit
   endpoint. New config block `fitting.hydration_cr_veto` with
   `enabled: false`: with the flag off, behaviour is unchanged and peak records
-  carry no veto fields. The thresholds are proposals, not ratified defaults --
-  see `docs/reports/HYDRATION_CR_VETO_EVIDENCE.md` and the read-only sweep
+  carry no veto fields. The thresholds are starting values, not validated defaults --
+  see `docs/METHODS.md` §3.4 and the read-only sweep
   utility `scripts/hydration_cr_veto_report.py`. Turning the flag on is a
   science decision. When a veto removes a component the model curve, residual,
   R2 and the fit overlay are all rebuilt from the surviving peaks, so a vetoed
@@ -755,9 +753,8 @@ between v5.7.4 and v5.7.5 but were missing from the entry above.
 Closes #7: the transitional `context_images.file_path` column is
 dropped. Ingestion, the web serve path, and the processing-side disk
 resolver now use `r2_rel_key` exclusively — `file_path` carried no
-information `r2_rel_key` lacked (both serving databases were fully
-backfilled: team 1107/1107, public 1529/1529 including the 5 `pds:`
-sentinel rows). Deploying this release requires running the new Alembic
+information `r2_rel_key` lacked (every row of both serving databases had
+been backfilled, the `pds:` sentinel rows included). Deploying this release requires running the new Alembic
 migration (`17db1a1940d6`, `DROP COLUMN` via SQLite batch mode) against
 both the team and public databases; no separate data re-sync is needed
 since the locator was already the live read path before the drop.
@@ -844,8 +841,8 @@ column drop remain tracked there).
 
 ### Notes
 - **Schema + migration change**: deploys must run `alembic upgrade
-  head` (the boot sequence does this) and then **re-sync both tier
-  databases** to the VPS per the established DB-sync pattern. Web ACI
+  head` (the boot sequence does this) and then **re-copy each tier's
+  database** to where it is served. Web ACI
   serving and Map Mode read `r2_rel_key` exclusively. A database whose
   schema was never migrated (column absent) fails at ORM query time —
   the boot-sequence `alembic upgrade head` is the guard for that case;
