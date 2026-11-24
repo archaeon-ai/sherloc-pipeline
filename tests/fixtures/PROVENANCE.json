@@ -45,7 +45,7 @@
       "category": "pds-archived",
       "instrument": "sherloc",
       "sol": 852,
-      "description": "Lake_Haiyaha detail_1 Loupe workspace + ACI context products (pure olivine)"
+      "description": "Lake_Haiyaha detail_1 Loupe workspace + ACI context products (olivine-rich)"
     },
     {
       "path": "tests/fixtures/loupe/sol_0921/",

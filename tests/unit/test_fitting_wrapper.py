@@ -220,7 +220,7 @@ class TestFittingOnRealData:
         assert isinstance(fit_result.r2, float)
 
     def test_fitting_on_lake_haiyaha(self, test_context):
-        """Gaussian fitting on Lake Haiyaha averaged spectrum (pure olivine)."""
+        """Gaussian fitting on Lake Haiyaha averaged spectrum (olivine-rich)."""
         service = SpectralService(context=test_context)
         
         data = service._load_loupe_data("0852", "Lake_Haiyaha", "detail_1")

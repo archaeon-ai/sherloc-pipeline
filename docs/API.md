@@ -418,7 +418,7 @@ fig = plot_overlay(
          "color": "green", "linestyle": "--"},
     ],
     xlim=(700, 1200),
-    scale_to_peak=(820, 870),  # Normalize to olivine doublet
+    scale_to_peak=(820, 870),  # Normalize to olivine band
     title="Mars vs Forsterite Comparison"
 )
 fig.savefig("comparison.png", dpi=300)

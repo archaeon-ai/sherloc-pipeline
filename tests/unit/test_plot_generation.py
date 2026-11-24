@@ -421,7 +421,7 @@ class TestPlotGenerationOnRealData:
         plt.close(fig)
 
     def test_plot_lake_haiyaha(self, test_context):
-        """Generate plot from Lake Haiyaha (pure olivine)."""
+        """Generate plot from Lake Haiyaha (olivine-rich)."""
         service = SpectralService(context=test_context)
         
         data = service._load_loupe_data("0852", "Lake_Haiyaha", "detail_1")
