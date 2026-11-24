@@ -1609,8 +1609,11 @@ class FittingService:
         ``_fit_point_hydration`` workers. See ``fitting.parallel_workers`` config.
 
         Uses R1_normalized_despiked.csv when preprocessing despiked R1, else
-        R1_normalized.csv (laser-normalized, background-subtracted, NO asPLS
-        baseline), with a linear endpoint baseline over the hydration window.
+        R1_normalized.csv. In both files, each dark-subtracted point spectrum is
+        scaled by the largest mean photodiode reading in the scan divided by that
+        point's mean reading across laser shots. Neither file has an asPLS baseline
+        removed. Preprocessing subtracts the instrument background only from scan
+        averages. The fit uses a linear endpoint baseline over the hydration window.
         Broad O-H bands are hard to confuse with cosmic rays, so the fit reads
         the despiked branch (minerals stay non-despiked). Quality gates (R² ≥ 0.25, FWHM ≥ 50 cm⁻¹, F-test
         significance) still apply, plus the optional
