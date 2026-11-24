@@ -703,7 +703,7 @@ The `mineral_assignment` column stores feature labels whose meaning varies by `f
 
 | fit_modality | mineral_assignment Values | Assignment Logic |
 |--------------|--------------------------|------------------|
-| `minerals` | Mineral feature names (e.g., `sulf1_v1`, `carb_v1`, `oliv_v1`) | `assign_min_id()`: wavenumber band lookup against the mineral rules (`fitting.mineral_rules` in `config.yaml`) |
+| `minerals` | Mineral feature names (e.g., `sulf1_v1`, `lo-carb`, `olivine`) | `assign_min_id()`: wavenumber band lookup against the mineral rules (`fitting.mineral_rules` in `config.yaml`) |
 | `organics` | `D_band` (1250-1450 cm⁻¹), `G_band` (1500-1700 cm⁻¹), `unidentified` | `classify_organic_band()`: center position range |
 | `hydration` | `OH_stretch` (3000-4000 cm⁻¹), `H2O_bend` (1500-1700 cm⁻¹), `unidentified` | `classify_hydration_band()`: center position range |
 | `fluorescence` | Group labels: `group1a` (300-307 nm), `group1b` (322-329 nm), `group2` (329-355 nm), `group3` (270-295 nm), `unidentified` | `assign_fluor_group()`: center wavelength range |

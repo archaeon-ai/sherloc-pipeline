@@ -271,7 +271,9 @@ def is_fittable(
     scientifically fit-worthy; every other cal target is an engineered/
     synthetic standard or instrument-diagnostic target (AlGaN lamp, Teflon,
     vectran, Orthofabric, polycarbonate, Diffusil, nGimat, the ``maze`` focus
-    target, ``power_on``/``power_off`` housekeeping) and is not fit.
+    target) and is not fit. ``power_on``/``power_off`` housekeeping scans are
+    ``engineering`` (``classify_target_type``), not calibration targets, and
+    are not fit either.
 
     The meteorite correctly stays ``target_type='cal_target'`` (it is *on the
     rover*, not in the exploration area); ``mars_target`` remains reserved for

@@ -6,13 +6,12 @@ display label: ``"pass"``, ``"review"``, or ``"fail"``.
 
 Conservative-by-design: peaks default to ``"review"``; ``"pass"`` must be
 earned by positive evidence (high R² + physically plausible FWHM + a
-real-target scan context). See the public-release-prep design and the
-v4.1.12 launch-blocker analysis for rationale.
+real-target scan context).
 
 Why a separate module:
 - The legacy ``pass_sharpness`` boolean (``core/fitting.py``) gates cosmic-ray
   contamination only. It does not catch unphysical FWHM or anti-correlated
-  fits (R² < 0), which is the v4.1.12 launch-blocker failure mode.
+  fits (R² < 0).
 - Centralizing the rule here lets both the Workbench ``/api/process/fit``
   response shaping and any future persisted-peak reader apply identical
   semantics.
@@ -23,8 +22,8 @@ from typing import Optional
 
 
 # Modality-specific FWHM plausibility bounds in cm⁻¹ (Raman) or nm (fluorescence).
-# Conservative literature-grounded starting points for v4.1.12; refine in v1.0.1
-# with real-target performance data per seed §54.
+# Conservative literature-grounded starting points, to be refined with
+# real-target performance data.
 FWHM_BOUNDS_CM1: dict[str, tuple[float, float]] = {
     "minerals":  (5.0, 100.0),    # mineral Raman bands, e.g. carbonate ν1 ~3–10
     "organics":  (10.0, 60.0),    # D/G bands, CH stretches
@@ -35,7 +34,7 @@ FWHM_BOUNDS_CM1: dict[str, tuple[float, float]] = {
 
 
 # Calibration / engineering target types never auto-promote to "pass" because
-# there is no Mars-target ground truth being measured. See seed §40 and
+# there is no Mars-target ground truth being measured. See
 # models/spectra.py:TargetType.
 _NON_SCIENCE_TARGET_TYPES = frozenset({"cal_target", "engineering"})
 
@@ -95,8 +94,8 @@ def classify_fit_quality(
         return "review"
 
     # FWHM-bound gate: when the modality has bounds (i.e. is Raman), absence
-    # of an FWHM value is absence of positive evidence — seed §32 locks the
-    # default to Review unless the fit earns pass. Fluorescence (and any
+    # of an FWHM value is absence of positive evidence, so the label stays
+    # Review unless the fit earns pass. Fluorescence (and any
     # future bounds-exempt modality) skips this gate entirely; the existing
     # fluorescence fitter enforces min_fwhm_nm at fit time.
     if modality in FWHM_BOUNDS_CM1:
