@@ -62,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   databases hold the longer value as they are.
 
 ### Removed
+- **The "laser" background scaling method is removed.** Background
+  subtraction on averages scales the background by pulses per point, the
+  method every command and web route already used. Gone: the
+  `bkg_scale_method` and `bkg_laser_roi` arguments of
+  `PreprocessingService.process_scan` and the
+  `preprocessing.background_subtraction.laser_scale` config block (`enabled`,
+  `roi`, `clip`), which only that method read. Results are unchanged.
 - **Grain segmentation, grain morphometry and spectrum clustering code is
   removed from the package.** No `sherloc` command and no web route used it.
   Gone: `sherloc_pipeline.vision.segmentation` (SAM grain masks),
@@ -80,6 +87,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the documented Python API (`sherloc_pipeline.api`) are unchanged.
 
 ### Fixed
+- **One PDS cache directory.** `pds-download` and `pds-ingest` read
+  `pds.cache_dir` from the config (override `SHERLOC_PDS_CACHE_DIR`) when no
+  `--output-dir` / `--pds-dir` is given, the same directory the web app and
+  image lookups read. The shipped config and the code default are both
+  `./pds`, where the two commands already wrote and read; the image lookups
+  looked in `./data/pds` before.
+- **`filter_fwhm_min_cm1` falls back to the shipped value.** A fitting config
+  without the key now applies 25 cm-1, the value in the shipped config, in
+  every fit and review path; the code fallback was 30 cm-1. The shipped
+  config sets the key, so its results are unchanged.
+- **The spectrum plot no longer raises when it closes before Plotly loads.**
+  A plot removed before its Plotly import settled tried to bind events on the
+  removed element, or left a rejected import unhandled, which could make the
+  frontend test run fail. The frontend tests now run in CI.
 - **Map RGB presets fill all three channels.** The "Sulfate Mineralogy" and
   "Organics + Hydration" presets named class ids the map has no layer for
   (`sulfate_v1`, `hi_carb`, `oh_stretch`): "Sulfate Mineralogy" showed only
