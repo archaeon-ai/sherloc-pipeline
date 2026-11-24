@@ -80,7 +80,7 @@ class TestClassifyScanClass:
         assert classify_scan_class("detail_2_median_all") == "composite"
 
 
-# WS-1 §4.3 (defect D2): bare trailing-underscore unions — the name-union
+# Bare trailing-underscore unions — the name-union
 # composites the substring patterns missed (stored `primary` at the source).
 BARE_UNDERSCORE_VECTORS = [
     ("detail_", "composite"),
@@ -97,7 +97,7 @@ BARE_UNDERSCORE_VECTORS = [
 
 
 class TestBareTrailingUnderscoreComposites:
-    """WS-1 §4.3 — bare trailing-underscore unions classify as composite."""
+    """Bare trailing-underscore unions classify as composite."""
 
     @pytest.mark.parametrize("scan_name,expected", BARE_UNDERSCORE_VECTORS)
     def test_classification(self, scan_name, expected):

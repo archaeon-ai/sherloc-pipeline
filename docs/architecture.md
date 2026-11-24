@@ -176,22 +176,23 @@ Long-running fits in Map Mode are dispatched onto a 1-worker
 The SPA uses hash routes. PHASE can open a scan without knowing its pipeline
 UUID by linking to `#/open?scan_name=<encoded-name>&sol=<sol>&point=<index>`.
 Use `points=<index>,<index>,...` for a subset of a **single scan**. These examples
-use an invented scan and sol:
+use an invented scan, sol and hosts (`sherloc.example.org` for the team
+tier, `sherloc-public.example.org` for the public tier):
 
 ```text
-https://sherloc.m2020-phase.net/#/open?scan_name=Testrock_detail&sol=42424&point=0
-https://sherloc-public.m2020-phase.net/#/open?scan_name=Testrock_detail&sol=42424&points=0,2,7
+https://sherloc.example.org/#/open?scan_name=Testrock_detail&sol=42424&point=0
+https://sherloc-public.example.org/#/open?scan_name=Testrock_detail&sol=42424&points=0,2,7
 ```
 
-Choose the host for the viewer's tier: team → `sherloc.m2020-phase.net`, public
-→ `sherloc-public.m2020-phase.net`. Authentication uses that host's existing
+Choose the host for the viewer's tier: team → `sherloc.example.org`, public
+→ `sherloc-public.example.org`. Authentication uses that host's existing
 flow. The resolver searches only scans visible in that tier; it never retries
 on another host. Build query strings with `URLSearchParams` (or encode each
 value with `encodeURIComponent`) so spaces, `&`, `+`, and `%` in names survive:
 
 ```js
 const query = new URLSearchParams({ scan_name: 'Testrock_detail', sol: '42424', points: '0,2,7' });
-const url = `https://sherloc.m2020-phase.net/#/open?${query}`;
+const url = `https://sherloc.example.org/#/open?${query}`;
 ```
 
 The resolver calls `GET /api/scans?scan_name=<encoded-name>&sol=<sol>` using

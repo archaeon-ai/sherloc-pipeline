@@ -768,7 +768,7 @@ class PipelineService:
         # Cosmic-Ray Mask Persistence (non-fatal, DB-gated) -----------------------
         # Mirrors the Raman-persistence precedent below: if the DB exists and
         # the despike step recorded ml masks, persist them; on error warn and
-        # continue; with no DB, debug-log the skip (spec §4.5). Runs before
+        # continue; with no DB, debug-log the skip. Runs before
         # fluorescence fitting, which reads the despiked rows built from these
         # masks (services/fluor_inputs.py).
         cr_masks_persisted = False

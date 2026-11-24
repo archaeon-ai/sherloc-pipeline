@@ -167,8 +167,7 @@ def fitted_fluor_db():
     The fit uses ``differential_evolution`` (~10-20 s per call). Every
     read-only assertion on the fitted peaks shares this single fit instead
     of re-fitting identical synthetic inputs per test — the 13 repeated
-    fits this replaced were ~275 s of CI wall-clock (archaeon-ai Actions
-    budget exhaustion, 2026-08-21). Tests that mutate the DB (idempotency)
+    fits this replaced were ~275 s of CI wall-clock. Tests that mutate the DB (idempotency)
     keep the function-scoped ``fluor_db``.
 
     Yields ``(engine, fit_result)``.

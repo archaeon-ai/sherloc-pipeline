@@ -80,7 +80,7 @@ urn-nasa-pds-mars2020_sherloc/
 |-- document/                    # SIS documents, user guide, release notes
 ```
 
-**Sol range:** sol_00004 through sol_01613 (data_raw: 152 sols, data_processed: 105 sols)
+**Sol range:** sol_00004 through sol_01859 as of Release 16 (2026-08-11). The per-collection counts in this document (for example data_raw: 152 sols, data_processed: 105 sols, through sol_01613) were measured at Release 14.
 
 ### Image Archive Locations
 
@@ -420,7 +420,7 @@ Tables are concatenated in a single CSV file, with byte offsets defined in the X
 | On-board Process_Data | `b108zpz` | 108 | 2 | RDR of the on-board Process_Data product |
 | Calibration | `w0` | 1 | 1 | Single calibration point |
 
-**zpz products (on-board Process_Data RDRs):** The CSV sections are headed "PROCESS DATA SPECTRUM REGION N" (SIS Appendix B; the parser matches `PROCESS_DATA_SPECTRUM_REGION_N`), and the PDS4 label names each table "PROCESS DATA SPECTRA REGION N" (all 190 release-16 labels), instead of "LASER-NORMALIZED SPECTRA REGION N". The release-16 SHERLOC RDR SIS (JPL D-104819 v1.12) defines them. Table 5, positions 49-51: "Z" cosmic ray correction skipped, "“P” : denotes that the on-board Process_Data algorithm has been applied", "Z" laser normalization skipped. Section 4.4.12, "Process_Data RDRs": "Prod ID: RRA or RRS special processing flag “P” in the filename. The process_data unpack algorithm characterizes and further processes (if necessary) the process_data EDR." The SIS gives each region's table as N x 2148, N the number of spectrum points. Measured on the 190 release-16 rrs/rcs labels with the P flag (public PDS4 labels, 2026-11-22), not stated by the SIS: 3 regions each, with 1, 2, 100 or 1296 records per region (not always 2). An earlier version of this page called them "post-processed summaries (likely mean + uncertainty)"; no mission document supports that.
+**zpz products (on-board Process_Data RDRs):** The CSV sections are headed "PROCESS DATA SPECTRUM REGION N" (SIS Appendix B; the parser matches `PROCESS_DATA_SPECTRUM_REGION_N`), and the PDS4 label names each table "PROCESS DATA SPECTRA REGION N" (all 190 release-16 labels), instead of "LASER-NORMALIZED SPECTRA REGION N". The release-16 SHERLOC RDR SIS (JPL D-104819 v1.12) defines them. Table 5, positions 49-51: "Z" cosmic ray correction skipped, "“P” : denotes that the on-board Process_Data algorithm has been applied", "Z" laser normalization skipped. Section 4.4.12, "Process_Data RDRs": "Prod ID: RRA or RRS special processing flag “P” in the filename. The process_data unpack algorithm characterizes and further processes (if necessary) the process_data EDR." The SIS gives each region's table as N x 2148, N the number of spectrum points. Measured on the 190 release-16 rrs/rcs labels with the P flag (public PDS4 labels, 2026-11-22), not stated by the SIS: 3 regions each, with 1, 2, 100 or 1296 records per region (not always 2).
 
 #### RCS — Reduced Calibrated Spectra (Calibration — same format as RRS)
 
@@ -489,7 +489,7 @@ Average photodiode intensity per laser shot position.
 
 One row per laser shot position (e.g., 100 rows for a 100-point detail scan). Values typically range 82-94 ADC counts. This is the processed equivalent of the raw EDR `LASER PHOTODIODE DATA` table.
 
-**Note:** This product was previously documented as "Reduced Line Information (wavelength list)". The actual content is photodiode intensity mapping, as confirmed by parsing Sol 921 data.
+**Note:** The content is photodiode intensity mapping (not a wavelength list), as confirmed by parsing Sol 921 data.
 
 #### RLS — Reduced Laser Shot (Cross-Reference)
 
@@ -884,7 +884,9 @@ RRS file sizes vary dramatically even for similar point counts: from 222 KB (665
 | 1 | 2021-06 | Initial | Launch |
 | 3+ | — | — | Wavelength calibration discontinuity introduced |
 | 10 | — | — | Dust cover anomaly documented |
-| 14 | 2025-12-04 | 1500-1619 | Latest (as of doc creation). DO_AREA support added |
+| 14 | 2025-12-04 | 1500-1619 | DO_AREA support added |
+| 15 | 2026-04-07 | 1620-1739 | |
+| 16 | 2026-08-11 | 1740-1859 | Latest as of this revision |
 
 Releases occur approximately quarterly, with data typically available 2-3 months after acquisition.
 

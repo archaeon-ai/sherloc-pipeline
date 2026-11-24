@@ -28,10 +28,10 @@
   ],
   "pds_envelope": {
     "sherloc": {
-      "release": "15",
-      "release_date": "2026-04-07",
-      "max_sol": 1739,
-      "source": "PDS Geosciences node, Mars 2020 SHERLOC archive (Release 15 covers sols through 1739)"
+      "release": "16",
+      "release_date": "2026-08-11",
+      "max_sol": 1859,
+      "source": "PDS Geosciences node, Mars 2020 SHERLOC archive (Release 16 covers sols through 1859)"
     }
   },
   "entries": [

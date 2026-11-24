@@ -269,7 +269,7 @@ class ScanORM(Base):
         Index("ix_scans_target_type", "target_type"),
         Index("ix_scans_scan_class", "scan_class"),
         # Note: target column already has index=True which creates ix_scans_target
-        # product_role governance CHECK (WS-1 §4.4). Kept in sync with Alembic
+        # product_role governance CHECK. Kept in sync with Alembic
         # migration 9b2e7c4a1f08 so ORM-created (create_all) and migration-built
         # schemas are equivalent for this constraint. The explicit
         # `source_scan_ids IS NOT NULL` guard defeats the SQL three-valued-logic

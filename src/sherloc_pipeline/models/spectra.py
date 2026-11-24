@@ -150,7 +150,7 @@ class ScanType(str, Enum):
     name-pattern matching (e.g., "AlGaN" → calibration) with a
     first-class enum. Benefits both PDS and Loupe data.
 
-    Per WS-1 (scan-classification), ``scan_type`` is **name-authoritative**:
+    ``scan_type`` is **name-authoritative**:
     derived from the scan name via :func:`classify_scan_type`, with the
     spectrum-count rule used only as a fallback for explicitly-uninformative
     names. ``LINE`` and ``HDR`` were previously unrepresentable, which forced
@@ -430,7 +430,7 @@ _HDR_TOKEN_RE = re.compile(r"(?:^|[^a-z])hdr(?:[^a-z]|$)")
 # cross / asterisk are unions of `line` primaries.
 _INHERITED_LINE_NAMES = frozenset({"cross", "asterisk"})
 
-# Calibration-target / engineering scan-name families (WS-1 §4.2, widened).
+# Calibration-target / engineering scan-name families.
 # Loupe cal/engineering scans carry no SRLC sequence code, so they are
 # name-identified. These are NON-science acquisitions — cal targets, instrument
 # diagnostics, laser-off darks — and resolve to CALIBRATION regardless of
@@ -501,7 +501,7 @@ def _is_calibration_name(scan_name: Optional[str]) -> bool:
     (non-science) acquisition: the AlGaN internal-cal lamp, a laser-off
     dark/diagnostic, a cal-target material, the external-cal meteorite, the maze
     focus target, laser power-state housekeeping, a passive (laser-off) ambient
-    observation, or a bare PPP intensity/SNR test (WS-1 §4.2)."""
+    observation, or a bare PPP intensity/SNR test."""
     low = (scan_name or "").strip().lower()
     if not low:
         return False
@@ -603,8 +603,7 @@ def multishot_reduction_role(scan_name: Optional[str]) -> Optional[str]:
     None if the name is not a recognized reduction.
 
     Distinguishes the multishot reductions from the bare ``*_all`` SPATIAL
-    union (a composite with product_role NULL) — the ``_all`` naming collision
-    (spec §4.3/§4.4).
+    union (a composite with product_role NULL): the ``_all`` naming collision.
     """
     low = (scan_name or "").strip().lower()
     for suffix, role in _MULTISHOT_REDUCTION_SUFFIXES:

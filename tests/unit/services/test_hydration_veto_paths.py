@@ -4,7 +4,7 @@ Covers ``services.fitting._fit_point_hydration`` (CLI/pipeline), and
 ``services.map_fitting._fit_raman_domain`` (web map-mode quick fit). The web
 point-fit endpoint is covered in ``tests/unit/web/test_processing.py``.
 
-Every path is asserted twice: flag OFF must reproduce pre-#38 behaviour exactly,
+Every path is asserted twice: flag OFF must reproduce the no-veto behavior exactly,
 flag ON must remove the cosmic ray while leaving a broad, authentic band alone.
 """
 

@@ -644,7 +644,7 @@ review decisions are left untouched. Requires the `ml-despike` extra
 (`onnxruntime`) and the Loupe workspace under `--data-dir`.
 
 ```bash
-# Canary: a single sol
+# One sol first
 sherloc backfill-masks --sol 0921 --data-dir /path/to/loupe --database ./phase.db
 
 # Full mission (science scans only)
@@ -658,7 +658,7 @@ sherloc backfill-masks --science --dry-run
 - `--database PATH` - Path to SQLite database
 - `--data-dir PATH` - Loupe workspace root containing `sol_XXXX` folders
 - `--results-dir PATH` - Scratch dir for preprocessing artifacts (default: temp dir)
-- `--sol` - Limit to a single sol (use for the canary rollout)
+- `--sol` - Limit to a single sol (for example, to try the backfill on one sol first)
 - `--science` - Mars targets + cal meteorite only
 - `--no-engineering` - Exclude engineering scans
 - `--dry-run` - Show scan count without processing

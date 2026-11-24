@@ -63,7 +63,7 @@ def test_build_validator_auth0_returns_package_validator(clean_env):
     SHERLOC no longer carries its own §2.6.1 implementation."""
     clean_env.setenv("SHERLOC_AUTH_MODE", "auth0")
     clean_env.setenv("SHERLOC_AUTH0_DOMAIN", "tenant.us.auth0.com")
-    clean_env.setenv("SHERLOC_AUTH0_AUDIENCE", "https://api.m2020-phase.net")
+    clean_env.setenv("SHERLOC_AUTH0_AUDIENCE", "https://api.example.org")
     clean_env.setenv(
         "SHERLOC_AUTH0_IDENTITY_CLAIM_URI",
         "https://m2020-phase.net/claims/identity",

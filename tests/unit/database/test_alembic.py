@@ -250,7 +250,7 @@ class TestR2RelKeyBackfill:
         Simulates the known swap/stamp hazard: the column was added but
         the revision was never stamped (e.g. deploy interrupted between
         DDL and stamp). A retried `upgrade head` must skip the ALTER and
-        still complete the backfill (review F3).
+        still complete the backfill.
         """
         config, db_path = alembic_config
 

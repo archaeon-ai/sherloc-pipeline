@@ -306,7 +306,7 @@ def test_averaged_mode_companion_r2_describes_its_own_window(test_context):
     padded_r2 = 1.0 - float(np.sum((y[mask] - padded[mask]) ** 2)) / ss_tot
     assert zoom_r2 - padded_r2 > 0.01, (zoom_r2, padded_r2)
 
-    # And the JSON sidecar inventories the companion + its window (#30 F4).
+    # And the JSON sidecar inventories the companion + its window (#30).
     meta_path = next(p for p in result.artifacts if p.suffix == ".json")
     outputs = json.loads(meta_path.read_text())
     zoomed_name = outputs["outputs"]["files"]["png_zoomed"]

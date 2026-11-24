@@ -985,7 +985,7 @@ class TestUnmatchedCuratedKeys:
         "-921_748731411", "921_-748731411", "921_+748731411",
     ])
     def test_noncanonical_numeric_key_warned_at_load(self, tmp_path, caplog, key):
-        """Review r1 F2: int()-parsable but non-canonical keys never resolve,
+        """Int()-parsable but non-canonical keys never resolve,
         so they are warned about at load and not treated as matched."""
         with caplog.at_level(logging.WARNING):
             resolver = _curated_resolver(tmp_path, {key: "X"})
@@ -1075,7 +1075,7 @@ class TestUnmatchedCuratedKeysInIngestSol:
         assert not [w for w in result.warnings if "Curated" in w]
 
     def test_skipped_targetless_detail_scan_warned(self, tmp_path, monkeypatch):
-        """Review r1 F1: an ordinary re-run names stored targetless scans."""
+        """An ordinary re-run names stored targetless scans."""
         service, sol_dir = self._service(tmp_path, monkeypatch, {})
         result = service.ingest_sol(sol_dir, force=False)
         assert result.metadata["observations_skipped"] == 1
@@ -1092,7 +1092,7 @@ class TestUnmatchedCuratedKeysInIngestSol:
         assert not [w for w in result.warnings if "has no resolved target" in w]
 
     def test_earlier_call_does_not_hide_unmatched_key(self, tmp_path, monkeypatch):
-        """Review r1 F3: label SCLKs seen by an earlier call are forgotten."""
+        """Label SCLKs seen by an earlier call are forgotten."""
         service, sol_dir = self._service(
             tmp_path, monkeypatch, {"921_748731411": "Amherst Point"}
         )

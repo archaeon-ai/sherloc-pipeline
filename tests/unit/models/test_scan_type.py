@@ -137,7 +137,7 @@ class TestUninformativeCountFallback:
 
 class TestDetailedAndLines:
     """`detailed_*` is a DETAIL variant whose trailing letters defeat the token
-    boundary; `lines` is the plural spelling of a `line` scan (WS-1 §4.2)."""
+    boundary; `lines` is the plural spelling of a `line` scan."""
 
     @pytest.mark.parametrize(
         "name", ["detailed_corner_1", "detailed_center_1a", "detailed_corner_2b", "DETAILED_X"]
@@ -150,7 +150,7 @@ class TestDetailedAndLines:
 
 
 class TestCalibrationVocabulary:
-    """Widened calibration / engineering scan-name families (WS-1 §4.2).
+    """Widened calibration / engineering scan-name families.
 
     These are non-science acquisitions (cal targets, instrument diagnostics,
     laser-off darks) and resolve to CALIBRATION regardless of spectrum count.

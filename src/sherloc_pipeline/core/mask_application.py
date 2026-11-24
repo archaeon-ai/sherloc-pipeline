@@ -7,7 +7,7 @@ fluorescence full-plane sum, and the masked-assignment R123 stitch — and
 replaces flagged rows via the shared legacy interpolation
 (:func:`~sherloc_pipeline.core.preprocessing.apply_mask_replacement`).
 
-Two normative rules govern combined representations (spec §3.3):
+Two normative rules govern combined representations:
 
 - **Contributor-set principle** — at each channel, apply the masks of
   exactly the regions that contribute to that channel under that
@@ -278,7 +278,7 @@ def apply_stored_mask_to_array(
 
 #: Per-channel contributor segments of the Loupe overlap-summation R123
 #: construction, *derived from* the boundary constants in
-#: ``core/r123_stitching.py`` (never hardcoded separately — spec §3.3).
+#: ``core/r123_stitching.py`` (never hardcoded separately).
 #: Each entry is ``(start, end, (regions...))``
 #: with ``[start, end)`` half-open channel ranges.
 def _r123_summation_segments() -> Sequence[Tuple[int, int, Tuple[str, ...]]]:
@@ -313,8 +313,8 @@ def count_uncovered_contributor_channels(
     behavior (spec §3.3). The count is the disclosure value
     ``n_uncovered_contributor_channels`` returned by composite web views
     (§4.6); it is **derived** here from the construction's own segment
-    definition plus ``region_windows`` and is never a hardcoded constant
-    (review F1-R4). With today's certified windows it evaluates to 207 for
+    definition plus ``region_windows`` and is never a hardcoded constant.
+    With today's certified windows it evaluates to 207 for
     ``r123_summation`` (147 overlap + 60 edge) and 2148 for
     ``fluorescence_sum``; single-region views report 0.
 

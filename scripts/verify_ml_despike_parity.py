@@ -306,8 +306,8 @@ def main() -> int:
     print(f"mark written to {args.out}")
     if not parity:
         print(
-            "PARITY FAILURE: stop and diagnose. The next "
-            "integration phase must not start and the change must not merge.",
+            "PARITY FAILURE: the integrated detector does not reproduce the "
+            "reference flags; diagnose before using it.",
             file=sys.stderr,
         )
     return 0 if parity else 1

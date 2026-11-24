@@ -1431,7 +1431,7 @@ class PDSObservationGrouper:
         (``pds_<sol>_<sclk>_<obs>``), so the name-authoritative resolver
         (:func:`sherloc_pipeline.models.spectra.classify_scan_type`) falls
         back here to sequence-code (calibration) + spectrum count — exactly
-        the WS-1 §4.2 "uninformative name" branch. The human-readable
+        the resolver's "uninformative name" branch. The human-readable
         Loupe scan names that the resolver classifies authoritatively are
         applied on the Loupe ingest path, not here. A missing count stays
         ``None`` (the carry layer quarantines it) rather than guessing.

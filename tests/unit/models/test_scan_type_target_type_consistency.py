@@ -1,5 +1,5 @@
 """Cross-consistency between the orthogonal scan_type (geometry) and target_type
-(purpose) axes — WS-1 §4.2 calibration-vocabulary widening.
+(purpose) axes, after the calibration-vocabulary widening.
 
 The widened calibration vocabulary in :func:`classify_scan_type` overlaps the
 cal/engineering scan-name rules in :func:`classify_target_type`. These tests
@@ -50,8 +50,7 @@ CAL_ENG_AT_THEIR_TARGETS = [
 def test_calibration_scan_type_never_contradicts_mars_target(name, target):
     # Each vector is a calibration/engineering family member: assert the geometry
     # axis calls it calibration FIRST (so drift away from the widened vocabulary
-    # fails loudly rather than silently skipping the cross-axis check — Codex
-    # PR #13 F1), then assert the purpose axis agrees it is not a Mars target.
+    # fails loudly rather than silently skipping the cross-axis check), then assert the purpose axis agrees it is not a Mars target.
     assert _st(name) == "calibration"
     assert classify_target_type(target, name) in ("cal_target", "engineering")
 

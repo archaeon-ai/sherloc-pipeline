@@ -92,7 +92,7 @@ R123_CONTRIBUTORS = ("R1", "R2", "R3")
 
 
 # ---------------------------------------------------------------------------
-# Stored-mask despike toggle (spec §4.6)
+# Stored-mask despike toggle
 #
 # The serving host never runs ML inference: ``?despike=true`` looks up the
 # masks the pipeline already persisted (``cosmic_ray_masks`` table) and
