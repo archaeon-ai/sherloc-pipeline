@@ -71,10 +71,6 @@ preprocessing:
     # CLI: --allow-missing-background.
     allow_missing: false
     pulses_per_point: 900
-    laser_scale:
-      enabled: true
-      roi: [600.0, 700.0]
-      clip: [0.1, 5.0]
     scale_bounds: [0.1, 5.0]  # warn if calculated scale is outside this range
     # Configurable background spectra for 'sherloc plot' command
     # Keep "as" and "fs" varieties hard-coded; file paths are configurable
@@ -290,7 +286,7 @@ logging:
 # PDS archive download settings
 pds:
   base_url: "https://pds-geosciences.wustl.edu/m2020/urn-nasa-pds-mars2020_sherloc"
-  cache_dir: "./data/pds"             # Override: SHERLOC_PDS_CACHE_DIR (was ./pds)
+  cache_dir: "./pds"                  # Override: SHERLOC_PDS_CACHE_DIR
   timeout_seconds: 60.0
   max_retries: 3
   backoff_factor: 2.0

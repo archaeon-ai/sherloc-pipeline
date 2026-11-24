@@ -188,8 +188,6 @@ class PreprocessingService:
         baseline_asym: Optional[float] = None,
         baseline_iters: Optional[int] = None,
         background_file: Optional[Path] = None,
-        bkg_scale_method: str = 'ppp',
-        bkg_laser_roi: Optional[str] = None,
         allow_missing_background: Optional[bool] = None,
     ) -> ServiceResult:
         """Process a single SHERLOC scan through the complete preprocessing pipeline.
@@ -225,8 +223,6 @@ class PreprocessingService:
             baseline_iters: asPLS max iterations. If None, uses config default.
             background_file: Background spectrum CSV for background subtraction.
                 If None, uses config default.
-            bkg_scale_method: Background scaling method: "ppp" (default) or "laser"
-            bkg_laser_roi: Override laser ROI as 'lo,hi' (e.g., '600,700')
             allow_missing_background: Run without background subtraction when
                 no background spectrum resolves or it cannot be read. None
                 defers to preprocessing.background_subtraction.allow_missing
@@ -656,8 +652,6 @@ class PreprocessingService:
                         target=target,
                         scan=scan,
                         background_file=background_file,
-                        bkg_scale_method=bkg_scale_method,
-                        bkg_laser_roi=bkg_laser_roi,
                         generate_plots=generate_plots,
                         despike_example_point=despike_example_point,
                         config=cfg,
@@ -1089,8 +1083,6 @@ class PreprocessingService:
         target: str,
         scan: str,
         background_file: Optional[Path],
-        bkg_scale_method: str,
-        bkg_laser_roi: Optional[str],
         generate_plots: bool,
         despike_example_point: int,
         *,
@@ -1341,35 +1333,6 @@ class PreprocessingService:
             record["ppp_scale"] = ppp_scale
             test_plots_dir = ingestion.get_results_path(target=target, sol=sol, scan=scan) / "test_plots"
 
-            roi = (600.0, 700.0)
-            clip = (0.1, 5.0)
-            try:
-                pre_cfg = getattr(ingestion.config, 'preprocessing', None)
-                bs_cfg = None
-                if isinstance(pre_cfg, dict):
-                    bs_cfg = pre_cfg.get('background_subtraction', {}) or {}
-                else:
-                    bs_cfg = getattr(pre_cfg, 'background_subtraction', {}) or {}
-                    if not isinstance(bs_cfg, dict):
-                        bs_cfg = {}
-                cfg_ls = bs_cfg.get('laser_scale', {}) if isinstance(bs_cfg, dict) else {}
-                if isinstance(cfg_ls, dict):
-                    r = cfg_ls.get('roi')
-                    if isinstance(r, (list, tuple)) and len(r) == 2:
-                        roi = (float(r[0]), float(r[1]))
-                    c = cfg_ls.get('clip')
-                    if isinstance(c, (list, tuple)) and len(c) == 2:
-                        clip = (float(c[0]), float(c[1]))
-            except Exception:
-                pass
-
-            if bkg_laser_roi:
-                try:
-                    lo, hi = [float(v) for v in str(bkg_laser_roi).split(',')]
-                    roi = (lo, hi)
-                except Exception:
-                    logger.warning("Invalid --bkg-laser-roi, expected 'lo,hi'")
-
             # Get keep windows from config
             try:
                 pre_cfg2 = getattr(ingestion.config, 'preprocessing', None)
@@ -1397,24 +1360,11 @@ class PreprocessingService:
                 x = avg.iloc[:, 0].values
                 y = avg["intensity"].values
 
-                amp_scan = self._compute_laser_peak_amplitude(x, y, roi=roi)
-                amp_bg = self._compute_laser_peak_amplitude(x_bg, y_bg, roi=roi)
-
-                # Method selection
-                scale_method = (bkg_scale_method or 'ppp').lower()
-                if scale_method not in ("laser", "ppp"):
-                    scale_method = "ppp"
+                # Scale the background by the ratio of the scan's pulses per
+                # point to the background's (pulses_per_point in the config).
                 scale_used = ppp_scale
                 method_used = "ppp"
-                if scale_method == "laser":
-                    if amp_scan is not None and amp_bg is not None and amp_bg > 0:
-                        scale_used = float(amp_scan) / float(amp_bg)
-                        scale_used = max(clip[0], min(clip[1], scale_used))
-                        method_used = "laser"
-                    else:
-                        logger.warning("Laser scaling requested but amplitudes unavailable; using PPP")
-
-                logger.info(f"Background scaling method={method_used} roi={roi} scale={scale_used:.4f} (amp_scan={amp_scan}, amp_bg={amp_bg}, ppp_scale={ppp_scale})")
+                logger.info(f"Background scaling method={method_used} scale={scale_used:.4f}")
 
                 y_bg_interp = np.interp(x, x_bg, y_bg * scale_used)
                 y_bkgsub = y - y_bg_interp
@@ -1682,24 +1632,3 @@ class PreprocessingService:
         except Exception:
             pass
         return 1.0
-    
-    def _compute_laser_peak_amplitude(self, x_vals, y_vals, roi=(600.0, 700.0)) -> Optional[float]:
-        """Estimate laser-line amplitude in ROI using a robust baseline (median) and peak height.
-        
-        Returns None if ROI invalid or no positive peak over baseline.
-        """
-        try:
-            x_arr = np.asarray(x_vals)
-            y_arr = np.asarray(y_vals)
-            mask = (x_arr >= float(roi[0])) & (x_arr <= float(roi[1]))
-            if mask.sum() < 3:
-                return None
-            y_roi = y_arr[mask]
-            baseline = float(np.median(y_roi))
-            amp = float(np.max(y_roi) - baseline)
-            if not np.isfinite(amp) or amp <= 0:
-                return None
-            return amp
-        except Exception:
-            return None
-

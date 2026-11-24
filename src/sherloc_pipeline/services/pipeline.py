@@ -674,8 +674,6 @@ class PipelineService:
                     baseline_asym=None,
                     baseline_iters=None,
                     background_file=None,
-                    bkg_scale_method="ppp",
-                    bkg_laser_roi=None,
                 )
             except Exception as exc:
                 stage_warnings.append(str(exc))
