@@ -1,4 +1,4 @@
-"""Mineral fitter rules of 2026-11-12: AICc gain threshold, merge-admissible candidates,
+"""Mineral fitter rules: AICc gain threshold, merge-admissible candidates,
 negative-spike channel masking, cosmic-ray review flag, configured caps and flags."""
 from pathlib import Path
 
@@ -33,7 +33,7 @@ def _cfg(**parsimony):
     return cfg
 
 
-def test_config_carries_the_rulings():
+def test_config_carries_the_mineral_fit_defaults():
     assert CONFIG["parsimony"]["model_selection"] == "aicc"
     assert CONFIG["parsimony"]["aicc_improve_threshold"] == 0.0
     assert CONFIG["parsimony"]["reject_merged_candidates"] is True

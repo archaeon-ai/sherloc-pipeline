@@ -1,10 +1,8 @@
 name: CI
-# Trigger discipline (archaeon-ai Actions budget, 2026-08-21): this suite is
-# the org's only multi-minute workflow. `on: [push, pull_request]` with no
-# branch filter ran it TWICE per push to a PR branch; with 25-min runs that
-# burned the org's entire 3,000-minute monthly allowance by 08-21 and blocked
-# CI for every repo. Run once per PR head, once per main push, and cancel a
-# superseded run when a new push lands on the same ref.
+# Trigger discipline: this suite takes many minutes. `on: [push, pull_request]`
+# with no branch filter would run it twice per push to a PR branch. Run once
+# per PR head, once per main push, and cancel a superseded run when a new push
+# lands on the same ref, to keep CI minutes down.
 on:
   push:
     branches: [main]

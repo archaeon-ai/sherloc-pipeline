@@ -1,6 +1,6 @@
 """Despiked input for broad domains, non-despiked for minerals.
 
-Ken's ruling (2026-10-21): organics, hydration and fluorescence fit the
+Organics, hydration and fluorescence fit the
 despiked spectrum (broad, hard to confuse with cosmic rays); minerals stay
 non-despiked because despiking can clip sharp mineral peaks. These tests pin
 the hydration point path and map mode to that rule. All spectra are synthetic.

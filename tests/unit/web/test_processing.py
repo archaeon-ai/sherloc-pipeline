@@ -1079,7 +1079,7 @@ def _hydration_fit_body(wn, intensity):
 
 @pytest.mark.asyncio
 async def test_hydration_veto_off_by_default_keeps_the_cosmic_ray(client, fake_config):
-    """Flag-off is the pre-#38 contract: the CR is still returned, unannotated."""
+    """Flag-off is the no-veto contract: the CR is still returned, unannotated."""
     wn, intensity = _make_hydration_cr_spectrum()
     resp = await client.post("/api/process/fit", json=_hydration_fit_body(wn, intensity))
 

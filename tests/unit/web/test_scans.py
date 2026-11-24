@@ -460,7 +460,7 @@ async def test_get_scan_colorized_aci_available_true_when_variant_exists(
     """ACI row present + R2 reports a sol_NNNN_colorized/ sibling → True."""
     _seed_aci_context_image(
         test_engine,
-        "/work/sherloc/PHASE-data/loupe/sol_0921/Amherst_Point_aci.png",
+        "/example/data/loupe/sol_0921/Amherst_Point_aci.png",
     )
     # Stub the R2 HEAD probe to assert the route consults it and to
     # avoid network. Patch in the routes module where it's imported.
@@ -479,11 +479,11 @@ async def test_get_scan_colorized_aci_available_false_when_variant_missing(
     test_engine, client, monkeypatch
 ):
     """ACI row present but no R2 sibling → False (the sparse-coverage
-    case that motivated this fix — 170 of 205 historical sols hit it).
+    case: most sols have no colorized variant).
     """
     _seed_aci_context_image(
         test_engine,
-        "/work/sherloc/PHASE-data/loupe/sol_0614/Uganik_Island_aci.png",
+        "/example/data/loupe/sol_0614/Uganik_Island_aci.png",
     )
     monkeypatch.setattr(
         "sherloc_pipeline.web.routes.scans.colorized_variant_exists",
@@ -578,7 +578,7 @@ async def test_get_scan_colorized_probe_skipped_when_access_denied(
     # is skipped for an unrelated reason.
     _seed_aci_context_image(
         test_engine,
-        "/work/sherloc/PHASE-data/loupe/sol_0921/Amherst_Point_aci.png",
+        "/example/data/loupe/sol_0921/Amherst_Point_aci.png",
     )
 
     def _fail_if_called(_path):  # pragma: no cover — must not run

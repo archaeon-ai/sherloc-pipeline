@@ -107,7 +107,7 @@ class TestClassifyTargetType:
 
     @pytest.mark.parametrize("target", [
         "Amherst Point", "Berry Hollow", "Bills Bay",
-        "Dragons Egg Lake", "cat arm reservoir",
+        "T0861", "cat arm reservoir",
         "Aitkenodden", "Klorne",
     ])
     def test_mars_science_targets(self, target):

@@ -202,7 +202,7 @@ class RawLoupeMetadata(PHASEBaseModel):
         Returns:
             Validated Scan instance
         """
-        # Name-authoritative scan_type (WS-1 §4.2). Loupe workspaces carry the
+        # Name-authoritative scan_type. Loupe workspaces carry the
         # human-readable scan name (detail_1, survey_100, line_2, HDR_500, …),
         # so classification is name-driven; the spectrum count is only a
         # fallback for uninformative names. An informative-unknown name is

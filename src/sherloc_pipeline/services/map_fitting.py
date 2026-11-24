@@ -243,7 +243,7 @@ def _fallback_fluor_wavelength(session, scan_point_id, spectrum_type):
 
 
 # Domains fitted on the non-despiked spectrum: sharp mineral peaks can be hit
-# by despiking (Ken's ruling, 2026-10-21). Organics and hydration (broad, hard
+# by despiking. Organics and hydration (broad, hard
 # to confuse with cosmic rays) are fitted on the despiked spectrum, matching
 # the point pipeline.
 _NON_DESPIKED_DOMAINS = frozenset({"minerals"})

@@ -306,7 +306,7 @@ class PixliseImage(IdentifiableModel):
     Example:
         >>> img = PixliseImage(
         ...     target_id="...",
-        ...     filename="PCW_0921_bubenka.png",
+        ...     filename="PCW_1692_bubenka.png",
         ...     image_type=PixliseImageType.PCW,
         ... )
     """

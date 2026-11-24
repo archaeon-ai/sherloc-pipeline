@@ -5,7 +5,7 @@
 **Date:** 2026-01-25
 **Pipeline SHA:** `git log -1 --format="%H"`
 
-> **Freshness note.** Dataset counts and experimental result tables in this document describe an earlier codebase and database state (cut-off 2026-01). Algorithm parameters and citation entries were re-audited against `src/sherloc_pipeline/config.yaml` and Crossref. For current database statistics, run `sherloc db-stats`. A refresh of the experimental sections is planned but not blocking.
+> **Freshness note.** Dataset counts and experimental result tables in this document describe an earlier codebase and database state (cut-off 2026-01). Algorithm parameters and citation entries were re-audited against `src/sherloc_pipeline/config.yaml` and Crossref. For current database statistics, run `sherloc db-stats`.
 
 ---
 
@@ -412,10 +412,9 @@ corpus, the published mission bad-pixel table (Jakubek et al. 2025), or both.
 ### 2.2.3 Fluorescence Fit Input: ML-Despiked R1–R3 with Laser Normalization
 
 Fluorescence is fitted on the dark-subtracted R1, R2 and R3 spectra with the
-stored ML cosmic-ray masks applied, and is then laser-normalized. This follows
-the domain owner's ruling of 2026-10-21: despiked input for organics, hydration
-and fluorescence (broad features, hard to confuse with cosmic rays), and
-non-despiked input for minerals.
+stored ML cosmic-ray masks applied, and is then laser-normalized. Organics,
+hydration and fluorescence fit despiked input, because their broad features are
+hard to confuse with cosmic rays; minerals fit non-despiked input.
 
 **Despiked rows.** For each scan point and region, the dark-subtracted spectrum
 takes its newest stored mask (§2.2.1). The flagged channels inside the region's
@@ -432,8 +431,8 @@ rows: fluorescence peaks stay linked to the point's measured R2 spectrum.
   them only from masks persisted by that run. A run despiked another way (or
   not at all), or one whose mask stage failed, therefore leaves no despiked
   rows.
-- For scans processed before this change, `sherloc backfill-fluor-inputs`
-  builds the rows from the masks already stored.
+- For scans processed by versions without despiked rows,
+  `sherloc backfill-fluor-inputs` builds the rows from the masks already stored.
 
 **Which input a fit uses.** A point is fitted on its despiked rows only when all
 three regions have one that is newer than both its dark-subtracted parent and
@@ -601,7 +600,7 @@ With `parsimony.reject_merged_candidates: true` (default), a candidate is skippe
 
 **Cosmic-ray review flag:** when a spectrum's cosmic-ray mask positions are supplied, each fitted peak carries `cr_mask_review` (a mask channel lies within center ± FWHM/2). It is a review flag only: it never removes a peak and never changes the fit input.
 
-**Mineral fit input:** the original dark-subtracted spectrum, not despiked (domain owner 2026-10-21, reconfirmed 2026-11-12: "despiked mineral input: no"); spikes are handled by negative-spike exclusion and the cosmic-ray review flag, never by a despiked input.
+**Mineral fit input:** the original dark-subtracted spectrum, not despiked; spikes are handled by negative-spike exclusion and the cosmic-ray review flag, never by a despiked input.
 
 ```python
 def compute_aicc(n_samples: int, rss: float, num_params: int) -> float:
@@ -640,6 +639,8 @@ For the mineral fit and the organics G fit, the size log is written per point, a
 - **FWHM:** initial-search lower bound 22 cm⁻¹ (`fit_fwhm_min_initial_cm1`), upper bound 90 cm⁻¹ (`fwhm_max_cm1`); post-fit `pass_fwhm` flag ≥ 25 cm⁻¹ (`filter_fwhm_min_cm1`); reviewable/persist eligibility ≥ 25 cm⁻¹ (`reviewable_fwhm_min_cm1`)
 
 Organics use their own R² minimum, `organics_r2_min` (0.25), for the G gate and the D+G fit; the mineral `r_squared_min` does not apply to them. Domain overrides (organics, hydration, fluorescence) are defined in the same `fitting:` block of `config.yaml` and may relax or tighten these defaults. The fluorescence `posthoc_filters` block sets `r2_min: 0.0` and `fwhm_min_cm1: 0.0`, disabling those post-hoc R² and FWHM rejection gates for the fluorescence domain.
+
+**Hydration cosmic-ray veto (off by default, issue #38):** a cosmic ray inside 2800–3900 cm⁻¹ can pass the R² and F-test gates as an OH-stretch peak with its FWHM pinned at the 50 cm⁻¹ floor. `fitting.hydration_cr_veto` (implemented in `core/hydration_veto.py`, applied on the pipeline, map and web point-fit paths) adds two signals: (a) a despike-mask veto, which implicates a candidate when a positive-going masked bin within `center_window_cm1` (15) of its center accounts for at least `mask_min_drop_ratio` (0.10) of its local height, or when the despiker removes more than `amplitude_drop_ratio_max` (0.5) of that height; and (b) a bound-pinning flag for a FWHM within `fwhm_floor_epsilon_cm1` (0.5) of the floor, which never rejects on its own. `action: "reject"` drops an implicated candidate and `"flag"` only annotates it. On synthetic spectra a two-channel spike is caught by both signals and an authentic broad OH band (FWHM ≈ 280 cm⁻¹, drop ratio ≈ 0.013) survives; without the 0.10 floor the mask signal vetoes such a band on a single masked noise channel. The thresholds are starting values: the catch rate on floor-pinned rows and the false-positive rate on interior-width rows have not yet been measured on a mission database, which `scripts/hydration_cr_veto_report.py --db <phase.db> [--all-rows]` reports (aggregate counts only).
 
 **References:**
 - F-test for nested models: standard derivation; implementation in `core/fitting.py:_f_test_pvalue`.

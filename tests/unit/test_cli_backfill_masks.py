@@ -9,7 +9,7 @@ masks-only contract:
   * preprocessing is invoked per scan with despike_method="ml"
   * the exact despike provenance produced by run_scan is handed to
     persist_masks (no fitting service is involved at all)
-  * the --sol filter narrows to a single sol (canary)
+  * the --sol filter narrows to a single sol
   * --dry-run touches no services
 """
 

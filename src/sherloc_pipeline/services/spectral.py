@@ -106,7 +106,7 @@ class DespikeApplication:
     from the database, ``modz`` means the legacy method computed live on
     the loaded representation, ``none`` means no mask application. The
     per-render summary line and the once-per-invocation no-mask note are
-    built from these counts (review F8).
+    built from these counts.
 
     ``--level`` data (``source="stored_level"``) is never re-processed;
     its despike state is a property of the stored level itself — the
@@ -220,7 +220,7 @@ class SpectralPlotRequest:
     # Domain selection (for plotting fitted peaks from DB)
     domain: Literal["raman", "fluor", "both"] = "raman"
 
-    # Cosmic-ray despike method (spec §4.7). None defers to
+    # Cosmic-ray despike method. None defers to
     # config (CLI > config > default "ml", resolve_despike_method). On
     # Loupe-loaded data: "ml" applies stored DB masks (never inference),
     # "modz" computes the legacy despike live, "none" applies nothing
@@ -365,7 +365,7 @@ class SpectralService:
         self.context = context if context is not None else RuntimeContext.bootstrap()
         # Per-invocation despike state ("both" re-enters process(), so the
         # no-mask note aggregates across renders and prints exactly once
-        # per top-level invocation — review F8).
+        # per top-level invocation).
         self._despike_depth = 0
         self._despike_no_mask = 0
         self._despike_points_seen = 0
@@ -417,7 +417,7 @@ class SpectralService:
 
         if top_level and self._despike_no_mask > 0:
             # Once per invocation, aggregated with a count — never per
-            # spectrum (spec §4.7 / review F8). Mirrors the web view's
+            # spectrum. Mirrors the web view's
             # communicated-state contract. Carried as a
             # ServiceResult warning: the CLI prints warnings to the
             # console exactly once, and JSON mode surfaces them

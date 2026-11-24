@@ -374,7 +374,7 @@ def test_mineral_aicc_summary_write_failure_fails_the_fit(tmp_path, mineral_base
     assert _read_fit_run_marker(_mineral_marker(mineral_base))["status"] == "running"
 
 
-# --- Reruns over a shrinking point set (#38 review round 8) -----------------
+# --- Reruns over a shrinking point set (#38) ------------------------------
 #
 # Per-point cleanup only reaches points the current run processed. A rerun
 # whose input has *fewer* point columns — a partial re-export, a reprocessed

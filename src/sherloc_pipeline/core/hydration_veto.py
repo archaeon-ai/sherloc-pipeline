@@ -1,7 +1,7 @@
 """Cosmic-ray veto for hydration (OH-stretch) peak fits.
 
 Hydration fitting reads the despiked branch when preprocessing produced one
-(the domain owner's ruling, 2026-10-21); without it the fit sees the
+(broad O-H bands are hard to confuse with cosmic rays); without it the fit sees the
 non-despiked spectrum. A cosmic ray the despiker missed (or any spike when no
 despiked branch exists) inside the 2800-3900 cm-1 window can pass the R2 and
 F-test gates and be reported as an OH-stretch feature with its FWHM pinned
@@ -19,9 +19,9 @@ discarded at call sites.
 unreliable by construction: the optimiser wanted a narrower peak than the model
 allows. This is a flag only, never a rejection.
 
-Both mechanisms sit behind a feature flag that is DEFAULT OFF. The thresholds are
-science decisions; the defaults below are proposals pending operator ratification
-(see ``docs/reports/HYDRATION_CR_VETO_EVIDENCE.md``).
+Both mechanisms sit behind a feature flag that is off by default. The defaults
+below are starting values, not yet validated on a full sweep (see
+``docs/METHODS.md``, hydration cosmic-ray veto).
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ WARNING_MODEL_REBUILT = "post_veto_model_rebuilt"
 # The only two accepted values of ``HydrationVetoConfig.action``.
 VALID_ACTIONS = frozenset({"reject", "flag"})
 
-# Proposed defaults (NOT ratified — see the evidence report).
+# Starting defaults, not yet validated on a full sweep (docs/METHODS.md §3.4).
 DEFAULT_CENTER_WINDOW_CM1 = 15.0
 DEFAULT_AMPLITUDE_DROP_RATIO_MAX = 0.5
 DEFAULT_MASK_MIN_DROP_RATIO = 0.10

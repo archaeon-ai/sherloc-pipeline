@@ -1,4 +1,4 @@
-"""Plot despike integration (spec §4.7, review F8).
+"""Plot despike integration.
 
 ``plot`` never runs inference: ``ml`` applies stored DB masks via the
 pipeline's own mask-application helpers; ``modz`` computes the legacy

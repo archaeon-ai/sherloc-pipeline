@@ -1,6 +1,6 @@
-"""Organics keep their own R2 minimum (Ken 2026-11-23: "organics keeps r2").
+"""Organics keep their own R2 minimum.
 
-The 2026-11-12 rulings dropped the mineral ``r_squared_min`` to 0.0. The
+The mineral ``r_squared_min`` is 0.0. The
 organics fit config is copied from the mineral one, so without its own
 ``organics_r2_min`` the dropped minimum reached organics by inheritance and
 a G fit with R2 below 0.25 was kept. These tests drive the real
