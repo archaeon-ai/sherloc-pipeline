@@ -783,6 +783,27 @@ async def test_background_auto_scale_reads_config_ppp(client, fake_config):
     assert resp.json()["scale_used"] == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [None, True, False, "900", 0, -450, float("inf"), float("nan")],
+)
+def test_background_ppp_invalid_values_fall_back_to_900(value):
+    """Only a finite positive number is taken from config; anything else gives 900."""
+    from types import SimpleNamespace
+    from sherloc_pipeline.web.routes.processing import _background_pulses_per_point
+
+    cfg = SimpleNamespace(preprocessing={"background_subtraction": {"pulses_per_point": value}})
+    assert _background_pulses_per_point(cfg) == 900.0
+
+
+def test_background_ppp_valid_config_value_is_used():
+    from types import SimpleNamespace
+    from sherloc_pipeline.web.routes.processing import _background_pulses_per_point
+
+    cfg = SimpleNamespace(preprocessing={"background_subtraction": {"pulses_per_point": 450}})
+    assert _background_pulses_per_point(cfg) == 450.0
+
+
 def test_shipped_config_background_ppp_is_900():
     """The packaged config's background pulses per point is 900, so auto scale is unchanged."""
     from sherloc_pipeline.config import load_config

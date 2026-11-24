@@ -4,6 +4,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import math
 import re
 from typing import Optional
 
@@ -558,15 +559,14 @@ _DEFAULT_BACKGROUND_PPP = 900.0
 
 
 def _background_pulses_per_point(config) -> float:
-    """Background pulses per point from config, else 900 (the shipped backgrounds)."""
+    """Background pulses per point from config: a finite positive number, else 900 (the shipped backgrounds)."""
     pre = getattr(config, "preprocessing", None) or {}
     bs = pre.get("background_subtraction", {}) if isinstance(pre, dict) else {}
     ppp = bs.get("pulses_per_point") if isinstance(bs, dict) else None
-    try:
-        value = float(ppp) if ppp is not None else _DEFAULT_BACKGROUND_PPP
-    except (TypeError, ValueError):
+    if isinstance(ppp, bool) or not isinstance(ppp, (int, float)):
         return _DEFAULT_BACKGROUND_PPP
-    return value if value > 0 else _DEFAULT_BACKGROUND_PPP
+    value = float(ppp)
+    return value if math.isfinite(value) and value > 0 else _DEFAULT_BACKGROUND_PPP
 
 
 @router.post("/process/background", response_model=BackgroundResponse)
