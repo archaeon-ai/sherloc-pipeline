@@ -92,14 +92,8 @@ dev = [
     # ever committed.
     "onnx>=1.21.0",
 ]
-# Optional ML extras for SAM-based grain segmentation. Skipped automatically
-# in tests when the deps are absent.
-ml = [
-    "torch>=2.0.0",
-    "segment-anything>=1.0",
-]
-# ML cosmic-ray despike runtime (~30 MB CPU onnxruntime) — distinct from
-# the torch [ml] (SAM) extra; plain installs stay lean.
+# ML cosmic-ray despike runtime (~30 MB CPU onnxruntime); plain installs
+# stay lean.
 # The upper bound deviates deliberately from the house floor-only pin
 # style: numeric flag parity of the certified v1.1 detector is certified
 # against onnxruntime 1.26.0 (the sole certified runtime configuration),

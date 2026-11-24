@@ -51,6 +51,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and no migration: SQLite does not enforce the width, so existing and new
   databases hold the longer value as they are.
 
+### Removed
+- **Grain segmentation, grain morphometry and spectrum clustering code is
+  removed from the package.** No `sherloc` command and no web route used it.
+  Gone: `sherloc_pipeline.vision.segmentation` (SAM grain masks),
+  `sherloc_pipeline.vision.morphometry` (grain shape statistics and
+  grain-to-spectrum links), `sherloc_pipeline.services.segmentation` (the
+  service that ran them), and the whole `sherloc_pipeline.ml` package
+  (clustering, spectral distance and similarity, feature extraction and their
+  base classes), with their tests. `sherloc_pipeline.vision` now exports only
+  the ACI image reader (`read_aci_image`, `scan_img_files`,
+  `get_raw_vicar_label`, `ACIImageMetadata`); `segment_grains`,
+  `GrainSegmenter`, `GrainMorphometryAnalyzer`, `analyze_morphometry`,
+  `compute_grain_spectrum_linkage` and the grain types are gone. The `[ml]`
+  install extra (torch and segment-anything) is removed; `[ml-despike]`, the
+  cosmic-ray detector, is unchanged. Code that imported any of these must
+  keep its own copy or pin an earlier release. Commands, web routes, fits and
+  the documented Python API (`sherloc_pipeline.api`) are unchanged.
+
 ### Fixed
 - **Organics keep their own R2 minimum.** The organics fit config is copied
   from the mineral one, so the 5.7.7 mineral `r_squared_min` of 0.0 reached
