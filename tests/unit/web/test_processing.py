@@ -96,9 +96,9 @@ async def test_fit_keeps_configured_parsimony_settings(synthetic_fit_client, mon
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("domain,expected", [("hydration", 0.0), ("minerals", 0.2), ("organics", 0.2)])
-async def test_hydration_fit_has_no_slit_preference(synthetic_fit_client, monkeypatch, domain, expected):
-    """The hydration point fit carries slit weight 0; other domains keep the configured weight."""
+@pytest.mark.parametrize("domain,expected", [("hydration", 0.0), ("organics", 0.0), ("minerals", 0.2)])
+async def test_point_fit_slit_preference_by_domain(synthetic_fit_client, monkeypatch, domain, expected):
+    """The hydration and organics point fits carry slit weight 0; minerals keeps the configured weight."""
     from sherloc_pipeline.web.routes import processing
 
     client, config = synthetic_fit_client
@@ -135,6 +135,35 @@ async def test_hydration_point_fit_does_not_depend_on_spectrum_scale(synthetic_f
             "wavenumber": x.tolist(), "intensity": (scale * y).tolist(),
             "params": {"fitting": {"domain": "hydration", "wavenumber_range": [2800.0, 3900.0],
                                    "fwhm_bounds": [50.0, 300.0], "max_peaks": 2, "min_snr": 3.0,
+                                   "model_selection": "f-test"}, "baseline": None},
+        })
+        assert response.status_code == 200, response.text
+        return sorted(response.json()["peaks"], key=lambda p: p["center_cm1"])
+
+    base, scaled = await fit(1.0), await fit(50.0)
+    assert len(base) == 2, "precondition: both bands are fitted"
+    assert len(scaled) == len(base)
+    for b, s in zip(base, scaled):
+        assert s["center_cm1"] == pytest.approx(b["center_cm1"], abs=0.01)
+        assert s["fwhm_cm1"] == pytest.approx(b["fwhm_cm1"], abs=0.01)
+        assert s["amplitude"] == pytest.approx(50.0 * b["amplitude"], rel=1e-4)
+
+
+@pytest.mark.asyncio
+async def test_organics_point_fit_does_not_depend_on_spectrum_scale(synthetic_fit_client):
+    """Through the real fitter: an organics spectrum and the same spectrum times 50 return the
+    same centers and FWHM (within 0.01 cm-1) and amplitudes times 50 (within 1e-4 relative)."""
+    client, config = synthetic_fit_client
+    config.fitting = {"slit_pref_weight": 0.2}
+    x = np.linspace(1000.0, 2000.0, 500)
+    band = lambda c, a, f: a * np.exp(-4.0 * np.log(2.0) * (x - c) ** 2 / f ** 2)
+    y = band(1360.0, 30.0, 90.0) + band(1600.0, 45.0, 60.0) + np.random.default_rng(11).normal(0.0, 1.0, x.shape)
+
+    async def fit(scale):
+        response = await client.post("/api/process/fit", json={
+            "wavenumber": x.tolist(), "intensity": (scale * y).tolist(),
+            "params": {"fitting": {"domain": "organics", "wavenumber_range": [1200.0, 1800.0],
+                                   "fwhm_bounds": [20.0, 200.0], "max_peaks": 2, "min_snr": 3.0,
                                    "model_selection": "f-test"}, "baseline": None},
         })
         assert response.status_code == 200, response.text
