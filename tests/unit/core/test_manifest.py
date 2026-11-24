@@ -116,11 +116,11 @@ def test_fuzzy_match_does_not_resolve_to_distinct_sibling_index(tmp_path: Path) 
     other. Requesting ``detail_1`` when only ``detail_2`` exists must refuse
     to guess rather than silently resolving to the wrong scan.
     """
-    sol_dir = tmp_path / "sol_2000"
+    sol_dir = tmp_path / "sol_0921"
     _make_working_dir(sol_dir, "detail_2", "detail_2")
 
     resolved = resolve_manifest_working_directory(
-        base_data_dir=tmp_path, sol="2000", scan="detail_1"
+        base_data_dir=tmp_path, sol="0921", scan="detail_1"
     )
 
     assert resolved is None

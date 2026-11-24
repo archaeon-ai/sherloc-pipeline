@@ -161,9 +161,9 @@ def test_range_token_and_path_naming(tmp_path: Path):
     assert format_range_token((700.0, 1200.0)) == "700-1200"
     assert format_range_token((700.5, 1200.0)) == "700.5-1200"
 
-    full_range = tmp_path / "1934_La_Suize_line_R1_avg-4p_trim_mean_bkgsub_fit.png"
+    full_range = tmp_path / "0921_Testrock_line_R1_avg-4p_trim_mean_bkgsub_fit.png"
     assert zoomed_overlay_path(full_range, (700.0, 1200.0)) == (
-        tmp_path / "1934_La_Suize_line_R1_avg-4p_trim_mean_bkgsub_fit_700-1200.png"
+        tmp_path / "0921_Testrock_line_R1_avg-4p_trim_mean_bkgsub_fit_700-1200.png"
     )
 
 
