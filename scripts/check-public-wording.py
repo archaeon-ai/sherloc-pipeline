@@ -44,8 +44,10 @@ ALLOW_PATH = ".github/public-wording-allow.txt"
 # Sols at or above this value are invented examples (sol 9999 is the usual one;
 # tests also use round sols such as 3000 to 8000 and 42424). The rover is far
 # below sol 3000, so every sol past the archived envelope and below it is
-# flagged. Raise this value before the mission nears it.
+# flagged. The check stops with an error once the archived envelope comes
+# within SOL_PLACEHOLDER_MARGIN of this value, so it cannot go quiet on new sols.
 SOL_PLACEHOLDER_MIN = 3000
+SOL_PLACEHOLDER_MARGIN = 500
 
 # Public sites a document may link to. A host is allowed when it equals one of
 # these or ends with "." plus one of them. Anything else, including a service
@@ -398,6 +400,11 @@ def main(argv: list[str] | None = None) -> int:
     ceiling = max_archived_sol(root)
     if ceiling is None:
         print(f"error: no pds_envelope max_sol in {LEDGER_PATH}", file=sys.stderr)
+        return 2
+    if ceiling >= SOL_PLACEHOLDER_MIN - SOL_PLACEHOLDER_MARGIN:
+        print(f"error: archived max_sol {ceiling} is within {SOL_PLACEHOLDER_MARGIN} of "
+              f"SOL_PLACEHOLDER_MIN ({SOL_PLACEHOLDER_MIN}); raise SOL_PLACEHOLDER_MIN and "
+              f"move invented test sols above it", file=sys.stderr)
         return 2
 
     try:

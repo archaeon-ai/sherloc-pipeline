@@ -403,3 +403,14 @@ def test_sols_between_the_archive_and_the_invented_range_are_flagged(text):
 
 def test_a_dated_measurement_note_is_not_a_decision_note():
     assert rules("measured on the 190 release-16 P-flag rrs/rcs labels, 2026-11-22,") == set()
+
+
+@pytest.mark.parametrize("max_sol", [2500, 2999, 3000, 3500])
+def test_a_ceiling_near_the_invented_range_is_a_usage_error(tmp_path, max_sol):
+    repo = _repo(tmp_path, max_sol=max_sol)
+    r = _run(repo, "--tree")
+    assert r.returncode == 2 and "SOL_PLACEHOLDER_MIN" in r.stderr
+
+
+def test_a_ceiling_below_the_margin_still_runs(tmp_path):
+    assert _run(_repo(tmp_path, max_sol=2499), "--tree").returncode == 0
