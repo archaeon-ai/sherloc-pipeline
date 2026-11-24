@@ -88,7 +88,12 @@ def test_a_failed_despike_leaves_no_despiked_outputs(tmp_path, fixtures_path, mo
     assert not any(path.exists() for path in paths)
 
 
-def test_a_failed_ml_despike_removes_the_despiked_csv_it_wrote(tmp_path, fixtures_path, monkeypatch):
+def test_a_failed_ml_despike_removes_the_despiked_csv_it_wrote(
+    tmp_path, fixtures_path, monkeypatch, preprocessing_service_with_stub
+):
+    # The stub detector keeps the test off the network: the default detector
+    # fetches the model artifact when it is not cached, and a failed or slow
+    # fetch would fail the despike step before the despiked write.
     paths = _plant_stale(tmp_path)
     written = []
     real_save = DataIngestion.save_spectral_data
