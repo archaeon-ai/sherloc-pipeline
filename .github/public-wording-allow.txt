@@ -94,3 +94,5 @@ tests/unit/scripts/test_check_public_wording.py | host | cache.private | test in
 tests/unit/scripts/test_check_public_wording.py | host | build.acme.tech | test input for the check
 tests/unit/scripts/test_check_public_wording.py | host | files.home | test input for the check
 tests/unit/scripts/test_check_public_wording.py | decision-note | Ruling | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | sol 1860 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | sol 2999 | test input for the check

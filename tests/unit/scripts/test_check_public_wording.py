@@ -389,3 +389,17 @@ def test_ruling_words_are_flagged(text):
 
 def test_a_file_name_with_ruling_in_it_is_not_a_decision_note():
     assert "decision-note" not in rules("`tests/unit/core/test_fitting_rulings.py` is renamed")
+
+
+@pytest.mark.parametrize("text", ['sol_dir = tmp_path / "sol_3000"', "sol 8000", "sol 42424", "sol 9999"])
+def test_invented_far_future_sols_pass(text):
+    assert "sol-ceiling" not in rules(text)
+
+
+@pytest.mark.parametrize("text", ["sol 1860", "sol 2999"])
+def test_sols_between_the_archive_and_the_invented_range_are_flagged(text):
+    assert "sol-ceiling" in rules(text)
+
+
+def test_a_dated_measurement_note_is_not_a_decision_note():
+    assert rules("measured on the 190 release-16 P-flag rrs/rcs labels, 2026-11-22,") == set()

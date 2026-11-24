@@ -41,9 +41,11 @@ from pathlib import Path
 
 LEDGER_PATH = "tests/fixtures/PROVENANCE.json"
 ALLOW_PATH = ".github/public-wording-allow.txt"
-# Sols at or above this value are reserved for invented examples (use sol 9999).
-# Every sol past the archived envelope and below it is flagged.
-SOL_PLACEHOLDER_MIN = 9000
+# Sols at or above this value are invented examples (sol 9999 is the usual one;
+# tests also use round sols such as 3000 to 8000 and 42424). The rover is far
+# below sol 3000, so every sol past the archived envelope and below it is
+# flagged. Raise this value before the mission nears it.
+SOL_PLACEHOLDER_MIN = 3000
 
 # Public sites a document may link to. A host is allowed when it equals one of
 # these or ends with "." plus one of them. Anything else, including a service
