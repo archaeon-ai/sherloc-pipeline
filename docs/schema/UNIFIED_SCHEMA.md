@@ -1066,11 +1066,7 @@ The R1 baseline path uses asPLS (`pybaselines.Baseline.aspls`); a `"poly"` linea
 
 See `src/sherloc_pipeline/core/fluor_fitting.py` and the spec at `docs/specs/FLUORESCENCE_FITTING_SPEC.md`. Strategy is `"agnostic"` by default (1..max_peaks unconstrained Gaussians, AICc-selected; SNR ≥ 20, min peak separation 15 nm). The hypothesis-driven path produces constrained candidate models (M0–M7); falls back to agnostic if R² < 0.7. Group labels (`group1a`, `group1b`, `group2`, `group3`, `unidentified`) are post-hoc via `assign_fluor_group()`.
 
-### B.5 ML / clustering parameters
-
-Algorithm classes in `src/sherloc_pipeline/ml/clustering.py` — `KMeansClusterer`, `DBSCANClusterer`, `HierarchicalClusterer`, all inheriting from `BaseClusterer`. Hyperparameters are constructor-injected; results are returned in `ClusteringResult` with `labels`, `n_clusters`, `cluster_sizes`, optional `centroids` / `inertia` / `silhouette_score`, and a free-form `metadata` dict.
-
-### B.6 VICAR header keys parsed into `context_images.vicar_metadata`
+### B.5 VICAR header keys parsed into `context_images.vicar_metadata`
 
 `src/sherloc_pipeline/vision/img_reader.py:parse_vicar_label()` extracts the keys below from the raw VICAR label of each ACI .IMG file and stores them in the `vicar_metadata` JSON column. This list reflects what the parser actually captures, not the broader VICAR-format standard.
 

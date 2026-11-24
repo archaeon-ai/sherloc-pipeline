@@ -2,8 +2,9 @@
 
 The base install stays lean
 (no ML runtime, no torch), the ``[ml-despike]`` extra is exactly the
-bounded onnxruntime pin, the torch ``[ml]`` (SAM) extra is unchanged,
-and the stub-model builder dependency lives in ``[dev]`` only.
+bounded onnxruntime pin, there is no torch ``[ml]`` extra and the
+README does not offer one, and the stub-model builder dependency lives in
+``[dev]`` only.
 """
 
 import tomllib
@@ -33,9 +34,16 @@ def test_ml_despike_extra_is_exactly_the_bounded_ort_pin(pyproject):
     assert extras["ml-despike"] == ["onnxruntime>=1.26.0,<2.0"]
 
 
-def test_torch_ml_extra_unchanged(pyproject):
+def test_no_torch_ml_extra(pyproject):
     extras = pyproject["project"]["optional-dependencies"]
-    assert extras["ml"] == ["torch>=2.0.0", "segment-anything>=1.0"]
+    assert "ml" not in extras
+    for name, deps in extras.items():
+        assert not any(dep.lower().startswith(("torch", "segment-anything")) for dep in deps), name
+
+
+def test_readme_offers_no_ml_extra():
+    readme = Path(__file__).resolve().parents[3] / "README.md"
+    assert '".[ml]"' not in readme.read_text(encoding="utf-8")
 
 
 def test_onnx_stub_builder_in_dev_only(pyproject):
