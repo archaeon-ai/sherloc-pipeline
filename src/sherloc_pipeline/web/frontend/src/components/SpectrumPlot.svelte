@@ -50,21 +50,35 @@
   }
 
   function bindPlotEvents() {
-    const div = plotDiv as PlotlyDiv;
-    if (!plotEventsBound && typeof div.on === 'function') {
+    const div = plotDiv as PlotlyDiv | null;
+    if (div && !plotEventsBound && typeof div.on === 'function') {
       div.on('plotly_relayout', onPlotRelayout);
       plotEventsBound = true;
     }
   }
 
+  // Plotly loads asynchronously; the component can be destroyed before the
+  // import settles. Stop quietly in that case instead of touching a removed
+  // element or leaving a rejected import unhandled.
+  let destroyed = false;
+
   onMount(async () => {
-    Plotly = await import('plotly.js-basic-dist-min');
+    let mod: typeof import('plotly.js-basic-dist-min');
+    try {
+      mod = await import('plotly.js-basic-dist-min');
+    } catch (err) {
+      if (destroyed) return;
+      throw err;
+    }
+    if (destroyed || !plotDiv) return;
+    Plotly = mod;
     plotInitialized = true;
     renderPlot();
     bindPlotEvents();
   });
 
   onDestroy(() => {
+    destroyed = true;
     if (plotDiv && Plotly) {
       try {
         const div = plotDiv as PlotlyDiv;

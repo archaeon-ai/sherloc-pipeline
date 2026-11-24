@@ -73,3 +73,20 @@ jobs:
             echo "FAIL: tests reference absolute local paths"
             exit 1
           fi
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/sherloc_pipeline/web/frontend
+    steps:
+      - uses: actions/checkout@v4
+      # Same Node version as the frontend build stage of the Dockerfile.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.18.0"
+          cache: npm
+          cache-dependency-path: src/sherloc_pipeline/web/frontend/package-lock.json
+      - run: npm ci
+      - run: npx vitest run
