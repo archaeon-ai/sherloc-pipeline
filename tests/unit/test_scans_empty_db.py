@@ -65,9 +65,9 @@ def populated_db_client(tmp_path, monkeypatch):
             ScanORM(
                 id="test-scan-1",
                 sol_number=921,
-                target="Quartier",
-                scan_name="quartier_detail_1",
-                scan_id="ss_0921_quartier_detail_1",
+                target="T0921",
+                scan_name="detail_1",
+                scan_id="ss_0921_t0921_detail_1",
                 sclk_start=789012345,
                 n_points=100,
                 n_channels=2148,

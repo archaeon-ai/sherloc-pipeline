@@ -719,7 +719,7 @@ class Scan(IdentifiableModel):
     Attributes:
         sol_number: Sol this scan was acquired on
         scan_name: Scan sequence name from Loupe (e.g., 'detail_1', 'survey_1296')
-        target: Geological target name (e.g., 'Amherst_Point', 'Dragons_Egg_Lake')
+        target: Geological target name (e.g., 'Amherst_Point', 'T0861')
         scan_id: Original scan identifier from data source
         sclk_start: Spacecraft clock at scan start
         sclk_stop: Spacecraft clock at scan end (optional)

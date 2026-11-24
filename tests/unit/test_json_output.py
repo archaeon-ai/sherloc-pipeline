@@ -193,9 +193,9 @@ class TestPipelineManifest:
         assert isinstance(parsed, dict)
 
     def test_scan_metadata_preserved(self):
-        m = self._make_manifest(sol=360, target="Quartier", scan_name="HDR_1")
+        m = self._make_manifest(sol=293, target="Quartier", scan_name="HDR_1")
         data = json.loads(m.model_dump_json())
-        assert data["sol"] == 360
+        assert data["sol"] == 293
         assert data["target"] == "Quartier"
         assert data["scan_name"] == "HDR_1"
 

@@ -556,7 +556,7 @@ Fit fluorescence peaks on R2/R3 spectra using differential evolution optimizatio
 
 ```bash
 # Fit a single scan
-sherloc fit-fluor --sol 360 --target "Quartier" --scan 1
+sherloc fit-fluor --sol 293 --target "Quartier" --scan 1
 
 # Fit all scans in the database
 sherloc fit-fluor --all --database ./phase.db
@@ -573,7 +573,7 @@ Persist Raman peak CSVs to the database for a specific domain:
 
 ```bash
 sherloc persist-peaks --domain organics --all
-sherloc persist-peaks --domain hydration --sol 360 --target "Quartier" --scan 1
+sherloc persist-peaks --domain hydration --sol 293 --target "Quartier" --scan 1
 ```
 
 **Options:**
