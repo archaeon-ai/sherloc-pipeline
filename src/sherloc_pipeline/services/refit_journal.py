@@ -312,8 +312,10 @@ class BatchJournal:
         handle.seek(0, os.SEEK_END)
         return done
 
-    def record(self, sol: int, target: str, scan: str) -> None:
+    def record(self, sol: int, target: str, scan: str, **notes: Any) -> None:
+        """Append a completed scan. ``notes`` add fields to its line; resume reads only the key."""
         entry = {
+            **notes,
             "sol": int(sol),
             "target": target,
             "scan": scan,

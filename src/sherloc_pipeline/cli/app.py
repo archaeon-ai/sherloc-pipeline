@@ -2127,6 +2127,7 @@ def _iter_all_scans(
     exclude_type: Optional[str] = None,
     science_only: bool = False,
     with_ids: bool = False,
+    skip_sub_scans: bool = False,
 ):
     """Yield (sol_number, target, scan_name) for all scans in the database.
 
@@ -2140,6 +2141,11 @@ def _iter_all_scans(
             Overrides target_type and exclude_type.
         with_ids: If True, append each scan's row id, so a caller can reach a
             scan stored without a target (#175). Its target is then "".
+        skip_sub_scans: If True, leave out every sub-scan whose parent scan
+            is stored; primary and composite scans are kept. A sub-scan with
+            no parent_scan_id, or one that names no stored scan, is kept
+            (see ``_sub_scans_without_parent``). Combined with the other
+            filters.
     """
     from sherloc_pipeline.database.connection import get_engine, get_session
     from sherloc_pipeline.database.models import ScanORM
@@ -2177,9 +2183,30 @@ def _iter_all_scans(
             if exclude_type is not None:
                 query = query.filter(ScanORM.target_type != exclude_type)
         scans = query.all()
+        if skip_sub_scans:
+            sub_scans = _sub_scans_without_parent(session, every=True)
+            scans = [row for row in scans if sub_scans.get(row[3], True)]
     # Normalize target names: DB stores spaces, filesystem/CLI uses underscores
     rows = [(sol, (tgt or "").replace(" ", "_"), scn, sid) for sol, tgt, scn, sid in scans]
     return rows if with_ids else [row[:3] for row in rows]
+
+
+def _sub_scans_without_parent(session, every: bool = False):
+    """Sub-scans whose parent scan is not stored.
+
+    A sub-scan's parent is not stored when its parent_scan_id is NULL or
+    names no row of ``scans``. Returns the set of those sub-scan ids, or with
+    ``every`` a dict of every sub-scan id to whether its parent is missing.
+    """
+    from sherloc_pipeline.database.models import ScanORM
+
+    stored = {sid for (sid,) in session.query(ScanORM.id)}
+    missing = {
+        sid: parent is None or parent not in stored
+        for sid, parent in session.query(ScanORM.id, ScanORM.parent_scan_id)
+        .filter(ScanORM.scan_class == "sub_scan")
+    }
+    return missing if every else {sid for sid, gone in missing.items() if gone}
 
 
 def _refuse_shared_outputs(scans, all_scans=None):
@@ -2802,6 +2829,11 @@ def refit_cmd(
         None, "--target",
         help="Only scans of this target (spaces or underscores). Refuses if no scan matches.",
     ),
+    skip_sub_scans: bool = typer.Option(
+        False, "--skip-sub-scans",
+        help="Fit primary and composite scans only. A sub-scan is run only when its parent "
+             "scan is not stored, and is then named in the journal and the result.",
+    ),
     journal: Optional[Path] = typer.Option(
         None, "--journal",
         help="Journal for a new batch (default: <results>/refit-<UTC time>.jsonl). Must not exist.",
@@ -2846,6 +2878,14 @@ def refit_cmd(
     --target limits the batch to one target's scans, combined with the
     other selection options; the target is part of the batch identity.
 
+    --skip-sub-scans runs primary and composite scans and leaves out each
+    sub-scan (a downlink part of a scan) whose parent scan is stored, since
+    the parent holds the same spectra. A sub-scan whose parent is not stored
+    is still run, so no stored spectra go unfitted; its journal line carries
+    "sub_scan_without_parent": true and the result lists it. The option is
+    part of the batch identity. Scans it leaves out are not run, and the
+    rows they already hold are not changed.
+
     The --json result lists the selected scans and the completed ones
     (including those an earlier run of the batch journaled), each with its
     sol, target, scan name and the id of the scan row the run writes.
@@ -2855,6 +2895,7 @@ def refit_cmd(
     Examples:
         sherloc refit --science
         sherloc refit --science --target Some_Target
+        sherloc refit --science --skip-sub-scans
         sherloc refit --science --journal refit-science.jsonl
         sherloc refit --science --resume refit-science.jsonl
     """
@@ -2924,6 +2965,7 @@ def refit_cmd(
         exclude_type="engineering" if no_engineering else None,
         science_only=science,
         with_ids=True,
+        skip_sub_scans=skip_sub_scans,
     )
     if target_key is not None:
         rows = [row for row in rows if row[1] == target_key]
@@ -2934,6 +2976,17 @@ def refit_cmd(
     if target_key is not None:
         # Only when given, so journals of batches without --target resume as before.
         selection["target"] = target_key
+    orphan_ids: Set[str] = set()
+    if skip_sub_scans:
+        # Only when given, as --target, so earlier journals resume unchanged.
+        selection["skip_sub_scans"] = True
+        from sherloc_pipeline.database.connection import get_engine, get_session
+        _engine = get_engine(db_path)
+        with get_session(_engine) as _session:
+            orphan_ids = _sub_scans_without_parent(_session) & {row[3] for row in rows}
+    orphan_keys = {
+        (int(sol_num), tgt, scn) for sol_num, tgt, scn, sid in rows if sid in orphan_ids
+    }
     identity = batch_identity(
         database=db_path,
         data_root=context.data_root,
@@ -2951,6 +3004,9 @@ def refit_cmd(
         fail(str(e))
 
     runnable, no_target, duplicates = select_runnable(scans)
+    # Name only the sub-scans the batch can run; one without a target is
+    # reported with the other scans that have none.
+    orphan_keys &= {(int(sol_num), tgt, scn) for sol_num, tgt, scn in runnable}
     unrunnable = [f"{sol_num:04d} {scn}: no target" for sol_num, _, scn in no_target]
     duplicate_labels = [f"{sol_num:04d} {tgt} {scn}" for sol_num, tgt, scn in duplicates]
     to_run, skipped = pending(runnable, batch.done)
@@ -2993,7 +3049,11 @@ def refit_cmd(
                 out.print(f"  [red]Not recorded: {'; '.join(reasons)}[/red]")
                 continue
             try:
-                batch.record(sol_num, tgt or "", scn)
+                batch.record(
+                    sol_num, tgt or "", scn,
+                    **({"sub_scan_without_parent": True}
+                       if (int(sol_num), tgt, scn) in orphan_keys else {}),
+                )
             except OSError as e:
                 fail(f"{label} completed but could not be recorded in {batch.path}: {e}. Batch stopped.")
             processed.append(label)
@@ -3020,6 +3080,8 @@ def refit_cmd(
                 "unrunnable": unrunnable,
                 "duplicates": duplicate_labels,
                 "selected": listed(runnable),
+                **({"sub_scans_without_parent": listed(sorted(orphan_keys))}
+                   if skip_sub_scans else {}),
                 "completed": listed([k for k in runnable if k in done_now or k in skipped_keys]),
             },
         )
@@ -3039,6 +3101,10 @@ def refit_cmd(
             out.print(f"[yellow]Duplicate scan keys, run once: {len(duplicate_labels)}[/yellow]")
             for item in duplicate_labels:
                 out.print(f"  - {item}")
+        if orphan_keys:
+            out.print(f"[yellow]Sub-scans selected because their parent scan is not stored: {len(orphan_keys)}[/yellow]")
+            for sol_num, tgt, scn in sorted(orphan_keys):
+                out.print(f"  - {sol_num:04d} {tgt} {scn}")
     sys.exit(1 if failed else 0)
 
 
