@@ -2127,6 +2127,7 @@ def _iter_all_scans(
     exclude_type: Optional[str] = None,
     science_only: bool = False,
     with_ids: bool = False,
+    science_units: bool = False,
 ):
     """Yield (sol_number, target, scan_name) for all scans in the database.
 
@@ -2140,6 +2141,13 @@ def _iter_all_scans(
             Overrides target_type and exclude_type.
         with_ids: If True, append each scan's row id, so a caller can reach a
             scan stored without a target (#175). Its target is then "".
+        science_units: If True, keep one row per science scan: primary scans,
+            sub-scans whose parent scan is not stored (no parent_scan_id, or
+            one that names no stored scan), and composites with a member scan
+            that is not stored (no source_scan_ids, or one that names no
+            stored scan). A sub-scan whose parent is stored, and a composite
+            whose members are all stored, are left out. Combined with the
+            other filters.
     """
     from sherloc_pipeline.database.connection import get_engine, get_session
     from sherloc_pipeline.database.models import ScanORM
@@ -2177,9 +2185,33 @@ def _iter_all_scans(
             if exclude_type is not None:
                 query = query.filter(ScanORM.target_type != exclude_type)
         scans = query.all()
+        if science_units:
+            stored = {
+                sid: (cls, parent, sources)
+                for sid, cls, parent, sources in session.query(
+                    ScanORM.id, ScanORM.scan_class,
+                    ScanORM.parent_scan_id, ScanORM.source_scan_ids,
+                )
+            }
+            scans = [row for row in scans if _is_science_unit(stored[row[3]], stored)]
     # Normalize target names: DB stores spaces, filesystem/CLI uses underscores
     rows = [(sol, (tgt or "").replace(" ", "_"), scn, sid) for sol, tgt, scn, sid in scans]
     return rows if with_ids else [row[:3] for row in rows]
+
+
+def _is_science_unit(fields, stored) -> bool:
+    """Whether a scan is fitted as a science scan (see ``_iter_all_scans``).
+
+    ``fields`` is the scan's (scan_class, parent_scan_id, source_scan_ids);
+    ``stored`` maps every stored scan id to its fields.
+    """
+    scan_class, parent, sources = fields
+    if scan_class == "sub_scan":
+        return parent is None or parent not in stored
+    if scan_class == "composite":
+        members = sources if isinstance(sources, list) else []
+        return not members or any(member not in stored for member in members)
+    return scan_class == "primary"
 
 
 def _refuse_shared_outputs(scans, all_scans=None):
@@ -2802,6 +2834,11 @@ def refit_cmd(
         None, "--target",
         help="Only scans of this target (spaces or underscores). Refuses if no scan matches.",
     ),
+    science_units: bool = typer.Option(
+        False, "--science-units",
+        help="One fit per science scan: primary scans; a sub-scan only when its parent "
+             "scan is not stored; a composite only when one of its member scans is not stored.",
+    ),
     journal: Optional[Path] = typer.Option(
         None, "--journal",
         help="Journal for a new batch (default: <results>/refit-<UTC time>.jsonl). Must not exist.",
@@ -2846,6 +2883,12 @@ def refit_cmd(
     --target limits the batch to one target's scans, combined with the
     other selection options; the target is part of the batch identity.
 
+    --science-units fits each science scan once. A sub-scan (a downlink part
+    of a scan) is left out when its parent scan is stored, and a composite
+    when all of its member scans are stored; a primary scan is always kept.
+    It is part of the batch identity. Scans it leaves out are not run, and
+    the rows they already hold are not changed.
+
     The --json result lists the selected scans and the completed ones
     (including those an earlier run of the batch journaled), each with its
     sol, target, scan name and the id of the scan row the run writes.
@@ -2855,6 +2898,7 @@ def refit_cmd(
     Examples:
         sherloc refit --science
         sherloc refit --science --target Some_Target
+        sherloc refit --science --science-units
         sherloc refit --science --journal refit-science.jsonl
         sherloc refit --science --resume refit-science.jsonl
     """
@@ -2924,6 +2968,7 @@ def refit_cmd(
         exclude_type="engineering" if no_engineering else None,
         science_only=science,
         with_ids=True,
+        science_units=science_units,
     )
     if target_key is not None:
         rows = [row for row in rows if row[1] == target_key]
@@ -2934,6 +2979,9 @@ def refit_cmd(
     if target_key is not None:
         # Only when given, so journals of batches without --target resume as before.
         selection["target"] = target_key
+    if science_units:
+        # Only when given, as --target, so earlier journals resume unchanged.
+        selection["science_units"] = True
     identity = batch_identity(
         database=db_path,
         data_root=context.data_root,
