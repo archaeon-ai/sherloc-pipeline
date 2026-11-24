@@ -1,178 +1,38 @@
 # Contributing to SHERLOC Pipeline
 
-Thanks for your interest in contributing. The sections below cover the ground
-rules for working in this repository.
-
-## Quick start
+From the checkout, install the test dependencies in a Python 3.12 virtual environment:
 
 ```bash
-git clone https://github.com/archaeon-ai/sherloc-pipeline.git
-cd sherloc-pipeline
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e .[dev]
+pip install -e '.[dev,web,pds,ml-despike]'
 pre-commit install
-pytest tests/<area>
 ```
 
-Run the tests for the area you changed locally (`pytest tests/<area>`); the full
-suite runs in CI. Pytest keeps only failed tests' temporary folders from the
-last run. CI places test temp in the runner's per-job folder.
+Format locally with the Makefile target, then run the CI lint and test selection:
 
-`pre-commit install` is required — it activates the local hooks described under
-[Public-repo discipline](#public-repo-discipline) below.
+```bash
+make format
+ruff check .
+pytest -m "not slow and not docker"
+```
 
-## Issues and pull requests
-
-- Bug reports and feature requests: use the issue templates under
-  `.github/ISSUE_TEMPLATE/`.
-- Security-sensitive reports: see [`SECURITY.md`](SECURITY.md).
-- Pull requests: include a concise summary, a test plan, and link any related
-  issue. CI must pass before review.
-- Pull requests from forks are reviewed line by line and may be re-authored by
-  a maintainer, with credit to the original pull request. CI runs on fork pull
-  requests only after a maintainer approves the run.
-
-## Conventional commits
-
-Commit messages follow `<type>(<scope>): <subject>`, where `<type>` is one of
-`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, or `spec`. Keep each commit
-to one logical change.
+Push your branch and open a pull request against `main`. Include a summary,
+the tests you ran, and a link to any related issue.
 
 ## Public-repo discipline
 
-This is a public repository. Tracked content must not embed operator-local
-infrastructure details. The same code base also runs in private operator
-environments with idiosyncratic paths and hostnames; the convention is to
-reach those via environment variables rather than hardcoding them.
+Tracked files, commit messages and pull requests must not contain local
+absolute paths, private host names or domains. Use `SHERLOC_DATA_DIR`, a
+command-line path option, `$HOME`, `example.com` or a repo-relative path
+instead. `scripts/check-public-wording.py` checks added lines and commit
+messages; CI runs it on every pull request. A justified exception is one line
+in `.github/public-wording-allow.txt` naming the file, the rule and the exact
+text.
 
-### Forbidden patterns and substitutions
+## Fixture provenance
 
-| Forbidden pattern | Use instead |
-|-------------------|-------------|
-| Absolute data paths (e.g. local `data` mounts or shared-storage mounts) | `SHERLOC_DATA_DIR` env var (overrides `paths.data_root` in `config.yaml`), a command-line path option such as `--data-dir`, or repo-relative paths |
-| Absolute home paths (e.g. `/home/<user>`) | `$HOME` or `~` |
-| Operator hostnames | A generic placeholder such as `devhost`, or env-driven |
-| Operator-owned domains | `example.com` or env-driven hostnames |
-| Internal agent codenames | Do not appear in tracked content |
-
-### Enforcement
-
-Review changed content against the table above before committing. If you
-introduce an absolute path, internal hostname, or other operator-local string,
-replace it with the substitution from the table (or with an env-driven
-configuration entry) before staging.
-
-### Wording check
-
-Anyone can read this repository, its commit messages and its pull requests.
-Write all of them for a reader outside the project: no local paths or private
-host names, no notes on how a change was reviewed or decided (review rounds,
-finding labels, who decided what and when), no names of AI tools or session
-links, and no sol past the archived PDS release (an invented example uses
-sol 9999). State the rule and its reason instead.
-
-`scripts/check-public-wording.py` checks this. CI runs it on every pull
-request (added lines, commit messages, title and body) and on every push to
-main (commit messages). Run it before you push:
-
-```bash
-scripts/check-public-wording.py                 # this branch vs origin/main
-pre-commit install                              # also checks each commit message
-```
-
-A justified exception is one line, with its reason, in
-`.github/public-wording-allow.txt`, naming the file, the rule and the exact
-text it allows; any other match on that line or in that file is still
-reported. If CI flags a commit message you have
-already pushed, say so on the pull request and leave the branch as it is: the
-fix is a rewrite and force-push of the branch, which a maintainer approves.
-Once a commit is on main its message stays, so the squash-merge message is the
-pull request title.
-
-### Rationale
-
-Conflating an operator's local environment with the public package makes the
-repository harder to clone, fork, and reproduce. Env-driven configuration
-keeps the same code path working both in the operator's private workspace
-and in clean public deployments without per-environment patches.
-
-### Pre-publication and internal content
-
-Keep pre-publication science and internal engineering process out of the
-public tree:
-
-- **Pre-publication findings** — conclusion language (feasibility verdicts,
-  organics/carbonate determinations) and the mission-target names tied to
-  unpublished work belong in the gitignored local working tree until they are
-  published.
-- **Internal engineering artifacts** — verification reports, review/revision
-  spec drafts, and deploy-pipeline material belong in the gitignored
-  internal-docs area, not the public tree. Keep one canonical,
-  public-appropriate document per topic under `docs`.
-- **Internal-only directory references and development-tool attribution** —
-  references to the gitignored internal directories should not appear in
-  tracked content other than the ignore-config files that exist to name them.
-
-### Fixture provenance
-
-This is a public repository, so every tracked **data file** (spectra, images,
-fixtures, golden outputs — anything matching the data extensions listed in
-`scripts/check-fixture-provenance.py`) must contain only publicly releasable
-values. Concretely, a data file may enter git only if it is one of:
-
-| Category | Meaning |
-|----------|---------|
-| `pds-archived` | Mars 2020 instrument data whose sol is within the instrument's archived PDS release envelope |
-| `raw-images-feed` | A product published on the public Mars 2020 raw-images site (public on receipt) |
-| `synthetic` | Generated/simulated values; any sol or target in the file name is nominal |
-| `reference-standard` | Earth-laboratory reference or calibration data (not Mars data) |
-| `operator-derived-archived` | An operator-produced derivation whose inputs are all archived/public |
-| `metadata` | A value-free structural/config file (manifests, lockfiles) |
-
-The ledger at `tests/fixtures/PROVENANCE.json` records the category for every
-tracked data file (directory entries end with `/` and cover everything under
-them). The check is **fail-closed**: a tracked data file with no ledger entry
-is a violation. High-confidence sol tokens embedded in paths (`sol_NNNN`
-directories, PDS product IDs, `NNNN_` file prefixes) are cross-checked
-against the ledger entry, so a mislabeled fixture fails loudly.
-
-**Adding a fixture:** add the file(s) plus a ledger entry in the same commit.
-For Mars 2020 data, confirm the sol is within the instrument's archived PDS
-release before adding it; if a new PDS release extends the envelope, bump
-`pds_envelope.<instrument>` in the ledger (release id, date, `max_sol`) in
-the same change-set.
-
-Enforcement is a pre-commit hook plus a CI step, with a third gate in
-`tests/architecture/test_fixture_provenance.py` so a plain `pytest` run also
-catches violations:
-
-```bash
-scripts/check-fixture-provenance.py --staged   # files staged for commit
-scripts/check-fixture-provenance.py --tree     # the entire tracked tree
-```
-
-## Coding standards
-
-- Python 3.12+. The project targets `ruff` defaults; run `ruff check .` before
-  pushing.
-- Add tests under `tests/` for new behavior. The `not slow` selector should
-  pass in under ~10 minutes; the full suite (including the regression golden)
-  takes ~25 minutes. CI runs the `not slow and not docker` selection; the
-  container smoke tests (`-m docker`) run in their own workflow.
-- Keep public-API docstrings short and informative; long-form explanations
-  belong in `docs/`.
-
-### System invariants
-
-[`docs/INVARIANTS.md`](docs/INVARIANTS.md) records system-wide constraints
-that hold across changes — service return patterns, error hierarchy, CLI
-surface stability, spectral calibration rules, and so on. Read it before
-modifying core paths, and update it in the same commit when an invariant is
-intentionally extended or refined.
-
-## Where to look
-
-- Architecture overview: [`docs/architecture.md`](docs/architecture.md)
-- Spectral calibration and region definitions: [`docs/schema/SPECTRAL_REGIONS.md`](docs/schema/SPECTRAL_REGIONS.md)
-- Scientific methods: [`docs/METHODS.md`](docs/METHODS.md)
-- System invariants: [`docs/INVARIANTS.md`](docs/INVARIANTS.md)
+Every tracked data file must have an entry in `tests/fixtures/PROVENANCE.json`
+with one of the categories `pds-archived`, `raw-images-feed`, `synthetic`,
+`reference-standard`, `operator-derived-archived` or `metadata`. Mars 2020 data
+must come from a sol within the archived PDS release. Add the file and its
+entry in the same commit. `scripts/check-fixture-provenance.py --tree` checks
+this in CI.
