@@ -30,8 +30,7 @@ package). They form three rough layers:
                 │  calibration / r1_extraction  spectrograms    │
                 │  / r123_stitching / mineral_id                │
                 │                                               │
-                │  vision (segmentation, optional)              │
-                │  ml (clustering, similarity, features)        │
+                │  vision (ACI image reading)                   │
                 ├──────────────────────────────────────────────┤
                 │  database (SQLAlchemy ORM, Alembic)           │
                 │  models  (Pydantic DTOs + type registry)      │
@@ -51,8 +50,7 @@ package). They form three rough layers:
 | `database/` | SQLAlchemy ORM, connection management, Alembic glue. | `models.py` (17 ORMs), `connection.py` (`get_engine`, `init_pds_database`), `pixl_models.py`. |
 | `visualization/` | Matplotlib/Plotly figure generation. | `fitting_plots.py`, `spatial.py`, `spectrograms.py`, `preprocessing_plots.py`, `cooccurrence.py`. |
 | `ml_despike/` | ML cosmic-ray detector: frozen manifest (sha256-pinned ONNX), sha256-verified fetch/cache, certified 8-channel featurization, ONNX CPU inference. Behind the `[ml-despike]` extra; never imported by `modz`/`none` paths. | `manifest.py`, `featurize.py`, `artifact.py`, `detector.py`. |
-| `vision/` | ACI image segmentation and morphometry. SAM-based; behind the `[ml]` extra. | `segmentation.py`, `morphometry.py`, `img_reader.py`. |
-| `ml/` | Cross-spectrum analytics: clustering, distance, feature extraction, similarity. | `clustering.py`, `distance.py`, `features.py`, `similarity.py`. |
+| `vision/` | ACI image reading (VICAR/PDS3 `.IMG`). | `img_reader.py`. |
 | `data/` | Static algorithmic reference data shipped with the package — tier-agnostic calibration inputs loaded via `importlib.resources`, not per-scan mission data. | `background/` (arm-stowed + fused-silica calibration spectra), `badpix_channels.csv`. |
 
 The full Pydantic + ORM schema and the Loupe wavelength polynomial

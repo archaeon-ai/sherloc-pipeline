@@ -699,15 +699,6 @@ Primary Dependencies:
 Spectroscopy-Specific:
   pybaselines: ">=1.0.0" # Baseline correction
 
-Deep Learning (Optional):
-  torch: ">=2.0.0"       # PyTorch for SAM
-  torchvision: ">=0.15.0"
-  segment-anything: ">=1.0" # Meta SAM models
-
-GPU Acceleration (Optional):
-  cuml: ">=22.10.0"      # RAPIDS ML
-  cudf: ">=22.10.0"      # RAPIDS DataFrames
-
 Database:
   sqlalchemy: ">=2.0.0" # ORM and database abstraction
   alembic: ">=1.13.0"   # Database migrations
