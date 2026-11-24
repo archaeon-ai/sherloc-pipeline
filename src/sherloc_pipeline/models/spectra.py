@@ -52,7 +52,7 @@ class DataSource(str, Enum):
 class SpectralRegion(str, Enum):
     """SHERLOC spectral regions.
 
-    Canonical reference: docs/schema/SPECTRAL_REGIONS.md
+    Reference: docs/schema/SPECTRAL_REGIONS.md
 
     Each region corresponds to a separate full-CCD readout (2148 channels).
     Only a subset of channels in each readout contains meaningful signal;

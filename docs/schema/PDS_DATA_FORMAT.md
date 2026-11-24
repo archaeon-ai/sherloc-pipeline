@@ -636,7 +636,7 @@ Processed products reference source EDR and intermediate products:
 
 ### Spectral Region Mapping
 
-> **Canonical Reference:** See [`SPECTRAL_REGIONS.md`](SPECTRAL_REGIONS.md) for the definitive specification of R1, R2, R3, and R123 regions, including channel ranges, wavelength boundaries, and the R123 stitching algorithm.
+> **Reference:** See [`SPECTRAL_REGIONS.md`](SPECTRAL_REGIONS.md) for R1, R2, R3, and R123 regions, including channel ranges, wavelength boundaries, and the R123 stitching algorithm.
 
 | PDS4 Product Region | SHERLOC Region | Wavelength Range | Channels (Usable) |
 |---------------------|----------------|------------------|--------------------|
@@ -793,7 +793,7 @@ ACI filename prefix classification: `SC0` = calibration context, `SC1` = autofoc
 
 ### Related Project Documents
 
-14. **PDS Ingestion Spec:** [`docs/specs/PDS_INGESTION_SPEC.md`](../specs/PDS_INGESTION_SPEC.md)
+14. **PDS Ingestion Guide:** [`docs/guides/PDS_INGESTION_GUIDE.md`](../guides/PDS_INGESTION_GUIDE.md)
 15. **Spectral Regions:** [`docs/schema/SPECTRAL_REGIONS.md`](SPECTRAL_REGIONS.md)
 16. **Unified Schema:** [`docs/schema/UNIFIED_SCHEMA.md`](UNIFIED_SCHEMA.md)
 
@@ -934,4 +934,4 @@ WATSON (SHERLOC Imager Focusable)       SRLC0 = WATSON sequence
 
 WATSON uses `SRLC0xxxx` (digit after SRLC is `0`), while spectroscopy uses `SRLC1xxxx`. Both share the same site/drive code (7-digit RMC), enabling cross-instrument association.
 
-WATSON association is heuristic (no direct cross-reference in spectral labels); see [`docs/specs/PDS_INGESTION_SPEC.md`](../specs/PDS_INGESTION_SPEC.md) for strategy details.
+The spectral labels carry no direct cross-reference to WATSON images, and this package does not associate WATSON images with spectral observations.

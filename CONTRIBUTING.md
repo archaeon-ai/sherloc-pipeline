@@ -49,8 +49,7 @@ reach those via environment variables rather than hardcoding them.
 
 | Forbidden pattern | Use instead |
 |-------------------|-------------|
-| Absolute data paths (e.g. local `data` mounts) | `SHERLOC_DATA_ROOT` env var, or repo-relative paths |
-| Absolute NAS paths (e.g. shared-storage mounts) | `SHERLOC_NAS_ROOT` env var, or repo-relative paths |
+| Absolute data paths (e.g. local `data` mounts or shared-storage mounts) | `SHERLOC_DATA_DIR` env var (overrides `paths.data_root` in `config.yaml`), a command-line path option such as `--data-dir`, or repo-relative paths |
 | Absolute home paths (e.g. `/home/<user>`) | `$HOME` or `~` |
 | Operator hostnames | A generic placeholder such as `devhost`, or env-driven |
 | Operator-owned domains | `example.com` or env-driven hostnames |
@@ -131,7 +130,8 @@ scripts/check-fixture-provenance.py --tree     # the entire tracked tree
   pushing.
 - Add tests under `tests/` for new behavior. The `not slow` selector should
   pass in under ~10 minutes; the full suite (including the regression golden)
-  takes ~25 minutes and runs in CI on demand.
+  takes ~25 minutes. CI runs the `not slow and not docker` selection; the
+  container smoke tests (`-m docker`) run in their own workflow.
 - Keep public-API docstrings short and informative; long-form explanations
   belong in `docs/`.
 

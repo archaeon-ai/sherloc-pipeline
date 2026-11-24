@@ -19,7 +19,7 @@ package). They form three rough layers:
                 ┌────▼───────────────▼──────────────────▼──────┐
                 │  services (orchestration)                    │
                 │  pipeline / ingestion / spectral / map_fit / │   business logic
-                │  spectrogram / classification / preprocessing│
+                │  spectrogram / identification / preprocessing│
                 │  / pds_ingestion / pixl_ingestion / ...      │
                 └────┬─────────────────────────────────────────┘
                      │
@@ -42,9 +42,9 @@ package). They form three rough layers:
 
 | Package | Purpose | Key modules |
 |---------|---------|-------------|
-| `cli/` | Typer entry point exposing every batch command. | `app.py` — 17 commands: `apply-review`, `backfill`, `backfill-masks`, `db-stats`, `extract-training`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`, `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`, `reclassify-targets`, `serve`. |
+| `cli/` | Typer entry point exposing every batch command. | `app.py` — 23 commands: `apply-review`, `backfill`, `backfill-fluor-inputs`, `backfill-masks`, `backfill-public-release`, `db-stats`, `extract-training`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`, `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`, `reclassify-product-roles`, `reclassify-scan-classes`, `reclassify-scan-types`, `reclassify-targets`, `refit`, `serve`; and two command groups, `references` and `identify`. |
 | `api/` | Notebook-friendly functional API. Stateless wrappers around services and core, intended for Jupyter use. | `spectral.py` — `process_scan_average`, `process_subset_average`, `process_point`, `load_point_spectrum`, `load_reference_spectrum`, `plot_spectrum`, `plot_overlay`. |
-| `web/` | FastAPI app + Svelte frontend. Read-mostly exploration UI. | `app.py` (factory + middlewares), `auth.py` (CF Access JWT validation), `routes/` (11 modules), `frontend/` (Svelte). |
+| `web/` | FastAPI app + Svelte frontend. Read-mostly exploration UI. | `app.py` (factory + middlewares), `auth.py` (CF Access JWT validation), `routes/` (12 modules), `frontend/` (Svelte). |
 | `services/` | Orchestrators that compose `core` primitives and persist results. | `pipeline.py` (the 7-step run), `handoff.py` (optional atomic delivery manifest), `ingestion.py` / `pds_ingestion.py` / `pixl_ingestion.py`, `spectral.py`, `map_fitting.py`, `spectrogram.py`, `preprocessing.py`. |
 | `core/` | Pure algorithmic primitives. Should not depend on `services/`. | `preprocessing.py`, `baseline.py`, `fitting.py` (Raman cm⁻¹), `fluor_fitting.py` / `fluor_id.py` / `fluor_detection.py` (fluorescence in nm), `calibration.py`, `r1_extraction.py`, `r123_stitching.py`, `mineral_id.py`, `pds_client.py`, `pds_parsers.py`. |
 | `models/` | Pydantic DTOs + a small type registry. Shared between CLI/API/web/services. | `spectra.py`, `fitting.py`, `instrument.py`, `pds.py`, `pixl.py`, `spectrogram.py`. |
@@ -61,8 +61,9 @@ are in [`docs/schema/UNIFIED_SCHEMA.md`](schema/UNIFIED_SCHEMA.md) and
 
 ## Data model
 
-Two SQLite databases share an identical schema (17 tables, 13 Alembic
-migrations on the head chain):
+Two SQLite databases share an identical schema (21 tables: the 17 in `database/models.py` and the four reference
+catalog tables in `database/reference_models.py`; 21 Alembic migrations
+on the head chain):
 
 - `phase.db` — Loupe-source data (proprietary tier; not redistributed).
 - `phase_pds.db` — PDS4 archive data only (publicly released).
@@ -76,7 +77,8 @@ Key tables: `sols`, `scans`, `scan_points`, `spectra`,
 `context_images`, `regions_of_interest`, `fitted_peaks`,
 `spectrograms`, `map_display_coordinates`, `users`,
 `user_preferences`, `classification_profiles`, `map_fit_cache`,
-`cosmic_ray_masks`.
+`cosmic_ray_masks`, `reference_releases`, `reference_files`,
+`reference_traces`, `reference_templates`.
 
 `cosmic_ray_masks` — per-(spectrum, region, method) channel-index arrays
 with full provenance (method label, model sha256, per-region tau).
@@ -113,10 +115,12 @@ canonical batch path. Seven steps:
    The fluorescence group names follow Sharma et al. 2023, *Nature*,
    https://doi.org/10.1038/s41586-023-06143-z.
    Co-occurrence confidence is scored against the Raman peaks from step 3.
-5. **Per-scan averages** (line / detail trim percentiles differ by scan
-   type — line scans 4 %, detail scans 2 %).
+5. **Per-scan averages** — fits of the scan's R1 mean and trimmed-mean
+   spectra. The trimmed mean cuts 2 % from each tail, raised for small
+   scans so that at least one point is cut from each tail (a 25-point
+   scan cuts 4 %).
 6. **Spatial overlay rendering** on ACI context images.
-7. **Summary** — companion JSON / Markdown report.
+7. **Summary** — prints the scan's fit counts.
 
 After step 7 succeeds, the pipeline records an explicit delivery-handoff skip
 unless `SHERLOC_HANDOFF_DIR` is configured. A configured run inventories all
@@ -155,6 +159,8 @@ FastAPI app (uvicorn, 127.0.0.1:8000)
       ├── /api/pds                (pds.py)
       ├── /api/jobs               (jobs.py — generic job queue)
       ├── /api/map                (map.py — Map Mode + WebSocket)
+      ├── /api/identify           (identification.py)
+      ├── /api/references         (references.py)
       └── /api/config             (config.py)
 ```
 
@@ -217,8 +223,8 @@ lists, and simultaneous `point` and `points` parameters show an error. Missing
 point indices show an out-of-range error, including holes in sparse scans;
 the resolver and direct Workbench links both reject them. Omitting both point
 parameters opens the scan average. Changing either selection parameter for an
-already open Workbench reloads that selection. Cross-scan subsets are a separate
-feature (F4).
+already open Workbench reloads that selection. Subsets that span more than one
+scan are not supported.
 
 ## Deployment notes
 
@@ -252,5 +258,5 @@ feature (F4).
 > Calibration lives in `core/calibration.py`
 > (`calculate_loupe_wavelength_wavenumber`); laser normalization lives
 > in `core/laser_normalization.py` (`process_laser_normalization`).
-> They are not interchangeable. The canonical reference is
+> They are not interchangeable. The reference is
 > [`docs/schema/SPECTRAL_REGIONS.md`](schema/SPECTRAL_REGIONS.md).

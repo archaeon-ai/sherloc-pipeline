@@ -53,6 +53,9 @@ def process_scan_average(
     fit_range: Optional[Tuple[float, float]] = None,
     single_peak_center: Optional[float] = None,
     n_peaks: Optional[int] = None,
+    min_snr: Optional[float] = None,
+    fwhm_min: Optional[float] = None,
+    fwhm_max: Optional[float] = None,
     data_dir: Optional[Path] = None,
     results_dir: Optional[Path] = None,
 ) -> Tuple[pd.DataFrame, Optional[FitResult]]
@@ -75,7 +78,7 @@ def process_scan_average(
 | `single_peak_center` | float | None | Fit single peak at position |
 | `n_peaks` | int | None | Maximum peaks to fit |
 | `min_snr` | float | None | Override minimum SNR threshold (default: 3.0) |
-| `fwhm_min` | float | None | Override minimum FWHM in cm⁻¹ (default: 30) |
+| `fwhm_min` | float | None | Override minimum FWHM in cm⁻¹ (default: `fitting.filter_fwhm_min_cm1` in `config.yaml`) |
 | `fwhm_max` | float | None | Override maximum FWHM in cm⁻¹ (default: 90) |
 | `data_dir` | Path | None | Override data directory |
 | `results_dir` | Path | None | Override results directory |
@@ -100,7 +103,7 @@ if fit:
     for peak in fit.peaks:
         print(f"Peak at {peak.m_cm1:.1f} cm⁻¹, FWHM={peak.fwhm:.1f}")
 
-# Single-peak fitting for carbonate
+# Single-peak fit seeded at 1090 cm⁻¹, inside the hi-carb window (1075-1105 cm⁻¹ in config.yaml)
 df, fit = process_scan_average(
     sol="0921", target="Amherst_Point", scan="detail_1",
     fit=True, fit_range=(1000, 1200), single_peak_center=1090
@@ -127,7 +130,11 @@ def process_point(
     fit_range: Optional[Tuple[float, float]] = None,
     single_peak_center: Optional[float] = None,
     n_peaks: Optional[int] = None,
+    min_snr: Optional[float] = None,
+    fwhm_min: Optional[float] = None,
+    fwhm_max: Optional[float] = None,
     data_dir: Optional[Path] = None,
+    results_dir: Optional[Path] = None,
 ) -> Tuple[pd.DataFrame, Optional[FitResult]]
 ```
 
@@ -147,9 +154,10 @@ def process_point(
 | `single_peak_center` | float | None | Single peak center |
 | `n_peaks` | int | None | Maximum peaks |
 | `min_snr` | float | None | Override minimum SNR threshold (default: 3.0) |
-| `fwhm_min` | float | None | Override minimum FWHM in cm⁻¹ (default: 30) |
+| `fwhm_min` | float | None | Override minimum FWHM in cm⁻¹ (default: `fitting.filter_fwhm_min_cm1` in `config.yaml`) |
 | `fwhm_max` | float | None | Override maximum FWHM in cm⁻¹ (default: 90) |
 | `data_dir` | Path | None | Override data directory |
+| `results_dir` | Path | None | Override results directory |
 
 **Returns:** `Tuple[DataFrame, Optional[FitResult]]`
 
@@ -185,6 +193,9 @@ def process_subset_average(
     fit_range: Optional[Tuple[float, float]] = None,
     single_peak_center: Optional[float] = None,
     n_peaks: Optional[int] = None,
+    min_snr: Optional[float] = None,
+    fwhm_min: Optional[float] = None,
+    fwhm_max: Optional[float] = None,
     data_dir: Optional[Path] = None,
     results_dir: Optional[Path] = None,
 ) -> Tuple[pd.DataFrame, Optional[FitResult]]
@@ -227,7 +238,8 @@ def load_point_spectrum(
         "normalized",
         "normalized_baselined",
         "normalized_despiked_baselined"
-    ] = "normalized_despiked_baselined",
+    ],
+    *,
     results_dir: Optional[Path] = None,
 ) -> pd.DataFrame
 ```
@@ -240,7 +252,7 @@ def load_point_spectrum(
 | `target` | str | required | Target name |
 | `scan` | str | required | Scan identifier |
 | `point` | int | required | Point index (0-based) |
-| `level` | str | "normalized_despiked_baselined" | Processing level |
+| `level` | str | required | Processing level |
 | `results_dir` | Path | None | Override results directory |
 
 **Processing levels:**
@@ -269,7 +281,8 @@ Load a reference mineral spectrum.
 ```python
 def load_reference_spectrum(
     mineral: str,
-    reference_dir: Optional[Path] = None,
+    *,
+    library_path: Optional[Path] = None,
 ) -> pd.DataFrame
 ```
 
@@ -278,7 +291,7 @@ def load_reference_spectrum(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `mineral` | str | required | Mineral name (case-insensitive partial match) |
-| `reference_dir` | Path | None | Override reference directory |
+| `library_path` | Path | None | Reference library directory (default: `tests/fixtures/reference`) |
 
 **Returns:** DataFrame with `raman_shift` and `intensity` columns
 
@@ -304,16 +317,15 @@ Generate a single-spectrum plot.
 def plot_spectrum(
     df: pd.DataFrame,
     *,
-    color: Optional[str] = None,
-    linewidth: float = 1.0,
-    linestyle: str = "-",
     fit_result: Optional[FitResult] = None,
     xlim: Optional[Tuple[float, float]] = None,
     ylim: Optional[Tuple[float, float]] = None,
     title: Optional[str] = None,
-    xlabel: str = "Raman Shift (cm⁻¹)",
-    ylabel: str = "Intensity (a.u.)",
-    figsize: Tuple[float, float] = (10, 6),
+    color: str = "#1f77b4",
+    linewidth: float = 1.2,
+    linestyle: str = "-",
+    show_grid: bool = True,
+    figsize: Tuple[float, float] = (12, 6),
 ) -> Figure
 ```
 
@@ -322,16 +334,15 @@ def plot_spectrum(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `df` | DataFrame | required | Spectrum data with `raman_shift` and `intensity` |
-| `color` | str | None | Line color (default: matplotlib default) |
-| `linewidth` | float | 1.0 | Line width |
+| `color` | str | "#1f77b4" | Line color |
+| `linewidth` | float | 1.2 | Line width |
 | `linestyle` | str | "-" | Line style: "-", "--", "-.", ":" |
 | `fit_result` | FitResult | None | Optional fitting results to overlay |
 | `xlim` | tuple | None | X-axis limits (min, max) |
 | `ylim` | tuple | None | Y-axis limits (min, max) |
 | `title` | str | None | Plot title |
-| `xlabel` | str | "Raman Shift (cm⁻¹)" | X-axis label |
-| `ylabel` | str | "Intensity (a.u.)" | Y-axis label |
-| `figsize` | tuple | (10, 6) | Figure size in inches |
+| `show_grid` | bool | True | Show grid lines |
+| `figsize` | tuple | (12, 6) | Figure size in inches |
 
 **Returns:** matplotlib Figure
 
@@ -366,10 +377,9 @@ def plot_overlay(
     ylim: Optional[Tuple[float, float]] = None,
     scale_to_peak: Optional[Tuple[float, float]] = None,
     title: Optional[str] = None,
-    xlabel: str = "Raman Shift (cm⁻¹)",
-    ylabel: str = "Intensity (a.u.)",
-    figsize: Tuple[float, float] = (10, 6),
-    legend_loc: str = "best",
+    show_grid: bool = True,
+    figsize: Tuple[float, float] = (12, 6),
+    legend_loc: str = "upper right",
 ) -> Figure
 ```
 
@@ -382,10 +392,9 @@ def plot_overlay(
 | `ylim` | tuple | None | Y-axis limits |
 | `scale_to_peak` | tuple | None | Range (min, max) for peak normalization |
 | `title` | str | None | Plot title |
-| `xlabel` | str | "Raman Shift (cm⁻¹)" | X-axis label |
-| `ylabel` | str | "Intensity (a.u.)" | Y-axis label |
-| `figsize` | tuple | (10, 6) | Figure size |
-| `legend_loc` | str | "best" | Legend location |
+| `show_grid` | bool | True | Show grid lines |
+| `figsize` | tuple | (12, 6) | Figure size |
+| `legend_loc` | str | "upper right" | Legend location |
 
 **Spectrum dictionary format:**
 
@@ -394,7 +403,7 @@ def plot_overlay(
     "df": DataFrame,           # Required: spectrum data
     "label": str,              # Optional: legend label
     "color": str,              # Optional: line color
-    "linewidth": float,        # Optional: line width (default: 1.0)
+    "linewidth": float,        # Optional: line width (default: 1.2)
     "linestyle": str,          # Optional: line style (default: "-")
 }
 ```

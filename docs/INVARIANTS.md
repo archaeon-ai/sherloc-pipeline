@@ -161,7 +161,7 @@ calibration (`core/calibration.calculate_loupe_wavelength_wavenumber`).
 overlap summation.
 
 **Where defined.** `src/sherloc_pipeline/core/calibration.py`,
-`docs/schema/SPECTRAL_REGIONS.md` (the canonical reference).
+`docs/schema/SPECTRAL_REGIONS.md` (the reference).
 
 **Why.** Linear approximation introduces ≤15 cm⁻¹ peak position errors. This
 is the calibration error that motivated the calibration rebuild.

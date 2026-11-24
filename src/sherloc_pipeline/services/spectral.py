@@ -2414,7 +2414,7 @@ class SpectralService:
                     Mutually exclusive with single_peak_center.
             min_snr: Optional SNR threshold override (default from config: 3.0).
                     Peaks below this SNR are flagged as rejected.
-            fwhm_min: Optional minimum FWHM override in cm^-1 (default from config: 30).
+            fwhm_min: Optional minimum FWHM override in cm^-1 (default from config).
                      Peaks narrower than this are flagged as rejected.
             fwhm_max: Optional maximum FWHM override in cm^-1 (default from config: 90).
                      Peaks wider than this are flagged as rejected.
@@ -2436,7 +2436,7 @@ class SpectralService:
             >>> print(f"Found {len(fit_result.peaks)} peaks with R²={fit_result.r2:.3f}")
             Found 3 peaks with R²=0.987
             
-            >>> # Single-peak fitting for carbonate at ~1090 cm^-1
+            >>> # Single-peak fit seeded at 1090 cm^-1 (inside the config's hi-carb window)
             >>> fit_result, model = service._apply_fitting(
             ...     corrected, fit_range=(1000, 1200), single_peak_center=1090
             ... )

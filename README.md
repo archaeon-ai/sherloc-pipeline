@@ -163,11 +163,11 @@ sherloc full-pipeline 0921 Amherst_Point detail_1
 
 1. **Preprocessing** — Despike, baseline correction, background subtraction
 2. **Raman fitting** — Peak detection and Gaussian fitting for minerals, organics, hydration
-3. **Fluorescence fitting** — Differential evolution fitting of R2/R3 fluorescence spectra with group assignment
-4. **Raman persistence** — Persist fitted Raman peaks to database across all three domains
-5. **Label averages** — Compute per-class average spectra
+3. **Raman persistence** — Persist fitted Raman peaks to database across all three domains
+4. **Fluorescence fitting and persistence** — Differential evolution fitting of R2/R3 fluorescence spectra with group assignment; the scan's accepted peaks CSV with quality flags is then written
+5. **Fitting (averages)** — Fit the scan's R1 mean and trimmed-mean average spectra (`averages_fit/`)
 6. **Spatial overlays** — Render detections on ACI context images
-7. **Summary** — Generate accepted peaks CSV with quality flags
+7. **Summary** — Print the scan's fit counts
 
 **Outputs:** All results are written to `results/<target>/<sol>_<scan>/` with subdirectories for each processing stage.
 
@@ -247,13 +247,13 @@ sherloc plot --sol 0921 --target Amherst_Point --scan detail_1 \
 | `--single-peak <center>` | Fit exactly one Gaussian near specified position (cm⁻¹) |
 | `--n-peaks <n>` | Limit automatic peak detection to at most N peaks |
 | `--min-snr <float>` | Override minimum SNR threshold for peak acceptance (default: 3.0) |
-| `--fwhm-min <float>` | Override minimum FWHM in cm⁻¹ (default: 30) |
+| `--fwhm-min <float>` | Override minimum FWHM in cm⁻¹ (default: `fitting.filter_fwhm_min_cm1` in `config.yaml`) |
 | `--fwhm-max <float>` | Override maximum FWHM in cm⁻¹ (default: 90) |
 
 **Examples:**
 
 ```bash
-# Single-peak fitting for carbonate at ~1090 cm⁻¹
+# Single-peak fit seeded at 1090 cm⁻¹, inside the hi-carb window (1075-1105 cm⁻¹ in config.yaml)
 sherloc plot --sol 0921 --target Amherst_Point --scan detail_1 \
   --background fs --baseline --fit --single-peak 1090 \
   --fit-range 1000,1200 --xlim 700,1400 --export both
@@ -380,7 +380,7 @@ data/loupe/
 ```
 src/sherloc_pipeline/
 ├── cli/
-│   └── app.py                  # Command-line interface (20 commands)
+│   └── app.py                  # Command-line interface (23 commands and the `references` and `identify` command groups)
 ├── services/
 │   ├── pipeline.py             # Full 7-step workflow orchestration
 │   ├── review.py               # Review propagation and overlay regeneration
@@ -459,7 +459,7 @@ results/<target>/<sol>_<scan>/
 ├── minerals_fit/               # Per-point mineral peak fits and diagnostics
 ├── organics_fit/               # Organic band identification
 ├── hydration_fit/              # Hydration band analysis
-├── label_averages/             # Class-averaged spectra
+├── averages_fit/               # Fits of the scan's R1 average spectra
 ├── spatial_overlays/           # Spatial visualizations on ACI images
 └── <sol>_<target>_<scan>_accepted_peaks.csv  # Unified review table
 ```
@@ -526,7 +526,7 @@ sherloc plot --sol <sol> --target <target> --scan <scan> [OPTIONS]
 - `--single-peak <center>` - Fit single Gaussian at position (cm⁻¹)
 - `--n-peaks <int>` - Maximum peaks to fit (1-10)
 - `--min-snr <float>` - Override minimum SNR threshold (default: 3.0)
-- `--fwhm-min <float>` - Override minimum FWHM (default: 30 cm⁻¹)
+- `--fwhm-min <float>` - Override minimum FWHM (default: `fitting.filter_fwhm_min_cm1` in `config.yaml`)
 - `--fwhm-max <float>` - Override maximum FWHM (default: 90 cm⁻¹)
 
 **Display:**
@@ -689,20 +689,20 @@ Key parameters in `config.yaml`:
 **Preprocessing:**
 - `preprocessing.despike.method` - Despike method: `ml` (default), `modz`, or `none`
 - `preprocessing.despike.zscore_threshold` - Robust z-score cutoff for `modz` (default: 6.0)
-- `preprocessing.baseline.lam` - Baseline smoothness parameter (default: 10000000.0)
+- `preprocessing.baseline.lam` - Baseline smoothness parameter (default: 1000000.0)
 - `preprocessing.background_subtraction.default_file` - Background spectrum path
 
 **Raman fitting:**
 - `fitting.min_snr` - Minimum signal-to-noise ratio (default: 3.0)
-- `fitting.r_squared_min` - Minimum fit quality (default: 0.25)
+- `fitting.r_squared_min` - Minimum fit quality (default: 0.0)
 - `fitting.fwhm_max_cm1` - Maximum peak width (default: 90 cm⁻¹)
 - `fitting.reviewable_fwhm_min_cm1` - FWHM gate for reviewable peaks (default: 25.0 cm⁻¹)
 - `fitting.mineral_rules` - Mineral wavenumber ranges (single source of truth)
 
 **Fluorescence fitting:**
-- `fluorescence_fitting.snr_threshold` - Minimum SNR for fluorescence peaks (default: 2.0)
-- `fluorescence_fitting.fit_range` - Wavelength range in nm (default: [276, 355])
-- `fluorescence_fitting.fwhm_range` - FWHM bounds in nm (default: [10, 40])
+- `fluorescence_fitting.snr_threshold` - Minimum SNR for fluorescence peaks (default: 10.0)
+- `fluorescence_fitting.fit_range` - Wavelength range in nm (default: [276, 357])
+- `fluorescence_fitting.fwhm_range` - FWHM bounds in nm (default: [7, 35])
 - `fluorescence_fitting.max_peaks` - Maximum peaks per spectrum (default: 4)
 - `fluorescence_fitting.saturation_threshold` - Saturation intensity threshold (default: 60000)
 - `fluorescence_fitting.saturation_channel_limit` - Max saturated channels before skipping (default: 5)

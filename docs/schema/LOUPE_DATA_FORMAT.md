@@ -106,7 +106,7 @@ Key-value pairs describing the workspace configuration and instrument state.
 | `human_readable_workspace` | string | User-friendly workspace name | `Teflon` |
 | `n_spectra` | integer | Number of spectral points in map | `100` |
 | `n_channels` | integer | CCD channels per spectrum | `2148` |
-| `laser_wavelength` | float | Laser wavelength (nm) | `248.6` |
+| `laser_wavelength` | float | Laser wavelength (nm) | `248.5794` |
 | `shots_per_spec` | integer | Laser shots per spectrum | `10`, `100`, `300` |
 | `az_scale` | float | Azimuth scale factor | `0.62815` |
 | `el_scale` | float | Elevation scale factor | `0.42244` |
@@ -500,8 +500,8 @@ SOFF dimension descriptor.
 
 ## Wavelength Calibration
 
-> **Canonical Reference:** See [`docs/schema/SPECTRAL_REGIONS.md`](SPECTRAL_REGIONS.md)
-> for the definitive wavelength calibration specification, including polynomial coefficients,
+> **Reference:** See [`docs/schema/SPECTRAL_REGIONS.md`](SPECTRAL_REGIONS.md)
+> for the wavelength calibration, including polynomial coefficients,
 > R1/R2/R3 region boundaries, and code patterns. The information below is a summary.
 
 ### Default Calibration Polynomial
@@ -541,8 +541,10 @@ The CCD has three regions with overlapping wavelength coverage:
 | R3 | ~1650-2148 | ~1650 - ~4000 cm^-1 |
 
 **Overlap Handling:**
-- R1 + R2 overlap: channels 565-690
-- R2 + R3 overlap: channels 1663-1696
+- R1 + R2 overlap: channels 565-689
+- R2 + R3 overlap: channels 1668-1689
+
+(The channel ranges the R123 stitch sums, from `core/r123_stitching.py`.)
 
 ---
 
@@ -550,41 +552,22 @@ The CCD has three regions with overlapping wavelength coverage:
 
 ### Scanner Coordinates
 
-**Raw coordinates:** Azimuth (az) and Elevation (el) in digital numbers (DN)
-
-**Scale factors (default):**
-- `az_scale`: 0.628154699
-- `el_scale`: 0.422441487
+**Raw coordinates:** Azimuth (az) and Elevation (el) in digital numbers (DN). This package does not convert them: it applies no az/el scale factors and no rotation.
 
 ### Pixel Coordinates
 
-Conversion from scanner coordinates to ACI image pixels:
+Each point is placed on the ACI image from its `x` and `y` in `spatial.csv` and the laser center (`core/spatial.py`, `convert_coordinates_loupe`):
 
 ```python
-laser_center = (809, 664)  # pixels
-rotation = 20.6793583  # degrees
+x_pix = laser_x * upscale - x * upscale * 1000 / pixel_scale
+y_pix = laser_y * upscale - y * upscale * 1000 / pixel_scale
 ```
+
+`laser_x` and `laser_y` come from the scan's `loupe.csv` when present, else from `spatial.laser_center` in `config.yaml` (809, 664 pixels). `pixel_scale` is `image.pixel_scale` (10.1 µm per pixel) unless `loupe.csv` gives one.
 
 ### ACI/WATSON Working Distance
 
-From motor position to working distance (cm):
-
-**ACI:**
-```python
-working_distance = (0.005 * motor_pos) - 20.34
-```
-
-**WATSON:**
-```python
-# Complex polynomial - see ACI_WATSON_calc.py
-working_distance = 1 / (
-    (1091060 / motor_pos) +
-    (-332.921) +
-    (0.0382592 * motor_pos) +
-    (-0.00000196922 * motor_pos**2) +
-    (0.0000000000384562 * motor_pos**3)
-)
-```
+This package does not compute a working distance from the focus motor position; `context_images.working_distance_cm` is left NULL.
 
 ---
 
@@ -605,6 +588,8 @@ Processing can be applied in different orders, resulting in codes like:
 - `NB`: Normalized then baselined
 - `NBC`: Normalized, baselined, cosmic-ray removed
 - etc.
+
+This package stores the code as text (`scans.processing_applied`) and does not decode it.
 
 ---
 
