@@ -398,15 +398,17 @@ class ReviewService:
             base = context.results_path
             
             # Determine thresholds from config
+            from sherloc_pipeline.core.fitting import FILTER_FWHM_MIN_CM1_DEFAULT
+
             try:
                 f_lo = 25.0
                 fitting_cfg = getattr(cfg, 'fitting', {})
                 if isinstance(fitting_cfg, dict):
-                    f_hi_keep = float(fitting_cfg.get('filter_fwhm_min_cm1', 30.0))
+                    f_hi_keep = float(fitting_cfg.get('filter_fwhm_min_cm1', FILTER_FWHM_MIN_CM1_DEFAULT))
                 else:
-                    f_hi_keep = float(getattr(fitting_cfg, 'filter_fwhm_min_cm1', 30.0))
+                    f_hi_keep = float(getattr(fitting_cfg, 'filter_fwhm_min_cm1', FILTER_FWHM_MIN_CM1_DEFAULT))
             except Exception:
-                f_lo, f_hi_keep = 25.0, 30.0
+                f_lo, f_hi_keep = 25.0, FILTER_FWHM_MIN_CM1_DEFAULT
             
             df = build_scan_df(base=base, sol=sol, target=target, scan=scan, f_lo=f_lo, f_hi_keep=f_hi_keep)
             if df.empty:

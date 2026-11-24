@@ -30,7 +30,7 @@ from sherloc_pipeline.core.calibration import (
     calculate_loupe_wavelength_wavenumber,
     get_region_wavelength_mask,
 )
-from sherloc_pipeline.core.fitting import fit_spectrum
+from sherloc_pipeline.core.fitting import FILTER_FWHM_MIN_CM1_DEFAULT, fit_spectrum
 from sherloc_pipeline.core.hydration_veto import (
     HydrationVetoConfig,
     despike_for_veto,
@@ -348,7 +348,7 @@ def _fit_raman_domain(
         cfg = {
             "r1_fit_range": list(roi),
             "fit_fwhm_min_initial_cm1": fitting_cfg.get("fit_fwhm_min_initial_cm1", 22),
-            "filter_fwhm_min_cm1": fitting_cfg.get("filter_fwhm_min_cm1", 30),
+            "filter_fwhm_min_cm1": fitting_cfg.get("filter_fwhm_min_cm1", FILTER_FWHM_MIN_CM1_DEFAULT),
             "fwhm_max_cm1": fitting_cfg.get("fwhm_max_cm1", 90),
             "slit_width_cm1_default": fitting_cfg.get("slit_width_cm1_default", 34.1),
             "slit_pref_weight": fitting_cfg.get("slit_pref_weight", 0.2),

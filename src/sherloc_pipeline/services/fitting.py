@@ -2534,7 +2534,8 @@ class FittingService:
                                 mdf['min_ID'] = map_min_id_series(mdf['center_cm1'], rules)
                         except Exception:
                             pass
-                        keep_thresh = float(fit_cfg.get('filter_fwhm_min_cm1', 30.0))
+                        from sherloc_pipeline.core.fitting import FILTER_FWHM_MIN_CM1_DEFAULT
+                        keep_thresh = float(fit_cfg.get('filter_fwhm_min_cm1', FILTER_FWHM_MIN_CM1_DEFAULT))
                         mdf = mdf[mdf['fwhm_cm1'] >= keep_thresh]
                         for _, r in mdf.iterrows():
                             acc_rows.append({
