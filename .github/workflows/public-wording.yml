@@ -41,22 +41,8 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.event.after }}
         run: |
-          # Every commit the push brings to main:
-          #   a normal push     BEFORE..AFTER;
-          #   a new branch      the commits on no other branch of this repository;
-          #   a forced push     merge-base(BEFORE, AFTER)..AFTER, after fetching the old tip.
-          # If the old tip cannot be fetched the run fails: those messages were not read.
-          set -euo pipefail
+          # Every commit the push brings to main, including a new branch and a
+          # forced push; the run fails if the old tip cannot be fetched.
           list="$RUNNER_TEMP/pushed-commits"
-          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            git rev-list "$AFTER" --not --exclude=refs/remotes/origin/main --remotes=origin > "$list"
-          else
-            if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-              git fetch --no-tags --quiet origin "$BEFORE" || {
-                echo "::error::old tip $BEFORE could not be fetched; check the pushed commit messages by hand"
-                exit 1
-              }
-            fi
-            git rev-list "$(git merge-base "$BEFORE" "$AFTER")..$AFTER" > "$list"
-          fi
+          bash scripts/list-pushed-commits.sh "$BEFORE" "$AFTER" "$list"
           python3 scripts/check-public-wording.py --commits-file "$list"

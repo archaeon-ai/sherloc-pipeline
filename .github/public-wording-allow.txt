@@ -1,8 +1,10 @@
 # Exceptions to scripts/check-public-wording.py, one per line:
-#   path glob | rule (or *) | exact text on the line (or *) | reason
+#   path glob | rule (or *) | exact text on the line (or * or marked) | reason
 # The path glob is matched against a file path, "PR title", "PR body" or
 # "commit <sha>". Every line needs a reason; keep the list short.
-scripts/check-public-wording.py | * | * | the check's own patterns and messages
-tests/unit/scripts/test_check_public_wording.py | * | * | test inputs for the check
+# "marked" covers only the lines of those files that end with the comment
+# "# public-wording: example"; any other line there is checked as usual.
+scripts/check-public-wording.py | * | marked | the check's own patterns and host lists
+tests/unit/scripts/test_check_public_wording.py | * | marked | test inputs for the check
 * | host | bmsis.org | the maintainer's published contact address
 tests/architecture/test_fixture_provenance.py | sol-ceiling | * | invented sols that test the archive envelope check

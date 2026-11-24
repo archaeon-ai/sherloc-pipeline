@@ -82,7 +82,9 @@ pre-commit install                              # also checks each commit messag
 ```
 
 A justified exception is one line, with its reason, in
-`.github/public-wording-allow.txt`. If CI flags a commit message you have
+`.github/public-wording-allow.txt`. The check's own source and tests spell out
+what the rules look for; there each such line ends with the comment
+`# public-wording: example`, and any other line is checked as usual. If CI flags a commit message you have
 already pushed, say so on the pull request and leave the branch as it is: the
 fix is a rewrite and force-push of the branch, which a maintainer approves.
 Once a commit is on main its message stays, so the squash-merge message is the

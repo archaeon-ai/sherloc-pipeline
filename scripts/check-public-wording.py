@@ -41,6 +41,10 @@ from pathlib import Path
 
 LEDGER_PATH = "tests/fixtures/PROVENANCE.json"
 ALLOW_PATH = ".github/public-wording-allow.txt"
+# An allow entry whose text is MARKED covers only the lines of its files that
+# carry EXAMPLE_MARK, so an unmarked line added to those files is still reported.
+MARKED = "marked"
+EXAMPLE_MARK = "public-wording: example"
 # Sols at or above this value are reserved for invented examples (use sol 9999).
 # Every sol past the archived envelope and below it is flagged.
 SOL_PLACEHOLDER_MIN = 9000
@@ -68,13 +72,27 @@ PUBLIC_HOSTS = (
 # Hosting services whose subdomains belong to one deployment: any subdomain is
 # reported (placeholders such as your-team.<service> pass).
 TENANT_SUFFIXES = (
-    "cloudflareaccess.com", "cloudflarestorage.com", "r2.dev", "workers.dev",
-    "pages.dev", "auth0.com", "amazonaws.com", "azurewebsites.net",
-    "herokuapp.com", "vercel.app", "netlify.app", "fly.dev", "ngrok.io",
-    "ngrok-free.app", "ts.net",
+    "cloudflareaccess.com", "cloudflarestorage.com", "r2.dev", "workers.dev",  # public-wording: example
+    "pages.dev", "auth0.com", "amazonaws.com", "azurewebsites.net",  # public-wording: example
+    "herokuapp.com", "vercel.app", "netlify.app", "fly.dev", "ngrok.io",  # public-wording: example
+    "ngrok-free.app", "ts.net",  # public-wording: example
 )
 
-# A first label that marks a host name as an invented example.
+# A host name with no scheme is recognized only when it ends in one of these:
+# public endings that rarely end a code identifier, and endings used inside
+# private networks. Any other ending (".app", ".info", ".site") is common in
+# code such as self.app, so a bare name there is not checked; a URL or an
+# email address is checked whatever its ending.
+BARE_HOST_SUFFIXES = (
+    "com", "net", "org", "io", "edu", "gov", "dev", "ai", "tech", "cloud",
+    "online", "biz",
+    "internal", "corp", "lan", "intranet", "localdomain", "local", "arpa",
+    "private", "home", "lab",
+)
+
+# A first label that marks a hosting-service subdomain (TENANT_SUFFIXES) as an
+# invented example, such as your-team.workers.dev. It applies to those
+# services only: demo.<private host> is reported like any other private host.
 PLACEHOLDER_LABEL = re.compile(
     r"your[\w-]*|tenant|team|account|acct|test|test-[\w-]+|example|invented|change-me"
     r"|placeholder|sample|demo|attacker[\w-]*")
@@ -117,7 +135,7 @@ RULES: tuple[Rule, ...] = (
          _r(r"(?i)\b[a-z][a-z0-9+.-]*://(?:[^@/\s]+@)?([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)"
             r"|\b[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})\b"
             r"|(?<![\w@./-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
-            r"(?:com|net|org|io|edu|gov|internal|corp|lan|intranet|localdomain|local|arpa))\b(?![\w(-])(?!\.\w)"),
+            r"(?:" + "|".join(BARE_HOST_SUFFIXES) + r"))\b(?![\w(-])(?!\.\w)"),
          "host name that is not a public site: use an example domain (example.com) or configuration"),
     Rule("ip-address",
          _r(r"(?<![\w.\u00a7])(?!127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)"
@@ -128,15 +146,15 @@ RULES: tuple[Rule, ...] = (
          _r(r"(?i)(?<![\w:.])(?!2001:db8:)[23][0-9a-f]{3}:(?:[0-9a-f]{0,4}:){2,6}[0-9a-f]{0,4}(?![\w:])"),
          "public IPv6 address: use a documentation address (2001:db8::) or configuration"),
     Rule("review-label",
-         _r(r"\b(?:[Rr]eview|[Rr]eviewer|Codex)\s+round\s*\d+|\b[Rr]ound[ -]?\d+\s+(?:F\d+|findings?|review|verdict)\b"
-            r"|\b[Rr]\d+\s+(?:NO-GO|GO)\b|\bNO-GO\b|\bCONDITIONAL[_ ]GO\b"
+         _r(r"\b(?:[Rr]eview|[Rr]eviewer|Codex)\s+round\s*\d+|\b[Rr]ound[ -]?\d+\s+(?:F\d+|findings?|review|verdict)\b"  # public-wording: example
+            r"|\b[Rr]\d+\s+(?:NO-GO|GO)\b|\bNO-GO\b|\bCONDITIONAL[_ ]GO\b"  # public-wording: example
             r"|\b(?:[Rr]eview|[Rr]eviewer|[Cc]onnector)\s+(?:[Rr]\d+\s+)?[FP]\d+(?:\.\d+)?\b"
             r"|\b[Rr]\d+\s+F\d+\b|\bPRIOR_RESOLVED\b|\b[Pp]rior round\b|\bexact head\b"),
          "review-round or finding label: describe the behavior, not how it was reviewed"),
     Rule("decision-note",
-         _r(r"\b[Pp]er\s+(?:the\s+)?(?:operator|PM|domain owner|science lead)\b"
+         _r(r"\b[Pp]er\s+(?:the\s+)?(?:operator|PM|domain owner|science lead)\b"  # public-wording: example
             r"|\b[Dd]omain[ -]owner\b|\b[Ss]cience lead\b"
-            r"|\b[Oo]perator'?s\s+(?:go|word|ruling|ratification|approval|decision|sign-off)\b"
+            r"|\b[Oo]perator'?s\s+(?:go|word|ruling|ratification|approval|decision|sign-off)\b"  # public-wording: example
             r"|\b[Rr]atif(?:y|ied|ication)\b|\b[Rr]uled\b(?!\s+out)|(?<![A-Za-z])[Rr]ulings?(?![A-Za-z])"
             r"|\(\s*" + _MONTHS_DAYS + r"[A-Z][a-z]+,?\s+" + _DATE + r"\b"
             r"|\b" + _MONTHS_DAYS + r"[A-Z][a-z]+,?\s+(?:on\s+)?" + _DATE
@@ -147,7 +165,7 @@ RULES: tuple[Rule, ...] = (
             r"|\b[Pp]arked (?:this|the|at)\b|\b[Bb]urndown\b|\bmust not merge\b|\bcanary rollout\b"),
          "internal project-management wording: write for a reader outside the project"),
     Rule("tool-attribution",
-         _r(r"Claude|Codex|\bcodex\b|Anthropic|OpenAI|\bGPT\b|\bGPT-?\d|\bgpt-\d|\bOpus\b|\bSonnet\b"
+         _r(r"Claude|Codex|\bcodex\b|Anthropic|OpenAI|\bGPT\b|\bGPT-?\d|\bgpt-\d|\bOpus\b|\bSonnet\b"  # public-wording: example
             r"|\bGemini\b|claude\.ai|\bGenerated with\b|\U0001F916"),
          "AI tool name or attribution: leave tooling out of code, docs and history"),
     Rule("sol-ceiling",
@@ -160,7 +178,7 @@ RULES: tuple[Rule, ...] = (
 )
 
 WORK_STATE_RULE = Rule(
-    "work-state", _r(r"^(?:.*/)?WORK_STATE[^/]*$|^\.claude/|^_scratch/|^\.codex/"),
+    "work-state", _r(r"^(?:.*/)?WORK_STATE[^/]*$|^\.claude/|^_scratch/|^\.codex/"),  # public-wording: example
     "work-tracking file or folder: keep it outside the repository")
 
 
@@ -188,9 +206,11 @@ class Allow:
     reason: str
 
     def covers(self, f: Finding) -> bool:
-        return (fnmatch.fnmatchcase(f.where, self.glob)
-                and self.rule in ("*", f.rule)
-                and (self.text == "*" or self.text in (f.match or f.text)))
+        if not (fnmatch.fnmatchcase(f.where, self.glob) and self.rule in ("*", f.rule)):
+            return False
+        if self.text == MARKED:
+            return EXAMPLE_MARK in f.text
+        return self.text == "*" or self.text in (f.match or f.text)
 
 
 def max_archived_sol(root: Path) -> int | None:
@@ -223,14 +243,16 @@ def load_allow(root: Path) -> list[Allow]:
 
 def _host_ok(host: str) -> bool:
     host = host.lower().rstrip(".")
-    if re.match(r"(?:<|\{|\$)", host) or PLACEHOLDER_LABEL.fullmatch(host.split(".")[0]):
-        return True     # a placeholder such as your-team.<service> or tenant.<service>
+    if re.match(r"(?:<|\{|\$)", host):
+        return True     # a template such as <host> or ${HOST}
     if re.fullmatch(r"[\d.]+", host):
         return True     # an address: the ip-address rule decides
     if "." not in host:
         return True     # a single-label test host such as http://testserver
     if any(host.endswith("." + h) for h in TENANT_SUFFIXES):
-        return False    # a deployment's own subdomain of a hosting service
+        # A deployment's own subdomain of a hosting service, unless its first
+        # label is a placeholder such as your-team.<service> or tenant.<service>.
+        return bool(PLACEHOLDER_LABEL.fullmatch(host.split(".")[0]))
     return any(host == h or host.endswith("." + h) for h in PUBLIC_HOSTS)
 
 
