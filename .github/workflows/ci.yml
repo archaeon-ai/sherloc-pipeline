@@ -1,5 +1,5 @@
 name: CI
-# Trigger discipline: this suite takes many minutes. `on: [push, pull_request]`
+# Triggers: this suite takes many minutes. `on: [push, pull_request]`
 # with no branch filter would run it twice per push to a PR branch. Run once
 # per PR head, once per main push, and cancel a superseded run when a new push
 # lands on the same ref, to keep CI minutes down.
@@ -42,7 +42,7 @@ jobs:
       # `ModuleNotFoundError: fastapi` at the first web test.
       - run: pip install -e '.[dev,web,pds,ml-despike]'
       - run: ruff check .
-      - name: Fixture provenance (tracked data files must be publicly releasable)
+      - name: Test data provenance (tracked data files must be publicly releasable)
         run: scripts/check-fixture-provenance.py --tree
       # The contract smoke (tests/contract/test_container_smoke.py) is
       # double-marked `docker` + `slow`; the dedicated contract-smoke.yml

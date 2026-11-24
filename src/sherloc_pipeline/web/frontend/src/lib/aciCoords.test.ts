@@ -2,7 +2,7 @@
 // The Workbench "Scan" zoom button corrupted-view symptom traced to a
 // naive `x_aci_pixel ?? x_pixel` fallback that interpreted Loupe
 // scanner_workspace values (~±0.5) as ACI image pixels. These tests
-// lock in the frame discipline so future changes can't regress.
+// pin the coordinate frame so future changes can't regress.
 
 import { describe, it, expect } from 'vitest';
 import { getAciPixel, computeAciBBox } from './aciCoords';
@@ -27,7 +27,7 @@ function makePoint(overrides: Partial<ScanPoint>): ScanPoint {
   };
 }
 
-describe('getAciPixel — frame discipline', () => {
+describe('getAciPixel — coordinate frame', () => {
   it('uses x_aci_pixel/y_aci_pixel when present (server-resolved)', () => {
     const pt = makePoint({
       x_aci_pixel: 820,

@@ -24,7 +24,7 @@ text given.
 A justified exception is one line in .github/public-wording-allow.txt, so it
 shows in the diff that adds it. Exits 0 when clean, 1 on findings, 2 on usage
 or allow-file errors. Stdlib only, so it runs without a virtualenv. See
-CONTRIBUTING.md "Public-repo discipline".
+CONTRIBUTING.md "Checks run in CI".
 """
 
 from __future__ import annotations
@@ -443,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f.render())
     if kept:
         print(f"\n{len(kept)} finding(s). This repository is public; see CONTRIBUTING.md "
-              f"\"Public-repo discipline\". A justified exception goes in {ALLOW_PATH}.")
+              f"\"Checks run in CI\". A justified exception goes in {ALLOW_PATH}.")
         return 1
     print("public wording: clean")
     return 0

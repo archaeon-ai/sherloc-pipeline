@@ -136,19 +136,18 @@ are immutable artifacts.
 
 ---
 
-## 8. Public-repo content discipline
+## 8. No local paths or host names in tracked content
 
 **Constraint.** Tracked content must not contain operator-local
 infrastructure strings (absolute paths, internal hostnames, internal
-codenames). Conventions and substitutions are documented in `CONTRIBUTING.md`
-"Public-repo discipline".
+codenames). The substitutions are listed in `CONTRIBUTING.md`
+"Checks run in CI".
 
-**Where enforced.** Contributor review against the `CONTRIBUTING.md` guidance.
-Data-file provenance is additionally gated by
+**Where enforced.** `scripts/check-public-wording.py` in CI and as a
+commit-message hook. Data-file provenance is checked by
 `scripts/check-fixture-provenance.py` (pre-commit + CI).
 
-**How to verify.** Review changed content against the `CONTRIBUTING.md`
-checklist before committing.
+**How to verify.** Run `scripts/check-public-wording.py` before pushing.
 
 ---
 
@@ -180,7 +179,7 @@ code should not reintroduce shared abstractions that erase the distinction.
 
 ---
 
-## 11. Frozen ML artifact discipline
+## 11. Frozen ML artifact
 
 **Constraint.** The ONNX model artifact (`ml_despike/manifest.py`) is
 sha256-pinned and immutable. No model re-evaluation, threshold tuning, or
@@ -264,7 +263,7 @@ Do **not** update for:
 
 - [ ] `pytest -m "not slow"` passes locally.
 - [ ] `ruff check .` passes.
-- [ ] Changed content reviewed against `CONTRIBUTING.md` "Public-repo discipline".
+- [ ] `scripts/check-public-wording.py` passes (`CONTRIBUTING.md` "Checks run in CI").
 - [ ] No new bare `except:` clauses.
 - [ ] No new hardcoded operator-local paths.
 - [ ] Service functions return `ServiceResult`; new errors extend `SherlocServiceError`.
