@@ -14,9 +14,7 @@
 1. [Data Provenance](#1-data-provenance)
 2. [Preprocessing Pipeline](#2-preprocessing-pipeline)
 3. [Peak Fitting Methods](#3-peak-fitting-methods)
-4. [Machine Learning Methods](#4-machine-learning-methods)
 5. [Vision Processing Methods](#5-vision-processing-methods)
-6. [Statistical Analysis](#6-statistical-analysis)
 7. [Software Environment](#7-software-environment)
 10. [Reproducibility Guidelines](#10-reproducibility-guidelines)
 11. [References](#11-references)
@@ -63,11 +61,12 @@ Drawn from Bhartia et al. (2021) and the codebase's Loupe-derived calibration in
 - **Processing Level:** EDR (Experimental Data Record) to RDR (Reduced Data Record)
 - **Calibration:** Dark subtraction, flat-field correction applied
 
-**Scan Types:**
-1. **Point Scans:** Single-point measurements (1-10 points)
-2. **Line Scans:** Linear transects (10-50 points)
-3. **Detail Scans:** High-resolution grids (10×10 = 100 points)
-4. **Calibration Scans:** Standard materials (AlGaN, Teflon, Polycarbonate)
+**Scan Types** (the `ScanType` values in `models/spectra.py`, resolved from the scan name by `classify_scan_type`):
+1. **Detail:** standard Mars surface scan
+2. **Survey:** large grid / areal-coverage scan
+3. **Line:** 1-D traverse scan (constituent of cross and asterisk composites)
+4. **HDR:** high-dynamic-range scan
+5. **Calibration:** calibration and engineering scans: AlGaN, laser-off darks, calibration-target materials, the meteorite, maze, laser power housekeeping, passive, and pulse-count intensity tests
 
 **Acquisition Parameters:**
 - **Pulses per Point (PPP):** 25-1000 (median: 100)
@@ -648,233 +647,6 @@ Organics use their own R² minimum, `organics_r2_min` (0.25), for the G gate and
 
 ---
 
-## 4. Machine Learning Methods
-
-### 4.1 Clustering Analysis
-
-#### 4.1.1 K-Means Clustering
-
-**Implementation:** scikit-learn KMeans with Lloyd's algorithm
-```python
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-
-def cluster_spectra(spectra: np.ndarray, n_clusters: int) -> ClusteringResult:
-    """Perform K-means clustering on spectral data."""
-    # Preprocessing
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(spectra)
-
-    # Optional dimensionality reduction
-    pca = PCA(n_components=50, random_state=42)
-    X_reduced = pca.fit_transform(X_scaled)
-
-    # Clustering
-    kmeans = KMeans(n_clusters=n_clusters,
-                   random_state=42,
-                   n_init=10,
-                   max_iter=300,
-                   tol=1e-4)
-    labels = kmeans.fit_predict(X_reduced)
-
-    # Quality metrics
-    silhouette = silhouette_score(X_reduced, labels)
-
-    return ClusteringResult(labels=labels,
-                          silhouette_score=silhouette,
-                          cluster_centers=kmeans.cluster_centers_)
-```
-
-**Hyperparameters (optimal):**
-- **n_clusters:** 5 (silhouette-optimized)
-- **init:** 'k-means++'
-- **n_init:** 10
-- **random_state:** 42 (reproducibility)
-- **algorithm:** 'lloyd'
-
-#### 4.1.2 DBSCAN (Density-Based Clustering)
-
-**Implementation:** Scikit-learn DBSCAN with epsilon-neighborhood
-```python
-from sklearn.cluster import DBSCAN
-
-def dbscan_cluster(spectra: np.ndarray, eps: float,
-                   min_samples: int) -> ClusteringResult:
-    """Density-based clustering for outlier detection."""
-    dbscan = DBSCAN(eps=eps,
-                   min_samples=min_samples,
-                   metric='euclidean',
-                   n_jobs=-1)
-    labels = dbscan.fit_predict(spectra)
-
-    # Separate core samples from noise (-1 labels)
-    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    n_noise = list(labels).count(-1)
-
-    return ClusteringResult(labels=labels,
-                          n_clusters=n_clusters,
-                          noise_points=n_noise)
-```
-
-**Hyperparameters:**
-- **eps:** 0.1284 (optimized via k-distance plot)
-- **min_samples:** 5 (2D rule of thumb: 2×dimensions)
-- **metric:** 'euclidean'
-
-### 4.2 Classification Methods
-
-#### 4.2.1 Calibration vs. Mars Classification
-
-**Best Model:** Gradient Boosting Classifier (96.95% accuracy)
-```python
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.model_selection import cross_val_score
-
-def train_calibration_classifier(spectra: np.ndarray,
-                                labels: np.ndarray) -> GradientBoostingClassifier:
-    """Train binary classifier for calibration vs. Mars scans."""
-    # Preprocessing pipeline
-    scaler = StandardScaler()
-    pca = PCA(n_components=50, random_state=42)
-
-    X_scaled = scaler.fit_transform(spectra)
-    X_reduced = pca.fit_transform(X_scaled)
-
-    # Gradient boosting classifier
-    gb_classifier = GradientBoostingClassifier(
-        n_estimators=100,
-        learning_rate=0.1,
-        max_depth=3,
-        random_state=42,
-        subsample=0.8,
-        min_samples_split=20,
-        min_samples_leaf=10
-    )
-
-    # Cross-validation
-    cv_scores = cross_val_score(gb_classifier, X_reduced, labels,
-                               cv=5, scoring='accuracy')
-
-    gb_classifier.fit(X_reduced, labels)
-    return gb_classifier
-```
-
-**Model Comparison Results:**
-| Algorithm | Test Accuracy | CV Mean ± Std | Precision | Recall | F1 Score |
-|-----------|---------------|---------------|-----------|--------|----------|
-| **GradientBoosting** | **96.95%** | **96.17 ± 1.2%** | **0.980** | **0.962** | **0.971** |
-| RandomForest | 96.45% | 95.41 ± 1.8% | 0.980 | 0.952 | 0.966 |
-| LogisticRegression | 91.37% | 93.62 ± 2.1% | 0.885 | 0.962 | 0.922 |
-| SVM (RBF) | 90.86% | 91.71 ± 2.4% | 0.884 | 0.952 | 0.917 |
-
-### 4.3 Dimensionality Reduction
-
-#### 4.3.1 Principal Component Analysis (PCA)
-
-**Implementation:** Incremental PCA for large datasets
-```python
-from sklearn.decomposition import PCA, IncrementalPCA
-
-def apply_pca(spectra: np.ndarray, n_components: int = 50) -> tuple:
-    """Apply PCA with explained variance analysis."""
-
-    # For large datasets, use incremental PCA
-    if spectra.shape[0] > 10000:
-        pca = IncrementalPCA(n_components=n_components)
-        batch_size = 1000
-        for i in range(0, spectra.shape[0], batch_size):
-            batch = spectra[i:i+batch_size]
-            pca.partial_fit(batch)
-        X_reduced = pca.transform(spectra)
-    else:
-        pca = PCA(n_components=n_components, random_state=42)
-        X_reduced = pca.fit_transform(spectra)
-
-    return X_reduced, pca.explained_variance_ratio_
-```
-
-**Results:**
-- **Components:** 50
-- **Explained Variance:** 17.7% (indicating high spectral dimensionality)
-- **Cumulative Variance:** First 10 components explain 9.2%
-
-#### 4.3.2 UMAP (Uniform Manifold Approximation)
-
-**Implementation:** Three-method approach for comprehensive analysis
-```python
-import umap
-from sklearn.model_selection import train_test_split
-
-# Method 1: Standard UMAP (CPU)
-def standard_umap(spectra: np.ndarray) -> np.ndarray:
-    """Standard UMAP dimensionality reduction."""
-    reducer = umap.UMAP(
-        n_neighbors=15,
-        n_components=2,
-        min_dist=0.1,
-        metric='euclidean',
-        random_state=42,
-        n_jobs=-1
-    )
-    return reducer.fit_transform(spectra)
-
-# Method 2: GPU UMAP (cuML/RAPIDS)
-def gpu_umap(spectra: np.ndarray) -> np.ndarray:
-    """GPU-accelerated UMAP using cuML."""
-    from cuml.manifold import UMAP as cuUMAP
-
-    reducer = cuUMAP(
-        n_neighbors=15,
-        n_components=2,
-        min_dist=0.1,
-        metric='euclidean',
-        random_state=42
-    )
-    return reducer.fit_transform(spectra)
-
-# Method 3: Parametric UMAP (hybrid training)
-def parametric_umap(spectra: np.ndarray, sample_size: int = 50000) -> tuple:
-    """Parametric UMAP with neural network encoder."""
-    from umap.parametric_umap import ParametricUMAP
-    import tensorflow as tf
-
-    # Stratified + diversity sampling for training
-    train_spectra = hybrid_sample(spectra, sample_size)
-
-    # Neural network architecture
-    encoder = tf.keras.Sequential([
-        tf.keras.layers.Dense(512, activation='relu'),
-        tf.keras.layers.Dropout(0.2),
-        tf.keras.layers.Dense(256, activation='relu'),
-        tf.keras.layers.Dropout(0.2),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dense(2)  # 2D embedding
-    ])
-
-    reducer = ParametricUMAP(
-        encoder=encoder,
-        n_neighbors=15,
-        n_components=2,
-        min_dist=0.1,
-        metric='euclidean',
-        random_state=42
-    )
-
-    # Train on subset, apply to full dataset
-    reducer.fit(train_spectra)
-    full_embedding = reducer.transform(spectra)
-
-    return full_embedding, reducer
-```
-
-**UMAP Strategy:**
-- **Standard UMAP:** Full 524K dataset, baseline 30-60 min
-- **GPU UMAP:** Full 524K dataset, ~5-10 min with RTX 3090 Ti
-- **Parametric UMAP:** 50K hybrid sample training, project full 524K
-
----
-
 ## 5. Vision Processing Methods
 
 ### 5.1 ACI Image Processing
@@ -908,247 +680,6 @@ def read_vicar_image(file_path: Path) -> tuple[np.ndarray, dict]:
 - **Field of View:** 16.6 × 12.1 mm
 - **Format:** 8-bit grayscale, uncompressed
 - **Metadata:** VICAR/PDS3 labels with acquisition parameters
-
-### 5.2 Grain Segmentation
-
-#### 5.2.1 Segment Anything Model (SAM)
-
-**Primary Model:** SAM ViT-B (Vision Transformer Base)
-```python
-from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
-
-def setup_sam_segmenter() -> SamAutomaticMaskGenerator:
-    """Initialize SAM ViT-B for grain segmentation."""
-    sam_checkpoint = "models/sam_vit_b_01ec64.pth"
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    sam = sam_model_registry["vit_b"](checkpoint=sam_checkpoint)
-    sam.to(device=device)
-
-    mask_generator = SamAutomaticMaskGenerator(
-        model=sam,
-        points_per_side=32,      # Grid density for prompt points
-        pred_iou_thresh=0.86,    # Quality threshold
-        stability_score_thresh=0.92,  # Stability threshold
-        min_mask_region_area=100,     # ~10 μm² minimum area
-        box_nms_thresh=0.7,     # Non-maximum suppression
-        crop_n_layers=0,        # No crop/zoom layers
-    )
-
-    return mask_generator
-```
-
-**Performance Comparison (RTX 3090 Ti):**
-| Model | Masks/Image | Time (s) | GPU Memory | Quality |
-|-------|-------------|----------|------------|---------|
-| **SAM ViT-B** | **54** | **2.2** | **2.7 GB** | **Best** |
-| MobileSAM | 30 | 2.4 | 2.7 GB | Good |
-| Watershed | 1140 | 0.4 | 0 GB | Baseline |
-
-#### 5.2.2 Watershed Fallback
-
-**Traditional Computer Vision:** Watershed segmentation for compatibility
-```python
-from skimage.segmentation import watershed
-from skimage.feature import peak_local_maxima
-from scipy.ndimage import distance_transform_edt
-
-def watershed_segmentation(image: np.ndarray) -> np.ndarray:
-    """Watershed-based grain segmentation fallback."""
-    # Preprocessing
-    blurred = gaussian_filter(image, sigma=1.0)
-
-    # Distance transform for marker generation
-    binary = blurred > threshold_otsu(blurred)
-    distance = distance_transform_edt(binary)
-
-    # Find local maxima as seeds
-    local_maxima = peak_local_maxima(distance,
-                                   min_distance=10,
-                                   threshold_abs=5)
-    markers = np.zeros_like(distance, dtype=int)
-    markers[tuple(local_maxima.T)] = np.arange(1, len(local_maxima) + 1)
-
-    # Watershed segmentation
-    labels = watershed(-distance, markers, mask=binary)
-
-    return labels
-```
-
-### 5.3 Grain Morphometry
-
-#### 5.3.1 Size Distribution Analysis
-
-**Wentworth Size Classification:**
-```python
-from enum import Enum
-
-class SizeClass(Enum):
-    """Wentworth grain size classification for geological materials."""
-    VERY_COARSE_SAND = (1000, 2000, "Very coarse sand")
-    COARSE_SAND = (500, 1000, "Coarse sand")
-    MEDIUM_SAND = (250, 500, "Medium sand")
-    FINE_SAND = (125, 250, "Fine sand")
-    VERY_FINE_SAND = (62.5, 125, "Very fine sand")
-    COARSE_SILT = (31.25, 62.5, "Coarse silt")
-
-def classify_grain_size(equivalent_diameter_um: float) -> SizeClass:
-    """Classify grain size according to Wentworth scale."""
-    for size_class in SizeClass:
-        min_size, max_size, _ = size_class.value
-        if min_size <= equivalent_diameter_um <= max_size:
-            return size_class
-    return SizeClass.VERY_FINE_SAND  # Default for smaller grains
-```
-
-#### 5.3.2 Shape Analysis
-
-**Morphometric Parameters:**
-```python
-from skimage.measure import regionprops
-
-def compute_grain_morphometry(mask: np.ndarray,
-                            pixel_scale_um: float = 10.1) -> dict:
-    """Compute comprehensive grain morphometry metrics."""
-    props = regionprops(mask.astype(int))[0]
-
-    # Size metrics
-    area_pixels = props.area
-    area_um2 = area_pixels * (pixel_scale_um ** 2)
-    equivalent_diameter_um = 2 * np.sqrt(area_um2 / np.pi)
-
-    # Shape metrics
-    perimeter_pixels = props.perimeter
-    perimeter_um = perimeter_pixels * pixel_scale_um
-
-    # Circularity (4π×Area/Perimeter²)
-    circularity = 4 * np.pi * area_pixels / (perimeter_pixels ** 2)
-
-    # Aspect ratio (major/minor axis length)
-    aspect_ratio = props.major_axis_length / props.minor_axis_length
-
-    # Centroid coordinates
-    centroid_y, centroid_x = props.centroid
-
-    return {
-        'area_um2': area_um2,
-        'equivalent_diameter_um': equivalent_diameter_um,
-        'perimeter_um': perimeter_um,
-        'circularity': circularity,
-        'aspect_ratio': aspect_ratio,
-        'centroid_x': centroid_x * pixel_scale_um,
-        'centroid_y': centroid_y * pixel_scale_um,
-        'major_axis_um': props.major_axis_length * pixel_scale_um,
-        'minor_axis_um': props.minor_axis_length * pixel_scale_um
-    }
-```
-
-**Morphometry Results (14,852 grains):**
-| Metric | Mean | Median | Std Dev |
-|--------|------|--------|---------|
-| Equivalent Diameter (μm) | 870.5 | 599.8 | 1161.3 |
-| Circularity | 0.480 | 0.480 | 0.192 |
-| Aspect Ratio | 4.02 | 1.52 | 8.64 |
-
----
-
-## 6. Statistical Analysis
-
-### 6.1 Quality Metrics
-
-#### 6.1.1 Clustering Validation
-
-**Silhouette Analysis:**
-```python
-from sklearn.metrics import silhouette_score, silhouette_samples
-
-def evaluate_clustering_quality(X: np.ndarray, labels: np.ndarray) -> dict:
-    """Comprehensive clustering quality assessment."""
-    # Global silhouette score
-    global_silhouette = silhouette_score(X, labels)
-
-    # Per-sample silhouette coefficients
-    sample_silhouettes = silhouette_samples(X, labels)
-
-    # Per-cluster analysis
-    cluster_scores = {}
-    for cluster_id in np.unique(labels):
-        if cluster_id == -1:  # Skip noise points in DBSCAN
-            continue
-        mask = labels == cluster_id
-        cluster_silhouettes = sample_silhouettes[mask]
-        cluster_scores[cluster_id] = {
-            'mean_silhouette': np.mean(cluster_silhouettes),
-            'std_silhouette': np.std(cluster_silhouettes),
-            'size': np.sum(mask)
-        }
-
-    return {
-        'global_silhouette': global_silhouette,
-        'cluster_scores': cluster_scores,
-        'sample_silhouettes': sample_silhouettes
-    }
-```
-
-#### 6.1.2 Classification Metrics
-
-**Cross-Validation Strategy:**
-```python
-from sklearn.model_selection import StratifiedKFold, cross_validate
-
-def evaluate_classifier(model, X: np.ndarray, y: np.ndarray) -> dict:
-    """Comprehensive classifier evaluation with cross-validation."""
-
-    # Stratified 5-fold cross-validation
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
-    scoring_metrics = ['accuracy', 'precision', 'recall', 'f1', 'roc_auc']
-    cv_results = cross_validate(model, X, y, cv=cv,
-                               scoring=scoring_metrics,
-                               return_train_score=True)
-
-    # Aggregate statistics
-    results = {}
-    for metric in scoring_metrics:
-        test_scores = cv_results[f'test_{metric}']
-        results[metric] = {
-            'mean': np.mean(test_scores),
-            'std': np.std(test_scores),
-            'scores': test_scores
-        }
-
-    return results
-```
-
-### 6.2 Statistical Tests
-
-#### 6.2.1 Distribution Comparisons
-
-**Kolmogorov-Smirnov Tests:**
-```python
-from scipy.stats import ks_2samp, mannwhitneyu
-
-def compare_spectral_distributions(group1: np.ndarray,
-                                 group2: np.ndarray) -> dict:
-    """Statistical comparison of spectral intensity distributions."""
-
-    # Kolmogorov-Smirnov test for distribution similarity
-    ks_statistic, ks_pvalue = ks_2samp(group1.flatten(),
-                                      group2.flatten())
-
-    # Mann-Whitney U test for median differences
-    mw_statistic, mw_pvalue = mannwhitneyu(group1.flatten(),
-                                          group2.flatten(),
-                                          alternative='two-sided')
-
-    return {
-        'ks_test': {'statistic': ks_statistic, 'p_value': ks_pvalue},
-        'mw_test': {'statistic': mw_statistic, 'p_value': mw_pvalue},
-        'effect_size': np.median(group1) - np.median(group2)
-    }
-```
-
----
 
 ## 7. Software Environment
 
@@ -1230,65 +761,11 @@ preprocessing:
     iters: 10
     diff_order: 2
     tol: 0.001
-
-machine_learning:
-  clustering:
-    default_algorithm: "kmeans"
-    kmeans:
-      n_clusters: 5
-      n_init: 10
-      random_state: 42
-    dbscan:
-      eps: 0.1284
-      min_samples: 5
-
-  feature_extraction:
-    pca_components: 50
-    normalization: "l2"
-
-vision:
-  sam:
-    model_type: "vit_b"
-    points_per_side: 32
-    pred_iou_thresh: 0.86
-    stability_score_thresh: 0.92
-    min_mask_region_area: 100
 ```
 
 ---
 
 ## 10. Reproducibility Guidelines
-
-### 10.1 Random Seed Management
-
-**Deterministic Results:**
-```python
-import numpy as np
-import random
-from sklearn.utils import check_random_state
-
-# Global random seed for reproducibility
-RANDOM_SEED = 42
-
-def set_random_seeds(seed: int = RANDOM_SEED):
-    """Set all random seeds for reproducible results."""
-    np.random.seed(seed)
-    random.seed(seed)
-
-    # PyTorch (if available)
-    try:
-        import torch
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    except ImportError:
-        pass
-
-# Apply consistently across all analysis
-set_random_seeds(42)
-```
 
 ### 10.2 Output Metadata Standards
 
@@ -1380,18 +857,37 @@ def compute_dataset_hash(spectra_paths: List[Path]) -> str:
   doi={10.1016/j.chemolab.2018.06.009}
 }
 
-@article{Kirillov2023,
-  title={Segment anything},
-  author={Kirillov, Alexander and Mintun, Eric and Ravi, Nikhila and Mao, Hanzi and Rolland, Chloe and Gustafson, Laura and Xiao, Tete and Whitehead, Spencer and Berg, Alexander C and Lo, Wan-Yen and others},
-  journal={arXiv preprint arXiv:2304.02643},
-  year={2023}
+@article{Sharma2023,
+  title={Diverse organic-mineral associations in Jezero crater, Mars},
+  author={Sharma, Sunanda and Roppel, Ryan D. and Murphy, Ashley E. and others},
+  journal={Nature},
+  volume={619},
+  number={7971},
+  pages={724--732},
+  year={2023},
+  doi={10.1038/s41586-023-06143-z}
 }
 
-@article{McInnes2018,
-  title={UMAP: Uniform manifold approximation and projection},
-  author={McInnes, Leland and Healy, John and Melville, James},
-  journal={arXiv preprint arXiv:1802.03426},
-  year={2018}
+@article{Scheller2024,
+  title={Inorganic interpretation of luminescent materials encountered by the Perseverance rover on Mars},
+  author={Scheller, Eva L. and Bosak, Tanja and McCubbin, Francis M. and others},
+  journal={Science Advances},
+  volume={10},
+  number={39},
+  pages={eadm8241},
+  year={2024},
+  doi={10.1126/sciadv.adm8241}
+}
+
+@article{Haney2026,
+  title={Multidisciplinary Analyses of Terrestrial Samples Used to Interpret an Inorganic Origin (Anhydrite:Ce$^{3+}$) for the 304 and 325-nm Doublet Fluorescence Detected by the Mars 2020 SHERLOC Instrument at Jezero Crater},
+  author={Haney, N. C. and Morris, R. V. and Jakubek, R. S. and others},
+  journal={Journal of Geophysical Research: Planets},
+  volume={131},
+  number={3},
+  pages={e2025JE009385},
+  year={2026},
+  doi={10.1029/2025JE009385}
 }
 
 @article{Pedregosa2011,
@@ -1431,48 +927,6 @@ def compute_dataset_hash(spectra_paths: List[Path]) -> str:
   url={https://github.com/derb12/pybaselines},
   doi={10.5281/zenodo.5608581}
 }
-
-@software{RAPIDS2023,
-  author={{RAPIDS Development Team}},
-  title={RAPIDS: GPU-Accelerated Data Science},
-  version={22.10.0},
-  year={2023},
-  url={https://rapids.ai}
-}
-```
-
-### 11.3 Standards and Conventions
-
-```bibtex
-@techreport{Wentworth1922,
-  title={A scale of grade and class terms for clastic sediments},
-  author={Wentworth, Chester K},
-  journal={The Journal of Geology},
-  volume={30},
-  number={5},
-  pages={377--392},
-  year={1922},
-  publisher={University of Chicago Press}
-}
-
-@article{Rousseeuw1987,
-  title={Silhouettes: a graphical aid to the interpretation and validation of cluster analysis},
-  author={Rousseeuw, Peter J},
-  journal={Journal of Computational and Applied Mathematics},
-  volume={20},
-  pages={53--65},
-  year={1987},
-  publisher={Elsevier}
-}
-
-@book{Hastie2009,
-  title={The elements of statistical learning: data mining, inference, and prediction},
-  author={Hastie, Trevor and Tibshirani, Robert and Friedman, Jerome},
-  year={2009},
-  publisher={Springer},
-  edition={2nd},
-  doi={10.1007/978-0-387-84858-7}
-}
 ```
 
 ---
@@ -1495,29 +949,6 @@ graph TD
 
     F --> I[Failed QC]
     I --> J[Flag for Manual Review]
-```
-
-### A.2 Machine Learning Workflow
-
-```mermaid
-graph TD
-    A[Preprocessed Spectra] --> B[Feature Extraction]
-    B --> C[Dimensionality Reduction]
-    C --> D[Model Selection]
-
-    D --> E[K-Means Clustering]
-    D --> F[DBSCAN Clustering]
-    D --> G[Classification]
-
-    E --> H[Silhouette Analysis]
-    F --> I[Density Analysis]
-    G --> J[Cross-Validation]
-
-    H --> K[Model Validation]
-    I --> K
-    J --> K
-
-    K --> L[Results & Metadata]
 ```
 
 ---
