@@ -14,6 +14,7 @@ Usage:
   scripts/check-public-wording.py --title T --body-file F   # also PR text
   scripts/check-public-wording.py --commit-msg FILE     # one commit message
   scripts/check-public-wording.py --messages A..B       # commit messages only
+  scripts/check-public-wording.py --commits-file F      # messages of the commits listed in F
 
 In a pull request workflow the title and body come from the PR_TITLE and
 PR_BODY environment variables. Branch mode reads the lines the branch adds
@@ -73,6 +74,11 @@ TENANT_SUFFIXES = (
     "ngrok-free.app", "ts.net",
 )
 
+# A first label that marks a host name as an invented example.
+PLACEHOLDER_LABEL = re.compile(
+    r"your[\w-]*|tenant|team|account|acct|test|test-[\w-]+|example|invented|change-me"
+    r"|placeholder|sample|demo|attacker[\w-]*")
+
 # Files where container and deployment paths such as /data are the subject.
 DEPLOY_GLOBS = ("Dockerfile*", "*/Dockerfile*", "docker-compose*", "compose*.y*ml",
                 "deploy/*", "docker-entrypoint.sh", ".dockerignore")
@@ -111,7 +117,7 @@ RULES: tuple[Rule, ...] = (
          _r(r"(?i)\b[a-z][a-z0-9+.-]*://(?:[^@/\s]+@)?([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)"
             r"|\b[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})\b"
             r"|(?<![\w@./-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
-            r"(?:com|net|org|io|edu|gov|internal|corp|lan|intranet|localdomain))\b(?![\w(-])(?!\.\w)"),
+            r"(?:com|net|org|io|edu|gov|internal|corp|lan|intranet|localdomain|local|arpa))\b(?![\w(-])(?!\.\w)"),
          "host name that is not a public site: use an example domain (example.com) or configuration"),
     Rule("ip-address",
          _r(r"(?<![\w.\u00a7])(?!127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)"
@@ -217,8 +223,8 @@ def load_allow(root: Path) -> list[Allow]:
 
 def _host_ok(host: str) -> bool:
     host = host.lower().rstrip(".")
-    if re.match(r"(?:your-|<|\{|\$)", host):
-        return True     # a placeholder such as your-team.example
+    if re.match(r"(?:<|\{|\$)", host) or PLACEHOLDER_LABEL.fullmatch(host.split(".")[0]):
+        return True     # a placeholder such as your-team.<service> or tenant.<service>
     if re.fullmatch(r"[\d.]+", host):
         return True     # an address: the ip-address rule decides
     if "." not in host:
@@ -358,6 +364,8 @@ def main(argv: list[str] | None = None) -> int:
                       help="check one commit message file (the pre-commit commit-msg hook)")
     mode.add_argument("--messages", metavar="RANGE",
                       help="check only the commit messages in RANGE (A..B), or one commit")
+    mode.add_argument("--commits-file", metavar="FILE",
+                      help="check only the messages of the commits listed in FILE, one id per line")
     ap.add_argument("--title", help="pull request title (default: $PR_TITLE)")
     ap.add_argument("--body-file", help="file holding the pull request body (default: $PR_BODY)")
     args = ap.parse_args(argv)
@@ -382,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
             findings = scan_text("commit message", text, ceiling)
         elif args.messages:
             findings = scan_messages(root, args.messages, ceiling)
+        elif args.commits_file:
+            findings = []
+            for sha in Path(args.commits_file).read_text(encoding="utf-8").split():
+                findings += scan_messages(root, sha, ceiling)
         else:
             findings = scan_branch(root, args.base, ceiling)
     except subprocess.CalledProcessError as exc:

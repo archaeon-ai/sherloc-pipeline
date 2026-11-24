@@ -60,7 +60,7 @@ def rules(text: str, path: str | None = None) -> set[str]:
         ("new observation at sol 2860", "sol-ceiling"),
         ("build.internal", "host"),
         ("build.secret.corp/docs", "host"),
-        ("https://tenant.cloudflareaccess.com/admin", "host"),
+        ("https://acme-lab.cloudflareaccess.com/admin", "host"),
         ("https://mycompany.example-bad.net/x", "host"),
         ("2001:4860:4860::8888", "ipv6-address"),
     ],
@@ -92,6 +92,8 @@ def test_flags(text, rule):
         "version 1.11.1.0 of the model",
         "spec section 3.9.8.3",
         "e.g. your-team.cloudflareaccess.com",
+        "issuer https://tenant.us.auth0.com/",
+        "bucket at https://account.r2.cloudflarestorage.com",
         "request.app.state.config",
         "sol 1853 line_1 has 25 points",
         'sol_dir = tmp_path / "sol_9999"',
@@ -234,3 +236,22 @@ def test_messages_mode_reads_one_commit_even_the_root(tmp_path):
                    cwd=repo, check=True)
     assert _run(repo, "--messages", "HEAD").returncode == 1
     assert _run(repo, "--messages", "main..HEAD").returncode == 1
+
+
+def test_commits_file_mode_reads_each_listed_commit(tmp_path):
+    repo = _repo(tmp_path)
+    for msg in ("fix: clean one", "fix: x (review round 2)", "fix: clean two"):
+        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", msg], cwd=repo, check=True)
+    shas = subprocess.run(["git", "rev-list", "main..HEAD"], cwd=repo, capture_output=True,
+                          text=True, check=True).stdout
+    listed = tmp_path / "list"
+    listed.write_text(shas)
+    r = _run(repo, "--commits-file", str(listed))
+    assert r.returncode == 1 and r.stdout.count("[review-label]") == 1
+    listed.write_text(shas.splitlines()[0] + "\n")
+    assert _run(repo, "--commits-file", str(listed)).returncode == 0
+
+
+@pytest.mark.parametrize("text", ["see build.local now", "cache.home.arpa"])
+def test_more_internal_suffixes(text):
+    assert "host" in rules(text)
