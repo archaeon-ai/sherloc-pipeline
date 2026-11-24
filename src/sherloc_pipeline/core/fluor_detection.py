@@ -175,11 +175,11 @@ _FEATURE_BOUNDS = {
     },
     "group1a": {
         "center": (300.0, 307.0),
-        "fwhm": (8.0, 18.0),  # empirical: 13.4 ± 1.5 nm (Berry Hollow N=75, ±3σ)
+        "fwhm": (8.0, 18.0),  # empirical FWHM window (nm)
     },
     "group1b": {
         "center": (322.0, 329.0),
-        "fwhm": (11.0, 29.0),  # empirical: 20.1 ± 3.0 nm (Berry Hollow N=78, ±3σ)
+        "fwhm": (11.0, 29.0),  # empirical FWHM window (nm)
     },
     "group2": {
         "center": (329.0, 355.0),

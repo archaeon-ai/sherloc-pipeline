@@ -70,7 +70,7 @@ class TestWavenumberCalibration:
         assert r1_wn.max() == pytest.approx(4765, abs=5)
 
     def test_known_peak_sulfate_1018(self):
-        """Sulfate nu1 peak at ~1018 cm-1 is within resolution of calibrated axis."""
+        """The R1 axis has a channel within 10 cm-1 of 1018 cm-1 (sulfate nu1)."""
         wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
         r1_mask = (wavelength >= 250.0) & (wavelength <= 282.0)
         r1_wn = wavenumber[r1_mask]
@@ -78,7 +78,7 @@ class TestWavenumberCalibration:
         assert abs(closest - 1018) < 10  # Within 10 cm-1
 
     def test_known_peak_carbonate_1085(self):
-        """Carbonate nu1 peak at ~1085 cm-1 is within resolution."""
+        """The R1 axis has a channel within 10 cm-1 of 1085 cm-1 (carbonate nu1)."""
         wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
         r1_mask = (wavelength >= 250.0) & (wavelength <= 282.0)
         r1_wn = wavenumber[r1_mask]
@@ -86,7 +86,7 @@ class TestWavenumberCalibration:
         assert abs(closest - 1085) < 10
 
     def test_known_peak_olivine_820(self):
-        """Olivine peak at ~820 cm-1 is within resolution."""
+        """The R1 axis has a channel within 10 cm-1 of 820 cm-1 (olivine band)."""
         wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
         r1_mask = (wavelength >= 250.0) & (wavelength <= 282.0)
         r1_wn = wavenumber[r1_mask]
@@ -94,7 +94,7 @@ class TestWavenumberCalibration:
         assert abs(closest - 820) < 10
 
     def test_known_peak_olivine_850(self):
-        """Olivine peak at ~850 cm-1 is within resolution."""
+        """The R1 axis has a channel within 10 cm-1 of 850 cm-1 (olivine band)."""
         wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=2148)
         r1_mask = (wavelength >= 250.0) & (wavelength <= 282.0)
         r1_wn = wavenumber[r1_mask]

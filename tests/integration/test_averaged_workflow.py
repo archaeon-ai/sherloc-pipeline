@@ -147,7 +147,7 @@ class TestAveragedWorkflowIntegration:
         assert 0 <= result.metadata["r2"] <= 1.0
 
     def test_workflow_lake_haiyaha(self, test_context, tmp_results):
-        """Test workflow on Lake Haiyaha fixture (pure olivine)."""
+        """Test workflow on Lake Haiyaha fixture (olivine-rich)."""
         service = SpectralService(context=test_context)
         
         request = SpectralPlotRequest(

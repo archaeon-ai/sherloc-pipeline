@@ -243,7 +243,7 @@ fluorescence_fitting:
   # Doublet detection
   doublet_snr_threshold: 10.0         # Both peaks must exceed (matches snr_threshold)
   doublet_separation_range: [18, 29]  # nm, expected separation
-  doublet_ratio_range: [0.7, 1.3]      # [lo, hi] intensity ratio (amp_1a/amp_1b); 3σ from Berry Hollow agnostic fits (N=74, mean=1.01±0.10)
+  doublet_ratio_range: [0.7, 1.3]      # [lo, hi] intensity ratio (amp_1a/amp_1b); empirical
 
   # Feature scan for hypothesis-driven fitting
   feature_scan:

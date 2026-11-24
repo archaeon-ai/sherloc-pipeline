@@ -46,25 +46,25 @@ def _seed_training_db(engine):
     """Seed a DB with diverse peaks for training data extraction.
 
     Creates:
-    - Sol 293, target Quartier, scan HDR_1
+    - Sol 7293, target T7293, scan HDR_1
       - Point 0: sulfate mineral peak (sulf1_v1) + Ce3+ doublet (group1a, group1b)
       - Point 1: organics (D_band, G_band) only
-    - Sol 257, target Dourbes, scan detail_1
+    - Sol 7257, target T7257, scan detail_1
       - Point 0: hydration (OH_stretch) + group2 fluorescence
       - Point 1: low-SNR peak (below threshold) — should be filtered out
     """
     point_ids = {}
 
     with get_session(engine) as session:
-        # Sol 293
-        sol293 = SolORM(sol_number=293, data_source="loupe")
+        # Sol 7293
+        sol293 = SolORM(sol_number=7293, data_source="loupe")
         session.add(sol293)
         session.flush()
 
         scan1_id = str(uuid.uuid4())
         scan1 = ScanORM(
-            id=scan1_id, sol_number=293, scan_name="HDR_1",
-            target="Quartier", scan_id="train_test_1",
+            id=scan1_id, sol_number=7293, scan_name="HDR_1",
+            target="T7293", scan_id="train_test_1",
             sclk_start=0, n_points=2, n_channels=2148,
         )
         session.add(scan1)
@@ -75,7 +75,7 @@ def _seed_training_db(engine):
         pt0 = ScanPointORM(id=pt0_id, scan_id=scan1_id, point_index=0)
         session.add(pt0)
         session.flush()
-        point_ids[(293, "Quartier", "HDR_1", 0)] = pt0_id
+        point_ids[(7293, "T7293", "HDR_1", 0)] = pt0_id
 
         spec0_r1 = SpectrumORM(
             id=str(uuid.uuid4()), scan_point_id=pt0_id, region="R1",
@@ -115,7 +115,7 @@ def _seed_training_db(engine):
         pt1 = ScanPointORM(id=pt1_id, scan_id=scan1_id, point_index=1)
         session.add(pt1)
         session.flush()
-        point_ids[(293, "Quartier", "HDR_1", 1)] = pt1_id
+        point_ids[(7293, "T7293", "HDR_1", 1)] = pt1_id
 
         spec1_r1 = SpectrumORM(
             id=str(uuid.uuid4()), scan_point_id=pt1_id, region="R1",
@@ -136,15 +136,15 @@ def _seed_training_db(engine):
             amplitude=1800.0, snr=25.0, mineral_assignment="G_band",
         ))
 
-        # Sol 257
-        sol257 = SolORM(sol_number=257, data_source="loupe")
+        # Sol 7257
+        sol257 = SolORM(sol_number=7257, data_source="loupe")
         session.add(sol257)
         session.flush()
 
         scan2_id = str(uuid.uuid4())
         scan2 = ScanORM(
-            id=scan2_id, sol_number=257, scan_name="detail_1",
-            target="Dourbes", scan_id="train_test_2",
+            id=scan2_id, sol_number=7257, scan_name="detail_1",
+            target="T7257", scan_id="train_test_2",
             sclk_start=0, n_points=2, n_channels=2148,
         )
         session.add(scan2)
@@ -155,7 +155,7 @@ def _seed_training_db(engine):
         pt2 = ScanPointORM(id=pt2_id, scan_id=scan2_id, point_index=0)
         session.add(pt2)
         session.flush()
-        point_ids[(257, "Dourbes", "detail_1", 0)] = pt2_id
+        point_ids[(7257, "T7257", "detail_1", 0)] = pt2_id
 
         spec2_r1 = SpectrumORM(
             id=str(uuid.uuid4()), scan_point_id=pt2_id, region="R1",
@@ -190,7 +190,7 @@ def _seed_training_db(engine):
         pt3 = ScanPointORM(id=pt3_id, scan_id=scan2_id, point_index=1)
         session.add(pt3)
         session.flush()
-        point_ids[(257, "Dourbes", "detail_1", 1)] = pt3_id
+        point_ids[(7257, "T7257", "detail_1", 1)] = pt3_id
 
         spec3_r1 = SpectrumORM(
             id=str(uuid.uuid4()), scan_point_id=pt3_id, region="R1",
@@ -243,20 +243,20 @@ class TestBackfillDiscovery:
         from rich.console import Console
 
         with get_session(engine) as session:
-            sol = SolORM(sol_number=293, data_source="loupe")
+            sol = SolORM(sol_number=7293, data_source="loupe")
             session.add(sol)
             session.flush()
             session.add(ScanORM(
-                id=str(uuid.uuid4()), sol_number=293, scan_name="HDR_1",
-                target="Quartier", scan_id="iter_test",
+                id=str(uuid.uuid4()), sol_number=7293, scan_name="HDR_1",
+                target="T7293", scan_id="iter_test",
                 sclk_start=0, n_points=2, n_channels=2148,
             ))
             session.add(ScanORM(
-                id=str(uuid.uuid4()), sol_number=257, scan_name="detail_1",
-                target="Dourbes", scan_id="iter_test2",
+                id=str(uuid.uuid4()), sol_number=7257, scan_name="detail_1",
+                target="T7257", scan_id="iter_test2",
                 sclk_start=0, n_points=1, n_channels=2148,
             ))
-            sol2 = SolORM(sol_number=257, data_source="loupe")
+            sol2 = SolORM(sol_number=7257, data_source="loupe")
             session.add(sol2)
             session.commit()
 
@@ -266,8 +266,8 @@ class TestBackfillDiscovery:
 
         assert len(scans) == 2
         # Ordered by sol_number, target, scan_name
-        assert scans[0] == (257, "Dourbes", "detail_1")
-        assert scans[1] == (293, "Quartier", "HDR_1")
+        assert scans[0] == (7257, "T7257", "detail_1")
+        assert scans[1] == (7293, "T7293", "HDR_1")
 
     def test_iter_all_scans_normalizes_target_spaces(self, engine):
         """_iter_all_scans replaces spaces with underscores in target names."""
@@ -308,7 +308,7 @@ class TestBackfillDiscovery:
             summary="OK", metadata={"peaks_inserted": 3}
         )
 
-        scans = [(293, "Quartier", "HDR_1", "synthetic-id-1")]
+        scans = [(7293, "T7293", "HDR_1", "synthetic-id-1")]
 
         # Create a real file so db_path.exists() passes
         db_file = tmp_path / "test.db"
@@ -347,7 +347,7 @@ class TestBackfillDiscovery:
             summary="OK", metadata={"peaks_inserted": 5}
         )
 
-        scans = [(293, "Quartier", "HDR_1", "synthetic-id-1")]
+        scans = [(7293, "T7293", "HDR_1", "synthetic-id-1")]
         db_file = tmp_path / "test.db"
         db_file.touch()
 
@@ -380,7 +380,7 @@ class TestBackfillDiscovery:
         """Backfill --dry-run does not call any service methods."""
         import typer
 
-        scans = [(293, "Quartier", "HDR_1", "synthetic-id-1")]
+        scans = [(7293, "T7293", "HDR_1", "synthetic-id-1")]
         db_file = tmp_path / "test.db"
         db_file.touch()
 
@@ -422,7 +422,7 @@ class TestBackfillDiscovery:
             summary="OK", metadata={"peaks_inserted": 0}
         )
 
-        scans = [(293, "Quartier", "HDR_1", "synthetic-id-1"), (257, "Dourbes", "detail_1", "synthetic-id-2")]
+        scans = [(7293, "T7293", "HDR_1", "synthetic-id-1"), (7257, "T7257", "detail_1", "synthetic-id-2")]
         db_file = tmp_path / "test.db"
         db_file.touch()
 
@@ -526,8 +526,8 @@ class TestJSONLExtractionFormat:
         lines = out.read_text().strip().split("\n")
         for line in lines:
             record = json.loads(line)
-            # The low-SNR point (Sol 257 point 1) should not appear
-            assert "Point 1, Sol 257" not in record["input"]
+            # The low-SNR point (Sol 7257 point 1) should not appear
+            assert "Point 1, Sol 7257" not in record["input"]
 
     def test_high_snr_threshold_reduces_records(self, training_db, tmp_path):
         """Higher SNR threshold produces fewer records."""
@@ -818,25 +818,25 @@ class TestCoOccurrenceOnTrainingData:
     """Validate co-occurrence queries work on the richer training fixture."""
 
     def test_finds_sulfate_ce3_in_training_db(self, training_db):
-        """Finds Point 0 Sol 293 (sulfate + Ce3+)."""
+        """Finds Point 0 Sol 7293 (sulfate + Ce3+)."""
         engine, point_ids = training_db
         service = _make_service(engine)
 
         results = service.query_co_occurrences()
 
         assert len(results) == 1
-        assert results[0]["sol_number"] == 293
+        assert results[0]["sol_number"] == 7293
         assert results[0]["point_index"] == 0
 
     def test_excludes_organics_from_co_occurrence(self, training_db):
-        """Organics-only point (Point 1 Sol 293) not in co-occurrence results."""
+        """Organics-only point (Point 1 Sol 7293) not in co-occurrence results."""
         engine, point_ids = training_db
         service = _make_service(engine)
 
         results = service.query_co_occurrences()
 
         result_ids = {r["scan_point_id"] for r in results}
-        assert point_ids[(293, "Quartier", "HDR_1", 1)] not in result_ids
+        assert point_ids[(7293, "T7293", "HDR_1", 1)] not in result_ids
 
     def test_hydration_group2_not_in_default_query(self, training_db):
         """Hydration + group2 point not matched by default sulfate+Ce3+ query."""
@@ -846,7 +846,7 @@ class TestCoOccurrenceOnTrainingData:
         results = service.query_co_occurrences()  # Default: sulf% + group1a/1b
 
         result_ids = {r["scan_point_id"] for r in results}
-        assert point_ids[(257, "Dourbes", "detail_1", 0)] not in result_ids
+        assert point_ids[(7257, "T7257", "detail_1", 0)] not in result_ids
 
     def test_custom_hydration_group2_query(self, training_db):
         """Custom query finds hydration + group2 co-occurrence."""
@@ -860,5 +860,5 @@ class TestCoOccurrenceOnTrainingData:
         )
 
         assert len(results) == 1
-        assert results[0]["sol_number"] == 257
+        assert results[0]["sol_number"] == 7257
         assert results[0]["point_index"] == 0
