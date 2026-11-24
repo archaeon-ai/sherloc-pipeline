@@ -174,3 +174,14 @@ class TestPdsCacheDirFromConfig:
         result = runner.invoke(app, ["pds-ingest", "--sol", "921"])
         assert result.exit_code != 0
         assert "configured-missing" in result.output.replace("\n", "")
+
+    @pytest.mark.parametrize("command, flag", [
+        ("pds-download", "--output-dir"),
+        ("pds-ingest", "--pds-dir"),
+    ])
+    def test_help_names_the_configured_default(self, runner, command, flag):
+        result = runner.invoke(app, [command, "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0, result.output
+        text = " ".join(result.output.split())
+        assert flag in text
+        assert "default: config pds.cache_dir, ./pds" in text
