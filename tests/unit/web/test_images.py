@@ -44,6 +44,16 @@ _PUBLIC_REL_KEY = "sol_0921/data_aci/SC0_0921_TEST.IMG"
 # Moto-backed R2 fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _object_storage_tier(monkeypatch):
+    """The route reads object storage only when PHASE_TIER is set.
+
+    Tests here run with it set unless they unset it themselves (the
+    local-disk tests at the end of this module do).
+    """
+    monkeypatch.setenv("PHASE_TIER", "team")
+
+
 @pytest.fixture
 def r2_team_client():
     """Spin up moto S3 + create the `phase-team` bucket + inject the
@@ -430,3 +440,58 @@ async def test_aci_colorized_falls_back_to_base(
     )
     assert resp.status_code == 200, resp.text
     assert resp.content[:4] == b"\x89PNG"
+
+
+# ---------------------------------------------------------------------------
+# Running locally without object storage (no PHASE_TIER)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def local_disk_aci(tmp_path, monkeypatch, fake_config):
+    """A local install: no PHASE_TIER, the ACI under the configured data root."""
+    monkeypatch.delenv("PHASE_TIER", raising=False)
+    r2_reader.reset_r2_client_for_tests()
+    fake_config.paths["data_root"] = str(tmp_path)
+    aci_path = tmp_path / _TEAM_REL_KEY
+    aci_path.parent.mkdir(parents=True)
+    aci_path.write_bytes(_make_png_bytes())
+    yield aci_path
+    r2_reader.reset_r2_client_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_aci_served_from_disk_without_object_storage(
+    client, test_engine, local_disk_aci
+):
+    """With no PHASE_TIER set, the ACI is read from the data root on disk."""
+    _insert_aci(test_engine, _TEAM_REL_KEY)
+
+    resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content[:4] == b"\x89PNG"
+
+
+@pytest.mark.asyncio
+async def test_aci_colorized_request_falls_back_to_base_on_disk(
+    client, test_engine, local_disk_aci
+):
+    """colorized=true with no colorized file on disk serves the base image."""
+    _insert_aci(test_engine, _TEAM_REL_KEY)
+
+    resp = await client.get(
+        f"/api/images/{SCAN_UUID}/aci", params={"colorized": "true"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.content[:4] == b"\x89PNG"
+
+
+@pytest.mark.asyncio
+async def test_aci_missing_file_on_disk_returns_404(
+    client, test_engine, local_disk_aci
+):
+    """A locator whose file is not under the data root answers 404, not 500."""
+    _insert_aci(test_engine, "loupe/sol_0921/detail_2/img/SC3_0921_ABSENT.PNG")
+
+    resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
+    assert resp.status_code == 404
