@@ -63,6 +63,33 @@ introduce an absolute path, internal hostname, or other operator-local string,
 replace it with the substitution from the table (or with an env-driven
 configuration entry) before staging.
 
+### Wording check
+
+Anyone can read this repository, its commit messages and its pull requests.
+Write all of them for a reader outside the project: no local paths or private
+host names, no notes on how a change was reviewed or decided (review rounds,
+finding labels, who decided what and when), no names of AI tools or session
+links, and no sol past the archived PDS release (an invented example uses
+sol 9999). State the rule and its reason instead.
+
+`scripts/check-public-wording.py` checks this. CI runs it on every pull
+request (added lines, commit messages, title and body) and on every push to
+main (commit messages). Run it before you push:
+
+```bash
+scripts/check-public-wording.py                 # this branch vs origin/main
+pre-commit install                              # also checks each commit message
+```
+
+A justified exception is one line, with its reason, in
+`.github/public-wording-allow.txt`, naming the file, the rule and the exact
+text it allows; any other match on that line or in that file is still
+reported. If CI flags a commit message you have
+already pushed, say so on the pull request and leave the branch as it is: the
+fix is a rewrite and force-push of the branch, which a maintainer approves.
+Once a commit is on main its message stays, so the squash-merge message is the
+pull request title.
+
 ### Rationale
 
 Conflating an operator's local environment with the public package makes the
