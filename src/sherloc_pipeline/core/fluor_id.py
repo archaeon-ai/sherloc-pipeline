@@ -9,8 +9,9 @@ Group attributions: group 1a and 1b, the 304/325 nm doublet, Ce3+ in
 anhydrite (Haney et al. 2026, JGR Planets, doi:10.1029/2025JE009385);
 group 2, Ce3+ in phosphate, and group 3, silicate defect luminescence
 (Scheller et al. 2024, Science Advances, doi:10.1126/sciadv.adm8241).
-The group names follow Sharma et al. 2023, Nature,
+The group numbers follow Sharma et al. 2023, Nature,
 doi:10.1038/s41586-023-06143-z.
+This pipeline splits group 1 into 1a and 1b.
 
 See docs/specs/FLUORESCENCE_FITTING_SPEC.md §4.1-4.3.
 """

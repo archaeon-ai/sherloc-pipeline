@@ -420,8 +420,8 @@ authentic Raman features. The method is selectable via `--despike-method` (CLI),
   by interpolation and never runs model inference. The model ships as a sha256-pinned
   ONNX (Open Neural Network Exchange) artifact executed via `onnxruntime` (the optional
   `[ml-despike]` extra) with fixed, non-tunable decision thresholds.
-- **`modz`** — a live robust rolling-median / MAD z-score despike (R1 only), following
-  Whitaker & Hayes (2018); tunable, and computed client-side in the web UI.
+- **`modz`** — a live robust rolling-median / MAD z-score despike (R1 only), adapted from
+  Whitaker & Hayes (2018). It is tunable and computed client-side in the web UI.
 - **`none`** — despike disabled.
 
 The implementation lives in `src/sherloc_pipeline/ml_despike/` (detector, featurization,

@@ -42,7 +42,7 @@ The values below describe the dataset as it existed at the 2026-01 cut-off and a
 
 ### 1.2 SHERLOC Instrument Specifications
 
-Drawn from Bhartia et al. (2021) and the codebase's Loupe-derived calibration in `src/sherloc_pipeline/config.yaml`. See `docs/schema/SPECTRAL_REGIONS.md` for the authoritative wavelength↔wavenumber mapping.
+Bhartia et al. (2021) report a 248.6 nm laser with 40 μs pulses and a ~100 μm spot. The R1, R2 and R3 wavelength bounds are the values in `src/sherloc_pipeline/config.yaml`. See `docs/schema/SPECTRAL_REGIONS.md` for the authoritative wavelength↔wavenumber mapping.
 
 | Parameter | Specification |
 |-----------|---------------|
@@ -56,10 +56,12 @@ Drawn from Bhartia et al. (2021) and the codebase's Loupe-derived calibration in
 
 ### 1.3 Data Sources and Processing Levels
 
-**Primary Data Source:** SHERLOC Loupe v5.1.5 format files [@Bhartia2021; @Loupe2022]
-- **Format:** Proprietary binary with embedded metadata
+**Primary Data Source:** SHERLOC Loupe format files [@Bhartia2021]
+- **Format:** Binary with embedded metadata
 - **Processing Level:** EDR (Experimental Data Record) to RDR (Reduced Data Record)
-- **Calibration:** Dark subtraction, flat-field correction applied
+- **Calibration:** Dark subtraction
+
+**Loupe software:** Uckert, K. (2022). nasa/Loupe: LoupeV5.1.5 (version LoupeV5.1.5a). Zenodo. doi:10.5281/zenodo.7062998 [@Loupe2022].
 
 **Scan Types** (the `ScanType` values in `models/spectra.py`, resolved from the scan name by `classify_scan_type`):
 1. **Detail:** standard Mars surface scan
@@ -71,7 +73,6 @@ Drawn from Bhartia et al. (2021) and the codebase's Loupe-derived calibration in
 **Acquisition Parameters:**
 - **Pulses per Point (PPP):** 25-1000 (median: 100)
 - **Integration Time:** Variable (5-60 seconds per point)
-- **Laser Energy:** ~15-50 μJ per pulse
 - **Atmospheric Pressure:** ~6-8 mbar (CO₂ dominated)
 
 ### 1.4 Target Context Integration
@@ -107,7 +108,7 @@ def parse_loupe_scan(file_path: Path) -> List[Spectrum]:
 
 ### 2.2 Cosmic Ray and Spike Removal
 
-**Algorithm:** Robust rolling-median residual with MAD-derived threshold [@Whitaker2018]
+**Algorithm:** Robust rolling-median residual with a MAD-derived threshold, adapted from Whitaker & Hayes (2018) [@Whitaker2018].
 
 **Parameters (`DespikeParams`):**
 ```python
@@ -454,6 +455,8 @@ clip (`clip_cosmic_spikes`), now as a backstop for spikes the stored masks did
 not cover. It preserves 7–8 nm bands and the 304/325 nm doublet
 (`tests/unit/core/test_fluor_clip.py`). On strong bands its noise estimate runs
 low, so it can replace a few flat-region channels at noise level.
+
+Fluorescence group numbers follow Sharma et al. (2023) [@Sharma2023], who report the group 1 doublet at roughly 303 and 325 nm. This pipeline labels its two components 1a and 1b.
 
 **Counts and exposure.**
 - Spectra counts (ingestion statistics, PDS validation) count
@@ -844,6 +847,17 @@ def compute_dataset_hash(spectra_paths: List[Path]) -> str:
   doi={10.1016/j.chemolab.2018.06.009}
 }
 
+@article{Jakubek2025,
+  title={Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component},
+  author={Jakubek, R. S. and others},
+  journal={Applied Spectroscopy},
+  volume={79},
+  number={6},
+  pages={904--918},
+  year={2025},
+  doi={10.1177/00037028241280081}
+}
+
 @article{Sharma2023,
   title={Diverse organic-mineral associations in Jezero crater, Mars},
   author={Sharma, Sunanda and Roppel, Ryan D. and Murphy, Ashley E. and others},
@@ -876,15 +890,6 @@ def compute_dataset_hash(spectra_paths: List[Path]) -> str:
   year={2026},
   doi={10.1029/2025JE009385}
 }
-
-@article{Pedregosa2011,
-  title={Scikit-learn: Machine learning in Python},
-  author={Pedregosa, Fabian and Varoquaux, Ga{\"e}l and Gramfort, Alexandre and Michel, Vincent and Thirion, Bertrand and Grisel, Olivier and Blondel, Mathieu and Prettenhofer, Peter and Weiss, Ron and Dubourg, Vincent and others},
-  journal={Journal of Machine Learning Research},
-  volume={12},
-  pages={2825--2830},
-  year={2011}
-}
 ```
 
 ### 11.2 Software and Data References
@@ -893,14 +898,15 @@ def compute_dataset_hash(spectra_paths: List[Path]) -> str:
 @software{Williford2024,
   author={Williford, Kenneth H.},
   title={SHERLOC Pipeline: Mars 2020 Raman/Fluorescence Data Processing},
-  version={3.0.0},
-  year={2024},
+  version={5.7.8},
+  year={2026},
   url={https://github.com/archaeon-ai/sherloc-pipeline}
 }
 
 @software{Loupe2022,
   author={Uckert, Kyle},
   title={nasa/Loupe: LoupeV5.1.5},
+  version={LoupeV5.1.5a},
   year={2022},
   publisher={Zenodo},
   doi={10.5281/zenodo.7062998},
@@ -910,7 +916,6 @@ def compute_dataset_hash(spectra_paths: List[Path]) -> str:
 @software{PyBaselines2022,
   author={Erb, Donald},
   title={pybaselines: A Python library of algorithms for the baseline correction of experimental data},
-  year={2022},
   url={https://github.com/derb12/pybaselines},
   doi={10.5281/zenodo.5608581}
 }

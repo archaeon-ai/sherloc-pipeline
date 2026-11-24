@@ -596,7 +596,8 @@ This package stores the code as text (`scans.processing_applied`) and does not d
 ## References
 
 1. **SHERLOC Instrument:** Bhartia et al. (2021). "Perseverance's SHERLOC Investigation." Space Science Reviews, 217(4).
-2. **SPAR Library:** NASA-AMMOS/SPAR (https://github.com/NASA-AMMOS/SPAR)
+2. **SOFF Format:** Uckert, K. & Deen, R.G. (2020). "Spectrometer Open File Format." AGU Fall Meeting Abstracts, GC022-0016 (ADS bibcode 2020AGUFMGC0220016U).
+3. **SPAR Library:** NASA-AMMOS/SPAR (https://github.com/NASA-AMMOS/SPAR)
 
 ---
 
