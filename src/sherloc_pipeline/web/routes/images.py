@@ -240,14 +240,11 @@ def _read_aci_from_disk(request: Request, rel_locator: Optional[str]) -> tuple[s
     )
     if path is None:
         raise HTTPException(status_code=404, detail="not_found")
-    root = next(
-        (
-            Path(r)
-            for r in (data_root, pds_cache_dir)
-            if r is not None and path.is_relative_to(Path(r))
-        ),
-        None,
-    )
+    # The locator's layout selects its root, as in resolve_disk_path: the
+    # Loupe tree lives under data_root and the PDS tree under pds.cache_dir,
+    # which may itself sit inside data_root.
+    root_setting = data_root if rel_locator.split("/", 1)[0] == "loupe" else pds_cache_dir
+    root = Path(root_setting) if root_setting is not None else None
     try:
         resolved = path.resolve(strict=True)
         contained = root is not None and resolved.is_relative_to(
@@ -264,7 +261,13 @@ def _read_aci_from_disk(request: Request, rel_locator: Optional[str]) -> tuple[s
 def get_aci_image(
     request: Request,
     scan_id: str,
-    colorized: bool = Query(False, description="Return colorized variant if available"),
+    colorized: bool = Query(
+        False,
+        description=(
+            "Return the colorized variant if available in object storage; "
+            "without object storage the base image is returned"
+        ),
+    ),
     enhanced: bool = Query(False, description="Apply adaptive histogram equalization and sharpening"),
     upscale: int = Query(1, ge=1, le=5, description="Lanczos upscaling factor (1–5, only used when enhanced=true)"),
 ):
@@ -273,8 +276,10 @@ def get_aci_image(
     Derives the R2 key from the ``context_images.r2_rel_key`` locator
     (hierarchical-key model). Optional query params:
 
-    - colorized: probe sibling ``sol_NNNN_colorized/<...>`` R2 key; serve
-      that variant if present, else the base.
+    - colorized: with object storage, probe the sibling
+      ``sol_NNNN_colorized/<...>`` R2 key and serve that variant if
+      present, else the base. Without object storage (no ``PHASE_TIER``)
+      the base image is read from disk and served.
     - enhanced: apply CLAHE + optional Lanczos upscale + unsharp mask.
       Results cached at ``/tmp/sherloc_aci_cache/`` for 24h.
     - upscale: integer 1–5 (only used when ``enhanced=true``).

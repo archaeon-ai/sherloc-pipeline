@@ -528,6 +528,30 @@ async def test_aci_symlink_out_of_pds_cache_returns_404(
 
 
 @pytest.mark.asyncio
+async def test_aci_symlink_out_of_nested_pds_cache_returns_404(
+    client, test_engine, local_disk_aci, fake_config, tmp_path
+):
+    """With pds.cache_dir inside data_root, a PDS locator is held to the PDS cache.
+
+    A symbolic link from the cache to another directory under data_root
+    must not be served just because that directory is inside data_root.
+    """
+    from types import SimpleNamespace
+
+    cache = tmp_path / "pds"
+    fake_config.pds = SimpleNamespace(cache_dir=str(cache))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "SC0_0921_OUT.IMG").write_bytes(b"not an image")
+    (cache / "sol_0921").mkdir(parents=True)
+    (cache / "sol_0921" / "data_aci").symlink_to(outside, target_is_directory=True)
+    _insert_aci(test_engine, "sol_0921/data_aci/SC0_0921_OUT.IMG")
+
+    resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_aci_served_from_pds_cache_on_disk(
     client, test_engine, local_disk_aci, fake_config, tmp_path_factory, monkeypatch
 ):
