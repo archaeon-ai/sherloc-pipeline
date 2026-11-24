@@ -146,3 +146,24 @@ def test_journal_records_the_option_and_resume_requires_it(make_db, calls, tmp_p
     plain = tmp_path / "plain.jsonl"
     _refit(db, tmp_path, "--journal", str(plain))
     assert "skip_sub_scans" not in json.loads(plain.read_text().splitlines()[0])["selection"]
+
+
+def test_sub_scan_without_parent_or_target_is_reported_as_unrunnable(make_db, calls, tmp_path):
+    db = make_db(lambda: [
+        _scan("Synthetic A", "detail_5a", "sub_scan", parent=None),
+        _scan(None, "detail_6a", "sub_scan", parent=None),
+    ])
+    journal = tmp_path / "batch.jsonl"
+    result = _refit(db, tmp_path, "--skip-sub-scans", "--journal", str(journal))
+    assert calls == ["detail_5a"]
+    assert [s["scan"] for s in result["sub_scans_without_parent"]] == ["detail_5a"]
+    assert any("detail_6a" in item for item in result["unrunnable"])
+    assert [e["scan"] for e in _entries(journal)] == ["detail_5a"]
+
+    text = CliRunner().invoke(app, [
+        "refit", "--database", str(db), "--data-dir", str(tmp_path / "data"),
+        "--results-dir", str(tmp_path / "results"), "--skip-sub-scans",
+        "--journal", str(tmp_path / "text.jsonl"),
+    ])
+    summary = text.output.split("Sub-scans selected because their parent scan is not stored")[1]
+    assert "detail_5a" in summary and "detail_6a" not in summary

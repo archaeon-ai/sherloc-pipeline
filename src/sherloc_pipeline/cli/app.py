@@ -3004,6 +3004,9 @@ def refit_cmd(
         fail(str(e))
 
     runnable, no_target, duplicates = select_runnable(scans)
+    # Name only the sub-scans the batch can run; one without a target is
+    # reported with the other scans that have none.
+    orphan_keys &= {(int(sol_num), tgt, scn) for sol_num, tgt, scn in runnable}
     unrunnable = [f"{sol_num:04d} {scn}: no target" for sol_num, _, scn in no_target]
     duplicate_labels = [f"{sol_num:04d} {tgt} {scn}" for sol_num, tgt, scn in duplicates]
     to_run, skipped = pending(runnable, batch.done)
@@ -3099,7 +3102,7 @@ def refit_cmd(
             for item in duplicate_labels:
                 out.print(f"  - {item}")
         if orphan_keys:
-            out.print(f"[yellow]Sub-scans run because their parent scan is not stored: {len(orphan_keys)}[/yellow]")
+            out.print(f"[yellow]Sub-scans selected because their parent scan is not stored: {len(orphan_keys)}[/yellow]")
             for sol_num, tgt, scn in sorted(orphan_keys):
                 out.print(f"  - {sol_num:04d} {tgt} {scn}")
     sys.exit(1 if failed else 0)
