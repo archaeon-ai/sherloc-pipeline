@@ -7,6 +7,7 @@ isolated) cache directory under ``tmp_path``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,7 @@ class TestPdsCacheDirFromConfig:
     def test_help_names_the_configured_default(self, runner, command, flag):
         result = runner.invoke(app, [command, "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0, result.output
-        text = " ".join(result.output.split())
+        # Help may wrap inside the panel borders; drop them before matching.
+        text = " ".join(re.sub(r"[│╭╮╰╯─]", " ", result.output).split())
         assert flag in text
         assert "default: config pds.cache_dir, ./pds" in text
