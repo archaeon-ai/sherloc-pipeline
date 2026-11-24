@@ -1768,6 +1768,7 @@ class FittingService:
             fit_cfg_oh['fit_fwhm_min_initial_cm1'] = fwhm_min
             fit_cfg_oh['filter_fwhm_min_cm1'] = fwhm_min
             fit_cfg_oh['fwhm_max_cm1'] = fwhm_max
+            fit_cfg_oh['slit_pref_weight'] = 0.0  # No slit preference for hydration
             fit_cfg_oh['min_snr'] = min_snr
             fit_cfg_oh['r_squared_min'] = r2_min
             fit_cfg_oh['parsimony'] = {
