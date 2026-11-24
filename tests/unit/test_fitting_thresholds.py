@@ -211,7 +211,7 @@ class TestApplyFittingThresholds:
     
     def test_fwhm_min_override_affects_peak_acceptance(self, service, synthetic_spectrum):
         """fwhm_min override changes which peaks pass QC."""
-        # Fit with default (30) - peak at ~40 FWHM should pass
+        # Fit with the config minimum (25) - peak at ~40 FWHM should pass
         fit_default, _ = service._apply_fitting(
             synthetic_spectrum,
             fit_range=(700, 1200),
@@ -227,7 +227,7 @@ class TestApplyFittingThresholds:
         assert len(fit_default.peaks) >= 1
         assert len(fit_high_min.peaks) >= 1
         
-        # Default should pass FWHM (>30), high min should fail (<50)
+        # Default should pass FWHM (>25), high min should fail (<50)
         assert fit_default.peaks[0].pass_fwhm is True
         # Note: pass_fwhm checks both min and max, so this depends on the actual FWHM
 
@@ -308,3 +308,26 @@ class TestThresholdsOnRealData:
         assert relaxed_accepted >= 0
         assert strict_accepted >= 0
 
+
+
+def test_apply_fitting_fwhm_fallback_equals_the_shipped_config(test_context, monkeypatch):
+    """With ``filter_fwhm_min_cm1`` absent from the fitting config,
+    SpectralService.apply_fitting passes the shipped value (25 cm-1) to the
+    fitter, as every other fit path does."""
+    import sherloc_pipeline.services.spectral as spectral
+
+    service = SpectralService(context=test_context)
+    fitting = {k: v for k, v in test_context.config.fitting.items()
+               if k != "filter_fwhm_min_cm1"}
+    monkeypatch.setattr(test_context.config, "fitting", fitting)
+    seen = {}
+
+    def capture(x_cm1, y, cfg, **kwargs):
+        seen.update(cfg)
+        return spectral.FitResult(peaks=[], r2=0.0, rss=0.0, dof=0, warnings=[]), np.zeros_like(y)
+
+    monkeypatch.setattr(spectral, "fit_spectrum", capture)
+    x = np.linspace(700, 1200, 500)
+    service.apply_fitting(pd.DataFrame({"raman_shift": x, "intensity": np.zeros_like(x)}),
+                          fit_range=(700, 1200))
+    assert seen["filter_fwhm_min_cm1"] == 25.0

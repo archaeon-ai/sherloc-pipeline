@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
+from sherloc_pipeline.core.pds_constants import PDS_DEFAULT_CACHE_DIR
 from sherloc_pipeline.core.utils import require_file
 
 
@@ -149,7 +150,7 @@ class SpectralRegions:
 class PDSConfig:
     """PDS archive download configuration."""
     base_url: str = "https://pds-geosciences.wustl.edu/m2020/urn-nasa-pds-mars2020_sherloc"
-    cache_dir: str = "./pds"
+    cache_dir: str = str(PDS_DEFAULT_CACHE_DIR)
     timeout_seconds: float = 60.0
     max_retries: int = 3
     backoff_factor: float = 2.0

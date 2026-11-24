@@ -1161,9 +1161,10 @@ class TestOrganicsFWHMFilter:
         d.mkdir()
         _write_marker(d)
 
-        # Peak at 1450 cm⁻¹ — not in D or G range, classified as unidentified
+        # Peak at 1475 cm⁻¹ — between the D (1250-1450) and G (1500-1700)
+        # ranges, classified as unidentified
         pd.DataFrame([
-            {"center_cm1": 1450.0, "fwhm_cm1": 25.0, "amplitude_a": 200.0,
+            {"center_cm1": 1475.0, "fwhm_cm1": 25.0, "amplitude_a": 200.0,
              "area": 50.0, "snr": 4.0},
         ]).to_csv(d / "0851_Lake_Haiyaha_detail_1_R1_point0_organics_dg_peaks.csv", index=False)
 

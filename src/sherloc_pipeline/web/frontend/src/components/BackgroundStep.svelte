@@ -2,17 +2,6 @@
   import { createEventDispatcher } from 'svelte';
   import { postBackground } from '../lib/api';
   import { ApiError } from '../lib/api';
-  import InfoTooltip from './InfoTooltip.svelte';
-
-  const bgRef = `<div class="ref-title">Dark frame background subtraction</div>
-Subtracts instrument background using pre-measured reference spectra,
-scaled by the scan's pulses per point relative to the background's (pulses_per_point in the config).
-<b>Arm-Stowed:</b> Post-anomaly 900 PPP averaged dark spectrum.
-<b>Fused Silica:</b> Corning 7980 air-subtracted reference.
-<div class="ref-cite">Bhartia, R. et al. (2021). Perseverance's Scanning Habitable Environments with
-Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation.
-<i>Space Sci. Rev.</i>, 217, 58.
-<a href="https://doi.org/10.1007/s11214-021-00812-z" target="_blank">doi:10.1007/s11214-021-00812-z</a></div>`;
 
   export let wavenumber: number[] = [];
   export let intensity: number[] = [];

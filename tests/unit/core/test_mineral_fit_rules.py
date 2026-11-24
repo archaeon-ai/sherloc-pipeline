@@ -133,3 +133,15 @@ def test_no_peaks_keeps_the_mask_count():
     res, _ = fit_spectrum(x, y, _cfg(), roi=(700, 1200), noise_std=1.0, negative_spike_sigma=10.0)
     assert res.peaks == []
     assert res.warnings == ["negative_spike_channels_masked:1", "no_peaks_detected"]
+
+
+def test_filter_fwhm_fallback_equals_the_shipped_config():
+    """A config without ``filter_fwhm_min_cm1`` applies the same FWHM bar as
+    the shipped config: a 27 cm-1 peak passes either way."""
+    x, y = _spectrum([(1015.0, 600.0, 27.0)])
+    shipped, _ = fit_spectrum(x, y, _cfg(), roi=(700, 1200))
+    no_key = {k: v for k, v in _cfg().items() if k != "filter_fwhm_min_cm1"}
+    fallback, _ = fit_spectrum(x, y, no_key, roi=(700, 1200))
+    assert len(shipped.peaks) == len(fallback.peaks) == 1
+    assert 25.0 <= shipped.peaks[0].fwhm < 30.0
+    assert shipped.peaks[0].pass_fwhm and fallback.peaks[0].pass_fwhm

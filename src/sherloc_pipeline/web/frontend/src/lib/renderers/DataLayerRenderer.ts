@@ -531,7 +531,7 @@ export class DataLayerRenderer {
 
   /**
    * Draw a ring marker at a point.
-   * 100 um diameter in image space = ~10px radius at 10 um/px ACI scale.
+   * 100 um diameter laser spot = 50 um radius = 5 px radius at 10 um/px ACI scale.
    */
   private drawRing(
     ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,

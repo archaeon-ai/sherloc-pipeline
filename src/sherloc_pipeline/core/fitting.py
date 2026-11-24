@@ -8,6 +8,10 @@ from scipy.stats import f as f_dist
 
 from sherloc_pipeline.models.fitting import PeakFit, FitResult
 
+# Fallback for the ``filter_fwhm_min_cm1`` fitting key when a config omits it;
+# equal to the value in the shipped config.yaml.
+FILTER_FWHM_MIN_CM1_DEFAULT = 25.0
+
 # Provenance: Peak fitting parameters (slit-width 34.1 cm-1, FWHM 22-90 cm-1,
 # R2 >= 0.25) and SNR thresholds (>=3 standard, >=2 organics with human filtering)
 # established by domain expert from instrument specifications and literature.
@@ -140,7 +144,7 @@ def fit_spectrum(
     y_roi = y[mask]
     # Config params
     fit_min = float(cfg.get('fit_fwhm_min_initial_cm1', 20))
-    filt_min = float(cfg.get('filter_fwhm_min_cm1', 30))
+    filt_min = float(cfg.get('filter_fwhm_min_cm1', FILTER_FWHM_MIN_CM1_DEFAULT))
     fwhm_max = float(cfg.get('fwhm_max_cm1', np.inf))
     slit_w = float(cfg.get('slit_width_cm1_default', 34.1))
     slit_wt = float(cfg.get('slit_pref_weight', 0.2))

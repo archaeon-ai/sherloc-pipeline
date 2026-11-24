@@ -60,7 +60,12 @@ from sherloc_pipeline.core.baseline import (
     build_weight_vector_from_windows,
 )
 from sherloc_pipeline.core.preprocessing import baseline_aspls
-from sherloc_pipeline.core.fitting import compute_r2, fit_spectrum, gaussian
+from sherloc_pipeline.core.fitting import (
+    FILTER_FWHM_MIN_CM1_DEFAULT,
+    compute_r2,
+    fit_spectrum,
+    gaussian,
+)
 from sherloc_pipeline.core.utils import resolve_trim_proportion, format_trim_label
 from sherloc_pipeline.models.fitting import FitResult, PeakFit
 
@@ -2483,7 +2488,7 @@ class SpectralService:
         cfg = {
             "r1_fit_range": fitting_config.get("r1_fit_range", [700, 1200]),
             "fit_fwhm_min_initial_cm1": fitting_config.get("fit_fwhm_min_initial_cm1", 22),
-            "filter_fwhm_min_cm1": fitting_config.get("filter_fwhm_min_cm1", 30),
+            "filter_fwhm_min_cm1": fitting_config.get("filter_fwhm_min_cm1", FILTER_FWHM_MIN_CM1_DEFAULT),
             "fwhm_max_cm1": fitting_config.get("fwhm_max_cm1", 90),
             "slit_width_cm1_default": fitting_config.get("slit_width_cm1_default", 34.1),
             "slit_pref_weight": fitting_config.get("slit_pref_weight", 0.2),

@@ -7,8 +7,8 @@ intended to be a living document — when the structure here drifts from
 the code, the code is authoritative; please update this file in the
 same change.
 
-The codebase is organized as 13 first-party packages under
-`src/sherloc_pipeline/` (12 code packages plus a `data/` reference-data
+The codebase is organized as 12 first-party packages under
+`src/sherloc_pipeline/` (11 code packages plus a `data/` reference-data
 package). They form three rough layers:
 
 ```
