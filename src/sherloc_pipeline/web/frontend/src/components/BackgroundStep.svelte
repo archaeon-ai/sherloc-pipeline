@@ -6,7 +6,7 @@
 
   const bgRef = `<div class="ref-title">Dark frame background subtraction</div>
 Subtracts instrument background using pre-measured reference spectra,
-scaled by laser line intensity ratio in the 600–700 cm⁻¹ window.
+scaled by the scan's pulses per point relative to the background's (pulses_per_point in the config).
 <b>Arm-Stowed:</b> Post-anomaly 900 PPP averaged dark spectrum.
 <b>Fused Silica:</b> Corning 7980 air-subtracted reference.
 <div class="ref-cite">Bhartia, R. et al. (2021). Perseverance's Scanning Habitable Environments with

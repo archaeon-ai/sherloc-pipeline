@@ -7,7 +7,7 @@ Two paths are documented below. **Path A** verifies your install with no externa
 ## Prerequisites
 
 - Python 3.12+
-- `git`, `npm` (for frontend builds — only required if you want to rebuild the UI; a pre-built `dist/` ships in the source tree)
+- `git`, `npm` (to build the web UI; the source tree has no built frontend, and without one the server answers API requests but serves no UI)
 - `sqlite3` (CLI useful for database inspection but not required at runtime)
 
 ```bash
@@ -16,6 +16,9 @@ cd sherloc-pipeline
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
+
+# Build the web UI into src/sherloc_pipeline/web/frontend/dist/
+(cd src/sherloc_pipeline/web/frontend && npm ci && npm run build)
 ```
 
 ---
@@ -75,6 +78,6 @@ For deployments behind Cloudflare Access (or another reverse proxy that performs
 | `SHERLOC_CORS_ALLOWED_ORIGINS` | Comma-separated list of origins allowed for browser cross-origin requests; empty by default (no cross-origin requests) |
 | `SHERLOC_CF_TEAM_DOMAIN` | Cloudflare Access team domain, e.g. `your-team.cloudflareaccess.com` (required unless `SHERLOC_AUTH_MODE=dev`) |
 | `SHERLOC_CF_AUDIENCE` | Cloudflare Access app AUD tag (required unless `SHERLOC_AUTH_MODE=dev`) |
-| `SHERLOC_AUTH_MODE` | Set to `dev` only on a developer workstation. Off by default. Bypasses CF Access JWT validation. |
+| `SHERLOC_AUTH_MODE` | `cf-access` when unset, except that `scripts/serve.sh` sets `dev` when it is unset. `dev` bypasses CF Access JWT validation: use it only on a developer workstation, and set the mode explicitly in production. |
 
 The server binds to `127.0.0.1` by default and is intended to run behind a reverse proxy in production. Direct exposure on a public interface without an auth proxy is unsupported.

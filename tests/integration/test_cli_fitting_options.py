@@ -33,6 +33,22 @@ class TestCLIFittingOptionsHelp:
         assert "maximum" in result.output.lower() or "peaks" in result.output.lower()
 
 
+    def test_help_fwhm_min_default_names_the_config(self):
+        """--fwhm-min help names the config as the default, not a number.
+
+        The config sets fitting.filter_fwhm_min_cm1; the help once said 30.
+        """
+        import typer.main
+
+        plot = typer.main.get_command(app).commands["plot"]
+        option = next(p for p in plot.params if p.name == "fwhm_min")
+        assert option.help == (
+            "Minimum FWHM in cm^-1 for peak acceptance (default from config)"
+        )
+        assert "--fwhm-min: Override minimum FWHM in cm^-1 (default from config)." in plot.help
+        assert "default: 30" not in option.help + plot.help
+
+
 class TestCLIFittingOptionsValidation:
     """Tests for CLI validation of fitting options."""
 

@@ -7,8 +7,9 @@
 
   const baselineRef = `<div class="ref-title">Adaptive smoothness penalized least squares (asPLS)</div>
 Iteratively reweighted penalized least squares baseline fitting.
-Protected mineral windows (sulfate, carbonate, OH-stretch) reduce penalty
-to avoid fitting through genuine Raman peaks.
+Here the fit has no protected windows; the batch pipeline down-weights the
+configured Raman windows (preprocessing.baseline.keep_windows) so the baseline
+does not fit through genuine Raman peaks.
 <div class="ref-cite">Zhang, F. et al. (2020). Baseline correction for infrared spectra using adaptive
 smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>, 53(3), 222–233.
 <a href="https://doi.org/10.1080/00387010.2020.1730908" target="_blank">doi:10.1080/00387010.2020.1730908</a>

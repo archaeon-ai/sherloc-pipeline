@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The `pds-ingest` command ingests PDS4 SHERLOC spectral data — fetched separately by `pds-download` from the PDS Geosciences Node (WUSTL) — into a dedicated `phase_pds.db` SQLite database. This database is structurally isolated from the Loupe-based `phase.db` — same schema, separate file — enabling cross-source analysis via SQLite `ATTACH DATABASE`.
+The `pds-ingest` command ingests PDS4 SHERLOC spectral data — fetched separately by `pds-download` from the PDS Geosciences Node (WUSTL) — into a dedicated `phase_pds.db` SQLite database. This database is structurally isolated from the Loupe-based `phase.db` — same schema, separate file. The package does not combine the two files; a user can open both together with SQLite `ATTACH DATABASE`.
 
 PDS ingestion supports:
 - Laser-normalized spectra (RRS/RCS) with R1/R2/R3 regions
@@ -107,7 +107,7 @@ PDS settings are defined in `src/sherloc_pipeline/config.yaml` under the `pds` s
 ```yaml
 pds:
   base_url: "https://pds-geosciences.wustl.edu/m2020/urn-nasa-pds-mars2020_sherloc"
-  cache_dir: "./pds"
+  cache_dir: "./data/pds"
   timeout_seconds: 60.0
   max_retries: 3
   backoff_factor: 2.0
@@ -116,7 +116,7 @@ pds:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `base_url` | WUSTL PDS Geosciences Node | PDS archive base URL |
-| `cache_dir` | `./pds` | Local directory for cached PDS downloads |
+| `cache_dir` | `./data/pds` | Directory where the web app and image lookups look for PDS ACI images (override: `SHERLOC_PDS_CACHE_DIR`). `pds-download` and `pds-ingest` do not read it: they use `./pds` unless `--output-dir` / `--pds-dir` is given. |
 | `timeout_seconds` | `60.0` | HTTP request timeout |
 | `max_retries` | `3` | Retry count for transient HTTP errors (5xx, 429) |
 | `backoff_factor` | `2.0` | Exponential backoff multiplier (delays: 1s, 2s, 4s) |
@@ -166,7 +166,7 @@ PDS products are versioned (e.g., v1.0, v2.0). The ingestion service uses numeri
 
 ### Database isolation
 
-PDS data lives in `phase_pds.db`, never in `phase.db`. The Loupe database is opened read-only for target name cross-reference. No writes are ever made to `phase.db`.
+PDS data lives in `phase_pds.db`, never in `phase.db`. The Loupe database is only queried, for target name cross-reference; ingestion writes nothing to `phase.db`. It is opened with an ordinary SQLite connection, not in SQLite read-only mode.
 
 ### Target name resolution
 

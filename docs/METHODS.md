@@ -46,7 +46,7 @@ Drawn from Bhartia et al. (2021) and the codebase's Loupe-derived calibration in
 
 | Parameter | Specification |
 |-----------|---------------|
-| **Laser** | Pulsed deep-UV neon-copper, 248.6 nm (40 μs pulses) |
+| **Laser** | Pulsed deep-UV neon-copper, 248.5794 nm (`wavelength.laser_wavelength` in `config.yaml`; 40 μs pulses) |
 | **Spectral Regions** | R1 (Raman), R2/R3 (Fluorescence) |
 | **R1 Range** | 250-282 nm; usable Raman shift ~640-4200 cm⁻¹ |
 | **R2 Range** | 282-337.8 nm |
@@ -387,16 +387,14 @@ This layer is **completely separate from cosmic-ray despiking**: it never
 masks, replaces, interpolates, or alters any spectral value — it only marks
 where the known-noisy channels fall, on demand, when the analyst opts in.
 
-The distinction matters because a channel can be *both* real mineral signal and
-intrinsically noisy. The clearest case is the carbonate ν₁ apex near
-1086.7 cm⁻¹: the spectral feature there is genuine carbonate signal, yet that
-same channel is also a known-noisy channel. Cosmic-ray despiking must **never**
-touch it — masking it would erase real mineral information — so the despike
-detector is deliberately built to leave such channels alone. The annotation
-layer fills the complementary need: the analyst can still toggle on a
-"known-noisy channel" marker to keep that channel's noise character in view
-while interpreting the carbonate band, without any risk of the value being
-modified.
+The distinction matters because a known-noisy marker says nothing about
+whether a band at that channel is real. A tier 1 channel enters the table only
+when it is noisy with the laser off (in the dark plane), a test a Raman band
+cannot pass. Inside the hi-carb window (1075-1105 cm⁻¹ in `config.yaml`), R1
+channels 136 and 138 are listed and channel 137 between them is not: an
+earlier rate criterion flagged 137, but its excursions came from the carbonate
+band, not the detector (see the header of `data/badpix_channels.csv`). Turning
+the layer on marks the listed channels and changes no value.
 
 The curated table carries two tiers. **Tier 1** channels are elevated-noise
 channels whose excursions a cosmic-ray detector could plausibly confuse for

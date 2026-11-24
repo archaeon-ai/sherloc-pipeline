@@ -87,9 +87,10 @@ always exceeds 1.0.
 
 ### Filenames
 
-Output filenames use `2p_trim_mean` as a **semantic label** for the method, not a
-literal encoding of the scipy parameter. This is consistent regardless of whether
-dynamic adjustment was applied:
+Output filenames and plot titles carry the **effective** per-tail trim percentage
+(`format_trim_label` in `core/utils.py`). A scan large enough for the configured 2 %
+to cut at least one point per tail is labeled `2p_trim_mean`; a smaller scan is
+labeled with its raised percentage, for example `4p_trim_mean` for 25 points:
 
 ```
 0921_Amherst_Point_detail_1_R1_raw-n_2p_trim_mean_bkgsub_baselined.csv

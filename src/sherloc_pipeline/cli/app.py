@@ -429,7 +429,7 @@ def plot_cmd(
     min_snr: Optional[float] = typer.Option(None, "--min-snr",
         help="Minimum SNR threshold for peak acceptance (default: 3.0 from config)"),
     fwhm_min: Optional[float] = typer.Option(None, "--fwhm-min",
-        help="Minimum FWHM in cm^-1 for peak acceptance (default: 30 from config)"),
+        help="Minimum FWHM in cm^-1 for peak acceptance (default from config)"),
     fwhm_max: Optional[float] = typer.Option(None, "--fwhm-max",
         help="Maximum FWHM in cm^-1 for peak acceptance (default: 90 from config)"),
     
@@ -483,11 +483,11 @@ def plot_cmd(
         --single-peak: Fit exactly one Gaussian near specified center (cm^-1).
         --n-peaks: Limit automatic peak detection to at most N peaks.
         --min-snr: Override minimum SNR threshold for peak acceptance (default: 3.0).
-        --fwhm-min: Override minimum FWHM in cm^-1 (default: 30).
+        --fwhm-min: Override minimum FWHM in cm^-1 (default from config).
         --fwhm-max: Override maximum FWHM in cm^-1 (default: 90).
         
         Examples:
-            # Fit single carbonate peak at ~1090 cm^-1
+            # Fit one peak seeded at 1090 cm^-1 (inside the config's hi-carb window)
             sherloc plot --sol 921 --target Amherst_Point --scan detail_1 \\
                 --background fs --baseline --fit --single-peak 1090 \\
                 --fit-range 1000,1200 --export both

@@ -4,7 +4,7 @@ This document defines the unified data schema for SHERLOC spectroscopy data, sup
 
 **Version:** 1.3
 **Date:** 2026-04-29
-**Status:** Implementation complete (v1.3 expands coverage to all 16 ORM tables and adds Units, Configuration Surface, and Example Queries appendices).
+**Status:** Implementation complete (v1.3 expands coverage to the ORM tables in `database/models.py` and adds Units, Configuration Surface, and Example Queries appendices).
 
 ---
 
@@ -96,9 +96,9 @@ Use JSON columns for:
 
 ## Entity Relationship Diagram
 
-The 16 ORM tables organize into three groups:
+The 17 ORM tables in `database/models.py` organize into three groups. (The database also holds the four reference catalog tables of `database/reference_models.py`, `reference_releases`, `reference_files`, `reference_traces` and `reference_templates`, which this document does not describe.)
 
-1. **Mission data hierarchy** — `Sol` → `Scan` → `ScanPoint` → `Spectrum` → `FittedPeak`, plus per-scan supporting tables (`InstrumentState`, `CCDConfiguration`, `ScannerCalibration`, `ContextImage`, `RegionOfInterest`, `Spectrogram`).
+1. **Mission data hierarchy** — `Sol` → `Scan` → `ScanPoint` → `Spectrum` → `FittedPeak`, plus `CosmicRayMask` (per-spectrum cosmic-ray channel masks) and per-scan supporting tables (`InstrumentState`, `CCDConfiguration`, `ScannerCalibration`, `ContextImage`, `RegionOfInterest`, `Spectrogram`).
 2. **Map Mode display cache** — `MapDisplayCoordinate` (per-scan-point ACI pixel cache).
 3. **Application state** — `User`, `UserPreference`, `ClassificationProfile`, `MapFitCache`.
 
@@ -250,7 +250,7 @@ A complete spectroscopy scan of a target (equivalent to Loupe workspace or PDS4 
 | `n_points` | INTEGER | NO | Number of map points | `n_spectra` | RMO records |
 | `n_channels` | INTEGER | NO | CCD channels (default 2148) | `n_channels` | Constant (2148) |
 | `shots_per_point` | INTEGER | YES | Laser shots per point (NULL for PDS) | `shots_per_spec` | NULL (not in processed) |
-| `laser_wavelength_nm` | FLOAT | NO | Laser wavelength (default 248.6) | `laser_wavelength` | Constant (248.6) |
+| `laser_wavelength_nm` | FLOAT | NO | Laser wavelength recorded for the scan (column default 248.6; wavelength calibration uses 248.5794 from `config.yaml`) | `laser_wavelength` | Column default (248.6) |
 | `processing_applied` | VARCHAR(100) | YES | Processing code | `specProcessingApplied` | `'laser_normalized'` |
 | `data_source` | VARCHAR(20) | YES | `'loupe'` or `'pds4'` — data provenance | Constant `'loupe'` | Constant `'pds4'` |
 | `scan_type` | VARCHAR(20) | YES | See `ScanType` enum below | Derived from name | Sequence code classification |
@@ -389,41 +389,42 @@ Scanner coordinate calibration parameters.
 
 ### ContextImage
 
-Associated ACI or WATSON context images.
+Associated ACI or WATSON context images. Three code paths write rows. VICAR IMG image ingestion (`services/image_ingestion.py`) fills the columns in the IMG column below. Loupe workspace ingestion (`sherloc ingest`, from the workspace `img/` directory) writes only `image_type` (WATSON when the filename contains `WATSON`, otherwise ACI) and `r2_rel_key` (derived from the file path; a file with no derivable locator is skipped). PDS4 ingestion (`services/pds_ingestion.py`) writes only `image_type` (always `ACI`), `r2_rel_key` and `pds_lidvid`. Columns a path does not write stay NULL.
 
-| Field | Type | Nullable | Description | Loupe Source | PDS4 Source |
+| Field | Type | Nullable | Description | IMG ingestion source | PDS4 ingestion source |
 |-------|------|----------|-------------|--------------|-------------|
 | `id` | UUID | NO (PK) | Unique identifier | Generated | Generated |
-| `scan_id` | UUID | NO (FK) | Parent scan | Generated | Generated |
-| `image_type` | TEXT | NO | 'ACI' or 'WATSON' | From filename | From collection |
-| `file_path` | TEXT | NO | Image file path | img/ directory | data_aci/watson |
+| `scan_id` | UUID | NO (FK) | Parent scan | Matched scan | Parent scan |
+| `image_type` | TEXT | NO | 'ACI' or 'WATSON' | From the filename's camera ID (SC1 = WATSON, otherwise ACI) | Always `ACI` |
+| `r2_rel_key` | TEXT | YES | Relative image locator (the key after `sherloc-aci/` in object storage) | Image locator | `pds:<LIDVID>` until the image is downloaded |
 | `pds_lidvid` | VARCHAR(200) | YES | Full PDS LIDVID for image product | NULL | `urn:nasa:pds:...::<ver>.0` |
-| `product_id` | TEXT | YES | PDS product ID | `product_ID` | LID |
-| `sclk` | BIGINT | YES | Acquisition SCLK | From filename | From label |
-| `pixel_scale_um` | FLOAT | YES | um/pixel | `pixel_scale` | From label |
-| `working_distance_cm` | FLOAT | YES | Working distance | `range` | From label |
-| `motor_position` | INTEGER | YES | Focus motor pos | `motor_pos` | From label |
-| `exposure_time_ms` | FLOAT | YES | Exposure time | `exp_time` | From label |
-| `led_illumination` | BOOLEAN | YES | LED on/off | `led_flag` | From label |
-| `width_px` | INTEGER | YES | Image width | Derived | From label |
-| `height_px` | INTEGER | YES | Image height | Derived | From label |
+| `product_id` | TEXT | YES | Product ID | VICAR label | NULL |
+| `sclk` | BIGINT | YES | Acquisition SCLK | VICAR spacecraft clock, else the filename | NULL |
+| `pixel_scale_um` | FLOAT | YES | um/pixel | Fixed 10.1 (ACI) | NULL |
+| `working_distance_cm` | FLOAT | YES | Working distance | Not written (NULL) | NULL |
+| `motor_position` | INTEGER | YES | Focus motor pos | `FOCUS_POSITION_COUNT` | NULL |
+| `exposure_time_ms` | FLOAT | YES | Exposure time | Not written (NULL) | NULL |
+| `led_illumination` | BOOLEAN | YES | LED on/off | Not written (NULL) | NULL |
+| `width_px` | INTEGER | YES | Image width | VICAR header | NULL |
+| `height_px` | INTEGER | YES | Image height | VICAR header | NULL |
 
 **VICAR metadata columns** (added in migration `0385ab87eb83`):
 
-| Field | Type | Nullable | Description | Loupe Source | PDS4 Source |
+| Field | Type | Nullable | Description | IMG ingestion source | PDS4 ingestion source |
 |-------|------|----------|-------------|--------------|-------------|
-| `file_format` | VARCHAR(10) | YES | VICAR FORMAT field | VICAR header | NULL |
-| `camera_id` | VARCHAR(10) | YES | Camera identifier (ACI/WATSON) | VICAR header | NULL |
-| `sol_number` | INTEGER | YES | Mars sol from VICAR label | `PLANET_DAY_NUMBER` | From label |
-| `sclk_start` | BIGINT | YES | Spacecraft clock start | `SPACECRAFT_CLOCK_START_COUNT` | From label |
-| `sclk_stop` | BIGINT | YES | Spacecraft clock stop | `SPACECRAFT_CLOCK_STOP_COUNT` | From label |
+| `file_format` | VARCHAR(10) | YES | File format | `IMG` | NULL |
+| `camera_id` | VARCHAR(10) | YES | Camera identifier (ACI/WATSON) | From the filename | NULL |
+| `sol_number` | INTEGER | YES | Mars sol | VICAR label, else the file path | NULL |
+| `sclk_start` | BIGINT | YES | Spacecraft clock start | Same value as `sclk` | NULL |
+| `sclk_stop` | BIGINT | YES | Spacecraft clock stop | Not written (NULL) | NULL |
 | `sequence_id` | VARCHAR(50) | YES | Observation sequence code | `SEQUENCE_ID` | NULL |
-| `image_time` | DATETIME | YES | Image acquisition time | `IMAGE_TIME` | `start_date_time` |
+| `image_time` | DATETIME | YES | Image acquisition time | `IMAGE_TIME` | NULL |
 | `focus_mode` | VARCHAR(20) | YES | Autofocus mode | `FOCUS_MODE` | NULL |
 | `focus_position_count` | INTEGER | YES | Focus motor step count | `FOCUS_POSITION_COUNT` | NULL |
 | `local_mean_solar_time` | VARCHAR(50) | YES | Local Mars time | `LOCAL_MEAN_SOLAR_TIME` | NULL |
-| `rover_motion_counter` | TEXT | YES | Site-drive position code | `ROVER_MOTION_COUNTER` | `geom:Motion_Counter` |
+| `rover_motion_counter` | TEXT | YES | Site-drive position code | Not written (NULL) | NULL |
 | `vicar_metadata` | JSON | YES | Full VICAR label as JSON | All parsed fields | NULL |
+| `source_img_path` | TEXT | YES | Source IMG path | Not written (NULL) | NULL |
 | `updated_at` | DATETIME | YES | Last modification time | Generated | Generated |
 
 ### RegionOfInterest
@@ -702,7 +703,7 @@ The `mineral_assignment` column stores feature labels whose meaning varies by `f
 
 | fit_modality | mineral_assignment Values | Assignment Logic |
 |--------------|--------------------------|------------------|
-| `minerals` | Mineral feature names (e.g., `sulf1_v1`, `carb_v1`, `oliv_v1`) | `assign_min_id()`: wavenumber band lookup from `MINERAL_BANDS` table |
+| `minerals` | Mineral feature names (e.g., `sulf1_v1`, `carb_v1`, `oliv_v1`) | `assign_min_id()`: wavenumber band lookup against the mineral rules (`fitting.mineral_rules` in `config.yaml`) |
 | `organics` | `D_band` (1250-1450 cm⁻¹), `G_band` (1500-1700 cm⁻¹), `unidentified` | `classify_organic_band()`: center position range |
 | `hydration` | `OH_stretch` (3000-4000 cm⁻¹), `H2O_bend` (1500-1700 cm⁻¹), `unidentified` | `classify_hydration_band()`: center position range |
 | `fluorescence` | Group labels: `group1a` (300-307 nm), `group1b` (322-329 nm), `group2` (329-355 nm), `group3` (270-295 nm), `unidentified` | `assign_fluor_group()`: center wavelength range |
@@ -763,7 +764,7 @@ The composite index `ix_fitted_peaks_modality_assignment` enables efficient cros
 | `solar_longitude` | `solar_longitude` | Sol |
 | `spacecraft_clock_start` | `sclk_start` | Scan |
 | `spacecraft_clock_stop` | `sclk_stop` | Scan |
-| `local_mean_solar_time` | `pds4_metadata.lmst` | Scan (JSON) |
+| `local_mean_solar_time` | `pds4_metadata.local_mean_solar_time` | Scan (JSON) |
 
 #### RMO Product Fields
 
@@ -773,18 +774,16 @@ The composite index `ix_fitted_peaks_modality_assignment` enables efficient cros
 | `Image_name` | Related via scan | ContextImage |
 | `x` | `x_pixel` | ScanPoint |
 | `y` | `y_pixel` | ScanPoint |
-| `Spectral_intensity_N` | Computed from spectra | - |
+| `Spectral_intensity_N` | Not read | - |
 
 #### Product Type Mapping
 
 | PDS4 Product | Unified Equivalent |
 |--------------|-------------------|
-| `data_raw` EDR | InstrumentState, CCDConfiguration |
-| `data_intermediate` RAC | Spectrum (processing_level='calibrated') |
-| `data_processed` RCS | Spectrum (processing_level='derived') |
-| `data_processed` RMO | ScanPoint (positions) |
-| `data_aci` | ContextImage (image_type='ACI') |
-| `data_watson` | ContextImage (image_type='WATSON') |
+| `data_processed` RRS / RCS | Spectrum (spectrum_type='laser_normalized', processing_level='normalized') |
+| `data_processed` RMO | ScanPoint (positions); ContextImage (image_type='ACI') from `Image_name` |
+
+EDR (`data_raw`), RAC (`data_intermediate`) and WATSON products are not ingested.
 
 ---
 
@@ -835,18 +834,11 @@ def extract_sclk(original_data_file: str) -> int:
 
 ### Spectral Array Storage
 
-Intensities stored as compressed binary:
+Intensities are stored as zlib-compressed float32 bytes, written and read by `Spectrum.compress_array()` and `Spectrum.decompress_array()` in `models/spectra.py`:
 ```python
-import numpy as np
-import zlib
-
-def compress_spectrum(intensities: np.ndarray) -> bytes:
-    """Compress float32 array for storage."""
-    return zlib.compress(intensities.astype(np.float32).tobytes())
-
-def decompress_spectrum(data: bytes, n_channels: int = 2148) -> np.ndarray:
-    """Decompress to float32 array."""
-    return np.frombuffer(zlib.decompress(data), dtype=np.float32)
+arr = np.array(values, dtype=np.float32)
+blob = zlib.compress(arr.tobytes())                       # compress_array
+values = np.frombuffer(zlib.decompress(blob), dtype=np.float32).tolist()  # decompress_array
 ```
 
 ---
@@ -867,20 +859,16 @@ def decompress_spectrum(data: bytes, n_channels: int = 2148) -> np.ndarray:
 
 ### Phase 2: PDS4 Ingestion (Optional/Supplementary)
 
-1. **Download/mirror** specific collections if needed
-2. **Parse inventory** CSV for product list
-3. **For each product**:
+1. **Download** sols with `sherloc pds-download`
+2. **Discover products** by listing the downloaded files of each sol
+3. **For each observation**:
    - Parse XML label -> Sol, Scan metadata
    - Parse CSV data -> Spectra, ScanPoints
-   - Link to existing Loupe data via SCLK matching
+   - Resolve the target name via SCLK lookup in the Loupe database, when one is given
 
-### Deduplication
+### Separate databases
 
-When ingesting both sources:
-1. Match by `sclk_start` (unique per observation)
-2. Prefer Loupe data (more complete for analysis)
-3. Merge PDS4-only fields into existing records
-4. Flag conflicts in `data_source` field
+PDS4 data is written to its own database (`phase_pds.db`), never into the Loupe database. The two sources are not merged or deduplicated; each row's source is recorded in `data_source`.
 
 ---
 
@@ -888,30 +876,7 @@ When ingesting both sources:
 
 ### Cross-Field Validation
 
-```python
-def validate_scan(scan: Scan) -> List[str]:
-    """Validate scan consistency."""
-    errors = []
-
-    # Check spectrum count matches point count
-    if scan.n_points != len(scan.scan_points):
-        errors.append(f"n_points ({scan.n_points}) != scan_points count")
-
-    # Check region coverage
-    regions = {s.region for p in scan.scan_points for s in p.spectra}
-    if 'R1' not in regions:
-        errors.append("Missing R1 region spectra")
-
-    # Check scan_class invariants
-    if scan.scan_class == "sub_scan" and scan.parent_scan_id is None:
-        errors.append("sub_scan rows must have parent_scan_id set")
-    if scan.scan_class == "composite" and not scan.source_scan_ids:
-        errors.append("composite rows must have non-empty source_scan_ids")
-    if scan.scan_class == "primary" and (scan.parent_scan_id or scan.source_scan_ids):
-        errors.append("primary rows must have parent_scan_id and source_scan_ids both NULL")
-
-    return errors
-```
+There is no single cross-field validation function. The cross-field rule the database enforces is the `ck_scans_product_role` CHECK constraint on `scans` (`database/models.py`, migration `9b2e7c4a1f08`): when `product_role` is set, a `raw` row is a `primary` scan with neither `parent_scan_id` nor `source_scan_ids`, and a `canonical` or `alternate` row is a `composite` scan with no `parent_scan_id` and at least one `source_scan_ids` entry. `DataIngestion.validate_scan_data()` (`core/data_ingestion.py`) checks a Loupe working directory (required files, metadata keys, spectral row count); no command calls it.
 
 ### Required Fields
 
@@ -941,23 +906,16 @@ def validate_scan(scan: Scan) -> List[str]:
 
 ## Migration Path
 
-### From Current Pipeline
+### Current state
 
-The existing pipeline uses:
-- Direct CSV parsing in processing code
-- No persistent storage
-- Per-request data loading
-
-### To PHASE Database
-
-1. **Create SQLite database** at `./phase.db`
-2. **Run initial ingestion** of all Loupe data
-3. **Update pipeline** to query database instead of parsing files
-4. **Add incremental ingestion** for new sols
+1. `alembic upgrade head` (or `sherloc init`) creates the SQLite database (default `./phase.db`).
+2. `sherloc ingest` loads Loupe scans; `sherloc process-new` ingests and processes a newly downloaded sol.
+3. `sherloc full-pipeline` persists fitted peaks to the database; the web app reads scans, spectra and peaks from it.
+4. Batch processing (`full-pipeline`, `plot`) still reads the Loupe working-directory CSV files directly.
 
 ### Schema Evolution
 
-Use Alembic for migrations (batch mode for SQLite). Current head: `4f638701cf7c` (20 migrations).
+Use Alembic for migrations (batch mode for SQLite). Current head: `a4d795f0a25e` (21 migrations).
 
 ```python
 # Example migration
@@ -966,6 +924,7 @@ def upgrade():
 ```
 
 Recent migrations:
+- `a4d795f0a25e`: Add nullable selection marks `fitted_peaks.kept_by`, `aicc_gain`, `step_p` (existing rows NULL)
 - `4f638701cf7c`: Add nullable `fitted_peaks.cr_mask_review` (single ADD COLUMN; existing rows NULL)
 - `a13c4e5f6071`: Add immutable reference release catalog tables
 - `6cff8ea9cb06`: Add fit_modality, center_nm, fwhm_nm, is_saturated; relax cm1 nullability; remove duplicate indexes; add domain triggers
@@ -985,7 +944,7 @@ Recent migrations:
 | FWHM (fluorescence) | nm | Emission band width | 1 – 30 |
 | SNR | ratio | Peak-to-noise (Raman acceptance ≥ 3.0) | 1 – 1000 |
 
-For canonical region definitions, channel mappings, and the Loupe polynomial calibration see [`SPECTRAL_REGIONS.md`](SPECTRAL_REGIONS.md).
+For region definitions, channel mappings, and the Loupe polynomial calibration see [`SPECTRAL_REGIONS.md`](SPECTRAL_REGIONS.md).
 
 ### A.2 Spatial units
 
@@ -1021,7 +980,7 @@ This appendix points at where pipeline configuration actually lives in the codeb
 
 ### B.1 Top-level config
 
-`config.yaml` at the repo root. Sections include `spectral_regions`, `fitting`, `fluorescence_fitting`, and per-domain parameter blocks. Many runtime knobs (e.g., `fitting.parallel_workers`, `fluorescence_fitting.parallel_workers`, R1 cutoff_channel) are read from this file via the loader in `src/sherloc_pipeline/core/utils.py`.
+`src/sherloc_pipeline/config.yaml`. Sections include `spectral_regions`, `fitting`, `fluorescence_fitting`, and per-domain parameter blocks. Many runtime knobs (e.g., `fitting.parallel_workers`, `fluorescence_fitting.parallel_workers`, `wavelength.cutoff_channel`) are read from this file via `load_config()` in `src/sherloc_pipeline/config.py`.
 
 ### B.2 Preprocessing parameters
 
@@ -1064,7 +1023,7 @@ The R1 baseline path uses asPLS (`pybaselines.Baseline.aspls`); a `"poly"` linea
 
 ### B.4 Fluorescence-fitting parameters
 
-See `src/sherloc_pipeline/core/fluor_fitting.py` and the spec at `docs/specs/FLUORESCENCE_FITTING_SPEC.md`. Strategy is `"agnostic"` by default (1..max_peaks unconstrained Gaussians, AICc-selected; SNR ≥ 20, min peak separation 15 nm). The hypothesis-driven path produces constrained candidate models (M0–M7); falls back to agnostic if R² < 0.7. Group labels (`group1a`, `group1b`, `group2`, `group3`, `unidentified`) are post-hoc via `assign_fluor_group()`.
+See `src/sherloc_pipeline/core/fluor_fitting.py`. Strategy is `"agnostic"` by default (1..max_peaks unconstrained Gaussians, AICc-selected; SNR ≥ 10 (`fluorescence_fitting.snr_threshold`), min peak separation 15 nm). The hypothesis-driven path produces constrained candidate models (M0–M7); when the best of them has R² < 0.7 it also runs an agnostic fit and keeps that fit if its AICc is lower. Group labels (`group1a`, `group1b`, `group2`, `group3`, `unidentified`) are post-hoc via `assign_fluor_group()`.
 
 ### B.5 VICAR header keys parsed into `context_images.vicar_metadata`
 
@@ -1104,7 +1063,7 @@ WHERE sc.target = 'Garde'
 ### C.2 Find scans with a linked ACI image
 
 ```sql
-SELECT sc.scan_name, sc.target, sc.sol_number, ci.file_path
+SELECT sc.scan_name, sc.target, sc.sol_number, ci.r2_rel_key
 FROM scans          sc
 JOIN context_images ci ON sc.id = ci.scan_id
 WHERE ci.image_type = 'ACI'
@@ -1140,26 +1099,27 @@ For fluorescence, swap `fit_modality = 'minerals'` for `'fluorescence'` and refe
 
 ## Appendix D — Field Inventory
 
-Total: **16 ORM tables** across three groups.
+Total: **17 ORM tables** in `database/models.py` across three groups (column counts from the ORM). The four reference catalog tables in `database/reference_models.py` are not listed.
 
-**Mission data hierarchy (11 tables):**
+**Mission data hierarchy (12 tables):**
 
 | Entity | Field count |
 |--------|-------------|
 | Sol | 7 |
-| Scan | 27 (incl. processing-state, classification, and lineage columns) |
-| ScanPoint | 13 |
-| Spectrum | 10 |
+| Scan | 31 (incl. processing-state, classification, and lineage columns) |
+| ScanPoint | 14 |
+| Spectrum | 11 |
 | InstrumentState | 21 |
-| CCDConfiguration | 13 |
-| ScannerCalibration | 8 |
-| ContextImage | 28 (incl. VICAR metadata block) |
-| RegionOfInterest | 7 |
-| FittedPeak | 19 |
+| CCDConfiguration | 14 |
+| ScannerCalibration | 9 |
+| ContextImage | 29 (incl. VICAR metadata block) |
+| RegionOfInterest | 8 |
+| FittedPeak | 24 |
+| CosmicRayMask | 8 |
 | Spectrogram | 18 |
 
-**Map Mode display cache (1 table):** `MapDisplayCoordinate` — 5 fields.
+**Map Mode display cache (1 table):** `MapDisplayCoordinate` — 6 fields.
 
-**Application state (4 tables):** `User` (5), `UserPreference` (5), `ClassificationProfile` (6), `MapFitCache` (12).
+**Application state (4 tables):** `User` (6), `UserPreference` (5), `ClassificationProfile` (6), `MapFitCache` (12).
 
-**Provenance:** all Loupe fields preserved (68 in loupe.csv + image attributes + per-region spectra + spatial); all PDS4 fields supported via explicit columns on `ContextImage`/`Scan` plus the `pds4_metadata` JSON catch-all.
+**Provenance:** all Loupe fields preserved (68 in loupe.csv + image attributes + per-region spectra + spatial); PDS4 fields are kept in explicit columns on `Scan` plus the `pds4_metadata` JSON catch-all; PDS4 context images carry only their LIDVID.
