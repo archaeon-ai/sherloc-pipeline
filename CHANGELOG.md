@@ -84,9 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without object storage (no `PHASE_TIER` set), the scan detail and scan
   points requests failed with an error for any Loupe scan with an ACI, and the
   ACI Viewer showed no image. Those requests now answer normally: the image
-  is read from `paths.data_root` (Loupe) or `pds.cache_dir` (PDS), a
-  colorized request uses the `sol_NNNN_colorized` copy when it exists on disk
-  and otherwise the base image, and a missing file answers 404.
+  is read from `paths.data_root` (Loupe) or `pds.cache_dir` (PDS). A file
+  that is missing, or that a symbolic link places outside that directory,
+  answers 404. Locally the base image is shown; the Colorized control stays
+  off.
 - **Map RGB presets fill all three channels.** The "Sulfate Mineralogy" and
   "Organics + Hydration" presets named class ids the map has no layer for
   (`sulfate_v1`, `hi_carb`, `oh_stretch`): "Sulfate Mineralogy" showed only

@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from sherloc_pipeline.database.models import ContextImageORM, ScanORM
 from sherloc_pipeline.web.data_access import DataAccessService
-from sherloc_pipeline.core.r2_keys import colorize_sol_segment, resolve_disk_path
+from sherloc_pipeline.core.r2_keys import resolve_disk_path
 from sherloc_pipeline.web.r2_reader import (
     colorized_variant_exists,
     derive_r2_key,
@@ -222,36 +222,42 @@ def _get_data_access(request: Request) -> DataAccessService:
     )
 
 
-def _read_aci_from_disk(
-    request: Request, rel_locator: Optional[str], colorized: bool
-) -> tuple[str, bytes]:
+def _read_aci_from_disk(request: Request, rel_locator: Optional[str]) -> tuple[str, bytes]:
     """Read the ACI from the configured data roots when no object storage is set.
 
     The stored locator resolves under ``paths.data_root`` (Loupe tree) or
-    ``pds.cache_dir`` (PDS tree). A colorized request uses the
-    ``sol_NNNN_colorized`` sibling when that file exists, else the base
-    image. A locator that resolves to no file answers 404.
+    ``pds.cache_dir`` (PDS tree). The file must stay inside that root once
+    symbolic links are resolved. A locator that resolves to no such file
+    answers 404. Colorized variants are not looked up on disk: the base
+    image is served.
     """
     config = request.app.state.config
     data_root = (getattr(config, "paths", None) or {}).get("data_root")
     pds_cache_dir = getattr(getattr(config, "pds", None), "cache_dir", None)
 
-    def resolve(locator: Optional[str]) -> Optional[Path]:
-        path = resolve_disk_path(
-            locator, data_root=data_root, pds_cache_dir=pds_cache_dir
-        )
-        return path if path is not None and path.is_file() else None
-
-    path = None
-    if colorized and rel_locator:
-        colorized_locator = colorize_sol_segment(rel_locator)
-        if colorized_locator is not None:
-            path = resolve(colorized_locator)
-    if path is None:
-        path = resolve(rel_locator)
+    path = resolve_disk_path(
+        rel_locator, data_root=data_root, pds_cache_dir=pds_cache_dir
+    )
     if path is None:
         raise HTTPException(status_code=404, detail="not_found")
-    return path.name, path.read_bytes()
+    root = next(
+        (
+            Path(r)
+            for r in (data_root, pds_cache_dir)
+            if r is not None and path.is_relative_to(Path(r))
+        ),
+        None,
+    )
+    try:
+        resolved = path.resolve(strict=True)
+        contained = root is not None and resolved.is_relative_to(
+            root.resolve(strict=True)
+        )
+    except OSError:
+        contained = False
+    if not contained or not resolved.is_file():
+        raise HTTPException(status_code=404, detail="not_found")
+    return resolved.name, resolved.read_bytes()
 
 
 @router.get("/images/{scan_id}/aci")
@@ -313,7 +319,7 @@ def get_aci_image(
         # R2 GET — surfaces 404/502 per spec §3.9.4.
         bytes_data = r2_get_bytes(key)
     else:
-        key, bytes_data = _read_aci_from_disk(request, aci.r2_rel_key, colorized)
+        key, bytes_data = _read_aci_from_disk(request, aci.r2_rel_key)
 
     suffix = Path(key).suffix.upper()
     if suffix == ".PNG":

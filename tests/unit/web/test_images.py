@@ -473,15 +473,78 @@ async def test_aci_served_from_disk_without_object_storage(
 
 
 @pytest.mark.asyncio
-async def test_aci_colorized_request_falls_back_to_base_on_disk(
-    client, test_engine, local_disk_aci
+async def test_aci_colorized_request_serves_base_image_on_disk(
+    client, test_engine, local_disk_aci, tmp_path
 ):
-    """colorized=true with no colorized file on disk serves the base image."""
+    """Without object storage a colorized request serves the base image."""
+    import hashlib
+
     _insert_aci(test_engine, _TEAM_REL_KEY)
+    colorized = tmp_path / _TEAM_REL_KEY.replace("sol_0921", "sol_0921_colorized")
+    colorized.parent.mkdir(parents=True)
+    colorized.write_bytes(_make_png_bytes(color=250))
 
     resp = await client.get(
         f"/api/images/{SCAN_UUID}/aci", params={"colorized": "true"}
     )
+    assert resp.status_code == 200, resp.text
+    assert hashlib.sha256(resp.content).hexdigest() == hashlib.sha256(
+        local_disk_aci.read_bytes()
+    ).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_aci_symlink_out_of_data_root_returns_404(
+    client, test_engine, local_disk_aci, tmp_path_factory
+):
+    """A Loupe locator through a symbolic link that leaves the data root answers 404."""
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "SC3_0921_OUT.PNG").write_bytes(_make_png_bytes())
+    link = local_disk_aci.parent.parent / "escape"
+    link.symlink_to(outside, target_is_directory=True)
+    _insert_aci(test_engine, "loupe/sol_0921/detail_1/escape/SC3_0921_OUT.PNG")
+
+    resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_aci_symlink_out_of_pds_cache_returns_404(
+    client, test_engine, local_disk_aci, fake_config, tmp_path_factory
+):
+    """A PDS locator through a symbolic link that leaves the PDS cache answers 404."""
+    from types import SimpleNamespace
+
+    cache = tmp_path_factory.mktemp("pds_cache")
+    fake_config.pds = SimpleNamespace(cache_dir=str(cache))
+    outside = tmp_path_factory.mktemp("outside_pds")
+    (outside / "SC0_0921_OUT.IMG").write_bytes(b"not an image")
+    (cache / "sol_0921").mkdir()
+    (cache / "sol_0921" / "data_aci").symlink_to(outside, target_is_directory=True)
+    _insert_aci(test_engine, "sol_0921/data_aci/SC0_0921_OUT.IMG")
+
+    resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_aci_served_from_pds_cache_on_disk(
+    client, test_engine, local_disk_aci, fake_config, tmp_path_factory, monkeypatch
+):
+    """A PDS locator resolves under pds.cache_dir and is served."""
+    from types import SimpleNamespace
+
+    cache = tmp_path_factory.mktemp("pds_cache_ok")
+    fake_config.pds = SimpleNamespace(cache_dir=str(cache))
+    target = cache / "sol_0921" / "data_aci" / "SC0_0921_OK.IMG"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"vicar bytes")
+    monkeypatch.setattr(
+        images_module, "_decode_vicar_bytes", lambda _b: np.zeros((4, 4), dtype=np.uint8)
+    )
+    _insert_aci(test_engine, "sol_0921/data_aci/SC0_0921_OK.IMG")
+
+    resp = await client.get(f"/api/images/{SCAN_UUID}/aci")
     assert resp.status_code == 200, resp.text
     assert resp.content[:4] == b"\x89PNG"
 
