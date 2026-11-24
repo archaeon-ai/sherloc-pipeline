@@ -96,6 +96,31 @@ async def test_fit_keeps_configured_parsimony_settings(synthetic_fit_client, mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("domain,expected", [("hydration", 0.0), ("minerals", 0.2), ("organics", 0.2)])
+async def test_hydration_fit_has_no_slit_preference(synthetic_fit_client, monkeypatch, domain, expected):
+    """The hydration point fit carries slit weight 0; other domains keep the configured weight."""
+    from sherloc_pipeline.web.routes import processing
+
+    client, config = synthetic_fit_client
+    config.fitting = {"slit_pref_weight": 0.2}
+    fitted = {}
+
+    def fit(x, y, cfg):
+        fitted["slit_pref_weight"] = cfg["slit_pref_weight"]
+        return SimpleNamespace(peaks=[], r2=0.6), np.zeros(len(x))
+
+    monkeypatch.setattr(processing, "fit_spectrum", fit)
+    monkeypatch.setattr(processing, "load_mineral_rules", lambda **kwargs: [])
+    response = await client.post("/api/process/fit", json={
+        "wavenumber": [11, 22, 33, 44], "intensity": [3, 5, 5, 3],
+        "params": {"fitting": {"domain": domain}},
+    })
+    assert response.status_code == 200, response.text
+    assert fitted["slit_pref_weight"] == expected
+    assert config.fitting["slit_pref_weight"] == 0.2  # app config not mutated
+
+
+@pytest.mark.asyncio
 async def test_fluorescence_provenance_omits_skipped_baseline(synthetic_fit_client, monkeypatch):
     from sherloc_pipeline.web.routes import processing
 
