@@ -1,8 +1,7 @@
 """
 Visualization package for PHASE spectral analysis.
 
-Enhanced visualization capabilities for SHERLOC spectral data including
-spatial spectrograms, interactive plots, and publication-quality figures.
+Plotting utilities for SHERLOC spectra, fitted peaks, and spatial overlays.
 
 Modules:
     plotting: Spectral and spatial plotting utilities (PlotConfig, configure_matplotlib, apply_plot_config)
@@ -11,19 +10,12 @@ Modules:
     ingestion_plots: Average spectrum plots (moved from core/data_ingestion.py)
     preprocessing_plots: Preprocessing verification and diagnostic plots
     normalization_plots: Laser normalization diagnostic plots
-    spectrograms: Enhanced spectrogram visualization pipeline for detail scans
 """
 
 from .plotting import (
     PlotConfig,
     configure_matplotlib,
     apply_plot_config,
-)
-
-from .spectrograms import (
-    SpectrogramVisualizationConfig,
-    SpectrogramVisualizationPipeline,
-    SpatialSpectralData,
 )
 
 from .fitting_plots import (
@@ -49,9 +41,6 @@ __all__ = [
     "PlotConfig",
     "configure_matplotlib",
     "apply_plot_config",
-    "SpectrogramVisualizationConfig",
-    "SpectrogramVisualizationPipeline",
-    "SpatialSpectralData",
     "plot_fit_overlay",
     "plot_fit_overlay_zoomed",
     "plot_fluor_fit_overlay",
