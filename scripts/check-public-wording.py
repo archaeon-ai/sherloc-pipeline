@@ -41,10 +41,6 @@ from pathlib import Path
 
 LEDGER_PATH = "tests/fixtures/PROVENANCE.json"
 ALLOW_PATH = ".github/public-wording-allow.txt"
-# An allow entry whose text is MARKED covers only the lines of its files that
-# carry EXAMPLE_MARK, so an unmarked line added to those files is still reported.
-MARKED = "marked"
-EXAMPLE_MARK = "public-wording: example"
 # Sols at or above this value are reserved for invented examples (use sol 9999).
 # Every sol past the archived envelope and below it is flagged.
 SOL_PLACEHOLDER_MIN = 9000
@@ -72,10 +68,10 @@ PUBLIC_HOSTS = (
 # Hosting services whose subdomains belong to one deployment: any subdomain is
 # reported (placeholders such as your-team.<service> pass).
 TENANT_SUFFIXES = (
-    "cloudflareaccess.com", "cloudflarestorage.com", "r2.dev", "workers.dev",  # public-wording: example
-    "pages.dev", "auth0.com", "amazonaws.com", "azurewebsites.net",  # public-wording: example
-    "herokuapp.com", "vercel.app", "netlify.app", "fly.dev", "ngrok.io",  # public-wording: example
-    "ngrok-free.app", "ts.net",  # public-wording: example
+    "cloudflareaccess.com", "cloudflarestorage.com", "r2.dev", "workers.dev",
+    "pages.dev", "auth0.com", "amazonaws.com", "azurewebsites.net",
+    "herokuapp.com", "vercel.app", "netlify.app", "fly.dev", "ngrok.io",
+    "ngrok-free.app", "ts.net",
 )
 
 # A host name with no scheme is recognized only when it ends in one of these:
@@ -146,16 +142,17 @@ RULES: tuple[Rule, ...] = (
          _r(r"(?i)(?<![\w:.])(?!2001:db8:)[23][0-9a-f]{3}:(?:[0-9a-f]{0,4}:){2,6}[0-9a-f]{0,4}(?![\w:])"),
          "public IPv6 address: use a documentation address (2001:db8::) or configuration"),
     Rule("review-label",
-         _r(r"\b(?:[Rr]eview|[Rr]eviewer|Codex)\s+round\s*\d+|\b[Rr]ound[ -]?\d+\s+(?:F\d+|findings?|review|verdict)\b"  # public-wording: example
-            r"|\b[Rr]\d+\s+(?:NO-GO|GO)\b|\bNO-GO\b|\bCONDITIONAL[_ ]GO\b"  # public-wording: example
+         _r(r"\b(?:[Rr]eview|[Rr]eviewer|Codex)\s+round\s*\d+|\b[Rr]ound[ -]?\d+\s+(?:F\d+|findings?|review|verdict)\b"
+            r"|\b[Rr]\d+\s+(?:NO-GO|GO)\b|\bNO-GO\b|\bCONDITIONAL[_ ]GO\b"
             r"|\b(?:[Rr]eview|[Rr]eviewer|[Cc]onnector)\s+(?:[Rr]\d+\s+)?[FP]\d+(?:\.\d+)?\b"
             r"|\b[Rr]\d+\s+F\d+\b|\bPRIOR_RESOLVED\b|\b[Pp]rior round\b|\bexact head\b"),
          "review-round or finding label: describe the behavior, not how it was reviewed"),
     Rule("decision-note",
-         _r(r"\b[Pp]er\s+(?:the\s+)?(?:operator|PM|domain owner|science lead)\b"  # public-wording: example
+         _r(r"\b[Pp]er\s+(?:the\s+)?(?:operator|PM|domain owner|science lead)\b"
             r"|\b[Dd]omain[ -]owner\b|\b[Ss]cience lead\b"
-            r"|\b[Oo]perator'?s\s+(?:go|word|ruling|ratification|approval|decision|sign-off)\b"  # public-wording: example
+            r"|\b[Oo]perator'?s\s+(?:go|word|ruling|ratification|approval|decision|sign-off)\b"
             r"|\b[Rr]atif(?:y|ied|ication)\b|\b[Rr]uled\b(?!\s+out)|(?<![A-Za-z])[Rr]ulings?(?![A-Za-z])"
+            r"(?!\.(?:py|md|txt|ya?ml|json|toml)\b)"
             r"|\(\s*" + _MONTHS_DAYS + r"[A-Z][a-z]+,?\s+" + _DATE + r"\b"
             r"|\b" + _MONTHS_DAYS + r"[A-Z][a-z]+,?\s+(?:on\s+)?" + _DATE
             + r"(?:\s+at\s+\d{1,2}:\d{2})?\s*:?\s*[\"“]"),
@@ -165,7 +162,7 @@ RULES: tuple[Rule, ...] = (
             r"|\b[Pp]arked (?:this|the|at)\b|\b[Bb]urndown\b|\bmust not merge\b|\bcanary rollout\b"),
          "internal project-management wording: write for a reader outside the project"),
     Rule("tool-attribution",
-         _r(r"Claude|Codex|\bcodex\b|Anthropic|OpenAI|\bGPT\b|\bGPT-?\d|\bgpt-\d|\bOpus\b|\bSonnet\b"  # public-wording: example
+         _r(r"Claude|Codex|\bcodex\b|Anthropic|OpenAI|\bGPT\b|\bGPT-?\d|\bgpt-\d|\bOpus\b|\bSonnet\b"
             r"|\bGemini\b|claude\.ai|\bGenerated with\b|\U0001F916"),
          "AI tool name or attribution: leave tooling out of code, docs and history"),
     Rule("sol-ceiling",
@@ -178,7 +175,7 @@ RULES: tuple[Rule, ...] = (
 )
 
 WORK_STATE_RULE = Rule(
-    "work-state", _r(r"^(?:.*/)?WORK_STATE[^/]*$|^\.claude/|^_scratch/|^\.codex/"),  # public-wording: example
+    "work-state", _r(r"^(?:.*/)?WORK_STATE[^/]*$|^\.claude/|^_scratch/|^\.codex/"),
     "work-tracking file or folder: keep it outside the repository")
 
 
@@ -206,11 +203,9 @@ class Allow:
     reason: str
 
     def covers(self, f: Finding) -> bool:
-        if not (fnmatch.fnmatchcase(f.where, self.glob) and self.rule in ("*", f.rule)):
-            return False
-        if self.text == MARKED:
-            return EXAMPLE_MARK in f.text
-        return self.text == "*" or self.text in (f.match or f.text)
+        return (fnmatch.fnmatchcase(f.where, self.glob)
+                and self.rule in ("*", f.rule)
+                and (self.text == "*" or self.text in (f.match or f.text)))
 
 
 def max_archived_sol(root: Path) -> int | None:

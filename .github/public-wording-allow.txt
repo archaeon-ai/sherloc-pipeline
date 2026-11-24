@@ -1,10 +1,96 @@
 # Exceptions to scripts/check-public-wording.py, one per line:
-#   path glob | rule (or *) | exact text on the line (or * or marked) | reason
+#   path glob | rule (or *) | exact text on the line (or *) | reason
 # The path glob is matched against a file path, "PR title", "PR body" or
-# "commit <sha>". Every line needs a reason; keep the list short.
-# "marked" covers only the lines of those files that end with the comment
-# "# public-wording: example"; any other line there is checked as usual.
-scripts/check-public-wording.py | * | marked | the check's own patterns and host lists
-tests/unit/scripts/test_check_public_wording.py | * | marked | test inputs for the check
+# "commit <sha>". Every line needs a reason.
+.github/public-wording-allow.txt | * | * | each entry quotes the text it allows
 * | host | bmsis.org | the maintainer's published contact address
 tests/architecture/test_fixture_provenance.py | sol-ceiling | * | invented sols that test the archive envelope check
+
+# The check's own patterns and tests spell out what the rules look for; each
+# entry names one such text, so anything else added to these files is checked.
+scripts/check-public-wording.py | host | cloudflareaccess.com | the check's own patterns and host lists
+scripts/check-public-wording.py | host | cloudflarestorage.com | the check's own patterns and host lists
+scripts/check-public-wording.py | host | r2.dev | the check's own patterns and host lists
+scripts/check-public-wording.py | host | workers.dev | the check's own patterns and host lists
+scripts/check-public-wording.py | host | pages.dev | the check's own patterns and host lists
+scripts/check-public-wording.py | host | amazonaws.com | the check's own patterns and host lists
+scripts/check-public-wording.py | host | azurewebsites.net | the check's own patterns and host lists
+scripts/check-public-wording.py | host | herokuapp.com | the check's own patterns and host lists
+scripts/check-public-wording.py | host | fly.dev | the check's own patterns and host lists
+scripts/check-public-wording.py | host | ngrok.io | the check's own patterns and host lists
+scripts/check-public-wording.py | host | ts.net | the check's own patterns and host lists
+scripts/check-public-wording.py | tool-attribution | Codex | the check's own patterns and host lists
+scripts/check-public-wording.py | review-label | NO-GO | the check's own patterns and host lists
+scripts/check-public-wording.py | decision-note | domain owner | the check's own patterns and host lists
+scripts/check-public-wording.py | decision-note | science lead | the check's own patterns and host lists
+scripts/check-public-wording.py | decision-note | ruling | the check's own patterns and host lists
+scripts/check-public-wording.py | decision-note | ratification | the check's own patterns and host lists
+scripts/check-public-wording.py | tool-attribution | Claude | the check's own patterns and host lists
+scripts/check-public-wording.py | tool-attribution | Anthropic | the check's own patterns and host lists
+scripts/check-public-wording.py | tool-attribution | OpenAI | the check's own patterns and host lists
+scripts/check-public-wording.py | tool-attribution | codex | the check's own patterns and host lists
+tests/unit/scripts/test_check_public_wording.py | home-path | /home/alice/projects/run | test input for the check
+tests/unit/scripts/test_check_public_wording.py | home-path | C:\Users\alice | test input for the check
+tests/unit/scripts/test_check_public_wording.py | store-path | /mnt/share/sherloc/phase.db | test input for the check
+tests/unit/scripts/test_check_public_wording.py | store-path | /data/group/sherloc/data | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | https://viewer.build-box.corp | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | ops@internal-lab.net | test input for the check
+tests/unit/scripts/test_check_public_wording.py | ip-address | 100.101.102.103 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | ip-address | 52.14.200.7 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | review-label | review round 3 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | review-label | Review r1 F2 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | review-label | r2 NO-GO | test input for the check
+tests/unit/scripts/test_check_public_wording.py | review-label | connector P2.1 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | decision-note | (Dana 2026-01-05 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | decision-note | (Dana 1/5 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | decision-note | domain owner | test input for the check
+tests/unit/scripts/test_check_public_wording.py | decision-note | ruling | test input for the check
+tests/unit/scripts/test_check_public_wording.py | decision-note | operator's go | test input for the check
+tests/unit/scripts/test_check_public_wording.py | decision-note | ratification | test input for the check
+tests/unit/scripts/test_check_public_wording.py | decision-note | ruled | test input for the check
+tests/unit/scripts/test_check_public_wording.py | process | WS-1 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | process | ; surface: | test input for the check
+tests/unit/scripts/test_check_public_wording.py | process | no deploy | test input for the check
+tests/unit/scripts/test_check_public_wording.py | process | PM-approved | test input for the check
+tests/unit/scripts/test_check_public_wording.py | process | parked this | test input for the check
+tests/unit/scripts/test_check_public_wording.py | process | must not merge | test input for the check
+tests/unit/scripts/test_check_public_wording.py | process | canary rollout | test input for the check
+tests/unit/scripts/test_check_public_wording.py | tool-attribution | Codex | test input for the check
+tests/unit/scripts/test_check_public_wording.py | tool-attribution | gpt-5 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | tool-attribution | Generated with | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | https://claude.ai | test input for the check
+tests/unit/scripts/test_check_public_wording.py | tool-attribution | claude.ai | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | sol 1900 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | sol_2100 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | SC3_1900_0000000000 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | ss__1900_0000000000 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | 1934_ | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | sol 2860 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | build.internal | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | build.secret.corp | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | https://acme-lab.cloudflareaccess.com | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | https://mycompany.example-bad.net | test input for the check
+tests/unit/scripts/test_check_public_wording.py | ipv6-address | 2001:4860:4860::8888 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | sol 1853 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | store-path | /data/sherloc/store/x | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | https://registry.yarnpkg.example-mirror.net | test input for the check
+tests/unit/scripts/test_check_public_wording.py | home-path | /home/alice/x | test input for the check
+tests/unit/scripts/test_check_public_wording.py | review-label | review round 2 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | review-label | r2 GO | test input for the check
+tests/unit/scripts/test_check_public_wording.py | process | (surface: | test input for the check
+tests/unit/scripts/test_check_public_wording.py | tool-attribution | Claude | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | sol 1950 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | sol-ceiling | sol 2050 | test input for the check
+tests/unit/scripts/test_check_public_wording.py | store-path | /mnt/share/x | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | ok-site.org | test input for the check
+tests/unit/scripts/test_check_public_wording.py | home-path | /home/alice/one | test input for the check
+tests/unit/scripts/test_check_public_wording.py | home-path | /home/alice/two | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | build.local | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | cache.home.arpa | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | https://demo.secret.corp | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | test.lab.corp | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | ops@demo.acme.tech | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | cache.private | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | build.acme.tech | test input for the check
+tests/unit/scripts/test_check_public_wording.py | host | files.home | test input for the check
+tests/unit/scripts/test_check_public_wording.py | decision-note | Ruling | test input for the check
