@@ -554,6 +554,21 @@ def _read_packaged_background_csv(filename: str) -> Optional[pd.DataFrame]:
         return pd.read_csv(path)
 
 
+_DEFAULT_BACKGROUND_PPP = 900.0
+
+
+def _background_pulses_per_point(config) -> float:
+    """Background pulses per point from config, else 900 (the shipped backgrounds)."""
+    pre = getattr(config, "preprocessing", None) or {}
+    bs = pre.get("background_subtraction", {}) if isinstance(pre, dict) else {}
+    ppp = bs.get("pulses_per_point") if isinstance(bs, dict) else None
+    try:
+        value = float(ppp) if ppp is not None else _DEFAULT_BACKGROUND_PPP
+    except (TypeError, ValueError):
+        return _DEFAULT_BACKGROUND_PPP
+    return value if value > 0 else _DEFAULT_BACKGROUND_PPP
+
+
 @router.post("/process/background", response_model=BackgroundResponse)
 def process_background(request: Request, body: BackgroundRequest) -> BackgroundResponse:
     """Apply scaled background subtraction to a provided spectrum."""
@@ -565,13 +580,14 @@ def process_background(request: Request, body: BackgroundRequest) -> BackgroundR
     if len(wn) < 2:
         raise HTTPException(status_code=400, detail="Need at least 2 data points")
 
-    # Resolve scale factor
+    config = request.app.state.config
+
+    # Resolve scale factor: the scan's pulses per point relative to the
+    # background's (preprocessing.background_subtraction.pulses_per_point).
     if body.scale == "auto":
-        scale = body.scan_ppp / 900.0
+        scale = body.scan_ppp / _background_pulses_per_point(config)
     else:
         scale = float(body.scale)
-
-    config = request.app.state.config
 
     try:
         bg_df = _load_background_standalone(config, body.bg_type)

@@ -761,6 +761,37 @@ async def test_background_auto_scale(client):
 
 
 @pytest.mark.asyncio
+async def test_background_auto_scale_reads_config_ppp(client, fake_config):
+    """Auto scale divides by the config's background pulses per point."""
+    fake_config.preprocessing["background_subtraction"] = {"pulses_per_point": 450}
+    fake_bg = _make_fake_background_df()
+    with patch(
+        "sherloc_pipeline.web.routes.processing._load_background_standalone",
+        return_value=fake_bg,
+    ):
+        resp = await client.post(
+            "/api/process/background",
+            json={
+                "wavenumber": np.linspace(700, 1200, 50).tolist(),
+                "intensity": np.full(50, 300.0).tolist(),
+                "bg_type": "as",
+                "scale": "auto",
+                "scan_ppp": 450,
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json()["scale_used"] == pytest.approx(1.0)
+
+
+def test_shipped_config_background_ppp_is_900():
+    """The packaged config's background pulses per point is 900, so auto scale is unchanged."""
+    from sherloc_pipeline.config import load_config
+    from sherloc_pipeline.web.routes.processing import _background_pulses_per_point
+
+    assert _background_pulses_per_point(load_config()) == 900.0
+
+
+@pytest.mark.asyncio
 async def test_background_length_mismatch(client):
     resp = await client.post(
         "/api/process/background",

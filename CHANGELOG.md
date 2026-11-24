@@ -52,6 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   databases hold the longer value as they are.
 
 ### Fixed
+- **Map RGB presets fill all three channels.** The "Sulfate Mineralogy" and
+  "Organics + Hydration" presets named class ids the map has no layer for
+  (`sulfate_v1`, `hi_carb`, `oh_stretch`): "Sulfate Mineralogy" showed only
+  its blue channel and "Organics + Hydration" showed no blue channel. They now use the map's class ids
+  (`sulf1_v1`, `hi-carb`, `OH_stretch`), which the presets and the map share
+  from one table; a test checks every preset against it.
+- **The web background step reads the background's pulses per point from
+  the config.** Auto scale divides the scan's pulses per point by
+  `preprocessing.background_subtraction.pulses_per_point` instead of a fixed
+  900. The shipped config sets 900, so results are unchanged.
 - **Organics keep their own R2 minimum.** The organics fit config is copied
   from the mineral one, so the 5.7.7 mineral `r_squared_min` of 0.0 reached
   the organics G gate by inheritance.
