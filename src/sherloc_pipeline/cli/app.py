@@ -36,7 +36,6 @@ from sherloc_pipeline.services.errors import SherlocServiceError
 from sherloc_pipeline.services.ingestion import IngestionService, IngestionError
 from sherloc_pipeline.services.pds_ingestion import PDSIngestionService, PDSIngestionError
 from sherloc_pipeline.services.pixl_ingestion import PixliseIngestionService, PixliseIngestionError
-from sherloc_pipeline.services.pds_ingestion import PDS_DEFAULT_CACHE_DIR
 from sherloc_pipeline.config import get_config
 from sherloc_pipeline.models.schemas.cli import CLIResult, CLIError
 from sherloc_pipeline import __version__ as _pipeline_version
@@ -1482,7 +1481,7 @@ def pds_ingest_cmd(
     ),
     pds_dir: Optional[Path] = typer.Option(
         None, "--pds-dir",
-        help="PDS cache directory (default: ./pds)"
+        help="PDS cache directory (default: config pds.cache_dir, ./pds)"
     ),
     pds_database: Optional[Path] = typer.Option(
         None, "--pds-database", "-d",
@@ -1542,7 +1541,7 @@ def pds_ingest_cmd(
             raise typer.Exit(code=1)
 
         # --- Resolve PDS cache directory ---
-        cache_dir = Path(pds_dir) if pds_dir else PDS_DEFAULT_CACHE_DIR
+        cache_dir = Path(pds_dir) if pds_dir else Path(get_config().pds.cache_dir)
         if not cache_dir.exists():
             console.print(f"[red]PDS cache directory not found: {cache_dir}[/red]")
             raise typer.Exit(code=1)
@@ -3931,7 +3930,7 @@ def pds_download_cmd(
     ),
     output_dir: Optional[Path] = typer.Option(
         None, "--output-dir", "-o",
-        help="PDS cache directory (default: ./pds)",
+        help="PDS cache directory (default: config pds.cache_dir, ./pds)",
     ),
     force: bool = typer.Option(
         False, "--force", "-f",
@@ -3963,7 +3962,7 @@ def pds_download_cmd(
         console.print("[red]--sol, --sol-range, and --auto are mutually exclusive[/red]")
         raise typer.Exit(code=1)
 
-    cache_dir = Path(output_dir) if output_dir else PDS_DEFAULT_CACHE_DIR
+    cache_dir = Path(output_dir) if output_dir else Path(get_config().pds.cache_dir)
 
     try:
         from sherloc_pipeline.services.pds_ingestion import PDSDownloader

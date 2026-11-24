@@ -131,3 +131,46 @@ class TestSherlocPdsDownload:
         assert payload["result"]["sols"] == [921]
         assert payload["result"]["downloaded"] == 2
         assert payload["result"]["errors"] == 0
+
+
+class TestPdsCacheDirFromConfig:
+    """Without a directory flag, pds-download and pds-ingest use the
+    configured ``pds.cache_dir`` (env ``SHERLOC_PDS_CACHE_DIR``), the same
+    directory the image lookups read."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_config(self):
+        from sherloc_pipeline.config import reset_config
+
+        reset_config()
+        yield
+        reset_config()
+
+    def test_default_matches_shipped_config(self, monkeypatch):
+        from sherloc_pipeline.config import PDSConfig, get_config
+        from sherloc_pipeline.core.pds_constants import PDS_DEFAULT_CACHE_DIR
+
+        monkeypatch.delenv("SHERLOC_PDS_CACHE_DIR", raising=False)
+        assert Path(get_config().pds.cache_dir) == PDS_DEFAULT_CACHE_DIR
+        assert Path(PDSConfig().cache_dir) == PDS_DEFAULT_CACHE_DIR
+
+    def test_download_writes_to_configured_cache(
+        self, runner, tmp_path, httpx_mock, monkeypatch
+    ):
+        cache = tmp_path / "configured"
+        monkeypatch.setenv("SHERLOC_PDS_CACHE_DIR", str(cache))
+        _add_pds_responses(httpx_mock, 921, SOL_921_PRODUCT_BASE)
+
+        result = runner.invoke(app, ["pds-download", "--sol", "921"])
+        assert result.exit_code == 0, result.output
+
+        sol_dir = cache / "sol_0921" / "data_processed"
+        assert (sol_dir / f"{SOL_921_PRODUCT_BASE}01.csv").exists()
+
+    def test_ingest_reads_configured_cache(self, runner, tmp_path, monkeypatch):
+        cache = tmp_path / "configured-missing"
+        monkeypatch.setenv("SHERLOC_PDS_CACHE_DIR", str(cache))
+
+        result = runner.invoke(app, ["pds-ingest", "--sol", "921"])
+        assert result.exit_code != 0
+        assert "configured-missing" in result.output.replace("\n", "")

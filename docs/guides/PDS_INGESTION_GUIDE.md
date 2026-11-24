@@ -107,7 +107,7 @@ PDS settings are defined in `src/sherloc_pipeline/config.yaml` under the `pds` s
 ```yaml
 pds:
   base_url: "https://pds-geosciences.wustl.edu/m2020/urn-nasa-pds-mars2020_sherloc"
-  cache_dir: "./data/pds"
+  cache_dir: "./pds"
   timeout_seconds: 60.0
   max_retries: 3
   backoff_factor: 2.0
@@ -116,7 +116,7 @@ pds:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `base_url` | WUSTL PDS Geosciences Node | PDS archive base URL |
-| `cache_dir` | `./data/pds` | Directory where the web app and image lookups look for PDS ACI images (override: `SHERLOC_PDS_CACHE_DIR`). `pds-download` and `pds-ingest` do not read it: they use `./pds` unless `--output-dir` / `--pds-dir` is given. |
+| `cache_dir` | `./pds` | PDS cache directory (override: `SHERLOC_PDS_CACHE_DIR`). `pds-download` writes here, `pds-ingest` reads here, and the web app and image lookups look here for ACI images. `--output-dir` / `--pds-dir` override it for one command. |
 | `timeout_seconds` | `60.0` | HTTP request timeout |
 | `max_retries` | `3` | Retry count for transient HTTP errors (5xx, 429) |
 | `backoff_factor` | `2.0` | Exponential backoff multiplier (delays: 1s, 2s, 4s) |
@@ -125,7 +125,7 @@ pds:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--pds-dir` | `./pds` | PDS cache directory |
+| `--pds-dir` | `pds.cache_dir` (`./pds`) | PDS cache directory |
 | `--pds-database` / `-d` | `./phase_pds.db` | PDS database path |
 | `--loupe-database` | `./phase.db` | Loupe DB for target cross-reference |
 
