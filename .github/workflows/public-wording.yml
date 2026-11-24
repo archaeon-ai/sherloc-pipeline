@@ -1,0 +1,48 @@
+name: Public wording
+
+# This repository is public. On a pull request this checks the lines the PR
+# adds, its commit messages, and its title and body (re-run when they are
+# edited). On a push to main it checks the new commit messages, including the
+# merge message; that run cannot block the push, it reports it.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-wording-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wording:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout --quiet "$HEAD_SHA"
+          python3 scripts/check-public-wording.py --base "$BASE_SHA"
+      - name: Check the commit messages pushed to main
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          # Every commit the push brings to main, including a new branch and a
+          # forced push; the run fails if the old tip cannot be fetched.
+          list="$RUNNER_TEMP/pushed-commits"
+          bash scripts/list-pushed-commits.sh "$BEFORE" "$AFTER" "$list"
+          python3 scripts/check-public-wording.py --commits-file "$list"

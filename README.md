@@ -73,7 +73,6 @@ Optional extras:
 pip install -e ".[pds]"          # PDS download client (sherloc pds-download)
 pip install -e ".[web]"          # FastAPI web UI (sherloc serve)
 pip install -e ".[ml-despike]"   # ML cosmic-ray detector (default from 4.2.0; onnxruntime)
-pip install -e ".[ml]"           # SAM-based grain segmentation
 pip install -e ".[dev]"          # test + lint tooling
 ```
 

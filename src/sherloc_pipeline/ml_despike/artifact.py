@@ -53,9 +53,8 @@ class ArtifactFetchError(RuntimeError):
 def default_cache_dir() -> Path:
     """Cache directory for fetched ML despike artifacts.
 
-    Follows the SAM checkpoint precedent
-    (``~/.cache/sherloc-pipeline/sam_checkpoints``), namespaced for this
-    package.
+    ``~/.cache/sherloc-pipeline/ml_despike``: the package's cache root,
+    one folder per artifact kind.
     """
     return Path.home() / ".cache" / "sherloc-pipeline" / "ml_despike"
 
