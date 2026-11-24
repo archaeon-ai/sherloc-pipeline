@@ -29,7 +29,7 @@ from unilluminated regions. Regional masks extract the relevant channels:
 - R3 (Fluorescence): channels 1677-2146 (470 ch, 337.8-357.4 nm) → Wavelength (nm)
 - R123 (Stitched):   2148 ch combined from R1+R2+R3 via Loupe overlap summation
 
-See docs/schema/SPECTRAL_REGIONS.md for the canonical region definitions.
+See docs/schema/SPECTRAL_REGIONS.md for a reference to the region definitions (the code governs).
 
 Image Processing:
 - ACI Images: 1648×1200 pixels, 10.1 μm/pixel scale

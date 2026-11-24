@@ -209,9 +209,9 @@ def stitch_r123_spectrum(r1: np.ndarray, r2: np.ndarray, r3: np.ndarray) -> np.n
     Matches Loupe algorithm with overlap summation.
 
     Args:
-        r1: R1 spectrum (2148 channels, R1 data in channels 0-574)
-        r2: R2 spectrum (2148 channels, R2 data in channels 565-1668)
-        r3: R3 spectrum (2148 channels, R3 data in channels 1668-2147)
+        r1: R1 readout (2148 channels; the stitch reads channels 0-689)
+        r2: R2 readout (2148 channels; the stitch reads channels 565-1689)
+        r3: R3 readout (2148 channels; the stitch reads channels 1668-2147)
 
     Returns:
         r123: Stitched 2148-channel spectrum
@@ -334,9 +334,6 @@ wavenumber = np.linspace(200, 4000, 2148)  # NEVER DO THIS!
 
 # WRONG: Raw channel slicing for R1
 r1_spectrum = full_spectrum[:501]  # cutoff_channel is NOT region boundary!
-
-# WRONG: Assuming region="R123" means stitched data
-# Historical data labeled R123 is actually R1-only
 ```
 
 ---
