@@ -233,7 +233,7 @@ def _read_aci_from_disk(
     image. A locator that resolves to no file answers 404.
     """
     config = request.app.state.config
-    data_root = config.paths.get("data_root")
+    data_root = (getattr(config, "paths", None) or {}).get("data_root")
     pds_cache_dir = getattr(getattr(config, "pds", None), "cache_dir", None)
 
     def resolve(locator: Optional[str]) -> Optional[Path]:
