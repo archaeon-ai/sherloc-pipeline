@@ -110,7 +110,6 @@ def get_config(request: Request, response: Response) -> ConfigResponse:
 
     return ConfigResponse(
         config_hash=config_hash,
-        evidence_policy_digest=hashlib.sha256(policy.model_dump_json().encode()).hexdigest(),
         reference_release_id=policy.references.release_id if access_mode == "internal" and policy.references.mode != "off" else None,
         fitting=config.fitting,
         fluorescence_fitting=config.fluorescence_fitting,
@@ -121,10 +120,7 @@ def get_config(request: Request, response: Response) -> ConfigResponse:
         access_mode=access_mode,
         tier="public" if access_mode == "public" else "team",
         capabilities=CapabilitiesConfig(
-            evidence_desk=policy.evidence_desk,
             references=policy.references.mode != "off",
-            identification=policy.identification.enabled,
-            experimental_candidates=policy.identification.experimental_candidates,
         ),
     )
 

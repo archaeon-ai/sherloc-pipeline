@@ -26,13 +26,5 @@ def _hang(path):
         time.sleep(.01)
 
 
-class HangingStore:
-    def __init__(self, path):
-        self.path = path
-
-    def read_verified(self, locator, sha256):
-        _hang(self.path)
-
-
 def _crash():
     os._exit(7)

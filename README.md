@@ -379,7 +379,7 @@ data/loupe/
 ```
 src/sherloc_pipeline/
 ├── cli/
-│   └── app.py                  # Command-line interface (23 commands and the `references` and `identify` command groups)
+│   └── app.py                  # Command-line interface (23 commands and the `references` command group)
 ├── services/
 │   ├── pipeline.py             # Full 7-step workflow orchestration
 │   ├── review.py               # Review propagation and overlay regeneration

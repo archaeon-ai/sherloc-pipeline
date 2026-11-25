@@ -37,7 +37,7 @@ it.each(['resource', 'tier', 'authentication'])('handles a bookmarked scan %s de
     return new Response(JSON.stringify(url === '/api/config/bootstrap'
       ? { auth: { auth_mode: 'cf-access' } }
       : { access_mode: 'public', tier: 'public', capabilities: {
-        references: false, identification: false, experimental_candidates: false,
+        references: false,
       } }));
   }));
   app = await (await import('./main')).default;

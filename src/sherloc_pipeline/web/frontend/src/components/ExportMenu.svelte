@@ -1,16 +1,6 @@
 <script lang="ts">
-  import type { EvidenceDisplay } from '../lib/evidenceTypes';
-  import { evidenceCsv, evidenceExport } from '../lib/evidenceStore';
-  import type { SharedEvidence } from '../lib/evidenceStore';
   import type { AnomalousPixel, ExportTrace, ProcessingArtifacts } from '../lib/types';
 
-  import type { IdentificationEvidence } from '../lib/identification';
-  export let identification: IdentificationEvidence | null = null;
-  export let evidenceDesk = false;
-  export let evidenceMode = false;
-  export let evidenceDisplays: EvidenceDisplay[] = [];
-  export let evidenceShared: SharedEvidence | null = null;
-  export let exportFigure: ((format: 'png' | 'svg') => void) | null = null;
   export let trace: ExportTrace | null = null;
   export let scanId: string = '';
   export let scanName: string = '';
@@ -19,7 +9,6 @@
   export let stage: string = 'raw';
   export let wavenumber: number[] = [];
   export let intensity: number[] = [];
-  $: channelCount = evidenceDesk ? intensity.length : wavenumber.length;
   export let artifacts: ProcessingArtifacts | null = null;
   export let processingChain: Record<string, unknown>[] = [];
   export let scanNPoints: number = 0;
@@ -87,7 +76,6 @@
     const provenance = trace?.provenance;
     return {
       ...provenance,
-      ...(identification ? { identification } : {}),
       source: trace?.source ?? {
         scan_id: scanId, sol: solNumber, target, scan_name: scanName, data_origin: null,
       },
@@ -107,8 +95,8 @@
         timestamp: exportTimestamp,
       },
       stage,
-      axes: { wavenumber_unit: provenance?.wavenumber_unit ?? (evidenceDesk && trace ? null : 'cm-1'),
-        wavelength_unit: provenance?.wavelength_unit ?? (evidenceDesk && trace ? null : 'nm'), intensity_unit: provenance?.intensity_unit ?? null },
+      axes: { wavenumber_unit: provenance?.wavenumber_unit ?? 'cm-1',
+        wavelength_unit: provenance?.wavelength_unit ?? 'nm', intensity_unit: provenance?.intensity_unit ?? null },
       data: { wavenumber, wavelength: trace?.wavelength ?? null, intensity,
         channel_indices: trace?.channel_indices ?? [], source_intensity: trace?.intensity ?? null },
       annotations: {
@@ -121,7 +109,6 @@
   // --- CSV generation ---
 
   function buildCsvContent(): string {
-    if (evidenceMode) return evidenceCsv(evidenceDisplays, identification, evidenceShared);
     const provenance = buildProvenanceJson();
     const lines: string[] = [];
 
@@ -142,7 +129,7 @@
     lines.push(`# wavelength_unit: ${provenance.axes.wavelength_unit ?? 'unknown'}`);
     lines.push(`# intensity_unit: ${provenance.axes.intensity_unit ?? 'unknown'}`);
     lines.push(`# exported_at: ${provenance.application.timestamp}`);
-    lines.push(`# n_channels: ${channelCount}`);
+    lines.push(`# n_channels: ${wavenumber.length}`);
 
     // Selection provenance
     const sel = provenance.selection as Record<string, unknown>;
@@ -202,7 +189,7 @@
 
     if (hasAnomalousPixels) {
       // 0/1 per served row: 1 where a served position is annotated as an anomalous pixel.
-      const anomalousPixelCol = new Array<number>(channelCount).fill(0);
+      const anomalousPixelCol = new Array<number>(wavenumber.length).fill(0);
       for (const b of anomalousPixels!) {
         if (b.position >= 0 && b.position < anomalousPixelCol.length) anomalousPixelCol[b.position] = 1;
       }
@@ -242,7 +229,7 @@
     lines.push(columns.join(','));
 
     // Data rows
-    const n = channelCount;
+    const n = wavenumber.length;
     for (let i = 0; i < n; i++) {
       const row: string[] = [];
       for (const col of data) {
@@ -286,7 +273,7 @@
   }
 
   function copyProvenance() {
-    const json = JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays, identification, evidenceShared) : buildProvenanceJson(), null, 2);
+    const json = JSON.stringify(buildProvenanceJson(), null, 2);
     navigator.clipboard.writeText(json).catch(() => {
       // Fallback: select text in the pre element
       const el = document.querySelector('.provenance-json');
@@ -317,7 +304,7 @@
   <button
     class="btn-secondary btn-sm export-trigger"
     on:click|stopPropagation={toggleMenu}
-    disabled={evidenceMode ? evidenceDisplays.length === 0 : channelCount === 0}
+    disabled={wavenumber.length === 0}
   >
     Export &#9660;
   </button>
@@ -328,13 +315,9 @@
     <div class="export-dropdown" on:click|stopPropagation>
       <button class="dropdown-item" on:click={downloadCsv}>
         <span class="dropdown-icon">&#128196;</span>
-        {evidenceMode ? 'Comparison CSV' : 'CSV at current stage'}
+        CSV at current stage
         <span class="dropdown-hint">{stage}</span>
       </button>
-      {#if exportFigure}
-        <button class="dropdown-item" on:click={() => { exportFigure?.('svg'); closeMenu(); }}>SVG + provenance</button>
-        <button class="dropdown-item" on:click={() => { exportFigure?.('png'); closeMenu(); }}>PNG + provenance</button>
-      {/if}
       <button class="dropdown-item" on:click={showProvenance}>
         <span class="dropdown-icon">&#128203;</span>
         Full provenance JSON
@@ -353,7 +336,7 @@
         <button class="btn-secondary btn-sm" on:click={closeProvenance}>Close</button>
       </div>
       <div class="modal-body">
-        <pre class="provenance-json">{JSON.stringify(evidenceMode ? evidenceExport(evidenceDisplays, identification, evidenceShared) : buildProvenanceJson(), null, 2)}</pre>
+        <pre class="provenance-json">{JSON.stringify(buildProvenanceJson(), null, 2)}</pre>
       </div>
       <div class="modal-footer">
         <button class="btn-primary btn-sm" on:click={copyProvenance}>

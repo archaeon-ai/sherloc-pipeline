@@ -95,12 +95,8 @@ def approved_policy():
 
 
 @pytest.mark.parametrize("policy", [
-    {"evidence_desk": "false"}, {"evidence_desk": 1}, {"evidence_desks": True},
+    {"unknown_feature": True},
     {"referneces": {}}, {"references": {"mod": "off"}},
-    {"identification": {"enabled": "false"}}, {"identification": {"enabled": 1}},
-    {"identification": {"enabled": True}},
-    {"identification": {"experimental_candidates": True}},
-    {"identification": {"max_concurrency": 0}},
     {"references": {"mode": "on"}}, {"references": {"mode": "all_approved"}},
     {"public_release": None}, {"public_release": {}},
     {"public_release": {"index_path": "synthetic.json"}},
@@ -121,20 +117,6 @@ def test_public_cannot_enable_references(monkeypatch):
         create_app(engine=Mock(), config=Mock(), access_mode="public")
 
 
-def test_method_must_bind_exact_release_and_subset(monkeypatch):
-    policy = approved_policy()
-    policy["identification"] = {"enabled": True, "allowed_method_releases": [{
-        "method_release_id": DIGEST, "reference_release_id": DIGEST,
-        "reference_subset_id": "b" * 64,
-    }]}
-    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
-    with pytest.raises(ValueError, match="matching"):
-        load_feature_policy("internal")
-    policy["identification"]["allowed_method_releases"][0]["reference_subset_id"] = DIGEST
-    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
-    assert load_feature_policy("internal").identification.enabled
-
-
 def test_unknown_feature_env_fails_startup(monkeypatch):
     monkeypatch.setenv("SHERLOC_FEATURE_REFERNCES", "off")
     with pytest.raises(ValueError, match="unknown feature setting"):
@@ -145,8 +127,6 @@ def test_defaults_off():
     policy = load_feature_policy("public")
     assert policy.public_release is None
     assert policy.references.mode == "off"
-    assert not policy.identification.enabled
-    assert not policy.identification.experimental_candidates
 
 
 def test_default_policy_roundtrip_preserves_internal_consumers(monkeypatch):
@@ -556,9 +536,6 @@ async def test_anonymous_access_mode_exposes_only_mode(engine, tmp_path, monkeyp
     synthetic_index(tmp_path, monkeypatch)
     if mode == "internal":
         policy = approved_policy()
-        policy["identification"] = {"enabled": True, "experimental_candidates": True,
-            "allowed_method_releases": [{"method_release_id": DIGEST,
-                "reference_release_id": DIGEST, "reference_subset_id": DIGEST}]}
         monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
     monkeypatch.setenv("SHERLOC_AUTH_MODE", "auth0")
     validator = Mock(side_effect=AssertionError("anonymous route must not authenticate"))
@@ -575,21 +552,36 @@ async def test_anonymous_access_mode_exposes_only_mode(engine, tmp_path, monkeyp
         app.state.map_executor.shutdown(wait=False)
 
 
+@pytest.mark.parametrize("mode", ["public", "internal"])
 @pytest.mark.asyncio
-@pytest.mark.parametrize("enabled", [False, True])
-async def test_evidence_capability_is_explicit_and_authenticated(engine, tmp_path, monkeypatch, enabled):
-    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps({"evidence_desk": enabled}))
-    app = create_app(engine=engine, config=fake_config(), access_mode="internal")
+async def test_retired_workbench_policy(engine, monkeypatch, mode):
+    policy = approved_policy() if mode == "internal" else {}
+    policy["evidence_desk"] = True
+    if mode == "internal":
+        policy["identification"] = {
+            "enabled": True, "experimental_candidates": True,
+            "allowed_method_releases": [{
+                "method_release_id": DIGEST, "reference_release_id": DIGEST, "reference_subset_id": DIGEST,
+            }],
+        }
+    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
+    app = create_app(engine=engine, config=fake_config(), access_mode=mode)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
-            response = await client.get("/api/config")
-            assert response.status_code == 200
-            assert response.json()["capabilities"]["evidence_desk"] is enabled
+            config = await client.get("/api/config")
+            assert config.status_code == 200
+            assert config.json()["capabilities"] == {"references": mode == "internal"}
+            assert "evidence_desk" not in config.json()["features"]
             assert "capabilities" not in (await client.get("/api/config/bootstrap")).json()
     finally:
         app.state.job_queue.shutdown()
         app.state.map_executor.shutdown(wait=False)
 
 
-def test_evidence_capability_defaults_off():
-    assert load_feature_policy("internal").evidence_desk is False
+@pytest.mark.asyncio
+async def test_removed_workbench_route(app):
+    path = "/api/identify"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
+        response = await client.post(path, json={})
+    assert response.status_code in (404, 405)
+    assert path not in app.openapi()["paths"]

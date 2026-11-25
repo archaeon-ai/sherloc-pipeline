@@ -4,7 +4,6 @@
 
 import { writable, derived } from 'svelte/store';
 import { processingState, undoStack, pointSelection } from './processingStore';
-import { clearEvidence, invalidateEvidence } from './evidenceStore';
 import { resetMapState } from './stores/mapStore';
 import type {
   BaselineParams,
@@ -43,33 +42,7 @@ export const lastFitResult = writable<FitResponse | null>(null);
 export const healthStatus = writable<HealthResponse | null>(null);
 
 // --- Config ---
-const configState = writable<ConfigResponse | null>(null);
-let configValue: ConfigResponse | null = null;
-let stopEvidenceAccess: (() => void) | null = null;
-
-function setConfig(config: ConfigResponse | null): void {
-  const enabled = config?.capabilities?.evidence_desk === true;
-  const wasEnabled = configValue?.capabilities?.evidence_desk === true;
-  if (enabled !== wasEnabled || (enabled && configValue?.tier !== config?.tier)) invalidateEvidence();
-  if (enabled && !stopEvidenceAccess) {
-    let previous: string | null = null;
-    stopEvidenceAccess = accessMode.subscribe(mode => {
-      if (previous !== null && mode !== previous) invalidateEvidence();
-      previous = mode;
-    });
-  } else if (!enabled && stopEvidenceAccess) {
-    stopEvidenceAccess();
-    stopEvidenceAccess = null;
-  }
-  configValue = config;
-  configState.set(config);
-}
-
-export const appConfig = {
-  subscribe: configState.subscribe,
-  set: setConfig,
-  update: (fn: (config: ConfigResponse | null) => ConfigResponse | null) => setConfig(fn(configValue)),
-};
+export const appConfig = writable<ConfigResponse | null>(null);
 
 // --- Feature flags (issue #21) ---
 // Source: /api/config `features` block. Default `pds_browser=true` so a
@@ -82,7 +55,6 @@ export function clearSessionState(): void {
   for (const controller of sessionRequests) controller.abort();
   sessionRequests.clear();
   processingNotice.set(null);
-  if (configValue?.capabilities?.evidence_desk === true) clearEvidence();
   scienceAuthorized.set(false);
   appConfig.set(null);
   features.set({ pds_browser: false });

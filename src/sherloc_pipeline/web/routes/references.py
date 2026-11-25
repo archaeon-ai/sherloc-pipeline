@@ -8,19 +8,16 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from sherloc_pipeline.core.identification.recipe import recipe_for_release
-from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
+from sherloc_pipeline.database.reference_models import ReferenceFileORM, ReferenceReleaseORM, ReferenceTraceORM
 from sherloc_pipeline.models.references import Digest, ReferenceTrace
-from sherloc_pipeline.services.identification import MAX_NATIVE_POINTS, MAX_TOTAL_BYTES, load_reference
-from sherloc_pipeline.services.identification_runtime import ExecutionFailed, WorkRejected, run_process
-from sherloc_pipeline.services.reference_import import array_digest, digest
-from sherloc_pipeline.services.reference_store import LocalReferenceStore
-from sherloc_pipeline.web.reference_storage import R2ReferenceStore, can_serve_template, can_serve_trace
+from sherloc_pipeline.runtime.worker import ExecutionFailed, WorkRejected, run_process
+from sherloc_pipeline.services.reference_import import array_digest, digest, read_arrays
+from sherloc_pipeline.services.reference_store import MAX_OBJECT_BYTES, LocalReferenceStore
+from sherloc_pipeline.web.reference_storage import R2ReferenceStore, can_serve_trace
 
 router = APIRouter(prefix="/api/references", tags=["references"])
 
-MAX_BINDING_MEMBERS = 10_000
-BINDING_QUERY_CHUNK = 500
+MAX_NATIVE_POINTS = 16384
 
 
 def require_references(request):
@@ -69,55 +66,6 @@ def trace_metadata(row):
             "point_count": row.point_count, "provenance": metadata}
 
 
-def identification_binding(request, policy, release):
-    identify = policy.identification
-    if not identify.enabled or not identify.experimental_candidates:
-        return None
-    ids = policy.references.template_ids
-    if len(ids) > identify.max_templates:
-        return None
-    query = request.state.db.query(ReferenceTemplateORM).filter_by(release_id=release.release_id)
-    if ids:
-        query = query.filter(ReferenceTemplateORM.template_id.in_(ids))
-    rows = query.order_by(ReferenceTemplateORM.template_id).limit(identify.max_templates + 1).all()
-    if ids and [row.template_id for row in rows] != ids:
-        return None
-    ids = [row.template_id for row in rows]
-    if not ids or len(ids) > identify.max_templates or digest(ids) != policy.references.subset_id:
-        return None
-    # Bound total authorization work before loading any member records.
-    if any(len(row.member_trace_ids) > 100 for row in rows) or sum(
-        len(row.member_trace_ids) for row in rows
-    ) > MAX_BINDING_MEMBERS:
-        return None
-    member_ids = sorted({identity for row in rows for identity in row.member_trace_ids})
-    members_by_id = {}
-    for start in range(0, len(member_ids), BINDING_QUERY_CHUNK):
-        members = request.state.db.query(ReferenceTraceORM).filter(
-            ReferenceTraceORM.release_id == release.release_id,
-            ReferenceTraceORM.trace_revision_id.in_(member_ids[start:start + BINDING_QUERY_CHUNK]),
-        ).all()
-        members_by_id.update((member.trace_revision_id, member) for member in members)
-    for row in rows:
-        members = [members_by_id.get(identity) for identity in row.member_trace_ids]
-        if any(member is None for member in members) or not can_serve_template(row, members, release, policy, "team"):
-            return None
-    bindings = []
-    for binding in identify.allowed_method_releases:
-        if (binding.reference_release_id != release.release_id
-                or binding.reference_subset_id != policy.references.subset_id):
-            continue
-        try:
-            recipe_for_release(binding.method_release_id)
-        except ValueError:
-            continue
-        bindings.append(binding)
-    if len(bindings) != 1:
-        return None
-    binding = bindings[0]
-    return {**binding.model_dump(mode="json"), "template_ids": ids}
-
-
 @router.get("")
 def list_references(request: Request, release_id: Digest,
                     modality: Literal["raman", "fluorescence", "unknown"] | None = None,
@@ -148,8 +96,11 @@ def list_references(request: Request, release_id: Digest,
     next_cursor = None
     if len(rows) > limit:
         next_cursor = base64.urlsafe_b64encode(json.dumps({"scope": scope, "after": rows[limit - 1].trace_revision_id}).encode()).decode()
-    return {"items": items, "next_cursor": next_cursor,
-            "binding": identification_binding(request, policy, release)}
+    return {"items": items, "next_cursor": next_cursor}
+
+
+def load_reference(store, locator, sha256, trace):
+    return read_arrays(store.read_verified(locator, sha256), [trace])
 
 
 @router.get("/{trace_revision_id}")
@@ -162,22 +113,24 @@ def get_reference(request: Request, trace_revision_id: Digest, release_id: Diges
     file = request.state.db.get(ReferenceFileORM, row.file_revision_id)
     if file is None or file.release_id != release_id:
         raise HTTPException(404, "Reference file unavailable")
-    if row.point_count > MAX_NATIVE_POINTS or (file.metadata_json or {}).get("arrays_size", MAX_TOTAL_BYTES + 1) > MAX_TOTAL_BYTES:
+    if row.point_count > MAX_NATIVE_POINTS or (file.metadata_json or {}).get("arrays_size", MAX_OBJECT_BYTES + 1) > MAX_OBJECT_BYTES:
         raise HTTPException(422, "Reference admission limit exceeded")
     key = ("team", digest(policy.model_dump(mode="json")), release_id, trace_revision_id,
-           row.axis_sha256, row.intensity_sha256, file.array_sha256, None)
+           row.axis_sha256, row.intensity_sha256, file.array_sha256)
     cache = request.app.state.reference_cache
     cached = cache.get(key)
     if cached is not None:
         return cached
     try:
         trace = ReferenceTrace.model_validate(row.metadata_json)
-        slots = request.app.state.identification_runtime.slots
+        slots = request.app.state.reference_slots
         if not slots.acquire(blocking=False):
             raise HTTPException(429, "Reference concurrency limit reached")
         try:
-            arrays, _ = run_process(load_reference, (reference_store(request), file.array_locator, file.array_sha256, trace),
-                                    policy.identification.timeout_seconds)
+            arrays = run_process(
+                load_reference, (reference_store(request), file.array_locator, file.array_sha256, trace),
+                policy.references.timeout_seconds,
+            )
         finally:
             slots.release()
         x, y = arrays[trace.x_key], arrays[trace.y_key]

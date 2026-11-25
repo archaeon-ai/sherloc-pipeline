@@ -1,4 +1,4 @@
-"""Strict, default-off reference and identification deployment policy."""
+"""Strict, default-off reference deployment policy."""
 
 import json
 import os
@@ -10,9 +10,6 @@ from sherloc_pipeline.models.feature_policy import (
     PolicyModel,
     PublicReleasePolicy,
     ReferencePolicy,
-    MethodBinding,
-    SourceDenylist,
-    IdentificationPolicy,
     FeaturePolicy,
 )
 
@@ -21,9 +18,6 @@ __all__ = [
     "PolicyModel",
     "PublicReleasePolicy",
     "ReferencePolicy",
-    "MethodBinding",
-    "SourceDenylist",
-    "IdentificationPolicy",
     "FeaturePolicy",
     "load_feature_policy",
     "load_public_release_index",
@@ -40,6 +34,12 @@ def load_feature_policy(access_mode: str) -> FeaturePolicy:
     if (access_mode == "public" and isinstance(values, dict)
             and "public_release" in values and values["public_release"] is None):
         raise ValueError("public_release requires index_path and index_sha256")
+    if isinstance(values, dict):
+        # Older deployments can keep retired Workbench settings in their JSON policy.
+        values.pop("evidence_desk", None)
+        values.pop("identification", None)
+        if isinstance(values.get("references"), dict):
+            values["references"].pop("template_ids", None)
     policy = FeaturePolicy.model_validate(values)
     if access_mode == "public" and policy.references.mode != "off":
         raise ValueError("public references.mode must be off")

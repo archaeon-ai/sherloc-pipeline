@@ -74,8 +74,7 @@ export function despikeStepRecord(nSpikes: number, params: Record<string, unknow
   };
 }
 
-// scale_mode is the mode the request was made with, so undo restores it with
-// the record and the Evidence desk never reads the live control.
+// Record the scale mode used for this request so undo restores it.
 export function backgroundStepRecord(bgType: string, scaleUsed: number, scaleMode: 'auto' | 'manual'): Record<string, unknown> {
   return {
     step: 'bg_subtract',

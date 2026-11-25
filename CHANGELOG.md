@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
+- The Workbench Evidence Desk and Evidence Rail, including pinned trace comparisons,
+  experimental candidate rankings, abstention results and identification exports.
+  The `POST /api/identify` endpoint and `sherloc identify point` command have been
+  removed. The reference list no longer returns a candidate method binding.
+  The server ignores `evidence_desk`, `identification` and `references.template_ids`
+  in older feature policies. To retain custom native
+  reference download limits, move `max_concurrency` and `timeout_seconds` into
+  `references`. Spectrum fits are unchanged.
 - The hydration cosmic-ray veto, off by default, has been removed. The shipped
   configuration produces the same fits and has a new configuration hash.
   The fitter ignores `fitting.hydration_cr_veto` in older configurations.
