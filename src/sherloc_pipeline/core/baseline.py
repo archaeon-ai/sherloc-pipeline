@@ -7,10 +7,6 @@ import numpy as np
 import pandas as pd
 from pybaselines import Baseline
 
-# Provenance: asPLS baseline parameters (lambda=1e6, asymmetry=0.01, protected
-# mineral windows) developed by domain expert through iterative testing against
-# known mineral standards. Not AI-generated or AI-tuned.
-
 
 @dataclass
 class BaselineParams:

@@ -151,19 +151,19 @@ fitting:
       D_band: 50.0                       # cm-1 minimum (removes cosmic rays)
       G_band: 40.0                       # cm-1 minimum (== fitting floor; sharpness filter handles cosmic rays)
       unidentified: 40.0                 # cm-1 minimum (== fitting floor; sharpness filter handles cosmic rays)
-    hydration_center_range: [3000.0, 3900.0]  # cm-1 (allows serpentine OH ~3700)
+    hydration_center_range: [3000.0, 3900.0]  # cm-1
 
   # Hydration-focused fitting (Phua et al. 2024)
   hydration_fit_range: [2800, 3900]   # O-H stretch search window (Phua et al. 2024)
   hydration_plot_range: [2600, 4000]
   hydration_max_peaks: 2              # typical decomposition into 1–2 Gaussians
-  hydration_min_snr: 3.0              # pre-fit gate only; F-test governs multi-peak
-  hydration_fwhm_min_cm1: 50.0        # Phua et al. lower bound (real OH never narrower)
-  hydration_fwhm_max_cm1: 300.0       # Phua et al. upper bound
+  hydration_min_snr: 3.0              # This pipeline's pre-fit gate. The F-test governs multi-peak fits.
+  hydration_fwhm_min_cm1: 50.0        # minimum FWHM of a hydration peak (cm-1)
+  hydration_fwhm_max_cm1: 300.0       # maximum FWHM of a hydration peak (cm-1)
   hydration_r2_min: 0.25              # quality gate (matches mineral standard)
   hydration_ftest_alpha: 0.01         # F-test for hydration model selection
   hydration_use_prebaseline: true     # use R1_normalized.csv, not _baselined
-  hydration_center_range: [3000.0, 3900.0]  # peak center bounds (allows serpentine)
+  hydration_center_range: [3000.0, 3900.0]  # This pipeline's peak center range (cm-1)
 
   # Cosmic-ray veto for hydration fits (issue #38). Off by default: the
   # thresholds below are starting values not yet validated on a full
@@ -221,9 +221,9 @@ fluorescence_fitting:
   fwhm_range: [7.0, 35.0]            # nm, hard bounds; 35nm accommodates group3 features
   min_peak_separation: 15.0           # nm, hard constraint; allows ~20nm Ce3+ anhydrite doublet (group1a+1b)
   max_peaks: 4                        # group3 + Ce3+ anhydrite doublet (group1a+1b) + group2
-  snr_threshold: 10.0                 # captures 100% of G1a/G1b; median G1a SNR=33.9, min=11.0
+  snr_threshold: 10.0                 # minimum SNR for a fitted fluorescence peak to be kept
   min_fwhm_nm: 8.0                    # rejects cosmic ray artifacts hitting optimizer floor (7nm)
-  noise_window: [261.5, 262.3]        # nm, quiet region for noise estimation
+  noise_window: [261.5, 262.3]        # nm, fluorescence noise estimation window
 
   # Saturation handling
   saturation_threshold: 60000         # counts; CCD saturation level
@@ -234,7 +234,7 @@ fluorescence_fitting:
     - {label: group3,   lo: 270.0, hi: 295.0}    # Silicate defect
     - {label: group1a,  lo: 300.0, hi: 307.0}    # Ce3+ doublet (short)
     - {label: group1b,  lo: 322.0, hi: 329.0}    # Ce3+ doublet (long)
-    - {label: group2,   lo: 329.0, hi: 355.0}    # Ce3+ in phosphate (~340nm; predicted ~360nm partner unresolved by SHERLOC)
+    - {label: group2,   lo: 329.0, hi: 355.0}    # Ce3+ in phosphate
 
   # Doublet detection
   doublet_snr_threshold: 10.0         # Both peaks must exceed (matches snr_threshold)

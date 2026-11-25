@@ -92,8 +92,8 @@ class TestAssignMinId:
         result = assign_min_id(965.0, rules)
         assert result == "phosphate"
 
-    def test_phosphate_whitlockite(self, rules):
-        """~946.6 cm^-1 (whitlockite PO4 v1) should identify as phosphate."""
+    def test_phosphate_lower_edge(self, rules):
+        """946.6 cm^-1 should identify as phosphate (945-980)."""
         result = assign_min_id(946.6, rules)
         assert result == "phosphate"
 

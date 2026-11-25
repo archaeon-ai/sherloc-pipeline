@@ -3,10 +3,6 @@
 Covers the v4.1.12 launch-blocker rules: negative R² → fail,
 sub-threshold R² → review, modality FWHM bounds, calibration-scan default,
 sharpness cosmic-ray gate.
-
-The two reproducer screenshots end up encoded as the negative-R² minerals
-case (`minerals_pass_negative_r2.png`) and the unphysical-FWHM organics case
-(`organics_pass_unphysical_fwhm.png`); both must NOT classify as "pass".
 """
 from __future__ import annotations
 
@@ -22,13 +18,7 @@ from sherloc_pipeline.services.quality import classify_fit_quality
 
 @pytest.mark.parametrize("r2", [-0.001, -1.677, -4.487, -100.0])
 def test_negative_r_squared_is_fail(r2: float) -> None:
-    """Reproducer #2: minerals fit with R² < 0 must be ``fail``.
-
-    Matches the four-decimal R² values shown in
-    ``minerals_pass_negative_r2.png`` (-4.487, -1.677, ...). The classifier
-    must reject these regardless of all other inputs — anti-correlation
-    with the data has no defensible interpretation as a valid fit.
-    """
+    """A negative R² returns fail for a mineral fit."""
     assert (
         classify_fit_quality(
             r_squared=r2,
@@ -87,9 +77,7 @@ def test_sharpness_below_threshold_does_not_force_fail() -> None:
 
 @pytest.mark.parametrize("target_type", ["cal_target", "engineering"])
 def test_non_science_target_caps_at_review(target_type: str) -> None:
-    """Reproducer scan ``external_calibration sol 70 meteorite_detail_1`` is
-    ``cal_target``. Even with a textbook fit, no ground truth → ``review``.
-    """
+    """The classifier returns review for these target types."""
     assert (
         classify_fit_quality(
             r_squared=0.99,
@@ -180,11 +168,8 @@ def test_high_r_squared_passes(r2: float) -> None:
 
 
 def test_organics_unphysical_fwhm_is_review() -> None:
-    """Reproducer #1: organics fit with FWHM 286.4 cm⁻¹ from
-    ``organics_pass_unphysical_fwhm.png`` (broad fluorescence baseline
-    mistaken for a peak). Organics bound is 10–60 cm⁻¹; 286 is ~5× too
-    wide. Even with a high overall R² the per-peak FWHM gates this to
-    ``review``.
+    """An organics peak with FWHM 286.4 cm⁻¹ is outside the 10–60 cm⁻¹ bound
+    and is classified review even with R² 0.92.
     """
     assert (
         classify_fit_quality(
@@ -222,7 +207,6 @@ def test_organics_fwhm_in_bound_passes() -> None:
 
 
 def test_minerals_fwhm_in_bound_passes() -> None:
-    """Carbonate-like narrow band (~7 cm⁻¹) on a real target."""
     assert (
         classify_fit_quality(
             r_squared=0.92,
@@ -247,7 +231,6 @@ def test_minerals_fwhm_out_of_bound_is_review() -> None:
 
 
 def test_hydration_broad_fwhm_passes() -> None:
-    """Hydration OH stretch envelope is intrinsically broad."""
     assert (
         classify_fit_quality(
             r_squared=0.90,

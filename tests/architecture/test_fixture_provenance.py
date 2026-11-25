@@ -9,7 +9,7 @@ Two layers:
    assertion CI runs via ``scripts/check-fixture-provenance.py --tree``,
    kept here too so a plain ``pytest`` run catches provenance violations.
 
-See CONTRIBUTING.md "Fixture provenance".
+See CONTRIBUTING.md "Checks run in CI".
 """
 
 import importlib.util

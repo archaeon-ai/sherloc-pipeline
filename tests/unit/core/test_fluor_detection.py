@@ -84,16 +84,15 @@ class TestScanFluorescenceFeatures:
         assert result.group1a_detected
         assert result.group1b_detected
 
-    def test_group1a_implies_doublet(self):
-        """Only group1a detected → group1_detected is True (physical doublet implied)."""
+    def test_group1a_sets_group1_flag(self):
+        """Detecting group1a alone sets the group 1 flag."""
         wl = _make_wavelength(n=800)
         intensity = _synth_spectrum(wl, [(304.0, 5000.0, 10.0)], noise_std=10.0)
         result = scan_fluorescence_features(wl, intensity, noise_std=10.0)
 
-        # Ce3+ 5d→2F5/2 implies the 5d→2F7/2 partner exists
         assert result.group1_detected
         assert result.group1a_detected
-        assert not result.group1b_detected  # not independently detected, but implied
+        assert not result.group1b_detected  # not independently detected
 
     def test_no_features_in_noise(self):
         """Pure noise → no features detected."""

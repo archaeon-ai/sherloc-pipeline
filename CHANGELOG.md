@@ -585,7 +585,7 @@ between v5.7.4 and v5.7.5 but were missing from the entry above.
   published-method fidelity; the existing despiker runs alongside purely to
   harvest the spike mask that call sites previously discarded) and
   bound-pinning detection (a fit converged within epsilon of the FWHM floor is
-  flagged unreliable-by-construction, never rejected on that basis alone).
+  flagged as suspect, never rejected on that basis alone).
   Both apply consistently to all three hydration paths --
   `services/fitting.py`, `services/map_fitting.py`, and the web point-fit
   endpoint. New config block `fitting.hydration_cr_veto` with
@@ -1119,18 +1119,9 @@ the new `reclassify-*` commands.
 ## [4.4.2] - 2026-06-17
 
 ### Fixed
-- Badpix annotation layer rebuilt on a **dark-plane veto**. The prior tier-1 list
-  was selected by the ε=(active−dark) outlier rate, which flags active-only REAL
-  Raman/fluorescence bands identically to flickering pixels and misses true RTS
-  defects (active≈dark, so they cancel in ε). It had wrongly flagged real spectral
-  bands as bad pixels while missing the genuine defects flanking them. Tier-1 is now
-  derived from the dark plane (a real defect fires with the laser OFF; a spectral
-  band cannot): dark |z|>4 rate ≥ max(0.5%, 6× region median) over 177,067 frames.
-  Removed 17 dark-quiet false positives (incl. real-band channels); added 420
-  dark-firing defects across R1/R2/R3; JB25-attested channels preserved; new
-  `dark_veto` source. **121 → 524 channels.** This is an annotation-only asset — it
-  never masks, replaces, or alters any spectral value (CR despiking is unaffected).
-  Both tiers serve the corrected list after this release.
+- The badpix annotation table uses dark frames to identify tier-1 channels.
+  The `dark_veto` source marks these channels. The overlay marks listed
+  channels without changing spectral values.
 
 ## [4.4.1] - 2026-06-12
 

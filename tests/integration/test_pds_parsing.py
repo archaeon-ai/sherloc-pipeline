@@ -51,7 +51,7 @@ EXPECTED_NON_ZPZ_SCLKS = {sclk for sclk, _, _ in SPEC_S14_OBSERVATIONS}
 
 # Wavelength tolerance (spec s14: < 0.001 nm except channel 500)
 WAVELENGTH_TOLERANCE_NM = 0.001
-CHANNEL_500_MAX_DEVIATION_NM = 0.5  # spec says 0.393 nm at channel 500
+CHANNEL_500_MAX_DEVIATION_NM = 0.5
 
 
 @pytest.fixture(scope="module")
@@ -225,11 +225,7 @@ class TestSol921SpectralParsing:
             )
 
     def test_wavelength_calibration_vs_loupe(self, non_zpz_groups):
-        """PDS wavelength array should match Loupe polynomial within 0.001 nm.
-
-        Spec s14: "PDS wavelength array matches Loupe V5.1.5a polynomial
-        within <0.001 nm, except 0.393 nm at channel 500."
-        """
+        """Compare PDS and polynomial wavelengths with a separate tolerance at channel 500."""
         loupe_wavelength, _ = calculate_loupe_wavelength_wavenumber(n_channels=2148)
         parser = PDSSpectralParser()
 
@@ -258,7 +254,7 @@ class TestSol921SpectralParsing:
             f"expected < {WAVELENGTH_TOLERANCE_NM} nm"
         )
 
-        # Channel 500: known 0.393 nm discontinuity
+        # Check channel 500 separately.
         ch500_diff = diff[500]
         assert ch500_diff < CHANNEL_500_MAX_DEVIATION_NM, (
             f"Channel 500 deviation = {ch500_diff:.6f} nm, "

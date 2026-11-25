@@ -5,7 +5,7 @@ Covers ``services.fitting._fit_point_hydration`` (CLI/pipeline), and
 point-fit endpoint is covered in ``tests/unit/web/test_processing.py``.
 
 Every path is asserted twice: flag OFF must reproduce the no-veto behavior exactly,
-flag ON must remove the cosmic ray while leaving a broad, authentic band alone.
+flag ON must remove the cosmic ray while leaving a broad synthetic band alone.
 """
 
 from pathlib import Path
@@ -49,7 +49,7 @@ def _cosmic_ray_only_spectrum(x, center=3300.0, amplitude=6000.0, seed=38):
 
 
 def _broad_hydration_spectrum(x, center=3400.0, fwhm=280.0, amplitude=900.0, seed=7):
-    """A wide OH stretch band — the known-authentic control."""
+    """Generate a broad synthetic OH stretch band."""
     sigma = fwhm / 2.3548
     y = 100.0 + amplitude * np.exp(-0.5 * ((x - center) / sigma) ** 2)
     return y + np.random.default_rng(seed).normal(0.0, 4.0, size=x.shape)
@@ -60,7 +60,7 @@ BAND_CENTER = 3400.0
 
 
 def _mixed_spectrum(x, seed=11):
-    """An authentic broad OH band AND a cosmic ray, well separated.
+    """A synthetic broad OH band AND a cosmic ray, well separated.
 
     Both components are fit and both clear the acceptance filters, so the veto
     has to remove exactly one of them — the case where a stale model curve is

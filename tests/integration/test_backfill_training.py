@@ -734,7 +734,7 @@ class TestBuildPhaseLabel:
         assert "Ca-sulfate sulf1_v1 Raman" in label
 
     def test_organics_label(self):
-        """D_band + G_band -> 'organic carbon'."""
+        """The training label includes both D and G bands."""
         raman = [
             self._make_peak("D_band", "organics"),
             self._make_peak("G_band", "organics"),
@@ -747,7 +747,7 @@ class TestBuildPhaseLabel:
         assert "organic G_band" in label
 
     def test_hydration_label(self):
-        """OH_stretch -> 'hydrated phase'."""
+        """The training label includes the OH stretch."""
         raman = [self._make_peak("OH_stretch", "hydration")]
 
         label = _build_phase_label(raman, [], [])

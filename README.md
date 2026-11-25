@@ -42,7 +42,7 @@ Workbench exposes the full per-point processing chain — ML cosmic-ray despikin
 
 ![Workbench — mineral detection](docs/img/workbench-minerals.png)
 
-*Autonomous sulfate and carbonate (ν₁) detections in a single SHERLOC spectrum, with the full processing chain applied (Amherst Point, Sol 921).*
+*Autonomous sulfate and carbonate (ν₁) detections in a single SHERLOC spectrum, after despiking and baseline correction (Amherst Point, Sol 921).*
 
 ![Workbench — hydration detection](docs/img/workbench-hydration.png)
 
@@ -406,9 +406,13 @@ src/sherloc_pipeline/
 
 ## Cosmic-Ray Despiking
 
-Deep-UV Raman spectra contain cosmic-ray spikes — narrow, high-amplitude detector
-artifacts that can mimic real mineral or organic bands — which are removed before
-fitting. The method is selectable via `--despike-method` (CLI),
+Raman spectra sometimes contain cosmic-ray spikes: commonly narrow, high-amplitude
+detector artifacts that can mimic real Raman features. They are removed from the
+input to the organics, hydration and fluorescence fits; the mineral fit reads
+the non-despiked spectrum to avoid the impact of despiking algorithms on
+authentic Raman features. When the method is `none`, or a scan has no despiked
+spectrum, those fits read the non-despiked spectrum; PDS fluorescence input is
+never despiked. The method is selectable via `--despike-method` (CLI),
 `preprocessing.despike.method` (`config.yaml`), or the web despike toggle:
 
 - **`ml`** (default) — a trained neural-network detector that classifies
@@ -418,8 +422,8 @@ fitting. The method is selectable via `--despike-method` (CLI),
   by interpolation and never runs model inference. The model ships as a sha256-pinned
   ONNX (Open Neural Network Exchange) artifact executed via `onnxruntime` (the optional
   `[ml-despike]` extra) with fixed, non-tunable decision thresholds.
-- **`modz`** — a live robust rolling-median / MAD z-score despike (R1 only), following
-  Whitaker & Hayes (2018); tunable, and computed client-side in the web UI.
+- **`modz`** — a live robust rolling-median / MAD z-score despike (R1 only), adapted from
+  Whitaker & Hayes (2018). It is tunable and computed client-side in the web UI.
 - **`none`** — despike disabled.
 
 The implementation lives in `src/sherloc_pipeline/ml_despike/` (detector, featurization,

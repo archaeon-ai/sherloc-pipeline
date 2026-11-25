@@ -708,7 +708,7 @@ spectra endpoints' invalid-region contract). `schema_version` stays `1.0.0`
 | `badpix[].position` | int | **0-based position into the served `wavenumber`/`intensity` arrays** for this region — the same coordinate system as `masked_positions`, so a marker at `position` lands on `wavenumber[position]`. For `R123` the served array is the full 2148-channel stitch, so `position == channel` |
 | `badpix[].channel` | int | absolute CCD channel index, `0..2147` |
 | `badpix[].tier` | int | `1` = CR-confusable elevated-noise channel; `2` = stable hot pixel that cancels in dark subtraction |
-| `badpix[].source` | str | attribution: `dark_veto` (dark-plane-confirmed defect), `jb25` (published mission bad-pixel table), or `both` |
+| `badpix[].source` | str | attribution: `dark_veto` (defect detected in dark frames), `jb25` (published mission bad-pixel table), or `both` |
 
 Channels outside the requested region's served selection are omitted (e.g. an
 R2 channel is not returned for a `region=R1` view). The list is sorted by

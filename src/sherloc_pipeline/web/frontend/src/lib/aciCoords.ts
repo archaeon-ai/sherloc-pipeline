@@ -13,8 +13,7 @@
 // `pt.x_aci_pixel ?? pt.x_pixel` fallback that interpreted
 // scanner-workspace values (~±0.5) as ACI pixels, producing a tight
 // zoom near the upper-left corner of the image where the ACI is
-// typically dark. This helper enforces the frame discipline so callers
-// only ever see image-pixel coords.
+// typically dark. This helper returns image-pixel coordinates only.
 
 import type { ScanPoint } from './types';
 
