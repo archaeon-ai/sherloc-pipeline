@@ -10,10 +10,10 @@
     getAverageSpectrum,
     getPointSpectrum,
     postSubsetAverage,
-    getBadpixChannels,
+    getAnomalousPixels,
   } from '../lib/api';
   import { ApiError } from '../lib/api';
-  import type { BadpixChannel } from '../lib/types';
+  import type { AnomalousPixel } from '../lib/types';
   import type {
     ScanDetail,
     SpectrumResponse,
@@ -107,34 +107,34 @@
 
   // Fetch the full detector catalog; map absolute channels through the
   // committed trace so embedded axes can select different region channels.
-  let badpixCatalog: BadpixChannel[] = [];
-  $: badpix = mapBadpix(badpixCatalog, spectrum?.channel_indices ?? []);
+  let anomalousPixelCatalog: AnomalousPixel[] = [];
+  $: anomalousPixels = mapAnomalousPixels(anomalousPixelCatalog, spectrum?.channel_indices ?? []);
 
-  function mapBadpix(catalog: BadpixChannel[], channels: number[]): BadpixChannel[] {
+  function mapAnomalousPixels(catalog: AnomalousPixel[], channels: number[]): AnomalousPixel[] {
     const positions = new Map(channels.map((channel, position) => [channel, position]));
     return catalog.filter(item => positions.has(item.channel))
       .map(item => ({ ...item, position: positions.get(item.channel)! }));
   }
-  let showBadpixOverlay = false;
-  $: exportBadpix = showBadpixOverlay && badpix.length > 0 ? badpix : null;
+  let showAnomalousPixelOverlay = false;
+  $: exportAnomalousPixels = showAnomalousPixelOverlay && anomalousPixels.length > 0 ? anomalousPixels : null;
 
   // Drop older annotation requests during region transitions.
-  let badpixRequestGen = 0;
+  let anomalousPixelRequestGen = 0;
 
-  async function loadBadpix(revalidate = false): Promise<void> {
+  async function loadAnomalousPixels(revalidate = false): Promise<void> {
     const requestBoundary = requestEvidence(revalidate);
     if (destroyed || staleEvidence(requestBoundary)) return;
-    const gen = ++badpixRequestGen;
+    const gen = ++anomalousPixelRequestGen;
     // Region transition: clear immediately so the previous region's
     // annotations neither render nor export while the new region's list is
     // in flight (their positions would be wrong for the new served array).
-    badpixCatalog = [];
+    anomalousPixelCatalog = [];
     try {
-      const res = await getBadpixChannels('R123');
+      const res = await getAnomalousPixels('R123');
       // Stale-response guard: a newer request started while this one was in
       // flight — drop this response entirely.
-      if (gen !== badpixRequestGen || (requestBoundary !== null && (destroyed || staleEvidence(requestBoundary)))) return;
-      badpixCatalog = res.badpix;
+      if (gen !== anomalousPixelRequestGen || (requestBoundary !== null && (destroyed || staleEvidence(requestBoundary)))) return;
+      anomalousPixelCatalog = res.anomalous_pixels;
     } catch {
       // Annotation layer is best-effort: a failed fetch must never break the
       // spectrum view. The list was already cleared at request start, so the
@@ -270,7 +270,7 @@
     activeBoundary = generation;
     metadataRequestGen += 1;
     spectrumRequestGen += 1;
-    badpixRequestGen += 1;
+    anomalousPixelRequestGen += 1;
     scan = null;
     points = [];
     evidenceContextKey = '';
@@ -283,14 +283,14 @@
     error = '';
     spectrum = null;
     rawSnapshot = null;
-    badpixCatalog = [];
+    anomalousPixelCatalog = [];
     processingState.set(null);
     undoStack.set([]);
     // Let config/session updates finish before starting one load in the new boundary.
     void Promise.resolve().then(async () => {
       if (destroyed || mountedSession !== sessionGeneration || generation !== evidenceGeneration) return;
       await loadScan(true);
-      if (!destroyed && mountedSession === sessionGeneration && generation === evidenceGeneration && scan) await loadBadpix(true);
+      if (!destroyed && mountedSession === sessionGeneration && generation === evidenceGeneration && scan) await loadAnomalousPixels(true);
     });
   });
 
@@ -299,14 +299,14 @@
     destroyed = true;
     metadataRequestGen += 1;
     spectrumRequestGen += 1;
-    badpixRequestGen += 1;
+    anomalousPixelRequestGen += 1;
   });
 
   onMount(async () => {
     processingState.set(null);
     undoStack.set([]);
     await loadScan();
-    await loadBadpix();
+    await loadAnomalousPixels();
   });
 
   async function loadScan(revalidate = false): Promise<void> {
@@ -541,7 +541,7 @@
     }
     // Refresh independently of the spectrum; a failed annotation fetch
     // never blocks the reload.
-    loadBadpix();
+    loadAnomalousPixels();
     reloadAndReset();
   }
 
@@ -644,7 +644,7 @@
         artifacts={currentState?.artifacts ?? null}
         spikeMask={effectiveSpikeMask}
         spikeMethod={effectiveSpikeMethod}
-        badpix={exportBadpix}
+        anomalousPixels={exportAnomalousPixels}
         {processingChain}
       />
     {/if}
@@ -838,8 +838,8 @@
                 stage={currentStage}
                 spikeMask={effectiveSpikeMask}
                 spikeMethod={effectiveSpikeMethod}
-                {badpix}
-                bind:showBadpix={showBadpixOverlay}
+                {anomalousPixels}
+                bind:showAnomalousPixels={showAnomalousPixelOverlay}
                 background={currentState?.artifacts?.background ?? null}
                 backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
                 baseline={baselineOverlay}
@@ -872,8 +872,8 @@
                   stage={currentStage}
                   spikeMask={effectiveSpikeMask}
                   spikeMethod={effectiveSpikeMethod}
-                  {badpix}
-                  bind:showBadpix={showBadpixOverlay}
+                  {anomalousPixels}
+                  bind:showAnomalousPixels={showAnomalousPixelOverlay}
                   background={currentState?.artifacts?.background ?? null}
                   backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
                   baseline={baselineOverlay}

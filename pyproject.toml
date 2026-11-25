@@ -131,9 +131,9 @@ where = ["src"]
 # deployment regressed to "Background file not found" (issue #13).
 #
 # The overlay reads the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
-# from the packaged data/badpix_channels.csv file.
+# from the packaged data/anomalous_pixels.csv file.
 [tool.setuptools.package-data]
-sherloc_pipeline = ["config.yaml", "data/background/*.csv", "data/badpix_channels.csv", "core/identification/recipes/*.json"]
+sherloc_pipeline = ["config.yaml", "data/background/*.csv", "data/anomalous_pixels.csv", "core/identification/recipes/*.json"]
 
 
 [tool.pytest.ini_options]

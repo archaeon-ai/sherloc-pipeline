@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 API_SCHEMA_VERSION = "1.0.0"
-#: ``GET /api/spectra/badpix``: 2.0.0 replaced ``tier`` and ``source`` with ``table``.
-BADPIX_SCHEMA_VERSION = "2.0.0"
+#: ``GET /api/spectra/anomalous-pixels``: 2.0.0 replaced ``tier`` and ``source`` with ``table``.
+ANOMALOUS_PIXELS_SCHEMA_VERSION = "2.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +371,7 @@ class SubsetResponse(BaseModel):
     despike_params_used: Optional[Dict[str, Any]] = None
 
 
-class BadpixChannelItem(BaseModel):
+class AnomalousPixelItem(BaseModel):
     """One display marker from Jakubek et al. 2025, Supplemental Tables S3 and S4."""
 
     position: int  # 0-based index in the served array for the requested region
@@ -379,13 +379,13 @@ class BadpixChannelItem(BaseModel):
     table: Literal["S3", "S4"]
 
 
-class BadpixResponse(BaseModel):
+class AnomalousPixelsResponse(BaseModel):
     """Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)."""
 
-    schema_version: str = BADPIX_SCHEMA_VERSION
+    schema_version: str = ANOMALOUS_PIXELS_SCHEMA_VERSION
     region: str
     n_channels: int
-    badpix: List[BadpixChannelItem] = Field(default_factory=list)
+    anomalous_pixels: List[AnomalousPixelItem] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

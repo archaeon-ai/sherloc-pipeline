@@ -119,54 +119,54 @@ describe('ExportMenu CSV spike-mask column (issue #8)', () => {
   });
 });
 
-describe('ExportMenu CSV badpix column (issue #9)', () => {
+describe('ExportMenu CSV anomalous_pixel column (issue #9)', () => {
   // wavenumber/intensity from the outer scope are [800,900,1000]/[5,6,7].
-  it('emits badpix column + source header when the badpix prop is set', async () => {
+  it('emits anomalous_pixel column + source header when the anomalousPixels prop is set', async () => {
     const csv = await exportCsv({
       stage: 'raw',
-      badpix: [
+      anomalousPixels: [
         { position: 0, channel: 106, table: 'S3' },
         { position: 2, channel: 640, table: 'S4' },
       ],
     });
-    expect(csv.split('\n')).toContain('# badpix_source: Jakubek et al. 2025, Supplemental Tables S3 and S4, doi:10.1177/00037028241280081');
+    expect(csv.split('\n')).toContain('# anomalous_pixel_source: Jakubek et al. 2025, Supplemental Tables S3 and S4, doi:10.1177/00037028241280081');
     const header = csv.split('\n').find((l) => l.startsWith('wavenumber'));
-    expect(header).toContain('badpix');
+    expect(header).toContain('anomalous_pixel');
     // 0/1 per served row: positions 0 and 2 flagged, position 1 clear.
     const rows = csv.split('\n').filter((l) => /^\d/.test(l));
     expect(rows.map((r) => r.split(',').pop())).toEqual(['1', '0', '1']);
   });
 
-  it('badpix column is distinct from spike_mask (both can be present)', async () => {
+  it('anomalous_pixel column is distinct from spike_mask (both can be present)', async () => {
     const csv = await exportCsv({
       stage: 'raw',
       spikeMask: [true, false, false],
       spikeMethod: 'ml',
-      badpix: [{ position: 2, channel: 160, table: 'S3' }],
+      anomalousPixels: [{ position: 2, channel: 160, table: 'S3' }],
     });
     const header = csv.split('\n').find((l) => l.startsWith('wavenumber'))!.split(',');
     expect(header).toContain('spike_mask');
-    expect(header).toContain('badpix');
-    // spike_mask flags row 0; badpix flags row 2 — independent columns.
+    expect(header).toContain('anomalous_pixel');
+    // spike_mask flags row 0; anomalous_pixel flags row 2 — independent columns.
     const rows = csv.split('\n').filter((l) => /^\d/.test(l)).map((r) => r.split(','));
     const sIdx = header.indexOf('spike_mask');
-    const bIdx = header.indexOf('badpix');
+    const bIdx = header.indexOf('anomalous_pixel');
     expect(rows.map((r) => r[sIdx])).toEqual(['1', '0', '0']);
     expect(rows.map((r) => r[bIdx])).toEqual(['0', '0', '1']);
   });
 
-  it('omits the column + header when the badpix prop is null (toggle OFF gate)', async () => {
+  it('omits the column + header when the anomalousPixels prop is null (toggle OFF gate)', async () => {
     // The Workbench passes null when the overlay toggle is OFF.
-    const csv = await exportCsv({ stage: 'raw', badpix: null });
-    expect(csv).not.toContain('badpix_source');
+    const csv = await exportCsv({ stage: 'raw', anomalousPixels: null });
+    expect(csv).not.toContain('anomalous_pixel_source');
     const header = csv.split('\n').find((l) => l.startsWith('wavenumber'));
-    expect(header).not.toContain('badpix');
+    expect(header).not.toContain('anomalous_pixel');
   });
 
-  it('omits the column when the badpix list is empty', async () => {
-    const csv = await exportCsv({ stage: 'raw', badpix: [] });
-    expect(csv).not.toContain('badpix_source');
-    expect(csv.split('\n').find((l) => l.startsWith('wavenumber'))).not.toContain('badpix');
+  it('omits the column when the anomalousPixels list is empty', async () => {
+    const csv = await exportCsv({ stage: 'raw', anomalousPixels: [] });
+    expect(csv).not.toContain('anomalous_pixel_source');
+    expect(csv.split('\n').find((l) => l.startsWith('wavenumber'))).not.toContain('anomalous_pixel');
   });
 });
 
@@ -226,14 +226,14 @@ describe('ExportMenu committed provenance', () => {
 });
 
 
-it('exports badpix positions against wavelength-only intensity rows', async () => {
+it('exports anomalous pixel positions against wavelength-only intensity rows', async () => {
   const csv = await exportCsv({ evidenceDesk: true, wavenumber: [], intensity: [3, 5, 7],
     trace: { wavelength: [281, 301, 321], wavenumber: [], intensity: [3, 5, 7], channel_indices: [0, 1, 2],
       source: { scan_id: 'synthetic' }, selection: { mode: 'average' },
       provenance: { calibration_version: null, wavenumber_unit: null, wavelength_unit: 'nm', intensity_unit: 'synthetic' } },
-    badpix: [{ position: 1, channel: 1, table: 'S4' }] });
+    anomalousPixels: [{ position: 1, channel: 1, table: 'S4' }] });
   const rows = csv.split('\n').filter(line => line && !line.startsWith('#'));
-  const index = rows[0].split(',').indexOf('badpix');
+  const index = rows[0].split(',').indexOf('anomalous_pixel');
   expect(rows.slice(1).map(row => row.split(',')[index])).toEqual(['0', '1', '0']);
 });
 

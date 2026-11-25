@@ -3,7 +3,7 @@
   import type { EvidenceDomain, EvidenceTheme, EvidenceTrace } from '../lib/evidenceTypes';
   import { comparisonDisplays, evidenceColor, nativeRenderTrace, evidenceExport, nativeFigureEvidence } from '../lib/evidenceStore';
   import type { SharedEvidence } from '../lib/evidenceStore';
-  import type { BadpixChannel, Peak } from '../lib/types';
+  import type { AnomalousPixel, Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
   // Dynamic import for plotly (same pattern as SpectrumPlot.svelte)
@@ -19,9 +19,9 @@
   // the displayed trace ("Spikes"); 'ml' = stored-mask removal positions on the
   // already-cleaned trace ("ML-masked"). null falls back to the generic label.
   export let spikeMethod: 'ml' | 'modz' | null = null;
-  const badpixLabel = 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)';
-  export let badpix: BadpixChannel[] = [];
-  export let showBadpix: boolean = false;
+  const anomalousPixelLabel = 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)';
+  export let anomalousPixels: AnomalousPixel[] = [];
+  export let showAnomalousPixels: boolean = false;
   export let background: number[] | null = null;     // dashed gray background line
   export let backgroundScaled: number[] | null = null;
   export let baseline: number[] | null = null;       // dashed red baseline curve
@@ -327,11 +327,11 @@
     }
 
     // Draw each annotation at the displayed sample value.
-    if (showBadpix && badpix.length > 0) {
+    if (showAnomalousPixels && anomalousPixels.length > 0) {
       const bpX: number[] = [];
       const bpY: number[] = [];
       const bpCustom: [number, string][] = [];
-      for (const bp of badpix) {
+      for (const bp of anomalousPixels) {
         if (bp.position >= 0 && bp.position < xData.length) {
           bpX.push(xData[bp.position]);
           bpY.push(intensity[bp.position]);
@@ -345,7 +345,7 @@
           customdata: bpCustom,
           type: 'scatter',
           mode: 'markers',
-          name: `${badpixLabel} · ${bpX.length}`,
+          name: `${anomalousPixelLabel} · ${bpX.length}`,
           marker: {
             symbol: 'diamond-open',
             size: 9,
@@ -718,8 +718,8 @@
       {#if spikeMask}
         <label class="toggle-label"><input type="checkbox" bind:checked={showOverlaySpikes} on:change={renderPlot} /> Spikes</label>
       {/if}
-      {#if badpix.length > 0}
-        <label class="toggle-label"><input type="checkbox" bind:checked={showBadpix} on:change={renderPlot} /> {badpixLabel}</label>
+      {#if anomalousPixels.length > 0}
+        <label class="toggle-label"><input type="checkbox" bind:checked={showAnomalousPixels} on:change={renderPlot} /> {anomalousPixelLabel}</label>
       {/if}
     </div>
     <div class="export-bar">

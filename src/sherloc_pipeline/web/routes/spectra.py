@@ -13,7 +13,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
-from sherloc_pipeline.core.badpix import load_badpix_channels
+from sherloc_pipeline.core.anomalous_pixels import load_anomalous_pixels
 from sherloc_pipeline.core.calibration import (
     calculate_loupe_wavelength_wavenumber,
     get_region_wavelength_mask,
@@ -37,8 +37,8 @@ from sherloc_pipeline.web.adapters import numpy_to_list
 from sherloc_pipeline.web.data_access import DataAccessService
 from sherloc_pipeline.web.schemas import (
     AverageSpectrumResponse,
-    BadpixChannelItem,
-    BadpixResponse,
+    AnomalousPixelItem,
+    AnomalousPixelsResponse,
     PointSpectrumResponse,
     ProvenanceInfo,
     SubsetRequest,
@@ -703,7 +703,7 @@ def _compute_average(
 
 
 @lru_cache(maxsize=len(VALID_REGIONS))
-def _badpix_items_for_region(region: str) -> tuple:
+def _anomalous_pixel_items_for_region(region: str) -> tuple:
     """Map absolute CCD indices to positions in the requested region's served array."""
     _, _, mask = _get_wavelength_wavenumber(region)
     selected_channels = np.where(mask)[0]
@@ -711,12 +711,12 @@ def _badpix_items_for_region(region: str) -> tuple:
     # this region's selection get no position (dropped).
     row_of_channel = {int(ch): pos for pos, ch in enumerate(selected_channels)}
     items = []
-    for rec in load_badpix_channels():
+    for rec in load_anomalous_pixels():
         pos = row_of_channel.get(int(rec.channel))
         if pos is None:
             continue
         items.append(
-            BadpixChannelItem(
+            AnomalousPixelItem(
                 position=pos,
                 channel=rec.channel,
                 table=rec.table,
@@ -726,8 +726,8 @@ def _badpix_items_for_region(region: str) -> tuple:
     return tuple(items)
 
 
-@router.get("/spectra/badpix", response_model=BadpixResponse)
-def get_badpix_channels(region: str = Query("R1")) -> BadpixResponse:
+@router.get("/spectra/anomalous-pixels", response_model=AnomalousPixelsResponse)
+def get_anomalous_pixels(region: str = Query("R1")) -> AnomalousPixelsResponse:
     """Return anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4).
 
     Each item gives the position in the region's served array, the absolute CCD
@@ -740,10 +740,10 @@ def get_badpix_channels(region: str = Query("R1")) -> BadpixResponse:
     if region not in VALID_REGIONS:
         raise HTTPException(status_code=400, detail=f"Invalid region: {region}")
     _, _, mask = _get_wavelength_wavenumber(region)
-    return BadpixResponse(
+    return AnomalousPixelsResponse(
         region=region,
         n_channels=int(mask.sum()),
-        badpix=list(_badpix_items_for_region(region)),
+        anomalous_pixels=list(_anomalous_pixel_items_for_region(region)),
     )
 
 

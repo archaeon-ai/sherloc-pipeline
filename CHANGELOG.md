@@ -54,9 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The Workbench overlay and its table went from 524 channels to the 36 anomalous pixels
   (Jakubek et al. 2025, Supplemental Tables S3 and S4). The other 488 came from this
-  pipeline's own dark-frame test and are withdrawn. The `/api/spectra/badpix` response
-  now uses schema version `2.0.0` (previously `1.0.0`). Items are `{position, channel, table}`,
-  with `tier` and `source` removed. The CSV export's `badpix_source` line now carries the citation.
+  pipeline's own dark-frame test and are withdrawn. The response now uses schema version `2.0.0`
+  (previously `1.0.0`). Items are `{position, channel, table}`, with `tier` and `source` removed.
+  The route is now `/api/spectra/anomalous-pixels` (was `/api/spectra/badpix`, no alias),
+  the response list is `anomalous_pixels` (was `badpix`), the CSV column is `anomalous_pixel`
+  (was `badpix`), the CSV citation header is `# anomalous_pixel_source:` (was `# badpix_source:`),
+  and JSON provenance records the list under `annotations.anomalous_pixels`.
 - The Workbench quality badge and the `quality` column in `peaks.csv` now
   compare each Raman peak's FWHM with the bounds used for that fit.
   Calibration and engineering scans can receive `pass` on the same criteria
