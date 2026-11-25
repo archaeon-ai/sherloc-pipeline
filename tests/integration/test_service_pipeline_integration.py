@@ -664,19 +664,6 @@ class TestFluorescencePeakFields:
             for p in peaks:
                 assert p.is_saturated is not None
 
-    def test_group_label_assigned(self, fitted_fluor_db):
-        """Fluorescence peaks should have mineral_assignment (group label) set."""
-        engine, result = fitted_fluor_db
-
-        with get_session(engine) as session:
-            peaks = session.query(FittedPeakORM).all()
-            assert len(peaks) > 0
-            labels = {p.mineral_assignment for p in peaks}
-            # Peaks at 305 and 325 should get group labels
-            valid_labels = {"group1a", "group1b", "group2", "group3", "unidentified"}
-            for label in labels:
-                assert label in valid_labels, f"Unexpected label: {label}"
-
     def test_peak_type_is_gaussian(self, fitted_fluor_db):
         engine, result = fitted_fluor_db
 
@@ -685,12 +672,36 @@ class TestFluorescencePeakFields:
             for p in peaks:
                 assert p.peak_type == "gaussian"
 
-    def test_assignment_confidence_populated(self, fitted_fluor_db):
-        """Fluorescence peaks should have assignment_confidence set by cross-modal scoring."""
-        engine, result = fitted_fluor_db
+    def test_stored_groups_and_empty_confidence(self, fluor_db, tmp_path):
+        engine, spectrum_ids, _ = fluor_db
+        # Only point 0 has a sulfate Raman peak.
+        with get_session(engine) as session:
+            session.add(FittedPeakORM(
+                id=str(uuid.uuid4()), spectrum_id=spectrum_ids[0]["R1"],
+                fit_modality="minerals", mineral_assignment="sulf1_v1",
+                center_cm1=1010.0, amplitude=50.0,
+            ))
+        result = _make_service(engine).fit_fluorescence(
+            sol="0293", target="Quartier", scan="HDR_1", results_dir=tmp_path,
+        )
 
         with get_session(engine) as session:
-            peaks = session.query(FittedPeakORM).all()
-            for p in peaks:
-                assert p.assignment_confidence is not None
-                assert isinstance(p.assignment_confidence, float)
+            rows = (
+                session.query(
+                    ScanPointORM.point_index, FittedPeakORM.mineral_assignment,
+                    FittedPeakORM.assignment_confidence,
+                )
+                .join(SpectrumORM, SpectrumORM.scan_point_id == ScanPointORM.id)
+                .join(FittedPeakORM, FittedPeakORM.spectrum_id == SpectrumORM.id)
+                .filter(FittedPeakORM.fit_modality == "fluorescence")
+                .order_by(ScanPointORM.point_index)
+                .all()
+            )
+        assert rows == [(0, "group1a", None), (1, "group1b", None)]
+
+        accepted_csv, = (p for p in result.artifacts if p.name.endswith("_fluor_accepted_peaks.csv"))
+        accepted = pd.read_csv(accepted_csv, keep_default_na=False)
+        columns = ["point", "group", "cooccurrence_confidence"]
+        assert list(accepted[columns].itertuples(index=False, name=None)) == [
+            (0, "group1a", ""), (1, "group1b", ""),
+        ]

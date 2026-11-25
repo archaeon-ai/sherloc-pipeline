@@ -112,7 +112,8 @@ canonical batch path. Seven steps:
    wavelength) and labels each peak on its own; Haney et al. (2026,
    https://doi.org/10.1029/2025JE009385) discuss this wavelength range as
    Ce³⁺-bearing anhydrite. Only the training export pairs peaks into doublets.
-   Co-occurrence confidence is scored against the Raman peaks from step 3.
+   Group assignments use the fluorescence peak wavelengths. New fluorescence
+   peaks have NULL assignment confidence in the database.
 5. **Per-scan averages** — fits of the scan's R1 mean and trimmed-mean
    spectra. The trimmed mean cuts 2 % from each tail, raised for small
    scans so that at least one point is cut from each tail (a 25-point
