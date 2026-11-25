@@ -30,7 +30,12 @@ from sherloc_pipeline.core.calibration import (
     calculate_loupe_wavelength_wavenumber,
     get_region_wavelength_mask,
 )
-from sherloc_pipeline.core.fitting import FILTER_FWHM_MIN_CM1_DEFAULT, fit_hydration_spectrum, fit_spectrum
+from sherloc_pipeline.core.fitting import (
+    FILTER_FWHM_MIN_CM1_DEFAULT,
+    fit_hydration_spectrum,
+    fit_spectrum,
+    hydration_parsimony,
+)
 from sherloc_pipeline.core.mineral_id import (
     MineralRule,
     assign_min_id,
@@ -401,7 +406,7 @@ def _fit_raman_domain(
             "min_display_snr": fitting_cfg.get("min_display_snr", 2.0),
             "min_amp_sigma_multiplier": fitting_cfg.get("min_amp_sigma_multiplier", 0.3),
             "noise_estimation": fitting_cfg.get("noise_estimation", {"window": [2000.0, 2100.0]}),
-            "hydration_ftest_alpha": fitting_cfg.get("hydration_ftest_alpha", 0.01),
+            "parsimony": hydration_parsimony(fitting_cfg),
             "posthoc_filters": fitting_cfg.get("posthoc_filters", {}),
         }
         assign_fn = classify_hydration_band

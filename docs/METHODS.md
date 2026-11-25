@@ -587,6 +587,7 @@ component counts, the fit uses the lowest AICc, counting three parameters per Ga
 for the line. The fit computes R² and sharpness after subtracting the selected line. The batch
 fit accepts centers from 3000 through 3900 cm⁻¹ and uses a 50–300 cm⁻¹ fit width range.
 Persistence requires SNR ≥ 3, FWHM ≥ 25 cm⁻¹ and record R² > 0.
+For hydration, `fwhm_at_cap` is true when the fitted FWHM is within 1 cm⁻¹ of the configured upper bound and false otherwise, with NULL for other domains and for rows written before this field.
 
 **Mineral fit input:** laser-normalized, dark-subtracted spectrum, asPLS-baselined (`normalized_baselined`); spikes are handled by negative-spike exclusion and the cosmic-ray review flag (not standard "despiked" as used for organics, hydration and fluorescence fitting).
 

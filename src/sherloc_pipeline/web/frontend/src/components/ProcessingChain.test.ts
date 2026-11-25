@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import ProcessingChain from './ProcessingChain.svelte';
+import FittingWorkspace from './FittingWorkspace.svelte';
 import * as api from '../lib/api';
 import type { BackgroundResponse, DespikeResponse, FitResponse } from '../lib/types';
 
@@ -591,6 +592,25 @@ describe('ProcessingChain — despike method selector kick', () => {
   });
 });
 
+it.each(['processing chain', 'fitting workspace'])('renders hydration controls in the %s', async view => {
+  if (view === 'fitting workspace') {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ scan: { target: 'Sample', sol_number: 1 } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ wavenumber: WAVENUMBER_A, intensity: INTENSITY_A })));
+  }
+  const ui = view === 'fitting workspace'
+    ? render(FittingWorkspace, { props: { scanId: 'sample' } })
+    : render(ProcessingChain, { props: { wavenumber: WAVENUMBER_A, intensity: INTENSITY_A } });
+  if (view === 'processing chain') {
+    await fireEvent.click(getStepCard(ui.container, '4. Peak Fit').querySelector('.step-header')!);
+  }
+  const domain = await ui.findByRole('combobox', { name: 'Domain' });
+  expect(ui.getByRole('combobox', { name: /Model Selection/i })).toBeInTheDocument();
+  await fireEvent.change(domain, { target: { value: 'hydration' } });
+  expect.soft(ui.getByRole('slider', { name: /Max Peaks/i })).toHaveValue('2');
+  expect.soft(ui.queryByRole('combobox', { name: /Model Selection/i })).not.toBeInTheDocument();
+});
+
 it('keeps the joint hydration baseline in the fitted snapshot', async () => {
   const wavenumber = [2800, 3075, 3350, 3625, 3900];
   vi.spyOn(api, 'postBaseline').mockResolvedValue({
@@ -613,7 +633,7 @@ it('keeps the joint hydration baseline in the fitted snapshot', async () => {
   await fireEvent.click(card.querySelector('.step-header')!);
   await fireEvent.change(card.querySelector('#rf-domain')!, { target: { value: 'hydration' } });
   await fireEvent.click(card.querySelector('.btn-primary')!);
-  expect(api.postFit).toHaveBeenCalledWith(expect.objectContaining({
+  expect.soft(api.postFit).toHaveBeenCalledWith(expect.objectContaining({
     intensity: [1, 2, 3, 4, 5],
     params: expect.objectContaining({ fitting: expect.objectContaining({ model_selection: 'aicc', max_peaks: 2 }) }),
   }));

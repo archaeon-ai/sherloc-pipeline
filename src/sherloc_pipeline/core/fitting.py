@@ -149,8 +149,12 @@ class _LinearBaseline:
 
 
 def hydration_parsimony(cfg: Dict) -> Dict:
-    """Plain AICc for the fit and the sequential F-test for its size log."""
-    return {"model_selection": "aicc", "ftest_alpha": cfg.get("hydration_ftest_alpha", 0.01)}
+    """Use the shared AICc controls and record the hydration F-test comparison."""
+    parsimony = dict(cfg.get("parsimony") or {})
+    parsimony["model_selection"] = "aicc"
+    if "hydration_ftest_alpha" in cfg:
+        parsimony["ftest_alpha"] = cfg["hydration_ftest_alpha"]
+    return parsimony
 
 
 def fit_hydration_spectrum(

@@ -455,6 +455,7 @@ Peak fitting results (analysis output). Supports four fitting domains via the `f
 | `amplitude` | FLOAT | NO | Peak amplitude (counts) | Fitting |
 | `amplitude_uncertainty` | FLOAT | YES | Amplitude uncertainty | Fitting |
 | `fwhm_cm1` | FLOAT | YES | Full width half max (cm⁻¹). Required for Raman, NULL for fluorescence | Fitting |
+| `fwhm_at_cap` | BOOLEAN | YES | TRUE when the fitted hydration FWHM is within 1 cm⁻¹ of the configured upper bound, FALSE otherwise. NULL for other domains and for rows written before this field | Fitting |
 | `fwhm_uncertainty` | FLOAT | YES | FWHM uncertainty (cm⁻¹) | Fitting |
 | `fwhm_nm` | FLOAT | YES | Full width half max (nm). Required for fluorescence, NULL for Raman | Fitting |
 | `is_saturated` | BOOLEAN | YES | CCD saturation flag (three-tier). Only used for fluorescence peaks | Fitting |
