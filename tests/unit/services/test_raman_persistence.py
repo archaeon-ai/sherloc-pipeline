@@ -10,6 +10,7 @@ AC: bd-3cqz.10 (spec step 2.5)
 import json
 import uuid
 import pytest
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from types import SimpleNamespace
@@ -240,6 +241,39 @@ def _call_persist_raman(service, results_base, domain):
         return service.persist_raman_peaks(
             sol="0851", target="Lake_Haiyaha", scan="detail_1", domain=domain,
         )
+
+
+def test_batch_hydration_noise_persisted_snr(tmp_path, populated_db):
+    from sherloc_pipeline.core.fitting import gaussian
+    from tests.unit.services.test_hydration_rerun_artifacts import _service
+
+    engine, spectrum_ids, _ = populated_db
+    shifts = np.r_[[2000., 2025., 2075., 2100.], np.arange(2800., 3901., 5.)]
+    band = gaussian(shifts, 3400, 24, 120)
+    frame = pd.DataFrame({"raman_shift": shifts})
+    for point, noise in enumerate([4., 10.]):
+        frame[str(point)] = band
+        frame.loc[:3, str(point)] = np.array([1., -1., -1., 1.]) * noise
+    # Both fitted components reach the peak table. Only the first clears persistence at SNR 3.
+    stem = "0851_Lake_Haiyaha_detail_1_R1"
+    frame.to_csv(tmp_path / f"{stem}_normalized_despiked.csv", index=False)
+    frame.loc[0, ["0", "1"]] += 500
+    frame.to_csv(tmp_path / f"{stem}_normalized.csv", index=False)
+    service = _service(tmp_path, hydration_min_snr=2)
+    ingestion = MagicMock()
+    ingestion.get_results_path.return_value = tmp_path
+    with patch("sherloc_pipeline.services.fitting.resolve_scan_context",
+               return_value=SimpleNamespace(base_data_dir=tmp_path, results_dir=tmp_path)), \
+         patch("sherloc_pipeline.core.data_ingestion.DataIngestion", return_value=ingestion):
+        service.fit_hydration(sol="0851", target="Lake_Haiyaha", scan="detail_1")
+    accepted = pd.read_csv(tmp_path / "hydration_fit" / f"{stem}_hydration_accepted_peaks.csv")
+    assert sorted(accepted.point) == [0, 1]
+    _call_persist_raman(_make_service(engine), tmp_path, "hydration")
+    with get_session(engine) as session:
+        peaks = session.query(FittedPeakORM).all()
+        assert len(peaks) == 1
+        assert peaks[0].spectrum_id == spectrum_ids[0]
+        assert peaks[0].snr == pytest.approx(6.)
 
 
 # ---------------------------------------------------------------------------
