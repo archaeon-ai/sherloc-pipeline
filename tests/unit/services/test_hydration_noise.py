@@ -18,6 +18,36 @@ def workbench_fit(x, y, config, domain, roi):
     return process_fit(request, body)
 
 
+@pytest.fixture
+def tilted_hydration_spectrum():
+    x = np.arange(1902.5, 3900., 5.)
+    y = 0.3 * (x - 1900.) + fitting.gaussian(x, 3400., 8., 80.)
+    window = (x >= 2000.) & (x <= 2100.)
+    # Each group has zero mean and zero slope, so the residual SD is exactly 2.
+    y[window] += np.tile([2., -2., -2., 2.], 5)
+    return x, y
+
+
+def test_workbench_hydration_peak_snr(tilted_hydration_spectrum):
+    x, y = tilted_hydration_spectrum
+    response = workbench_fit(x, y, SimpleNamespace(fitting={}), "hydration", (2800, 3900))
+    assert response.n_peaks == 1
+    peak, = response.peaks
+    assert peak.center_cm1 == pytest.approx(3400., abs=0.01)
+    assert peak.snr == pytest.approx(4., abs=0.01)
+    assert peak.snr == pytest.approx(peak.amplitude / 2.)
+
+
+def test_map_hydration_peak_snr(tilted_hydration_spectrum):
+    x, y = tilted_hydration_spectrum
+    result = map_fitting._fit_raman_domain(x, y, {}, "hydration", preprocessed=True)
+    assert result.status == "measured"
+    peak, = result.peaks
+    assert peak["center_cm1"] == pytest.approx(3400., abs=0.01)
+    assert peak["snr"] == pytest.approx(4., abs=0.01)
+    assert peak["snr"] == pytest.approx(peak["amplitude"] / 2., abs=0.01)
+
+
 @pytest.mark.parametrize(("window", "roi"), [
     ((2000, 2100), (2800, 3900)),  # tilted interval
     ((1900, 1980), (2800, 3900)),  # alternative configured interval
