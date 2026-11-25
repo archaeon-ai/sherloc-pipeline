@@ -13,8 +13,8 @@ DIGEST = "a" * 64
 
 
 @pytest.mark.parametrize("name", [
-    "Digest", "PolicyModel", "PublicReleasePolicy", "ReferencePolicy", "MethodBinding",
-    "IdentificationPolicy", "FeaturePolicy",
+    "Digest", "PolicyModel", "PublicReleasePolicy", "ReferencePolicy",
+    "FeaturePolicy",
 ])
 def test_web_policy_reexports_are_the_model_objects(name):
     assert getattr(web_policy, name) is getattr(policy_models, name)
@@ -29,7 +29,6 @@ def test_default_policy_stays_off(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     for policy in (web_policy.FeaturePolicy(), web_policy.load_feature_policy("internal")):
         assert policy.references.mode == "off"
-        assert not policy.identification.enabled and not policy.identification.experimental_candidates
         assert policy.public_release is None
 
 

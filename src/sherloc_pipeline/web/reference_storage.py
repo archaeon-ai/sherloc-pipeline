@@ -1,8 +1,12 @@
 """Tier-aware reference read adapter; no HTTP reference routes."""
 
+from collections import OrderedDict
 from collections.abc import Callable
+import copy
 import hashlib
 import io
+import threading
+import time
 from typing import BinaryIO
 
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
@@ -63,3 +67,29 @@ def can_serve_template(
     return reference_serving.can_serve_template(
         template, members, release, policy, tier, trace_check=can_serve_trace,
     )
+
+
+class ResponseCache:
+    def __init__(self, capacity=16, ttl=120):
+        self.capacity, self.ttl = capacity, ttl
+        self._entries = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key):
+        with self._lock:
+            value = self._entries.get(key)
+            if value is None:
+                return None
+            expires, payload = value
+            if time.monotonic() >= expires:
+                del self._entries[key]
+                return None
+            self._entries.move_to_end(key)
+            return copy.deepcopy(payload)
+
+    def put(self, key, payload):
+        with self._lock:
+            self._entries[key] = (time.monotonic() + self.ttl, copy.deepcopy(payload))
+            self._entries.move_to_end(key)
+            while len(self._entries) > self.capacity:
+                self._entries.popitem(last=False)

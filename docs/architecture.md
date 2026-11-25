@@ -19,7 +19,7 @@ package). They form three rough layers:
                 ┌────▼───────────────▼──────────────────▼──────┐
                 │  services (orchestration)                    │
                 │  pipeline / ingestion / spectral / map_fit / │   business logic
-                │  spectrogram / identification / preprocessing│
+                │  spectrogram / preprocessing                 │
                 │  / pds_ingestion / pixl_ingestion / ...      │
                 └────┬─────────────────────────────────────────┘
                      │
@@ -41,9 +41,9 @@ package). They form three rough layers:
 
 | Package | Purpose | Key modules |
 |---------|---------|-------------|
-| `cli/` | Typer entry point exposing every batch command. | `app.py` — 22 commands: `apply-review`, `backfill`, `backfill-fluor-inputs`, `backfill-masks`, `backfill-public-release`, `db-stats`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`, `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`, `reclassify-product-roles`, `reclassify-scan-classes`, `reclassify-scan-types`, `reclassify-targets`, `refit`, `serve`; and two command groups, `references` and `identify`. |
+| `cli/` | Typer entry point exposing every batch command. | `app.py` — 22 commands: `apply-review`, `backfill`, `backfill-fluor-inputs`, `backfill-masks`, `backfill-public-release`, `db-stats`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`, `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`, `reclassify-product-roles`, `reclassify-scan-classes`, `reclassify-scan-types`, `reclassify-targets`, `refit`, `serve`; and the `references` command group. |
 | `api/` | Notebook-friendly functional API. Stateless wrappers around services and core, intended for Jupyter use. | `spectral.py` — `process_scan_average`, `process_subset_average`, `process_point`, `load_point_spectrum`, `load_reference_spectrum`, `plot_spectrum`, `plot_overlay`. |
-| `web/` | FastAPI app + Svelte frontend. Read-mostly exploration UI. | `app.py` (factory + middlewares), `auth.py` (CF Access JWT validation), `routes/` (12 modules), `frontend/` (Svelte). |
+| `web/` | FastAPI app + Svelte frontend. Read-mostly exploration UI. | `app.py` (factory + middlewares), `auth.py` (CF Access JWT validation), `routes/` (11 route modules), `frontend/` (Svelte). |
 | `services/` | Orchestrators that compose `core` primitives and persist results. | `pipeline.py` (the 7-step run), `handoff.py` (optional atomic delivery manifest), `ingestion.py` / `pds_ingestion.py` / `pixl_ingestion.py`, `spectral.py`, `map_fitting.py`, `spectrogram.py`, `preprocessing.py`. |
 | `core/` | Pure algorithmic primitives. Should not depend on `services/`. | `preprocessing.py`, `baseline.py`, `fitting.py` (Raman cm⁻¹), `fluor_fitting.py` / `fluor_id.py` (fluorescence in nm), `calibration.py`, `r1_extraction.py`, `r123_stitching.py`, `mineral_id.py`, `pds_client.py`, `pds_parsers.py`. |
 | `models/` | Pydantic DTOs + a small type registry. Shared between CLI/API/web/services. | `spectra.py`, `fitting.py`, `instrument.py`, `pds.py`, `pixl.py`, `spectrogram.py`. |
@@ -158,7 +158,6 @@ FastAPI app (uvicorn, 127.0.0.1:8000)
       ├── /api/pds                (pds.py)
       ├── /api/jobs               (jobs.py — generic job queue)
       ├── /api/map                (map.py — Map Mode + WebSocket)
-      ├── /api/identify           (identification.py)
       ├── /api/references         (references.py)
       └── /api/config             (config.py)
 ```

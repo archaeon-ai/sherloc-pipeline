@@ -317,7 +317,6 @@ export interface FeaturesConfig {
 }
 
 export interface ConfigResponse {
-  evidence_policy_digest?: string | null;
   reference_release_id?: string | null;
   schema_version: string;
   config_hash: string;
@@ -367,10 +366,7 @@ export interface ConfigResponse {
   access_mode: 'internal' | 'public';
   tier: 'team' | 'public';
   capabilities: {
-    evidence_desk: boolean;
     references: boolean;
-    identification: boolean;
-    experimental_candidates: boolean;
   };
 }
 
@@ -608,7 +604,6 @@ export interface ProcessingArtifacts {
 }
 
 export interface ExportTrace {
-  region?: string;
   provenance: SpectrumProvenance;
   source: Record<string, unknown>;
   selection: Record<string, unknown>;

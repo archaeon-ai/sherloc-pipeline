@@ -69,9 +69,14 @@ validator runs at container boot (before the exact-target Alembic upgrade and th
 uvicorn launch) and exits 1 on any error.
 
 Validation also reads the optional `SHERLOC_FEATURE_POLICY` as a strict
-JSON object. Unknown fields, wrong types, invalid dependencies, malformed
-JSON, and unknown feature env keys fail startup. Unset means `{}` with
-references and identification off. A `public_release` block opts public
+JSON object. The loader ignores the legacy `evidence_desk`, `identification`,
+and `references.template_ids` fields.
+Every other unknown field fails validation and prevents startup. Wrong types
+for current fields, invalid dependencies, malformed JSON, and unknown feature
+environment keys also prevent startup. Unset means `{}` with
+references off. For native trace downloads, `references.max_concurrency`
+accepts 1–8 simultaneous reads (default 1), and `references.timeout_seconds`
+accepts 1–120 seconds per read (default 10). A `public_release` block opts public
 instances into the strict release-index check: both a non-empty local
 `index_path` and a 64-character lowercase hex `index_sha256` are required.
 Incomplete blocks fail validation; public mode also rejects explicit null.
@@ -149,7 +154,7 @@ mode, used for tests + the `contract-smoke` workflow.
 | `SHERLOC_CORS_ALLOWED_ORIGINS` | unset | CSV of allowed Origins for `/api/*`. Empty string disables CORS; unset leaves it unconfigured. |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Optional uvicorn proxy trust setting; comma-separated peer addresses or CIDR networks. See below for public deployments behind a reverse proxy. |
 | `SHERLOC_FEATURE_PDS_BROWSER` | unset (= ENABLED) | Only literal `disabled` (case-insensitive) opts out |
-| `SHERLOC_FEATURE_POLICY` | unset (= `{}`, strict release-index check OFF) | Strict JSON object; references and identification default off. `public_release` opts public instances into a required local `index_path` + pinned `index_sha256`. Invalid policy or configured index fails startup; see §5. |
+| `SHERLOC_FEATURE_POLICY` | unset (= `{}`, strict release-index check OFF) | Strict JSON object; references default off. `public_release` opts public instances into a required local `index_path` + pinned `index_sha256`. Invalid policy or configured index fails startup; see §5. |
 | `AWS_REGION` | `auto` | Used by boto3 R2 client |
 
 For the public tier behind a reverse proxy, set `FORWARDED_ALLOW_IPS` to only
