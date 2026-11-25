@@ -57,15 +57,6 @@ import pandas as pd
 from rich.console import Console
 from rich.progress import Progress, BarColumn, TextColumn, MofNCompleteColumn, TimeElapsedColumn
 
-from sherloc_pipeline.core.hydration_veto import (
-    HydrationVetoConfig,
-    HydrationVetoResult,
-    despike_for_veto,
-    evaluate_hydration_peak,
-    rebuild_post_veto_fit,
-)
-from sherloc_pipeline.core.preprocessing import DespikeParams, despike_params_from_config
-
 from .base import ServiceResult
 from .errors import FittingError, enrich
 from .paths import resolve_scan_context
@@ -691,16 +682,6 @@ def _attach_cr_mask_wavenumbers(
     return None
 
 
-def _despike_params_from_config(cfg) -> DespikeParams:
-    """Build classical despiker params from a pipeline config for veto use.
-
-    Thin alias over :func:`core.preprocessing.despike_params_from_config`, which
-    is the single source of truth shared by every despiker caller. Kept as a
-    module-local name because the pipeline worker imports it by this name.
-    """
-    return despike_params_from_config(cfg)
-
-
 def _fit_point_hydration(
     point_data: Dict[str, Any],
     *,
@@ -719,8 +700,6 @@ def _fit_point_hydration(
     sol: str,
     target: str,
     scan: str,
-    veto_cfg: Optional[HydrationVetoConfig] = None,
-    despike_params: Optional[DespikeParams] = None,
 ) -> Dict[str, Any]:
     """Fit hydration for a single point (picklable worker)."""
     from sherloc_pipeline.core.fitting import fit_spectrum, save_peak_table
@@ -728,12 +707,8 @@ def _fit_point_hydration(
 
     point_idx = point_data['point_idx']
     y_full = point_data['y']
-    # The veto needs the spectrum the despiker has not cleaned; when the fit
-    # input is the despiked branch, the caller passes the original as y_raw.
-    y_veto = point_data.get('y_raw', y_full)
     out_path = Path(out_dir)
     artifacts: List[Path] = []
-    warnings: List[str] = []
 
     # Artifacts this point owns. Every no-detection exit deletes them so a
     # previous run's CSV/PNG cannot survive into a run that rejected the peak
@@ -807,43 +782,6 @@ def _fit_point_hydration(
             continue
         accepted_peaks.append(p)
 
-    # Cosmic-ray veto (issue #38), feature-flagged and default OFF. It scores
-    # candidates against the non-despiked spectrum; the despiker runs here
-    # only to supply the spike mask.
-    veto_by_peak: Dict[int, HydrationVetoResult] = {}
-    if veto_cfg is not None and veto_cfg.enabled and accepted_peaks:
-        y_desp, spike_mask = despike_for_veto(x, y_veto, despike_params)
-        surviving = []
-        vetoed_ids = set()
-        for p in accepted_peaks:
-            verdict = evaluate_hydration_peak(
-                p.m_cm1, p.fwhm, x, y_veto, y_desp, spike_mask, veto_cfg
-            )
-            veto_by_peak[id(p)] = verdict
-            if verdict.vetoed:
-                vetoed_ids.add(id(p))
-                warnings.append(
-                    f"Point {point_idx}: hydration candidate at {p.m_cm1:.1f} cm-1 "
-                    f"vetoed as cosmic ray ({', '.join(verdict.flags)})"
-                )
-                continue
-            surviving.append(p)
-        accepted_peaks = surviving
-        if vetoed_ids:
-            # The overlay and the exported R2 are model-derived, so pruning the
-            # accepted list is not enough: a mixed authentic-plus-cosmic fit
-            # would still render the vetoed component as part of the accepted
-            # fit. Rebuild the curve from every non-vetoed component of the
-            # original fit — peaks the centre/sharpness filters excluded are
-            # still genuine parts of the fit and stay in the model.
-            oh_result, oh_model = rebuild_post_veto_fit(
-                x,
-                y_for_fit,
-                oh_result,
-                [p for p in oh_result.peaks if id(p) not in vetoed_ids],
-                roi=oh_roi,
-            )
-
     oh_pass = len(accepted_peaks) > 0
 
     # Export if accepted
@@ -859,8 +797,7 @@ def _fit_point_hydration(
         )
         artifacts.append(png_path)
     else:
-        # Nothing survived (e.g. the veto rejected the only candidate). Clear
-        # this point's artifacts so a later persist cannot resurrect them.
+        # Clear artifacts from any earlier fit that accepted this point.
         _remove_stale_artifacts(owned_artifacts)
 
     # Build accepted rows
@@ -877,9 +814,6 @@ def _fit_point_hydration(
             'sharpness_ratio': p.sharpness_ratio,
             'pass_sharpness': p.pass_sharpness,
         }
-        verdict = veto_by_peak.get(id(p))
-        if verdict is not None:
-            row.update(verdict.as_row())
         accepted_rows.append(row)
 
     summary_row = {
@@ -894,7 +828,7 @@ def _fit_point_hydration(
         'summary_row': summary_row,
         'accepted_peaks': accepted_rows,
         'artifacts': artifacts,
-        'warnings': warnings,
+        'warnings': [],
     }
 
 
@@ -1615,10 +1549,8 @@ class FittingService:
         removed. Preprocessing subtracts the instrument background only from scan
         averages. The fit uses a linear endpoint baseline over the hydration window.
         Broad O-H bands are hard to confuse with cosmic rays, so the fit reads
-        the despiked branch (minerals stay non-despiked). Quality gates (R² ≥ 0.25, FWHM ≥ 50 cm⁻¹, F-test
-        significance) still apply, plus the optional
-        ``fitting.hydration_cr_veto`` (issue #38, default OFF), which scores
-        candidates against the non-despiked spectrum.
+        the despiked branch (minerals stay non-despiked). The R² (≥ 0.25),
+        FWHM (≥ 50 cm⁻¹), and F-test significance gates still apply.
 
         Idempotent under a configuration change: per-point artifacts and the
         accepted-peaks summary are removed when a re-run no longer produces
@@ -1780,14 +1712,6 @@ class FittingService:
                 'ftest_alpha': ftest_alpha,
             }
 
-            # Cosmic-ray veto config (issue #38) — default OFF.
-            veto_cfg = HydrationVetoConfig.from_fitting_config(fit_cfg)
-            veto_despike_params = _despike_params_from_config(cfg)
-            if veto_cfg.enabled:
-                self.console.print(
-                    f"[yellow]Hydration cosmic-ray veto ENABLED (action={veto_cfg.action}).[/yellow]"
-                )
-
             oh_mask = (x >= oh_roi[0]) & (x <= oh_roi[1])
             plot_mask_oh = (x >= oh_plot[0]) & (x <= oh_plot[1])
             n_edge = 5  # points for endpoint averaging
@@ -1809,18 +1733,6 @@ class FittingService:
                 {'point_idx': int(col), 'y': df[col].to_numpy(float)}
                 for col in point_cols
             ]
-            if raw_df is not None:
-                unpaired = []
-                for item, col in zip(point_inputs, point_cols):
-                    if col in raw_df.columns:
-                        item['y_raw'] = raw_df[col].to_numpy(float)
-                    else:
-                        unpaired.append(col)
-                if unpaired and veto_cfg.enabled:
-                    input_warnings.append(
-                        f"{level_csv.name} lacks point(s) {', '.join(unpaired)}; the "
-                        "cosmic-ray veto scored the despiked spectrum for them."
-                    )
 
             # --- Phase 2: Parallel fitting + plotting + CSV writes ---
             from sherloc_pipeline.core.utils import resolve_parallel_workers
@@ -1835,7 +1747,6 @@ class FittingService:
                 min_snr=min_snr, r2_min=r2_min, center_lo=center_lo,
                 center_hi=center_hi, out_dir=str(multifits_dir),
                 sol=sol, target=target, scan=scan,
-                veto_cfg=veto_cfg, despike_params=veto_despike_params,
             )
 
             results = self._run_parallel(
@@ -3005,12 +2916,8 @@ class FittingService:
                     )
                 marker_accepted = int(marker["accepted_peaks"])
                 if not peak_csvs:
-                    # A fit that ran and accepted nothing is a legitimate zero
-                    # result (e.g. the hydration cosmic-ray veto rejected every
-                    # candidate). It must clear the domain's existing rows rather
-                    # than abort, or the previous run's peaks stay in the database
-                    # forever. The marker distinguishes that from a completed run
-                    # whose accepted peaks' CSVs have since gone missing.
+                    # A completed fit with zero accepted peaks clears the domain's
+                    # earlier rows. A positive count indicates missing peak CSVs.
                     if marker_accepted != 0:
                         raise FittingError(
                             f"Fit directory {fit_dir} is inconsistent for domain '{domain}': "

@@ -87,7 +87,7 @@ def test_flags(text, rule):
         "--color-surface: #ffffff;",
         "a contract surface: a misconfigured container",
         "Step 1/7: Preprocessing",
-        "Round 1: veto off, the CR is accepted",
+        "Round 1: the fit accepted one peak",
         "file generated without error",
         "use $HOME/data or ~/data, or /home/<user>/data",
         "see https://pds-geosciences.wustl.edu/missions/mars2020/sherloc.htm",

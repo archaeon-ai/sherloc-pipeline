@@ -68,12 +68,8 @@ def _despike_config_mapping(obj) -> Dict[str, Any]:
 def despike_params_from_config(config) -> DespikeParams:
     """Build a complete :class:`DespikeParams` from a pipeline config.
 
-    Single source of truth for turning ``preprocessing.despike`` into despiker
-    parameters. Every caller that runs the classical despiker — the CLI
-    pipeline, the hydration cosmic-ray veto (pipeline, map-mode, web point fit),
-    the evidence sweep, and the web modz preview — resolves its parameters here,
-    so a supported ``preprocessing.despike`` override cannot produce different
-    spike masks (and therefore different veto verdicts) on different paths.
+    The CLI pipeline, map fits, and web modz preview share these settings
+    so the same spectrum and configuration produce the same spike mask.
 
     Every field is resolved, including the ones an incomplete builder used to
     drop (``run_length_max``, the laser/sulfate guard windows). Resolution is

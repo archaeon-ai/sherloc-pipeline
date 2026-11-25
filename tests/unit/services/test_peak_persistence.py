@@ -491,7 +491,7 @@ def test_persist_spectrum_type_fallback(engine, mock_csvs):
 
 
 # ---------------------------------------------------------------------------
-# Zero-result persistence (issue #38): a fit that accepted nothing must clear
+# Zero-result persistence: a fit that accepted nothing must clear
 # the domain's existing rows, not leave the previous run's peaks in place.
 # ---------------------------------------------------------------------------
 
@@ -523,9 +523,8 @@ def _hydration_marker_path(results_base):
 def _hydration_results_dir(tmp_path, with_peaks: bool):
     """A hydration_fit directory as the fitter leaves it.
 
-    ``with_peaks=True`` is a run that accepted a peak; ``with_peaks=False`` is
-    the same scan re-fitted with the cosmic-ray veto on, which writes the
-    scan-level summary and the completed-run marker but no per-point CSV.
+    A run with zero accepted peaks writes a summary and a completed-run
+    marker. A run with an accepted peak also writes a per-point CSV.
     """
     results_base = tmp_path / "results"
     hyd_dir = results_base / "hydration_fit"
@@ -561,7 +560,7 @@ def _hydration_results_dir(tmp_path, with_peaks: bool):
 
 
 def test_persist_hydration_zero_result_clears_existing_rows(populated_db, tmp_path):
-    """Veto-off then veto-on into the same results dir must empty the table."""
+    """A subsequent fit with zero peaks clears the previous fit from the table."""
     engine, _ = populated_db
     service = _make_service(engine)
 
@@ -583,7 +582,7 @@ def test_persist_hydration_zero_result_clears_existing_rows(populated_db, tmp_pa
         remaining = session.query(FittedPeakORM).filter_by(
             fit_modality="hydration"
         ).all()
-    assert remaining == [], "the vetoed peak must not survive the re-run"
+    assert remaining == []
 
 
 def test_persist_hydration_zero_result_leaves_other_domains_alone(

@@ -31,12 +31,6 @@ from sherloc_pipeline.core.calibration import (
     get_region_wavelength_mask,
 )
 from sherloc_pipeline.core.fitting import FILTER_FWHM_MIN_CM1_DEFAULT, fit_spectrum
-from sherloc_pipeline.core.hydration_veto import (
-    HydrationVetoConfig,
-    despike_for_veto,
-    evaluate_hydration_peak,
-    rebuild_post_veto_fit,
-)
 from sherloc_pipeline.core.mineral_id import (
     MineralRule,
     assign_min_id,
@@ -304,7 +298,6 @@ def _fit_raman_domain(
     baseline_params: BaselineParams | None = None,
     baseline_weights: np.ndarray | None = None,
     preprocessed: bool = False,
-    raw_intensity_r1: np.ndarray | None = None,
 ) -> DomainResult:
     """Fit a single Raman domain (minerals, organics, or hydration) for one point.
 
@@ -320,17 +313,11 @@ def _fit_raman_domain(
             domain needs (despiked unless in ``_NON_DESPIKED_DOMAINS``) and
             both steps are skipped here. Callers fitting several
             domains for the same point should preprocess once.
-        raw_intensity_r1: The pre-despike intensity for this point. Only used
-            by the hydration cosmic-ray veto (issue #38), which needs the
-            spectrum the despiker has *not* already cleaned in order to
-            measure a candidate's spike contribution. When omitted the veto
-            falls back to ``intensity_r1``.
 
     Returns:
         DomainResult with fitted peaks or "missing"/"below_threshold" status.
     """
     fitting_cfg = config.get("fitting", {})
-    despike_params = despike_params_from_config(config)
 
     x = wavenumber_r1.astype(np.float64)
     if preprocessed:
@@ -338,7 +325,7 @@ def _fit_raman_domain(
     else:
         y = _preprocess_r1_intensity(
             wavenumber_r1, intensity_r1, baseline_params, baseline_weights,
-            despike_params=despike_params,
+            despike_params=despike_params_from_config(config),
             despike=domain not in _NON_DESPIKED_DOMAINS,
         )
 
@@ -440,43 +427,11 @@ def _fit_raman_domain(
     if not fit_result.peaks:
         return DomainResult(status="below_threshold")
 
-    # Cosmic-ray veto (issue #38) — hydration only, feature-flagged, default OFF.
-    veto_cfg = HydrationVetoConfig.from_fitting_config(fitting_cfg)
-    veto_active = domain == "hydration" and veto_cfg.enabled
-    if veto_active:
-        y_veto_raw = (
-            raw_intensity_r1.astype(np.float64)
-            if raw_intensity_r1 is not None
-            else intensity_r1.astype(np.float64)
-        )
-        y_veto_desp, veto_mask = despike_for_veto(x, y_veto_raw, despike_params)
-
-    # Pass 1: score the candidates. R2 is reported on every peak row, so a veto
-    # has to be resolved before any row is built — otherwise the surviving peaks
-    # would carry the goodness-of-fit of a model that still contained the
-    # rejected cosmic ray.
-    verdicts: dict = {}
-    if veto_active:
-        survivors = []
-        for p in fit_result.peaks:
-            verdict = evaluate_hydration_peak(
-                p.m_cm1, p.fwhm, x, y_veto_raw, y_veto_desp, veto_mask, veto_cfg
-            )
-            verdicts[id(p)] = verdict
-            if not verdict.vetoed:
-                survivors.append(p)
-        if len(survivors) != len(fit_result.peaks):
-            fit_result, _ = rebuild_post_veto_fit(
-                x, y, fit_result, survivors, roi=roi
-            )
-
     # Convert peaks to dicts with assignments
     peaks = []
     has_detection = False
     for p in fit_result.peaks:
         if not (p.pass_snr and p.pass_fwhm):
-            continue
-        if veto_active and verdicts[id(p)].vetoed:
             continue
         assignment = assign_fn(p.m_cm1)
         peak_dict = {
@@ -488,8 +443,6 @@ def _fit_raman_domain(
             "area": round(p.area, 2),
             "r2": round(fit_result.r2, 4),
         }
-        if veto_active:
-            peak_dict.update(verdicts[id(p)].as_row())
         peaks.append(peak_dict)
         if p.snr >= _SNR_THRESHOLD:
             has_detection = True
@@ -834,7 +787,6 @@ class MapFitService:
         # Baseline correction: asPLS params + weight vector
         bl_params: BaselineParams | None = None
         bl_weights: np.ndarray | None = None
-        # Same despiker parameters the CLI pipeline and the veto resolve.
         despike_params = despike_params_from_config(self.config)
         if raman_domains:
             pre_cfg = self.config.get("preprocessing", {})
@@ -936,7 +888,6 @@ class MapFitService:
                             baseline_params=bl_params,
                             baseline_weights=bl_weights,
                             preprocessed=True,
-                            raw_intensity_r1=intensity_r1,
                         )
                     except Exception as exc:
                         logger.debug(

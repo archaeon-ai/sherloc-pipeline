@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- The hydration cosmic-ray veto, off by default, has been removed. The shipped
+  configuration produces the same fits and has a new configuration hash.
+  The fitter ignores `fitting.hydration_cr_veto` in older configurations.
+  The fit response and hydration result rows no longer include `cr_vetoed`, `cr_veto_flags`,
+  `cr_mask_hit`, `cr_amplitude_drop_ratio`, or `fwhm_floor_pinned`.
+  The report script `scripts/hydration_cr_veto_report.py` has also been removed.
+
 ### Fixed
 
 - **The downgrade of `4f638701cf7c` keeps both `fit_modality` triggers.**
