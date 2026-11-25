@@ -9,6 +9,7 @@
   import ClassificationEditor from './ClassificationEditor.svelte';
   import MapSpectrumPanel from './MapSpectrumPanel.svelte';
   import { MapWebSocket } from '../../lib/mapWebSocket';
+  import { classLabel, classUnit, defaultCenters, matchRule } from '../../lib/classRules';
   import { DOMAIN_CLASSES } from '../../lib/mapClasses';
   import {
     MapProgressTracker,
@@ -121,8 +122,7 @@
   let unsubDisplayMode = () => {};
   onMount(() => {
     // Svelte subscriptions emit their current value synchronously. Defer this
-    // one until the component is fully initialized because a retained class
-    // selection calls classLabel(), which reads constants declared below.
+    // one until the component is fully initialized for a retained class selection.
     unsubDisplayMode = mapDisplayMode.subscribe((mode) => {
       // Deferred DB layer loading (only when layerSource is 'init')
       if (availableLayers && !layerDataLoaded && layerSource === 'init' && mode.type !== 'all_domains') {
@@ -132,7 +132,8 @@
 
       // Drive spectrum viewer panel
       if (mode.type === 'class' && 'class_id' in mode) {
-        const label = classLabel(mode.class_id);
+        const label = layers.find((l) => l.domain === mode.domain && l.class_id === mode.class_id)?.label
+          ?? classLabel(mode.class_id);
         spectrumClassInfo = { domain: mode.domain, class_id: mode.class_id, label };
         spectrumMode = 'class_average';
         spectrumPointIndex = null;
@@ -295,47 +296,20 @@
     unsubDisplayMode();
   });
 
-  // Center values for known class_ids (used for display labels).
-  // Raman in cm-1, fluorescence in nm.
-  const CLASS_CENTERS: Record<string, { center: number; unit: string }> = {
-    olivine: { center: 836, unit: 'cm\u207b\u00b9' },
-    phosphate: { center: 962, unit: 'cm\u207b\u00b9' },
-    pyroxene: { center: 998, unit: 'cm\u207b\u00b9' },
-    sulf1_v1: { center: 1016, unit: 'cm\u207b\u00b9' },
-    sulf2_v1: { center: 1026, unit: 'cm\u207b\u00b9' },
-    '1050': { center: 1050, unit: 'cm\u207b\u00b9' },
-    'lo-carb': { center: 1067, unit: 'cm\u207b\u00b9' },
-    'hi-carb': { center: 1088, unit: 'cm\u207b\u00b9' },
-    sulf_v3: { center: 1132, unit: 'cm\u207b\u00b9' },
-    D_band: { center: 1350, unit: 'cm\u207b\u00b9' },
-    G_band: { center: 1598, unit: 'cm\u207b\u00b9' },
-    OH_stretch: { center: 3434, unit: 'cm\u207b\u00b9' },
-    group3: { center: 285, unit: 'nm' },
-    group1a: { center: 304, unit: 'nm' },
-    group1b: { center: 326, unit: 'nm' },
-    g1_doublet: { center: 315, unit: 'nm' },
-    group2: { center: 341, unit: 'nm' },
-    unidentified: { center: 0, unit: '' },
-  };
-
   // Domain sort order: minerals, organics, hydration, fluorescence last
   const DOMAIN_ORDER: Record<string, number> = {
     minerals: 0, organics: 1, hydration: 2, fluorescence: 3,
   };
 
-  function classLabel(cls: string): string {
-    const info = CLASS_CENTERS[cls];
-    if (info && info.center > 0) {
-      return `${cls} ~${info.center} ${info.unit}`;
-    }
-    return cls;
+  function layerCenter(domain: string, cls: string) {
+    const rule = activeProfile?.rules.find((r) => r.domain === domain && r.class_id === cls);
+    return rule?.center ?? defaultCenters.get(cls)?.center;
   }
 
   function buildLayersFromAvailable(
     available: Record<string, Record<string, { n_detections: number; classes: string[] }>>,
   ): void {
     // Build layers from DB-available classes only.
-    // Each class gets a formatted label like "sulf1_v1 ~1016 cm⁻¹".
     const newLayers: ScalarLayer[] = [];
     let idx = 0;
 
@@ -355,8 +329,8 @@
       const da = DOMAIN_ORDER[a.domain] ?? 99;
       const db = DOMAIN_ORDER[b.domain] ?? 99;
       if (da !== db) return da - db;
-      const ca = CLASS_CENTERS[a.cls]?.center ?? 0;
-      const cb = CLASS_CENTERS[b.cls]?.center ?? 0;
+      const ca = layerCenter(a.domain, a.cls) ?? 0;
+      const cb = layerCenter(b.domain, b.cls) ?? 0;
       return ca - cb;
     });
 
@@ -364,7 +338,7 @@
       newLayers.push({
         id: `${entry.domain}:${entry.cls}:snr:${idx}`,
         point_set_id: scanId,
-        label: classLabel(entry.cls),
+        label: classLabel(entry.cls, layerCenter(entry.domain, entry.cls)),
         domain: entry.domain,
         class_id: entry.cls,
         value_type: 'snr',
@@ -525,8 +499,8 @@
       const da = DOMAIN_ORDER[a.domain] ?? 99;
       const db = DOMAIN_ORDER[b.domain] ?? 99;
       if (da !== db) return da - db;
-      const ca = CLASS_CENTERS[a.cls]?.center ?? 0;
-      const cb = CLASS_CENTERS[b.cls]?.center ?? 0;
+      const ca = layerCenter(a.domain, a.cls) ?? 0;
+      const cb = layerCenter(b.domain, b.cls) ?? 0;
       return ca - cb;
     });
 
@@ -534,7 +508,7 @@
       newLayers.push({
         id: `${entry.domain}:${entry.cls}:snr:${idx}`,
         point_set_id: scanId,
-        label: classLabel(entry.cls),
+        label: classLabel(entry.cls, layerCenter(entry.domain, entry.cls)),
         domain: entry.domain,
         class_id: entry.cls,
         value_type: 'snr',
@@ -583,9 +557,7 @@
       const domainRules = rules.filter((r) => r.domain === domain);
       const newPeaks = domainResult.peaks.map((peak) => {
         const center = peak.center_cm1 ?? peak.center_nm ?? 0;
-        const matchingRule = domainRules.find(
-          (r) => !r.disabled && Math.abs(center - r.center) <= r.range,
-        );
+        const matchingRule = matchRule(domain, center, domainRules);
         return { ...peak, assignment: matchingRule ? matchingRule.class_id : 'unidentified' };
       });
 
@@ -730,23 +702,20 @@
     let idx = 0;
 
     // Group by domain, sort
-    const entries = enabledRules.map((r) => ({ domain: r.domain, cls: r.class_id, label: r.label }));
-    entries.sort((a, b) => {
+    const entries = [...enabledRules].sort((a, b) => {
       const da = DOMAIN_ORDER[a.domain] ?? 99;
       const db = DOMAIN_ORDER[b.domain] ?? 99;
       if (da !== db) return da - db;
-      const ca = CLASS_CENTERS[a.cls]?.center ?? 0;
-      const cb = CLASS_CENTERS[b.cls]?.center ?? 0;
-      return ca - cb;
+      return a.center - b.center;
     });
 
-    for (const entry of entries) {
+    for (const rule of entries) {
       newLayers.push({
-        id: `${entry.domain}:${entry.cls}:snr:${idx}`,
+        id: `${rule.domain}:${rule.class_id}:snr:${idx}`,
         point_set_id: scanId,
-        label: classLabel(entry.cls),
-        domain: entry.domain,
-        class_id: entry.cls,
+        label: classLabel(rule.class_id, rule.center, classUnit(rule.domain)),
+        domain: rule.domain,
+        class_id: rule.class_id,
         value_type: 'snr',
         values: Array.from({ length: nPoints }, makeEmptyValue),
         colormap: { type: 'sequential', name: 'viridis', range: [0, 30] },

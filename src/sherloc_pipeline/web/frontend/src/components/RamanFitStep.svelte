@@ -29,8 +29,6 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
   export let inputGeneration: number = 0;
   export let baselineParams: BaselineParams = { method: 'aspls', lam: 1e6, max_iter: 10 };
   export let collapsed: boolean = true;
-  // Scan target type for the fit-quality classifier.
-  export let targetType: string | null = null;
 
   const dispatch = createEventDispatcher<{
     apply: {
@@ -123,7 +121,6 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
       const result = await postFit({
         wavenumber: xData,
         intensity,
-        target_type: targetType ?? undefined,
         params: {
           // Workbench is sequential: BaselineStep is the canonical baseline stage.
           // The fit step receives intensity that has already been baseline-corrected

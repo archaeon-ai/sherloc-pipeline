@@ -23,7 +23,7 @@
 // presenting a possibly short map as the whole measurement.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, screen, waitFor } from '@testing-library/svelte';
+import { render, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import MapMode from './MapMode.svelte';
 import * as api from '../../lib/api';
@@ -258,6 +258,32 @@ describe('MapMode — persisted display mode initialization (issue #37)', () => 
     await waitFor(() =>
       expect(getMapData).toHaveBeenCalledWith(SCAN_ID, 'minerals', 'snr', 'olivine'),
     );
+  });
+});
+
+describe('applying classification windows', () => {
+  async function openEditorWithPeak(center: number) {
+    const handlers = await startFit();
+    const frame = pointFrame(0, 12, 1);
+    frame.results.minerals.peaks[0].center_cm1 = center;
+    handlers.onPointFitted(frame);
+    await fireEvent.click(screen.getByText('Classification'));
+  }
+
+  it('puts a 980 cm⁻¹ peak on the pyroxene layer', async () => {
+    await openEditorWithPeak(980);
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    const pyroxene = get(mapLayers).find((layer) => layer.class_id === 'pyroxene');
+    expect(pyroxene?.values[0].value).toBe(12);
+  });
+
+  it('labels and sorts layers by their edited centers', async () => {
+    await openEditorWithPeak(1088);
+    const row = screen.getByRole('row', { name: /olivine/ });
+    await fireEvent.input(within(row).getAllByRole('spinbutton')[0], { target: { value: '1200' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    const minerals = get(mapLayers).filter((layer) => layer.domain === 'minerals' && layer.class_id);
+    expect(minerals.at(-1)?.label).toBe('olivine ~1200 cm⁻¹');
   });
 });
 

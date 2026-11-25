@@ -520,13 +520,7 @@ async def test_fit_routes_fluorescence_to_fluor_fitter(client):
 
 
 # ---------------------------------------------------------------------------
-# Quality classifier wiring (v4.1.12 launch blocker)
-#
-# These exercise the integration between /api/process/fit and
-# services.quality.classify_fit_quality. Per-rule semantics live in
-# tests/unit/services/test_quality_classifier.py; here we lock in that the
-# route actually populates `quality` and that the two operator-supplied
-# reproducer scenarios never render as "pass".
+# Workbench fit quality
 # ---------------------------------------------------------------------------
 
 
@@ -558,24 +552,46 @@ async def test_fit_populates_quality_field(client):
 
 
 @pytest.mark.asyncio
-async def test_fit_calibration_target_caps_quality_at_review(client):
-    """Reproducer scenario A: external_calibration scan (target_type=cal_target).
-    Even a high-R² fit on a real Gaussian peak must NOT render as "pass" because
-    a calibration target has no Mars-target ground truth to validate against.
-    """
-    wn, intensity = _make_test_spectrum()
-    resp = await client.post(
-        "/api/process/fit",
-        json={"wavenumber": wn, "intensity": intensity, "target_type": "cal_target"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["peaks"]
-    for peak in data["peaks"]:
-        assert peak["quality"] != "pass", (
-            "calibration scan must never auto-pass; got "
-            f"{peak['quality']} for peak {peak}"
-        )
+@pytest.mark.parametrize("target_type", ["cal_target", "engineering"])
+async def test_fit_good_organic_band_passes_for_any_scan(synthetic_fit_client, target_type):
+    client, _ = synthetic_fit_client
+    x = np.linspace(1000, 1750, 301)
+    y = 100 * np.exp(-4 * np.log(2) * ((x - 1350) / 150) ** 2)
+    response = await client.post("/api/process/fit", json={
+        "wavenumber": x.tolist(), "intensity": y.tolist(), "target_type": target_type,
+        "params": {"fitting": {
+            "domain": "organics", "wavenumber_range": [1000, 1750],
+            "fwhm_bounds": [40, 200], "max_peaks": 1,
+        }},
+    })
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["r_squared"] >= 0.8
+    peak, = result["peaks"]
+    assert peak["mineral_assignment"] == "D_band"
+    assert peak["fwhm_cm1"] == pytest.approx(150, abs=0.01)
+    assert peak["quality"] == "pass"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("upper", "expected"), [(55, "review"), (65, "pass")])
+async def test_fit_quality_uses_requested_width_bounds(synthetic_fit_client, monkeypatch, upper, expected):
+    from sherloc_pipeline.web.routes import processing
+
+    client, _ = synthetic_fit_client
+    peak = SimpleNamespace(m_cm1=1350, fwhm=60, a=20, area=500, snr=8)
+
+    def fit(x, y, cfg):
+        assert (cfg["fit_fwhm_min_initial_cm1"], cfg["fwhm_max_cm1"]) == (35, upper)
+        return SimpleNamespace(peaks=[peak], r2=0.95), np.zeros_like(x)
+
+    monkeypatch.setattr(processing, "fit_spectrum", fit)
+    response = await client.post("/api/process/fit", json={
+        "wavenumber": [1300, 1350, 1400], "intensity": [2, 20, 2],
+        "params": {"fitting": {"domain": "organics", "fwhm_bounds": [35, upper]}},
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["peaks"][0]["quality"] == expected
 
 
 @pytest.mark.asyncio

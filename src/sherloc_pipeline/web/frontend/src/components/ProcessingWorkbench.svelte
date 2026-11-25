@@ -754,7 +754,6 @@
                 scanPpp={scan.shots_per_point ?? 900}
                 isAverageMode={selectionMode === 'average'}
                 isSinglePoint={selectionMode === 'point'}
-                targetType={scan.target_type ?? null}
                 despikeMethod={despikeMethod}
                 {mlMaskCount}
                 region={selectedRegion}

@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pipeline's own dark-frame test and are withdrawn. The `/api/spectra/badpix` response
   now uses schema version `2.0.0` (previously `1.0.0`). Items are `{position, channel, table}`,
   with `tier` and `source` removed. The CSV export's `badpix_source` line now carries the citation.
+- The Workbench quality badge and the `quality` column in `peaks.csv` now
+  compare each Raman peak's FWHM with the bounds used for that fit.
+  Calibration and engineering scans can receive `pass` on the same criteria
+  as other scans.
+- The map classification editor now opens with the fitter's class windows
+  for minerals, organics, hydration, and fluorescence. It assigns shared
+  endpoints as the fitter does and labels and orders layers by their applied
+  window centers.
 - **The batch hydration fit carries no slit-width preference** (`slit_pref_weight` 0, as the map fit does), so its centers and widths do not depend on the scale of the spectrum.
 - **The web point fit for hydration carries no slit-width preference** (`slit_pref_weight` 0 on `/api/process/fit` with domain `hydration`), as the batch and map hydration fits do.
 - **The web point fit for organics carries no slit-width preference** (`slit_pref_weight` 0 on `/api/process/fit` with domain `organics`), as the batch and map organics fits do.

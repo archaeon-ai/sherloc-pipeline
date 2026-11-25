@@ -241,7 +241,7 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
                         r_squared=fluor_result.r2,
                         fwhm=fp.fwhm_nm,
                         modality="fluorescence",
-                        target_type=body.target_type,
+                        fwhm_bounds=None,
                     ),
                 )
             )
@@ -365,7 +365,7 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
                         r_squared=fit_result.r2,
                         fwhm=p.fwhm,
                         modality=domain,
-                        target_type=body.target_type,
+                        fwhm_bounds=(fit_cfg["fit_fwhm_min_initial_cm1"], fit_cfg["fwhm_max_cm1"]),
                         sharpness_ratio=sharpness_ratio,
                         sharpness_max=sharpness_max,
                     ),
