@@ -391,7 +391,7 @@ src/sherloc_pipeline/
 │   ├── preprocessing.py        # Signal processing algorithms
 │   ├── fitting.py              # Raman spectral decomposition (multi-Gaussian)
 │   ├── fluor_fitting.py        # Fluorescence fitting (differential evolution, saturation handling)
-│   ├── fluor_id.py             # Fluorescence group assignment and co-occurrence scoring
+│   ├── fluor_id.py             # Fluorescence group assignment by wavelength
 │   ├── spatial.py              # Overlay composition
 │   ├── accepted_assembler.py   # Review table aggregation
 │   └── mineral_id.py           # Mineral/organic/hydration band classification
