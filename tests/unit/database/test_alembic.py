@@ -8,7 +8,9 @@ Tests cover:
 """
 
 import os
+import sqlite3
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -478,3 +480,56 @@ class TestSelectionMarksColumns:
         assert not {"kept_by", "aicc_gain", "step_p"} & cols
         assert con.execute("SELECT id FROM fitted_peaks").fetchall() == [("p1",)]
         con.close()
+
+    def test_downgrade_preserves_fit_modality_guards(self, alembic_config, monkeypatch):
+        def schema(path):
+            with closing(sqlite3.connect(path)) as con:
+                objects = con.execute(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                    "WHERE tbl_name = 'fitted_peaks' ORDER BY type, name"
+                ).fetchall()
+                columns = con.execute("PRAGMA table_info(fitted_peaks)").fetchall()
+            # Batch recreation can wrap the table's column declarations onto new lines.
+            return [
+                (kind, name, table, " ".join(sql.split()) if kind == "table" else sql)
+                for kind, name, table, sql in objects
+            ], columns
+
+        def triggers(objects):
+            return {name: sql for kind, name, table, sql in objects if kind == "trigger"}
+
+        config, db_path = alembic_config
+        command.upgrade(config, "head")
+        head_objects, head_columns = schema(db_path)
+        head_triggers = triggers(head_objects)
+        assert {"check_fit_modality_insert", "check_fit_modality_update"} <= head_triggers.keys()
+
+        insert = (
+            "INSERT INTO fitted_peaks (id, spectrum_id, peak_type, amplitude, fit_modality, created_at) "
+            "VALUES (?, 's1', 'gaussian', 1.0, ?, '2026-01-01')"
+        )
+        with closing(sqlite3.connect(db_path)) as con:
+            con.execute(insert, ("p1", "minerals"))
+            con.commit()
+
+        predecessor = "4f638701cf7c"
+        command.downgrade(config, predecessor)
+        objects, columns = schema(db_path)
+        assert triggers(objects) == head_triggers
+        assert {"kept_by", "aicc_gain", "step_p"}.isdisjoint(col[1] for col in columns)
+
+        reference = db_path.with_name("predecessor.db")
+        with monkeypatch.context() as patch:
+            patch.setenv("PHASE_DATABASE_PATH", str(reference))
+            command.upgrade(config, predecessor)
+        assert (objects, columns) == schema(reference)
+
+        with closing(sqlite3.connect(db_path)) as con:
+            assert con.execute("SELECT id, fit_modality FROM fitted_peaks").fetchall() == [("p1", "minerals")]
+            with pytest.raises(sqlite3.IntegrityError, match="invalid fit_modality value"):
+                con.execute(insert, ("p2", "invalid"))
+            with pytest.raises(sqlite3.IntegrityError, match="invalid fit_modality value"):
+                con.execute("UPDATE fitted_peaks SET fit_modality = 'invalid' WHERE id = 'p1'")
+
+        command.upgrade(config, "head")
+        assert schema(db_path) == (head_objects, head_columns)

@@ -128,6 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used them. Commands, web routes, fits, and stored data are unchanged.
 
 ### Fixed
+- **The downgrade of `a4d795f0a25e` keeps both `fit_modality` triggers.**
 - **One PDS cache directory.** `pds-download` and `pds-ingest` read
   `pds.cache_dir` from the config (override `SHERLOC_PDS_CACHE_DIR`) when no
   `--output-dir` / `--pds-dir` is given, the same directory the web app and
