@@ -23,7 +23,6 @@ from sherloc_pipeline.database.models import Base
 from sherloc_pipeline.database.reference_models import ReferenceReleaseORM, ReferenceTemplateORM, ReferenceTraceORM
 from sherloc_pipeline.runtime import worker as runtime_worker
 from sherloc_pipeline.runtime.worker import ExecutionFailed, WorkRejected, run_process
-from sherloc_pipeline.web.reference_storage import ResponseCache
 from sherloc_pipeline.services.reference_import import digest, import_release
 from sherloc_pipeline.services.reference_store import LocalReferenceStore
 from sherloc_pipeline.web.app import create_app
@@ -72,7 +71,7 @@ def reference_api(tmp_path, snapshot, monkeypatch, request):
         unknown = session.query(ReferenceTraceORM).filter_by(rights_known=False).one().trace_revision_id
         values = {'references': {'mode': 'all_approved', 'release_id': release.release_id,
                   'serving_policy_version': release.serving_policy_sha256, 'subset_id': digest([template.template_id]),
-                  'max_concurrency': 2, 'timeout_seconds': 5}}
+                  **options.get('reference_limits', {})}}
     monkeypatch.setenv('PHASE_TIER', 'team')
     monkeypatch.setenv('SHERLOC_AUTH_MODE', 'dev')
     monkeypatch.setenv('SHERLOC_FEATURE_POLICY', json.dumps(values))
@@ -90,6 +89,15 @@ def reference_api(tmp_path, snapshot, monkeypatch, request):
     engine.dispose()
 
 
+def test_reference_list_omits_binding(reference_api):
+    response = reference_api.client.get('/api/references', params={'release_id': reference_api.imported.release_id})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['items']
+    assert 'binding' not in payload
+
+
+@pytest.mark.parametrize('reference_api', [{'reference_limits': {'max_concurrency': 2}}], indirect=True)
 def test_native_reference_provenance(reference_api):
     s = reference_api
     listed = s.client.get('/api/references', params={'release_id': s.imported.release_id})
@@ -238,6 +246,8 @@ def test_deadline_kills_and_reaps_worker(tmp_path, monkeypatch):
 
 
 def test_cache_is_bounded_detached_and_scoped():
+    from sherloc_pipeline.web.reference_storage import ResponseCache
+
     cache = ResponseCache(capacity=2)
     one = ('team', 'synthetic-policy-1', 'release', 'source', 'method')
     cache.put(one, {'x': [1]})
@@ -291,6 +301,7 @@ class SyntheticFailedNativeStore:
 
 
 @pytest.mark.parametrize('failure', ['crash', 'deadline', 'rejected', 'missing'])
+@pytest.mark.parametrize('reference_api', [{'reference_limits': {'timeout_seconds': 5}}], indirect=True)
 def test_native_reference_worker_errors_are_classified_and_reaped(reference_api, tmp_path, failure):
     s = reference_api
     marker = tmp_path / 'synthetic-native-pid.txt'

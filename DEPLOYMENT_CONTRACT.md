@@ -69,8 +69,11 @@ validator runs at container boot (before the exact-target Alembic upgrade and th
 uvicorn launch) and exits 1 on any error.
 
 Validation also reads the optional `SHERLOC_FEATURE_POLICY` as a strict
-JSON object. Unknown fields, wrong types, invalid dependencies, malformed
-JSON, and unknown feature env keys fail startup. Unset means `{}` with
+JSON object. The loader ignores the legacy `evidence_desk`, `identification`,
+and `references.template_ids` fields.
+Every other unknown field fails validation and prevents startup. Wrong types
+for current fields, invalid dependencies, malformed JSON, and unknown feature
+environment keys also prevent startup. Unset means `{}` with
 references off. For native trace downloads, `references.max_concurrency`
 accepts 1–8 simultaneous reads (default 1), and `references.timeout_seconds`
 accepts 1–120 seconds per read (default 10). A `public_release` block opts public

@@ -12,12 +12,14 @@ from unittest.mock import Mock
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from sherloc_pipeline.database.models import Base, ScanORM, SolORM
 from sherloc_pipeline.services.public_release import PublicReleaseIndex, backfill_public_release
+from sherloc_pipeline.services.reference_import import digest
 from sherloc_pipeline.web import auth, config_check
 from sherloc_pipeline.web.app import create_app
 from sherloc_pipeline.web.data_access import DataAccessService
@@ -576,6 +578,42 @@ async def test_retired_workbench_policy(engine, monkeypatch, mode):
     finally:
         app.state.job_queue.shutdown()
         app.state.map_executor.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_complete_legacy_policy_preserves_references(engine, monkeypatch):
+    template_ids = ["a" * 64]
+    references = {**approved_policy()["references"], "subset_id": digest(template_ids)}
+    policy = {
+        "evidence_desk": True,
+        "identification": {
+            "enabled": True, "experimental_candidates": True,
+            "allowed_method_releases": [{
+                "method_release_id": DIGEST, "reference_release_id": references["release_id"],
+                "reference_subset_id": references["subset_id"],
+            }],
+        },
+        "references": {**references, "template_ids": template_ids},
+    }
+    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
+    app = create_app(engine=engine, config=fake_config(), access_mode="internal")
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://synthetic") as client:
+            response = await client.get("/api/config")
+        assert response.status_code == 200
+        assert response.json()["capabilities"] == {"references": True}
+        assert app.state.feature_policy.references.model_dump(exclude_unset=True) == references
+    finally:
+        app.state.job_queue.shutdown()
+        app.state.map_executor.shutdown(wait=False)
+
+    policy["references"]["template_names"] = []
+    monkeypatch.setenv("SHERLOC_FEATURE_POLICY", json.dumps(policy))
+    with pytest.raises(ValidationError) as exc:
+        load_feature_policy("internal")
+    assert [(e["loc"], e["type"]) for e in exc.value.errors()] == [
+        (("references", "template_names"), "extra_forbidden"),
+    ]
 
 
 @pytest.mark.asyncio
