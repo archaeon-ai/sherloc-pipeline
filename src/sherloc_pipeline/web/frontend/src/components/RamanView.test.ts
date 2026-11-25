@@ -360,15 +360,13 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
     expect(trace?.x).toEqual(catalog.map(item => item.channel));
   });
 
-  it('default-OFF: no anomalous pixel trace until the toggle is enabled', async () => {
+  it('omits the anomalous pixel trace by default', async () => {
     render(RamanView, {
       props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels },
     });
     await flush();
     // showAnomalousPixels defaults to false → overlay not rendered.
     expect(anomalousPixelTrace()).toBeUndefined();
-    // The dedicated toggle is present (the data is available).
-    // (asserted in the toggle test below)
   });
 
   it('renders hollow blue diamonds at anomalous pixel positions when showAnomalousPixels is on', async () => {
@@ -414,18 +412,29 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
     expect(spike?.marker?.color).not.toBe(bp?.marker?.color);
   });
 
-  it('the "Anomalous pixels" toggle gates the overlay', async () => {
-    const { getByLabelText } = render(RamanView, {
+  it('offers no anomalous-pixels control in the spectrum toolbar', () => {
+    const { getByRole, queryByRole, queryByLabelText, queryByText } = render(RamanView, {
+      props: { wavenumber, intensity, anomalousPixels },
+    });
+    const name = /anomalous pixels/i;
+    expect(getByRole('checkbox', { name: 'Grid' })).toBeInTheDocument();
+    expect(queryByRole('checkbox', { name })).not.toBeInTheDocument();
+    expect(queryByLabelText(name)).not.toBeInTheDocument();
+    expect(queryByText(name)).not.toBeInTheDocument();
+  });
+
+  it('enables the overlay when the showAnomalousPixels prop changes', async () => {
+    const { rerender } = render(RamanView, {
       props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels },
     });
     await flush();
     expect(anomalousPixelTrace()).toBeUndefined();
 
-    const cb = getByLabelText(/Anomalous pixels/i) as HTMLInputElement;
-    expect(cb.checked).toBe(false); // default OFF
-    await fireEvent.click(cb);
+    await rerender({ showAnomalousPixels: true });
     await flush();
-    expect(anomalousPixelTrace()).toBeDefined();
+    expect(anomalousPixelTrace()).toMatchObject({
+      hovertemplate: expect.stringContaining('CCD channel %{customdata[0]} · Table %{customdata[1]}'),
+    });
   });
 
   it('renders no toggle and no trace when there are no anomalous pixels', async () => {
