@@ -72,94 +72,23 @@ def _fluor_objective(
     return float(np.sum((y - y_model) ** 2))
 
 
-def _fluor_objective_simple(
-    params: np.ndarray,
-    x: np.ndarray,
-    y: np.ndarray,
-) -> float:
-    """Sum-of-squares objective without separation constraint.
-
-    Used for hypothesis-driven fitting where per-peak bounds already
-    enforce feature separation via constrained center ranges.
-    """
-    y_model = multi_gaussian(x, params)
-    return float(np.sum((y - y_model) ** 2))
-
-
-def _fluor_objective_ratio_constrained(
-    params: np.ndarray,
-    x: np.ndarray,
-    y: np.ndarray,
-    g1a_peak_idx: int,
-    g1b_peak_idx: int,
-    ratio_range: Tuple[float, float],
-) -> float:
-    """Sum-of-squares objective with amplitude ratio constraint on Ce3+ doublet.
-
-    Returns inf if amp_1a / amp_1b falls outside ratio_range.
-    """
-    amp_1a = params[g1a_peak_idx * 3 + 1]
-    amp_1b = params[g1b_peak_idx * 3 + 1]
-    if amp_1b <= 0:
-        return np.inf
-    ratio = amp_1a / amp_1b
-    if ratio < ratio_range[0] or ratio > ratio_range[1]:
-        return np.inf
-    y_model = multi_gaussian(x, params)
-    return float(np.sum((y - y_model) ** 2))
-
-
 def _run_de_fit(
     bounds_list: List[Tuple[float, float]],
     x_fit: np.ndarray,
     y_fit: np.ndarray,
-    min_peak_separation: float = 0.0,
-    use_separation_constraint: bool = True,
-    ratio_constraint: Optional[Tuple[int, int, Tuple[float, float]]] = None,
+    min_peak_separation: float,
 ) -> Optional[Tuple[np.ndarray, float]]:
-    """Run differential evolution and return (best_params, rss) or None.
-
-    Args:
-        ratio_constraint: If set, (g1a_peak_idx, g1b_peak_idx, (lo, hi))
-            enforces amp_1a/amp_1b within [lo, hi] during optimization.
-    """
-    if not bounds_list:
-        # M0 null model: RSS = sum(y^2), params empty
-        rss = float(np.sum(y_fit ** 2))
-        return np.array([]), rss
-
+    """Run differential evolution and return (best_params, rss) or None."""
     try:
-        if ratio_constraint is not None:
-            g1a_idx, g1b_idx, ratio_range = ratio_constraint
-            result = differential_evolution(
-                _fluor_objective_ratio_constrained,
-                bounds=bounds_list,
-                args=(x_fit, y_fit, g1a_idx, g1b_idx, ratio_range),
-                seed=42,
-                maxiter=1000,
-                tol=1e-8,
-                polish=True,
-            )
-        elif use_separation_constraint and min_peak_separation > 0:
-            result = differential_evolution(
-                _fluor_objective,
-                bounds=bounds_list,
-                args=(x_fit, y_fit, min_peak_separation),
-                seed=42,
-                maxiter=1000,
-                tol=1e-8,
-                polish=True,
-            )
-        else:
-            result = differential_evolution(
-                _fluor_objective_simple,
-                bounds=bounds_list,
-                args=(x_fit, y_fit),
-                seed=42,
-                maxiter=1000,
-                tol=1e-8,
-                polish=True,
-            )
+        result = differential_evolution(
+            _fluor_objective,
+            bounds=bounds_list,
+            args=(x_fit, y_fit, min_peak_separation),
+            seed=42,
+            maxiter=1000,
+            tol=1e-8,
+            polish=True,
+        )
         if not np.isfinite(result.fun):
             return None
         return result.x, result.fun
@@ -197,7 +126,6 @@ def _agnostic_fit(
         de_result = _run_de_fit(
             bounds_list, x_fit, y_fit,
             min_peak_separation=min_peak_separation,
-            use_separation_constraint=True,
         )
         if de_result is None:
             continue
@@ -210,97 +138,6 @@ def _agnostic_fit(
             best_params = params
 
     return best_params, best_aicc, best_rss
-
-
-def _hypothesis_fit(
-    x_fit: np.ndarray,
-    y_fit: np.ndarray,
-    noise_std: float,
-    y_max: float,
-    wavelength: np.ndarray,
-    intensity: np.ndarray,
-    agnostic_r2_threshold: float = 0.7,
-    position_bounds: Tuple[float, float] = (270.0, 357.0),
-    fwhm_range: Tuple[float, float] = (7.0, 35.0),
-    min_peak_separation: float = 15.0,
-    max_peaks: int = 4,
-    doublet_ratio_range: Tuple[float, float] = (0.7, 1.3),
-) -> Tuple[Optional[np.ndarray], float, float, List[str]]:
-    """Hypothesis-driven fitting with feature scan and constrained models.
-
-    Returns (best_params, best_aicc, best_rss, warnings).
-    """
-    from sherloc_pipeline.core.fluor_detection import (
-        enumerate_candidate_models,
-        scan_fluorescence_features,
-    )
-
-    n_data = x_fit.size
-    warnings: List[str] = []
-
-    # Phase 1: Feature scan
-    scan = scan_fluorescence_features(wavelength, intensity, noise_std)
-
-    # Phase 2: Enumerate candidate models
-    candidates = enumerate_candidate_models(scan, y_max)
-
-    # Phase 3: Fit each candidate, select by AICc
-    best_aicc = float("inf")
-    best_rss = float("inf")
-    best_params: Optional[np.ndarray] = None
-
-    for candidate in candidates:
-        if candidate.n_peaks == 0:
-            # M0 null model
-            rss = float(np.sum(y_fit ** 2))
-            aicc = _compute_aicc(n_data, rss, 0)
-            if aicc < best_aicc:
-                best_aicc = aicc
-                best_rss = rss
-                best_params = None  # will be handled as no-peak result
-            continue
-
-        # Build ratio constraint for models with both group1a + group1b
-        ratio_constraint = None
-        if "group1a" in candidate.features and "group1b" in candidate.features:
-            g1a_idx = candidate.features.index("group1a")
-            g1b_idx = candidate.features.index("group1b")
-            ratio_constraint = (g1a_idx, g1b_idx, doublet_ratio_range)
-
-        de_result = _run_de_fit(
-            candidate.bounds, x_fit, y_fit,
-            use_separation_constraint=False,  # bounds enforce separation
-            ratio_constraint=ratio_constraint,
-        )
-        if de_result is None:
-            continue
-
-        params, rss = de_result
-        aicc = _compute_aicc(n_data, rss, candidate.n_peaks * 3)
-        if aicc < best_aicc:
-            best_aicc = aicc
-            best_rss = rss
-            best_params = params
-
-    # Phase 4: Agnostic diagnostic (conditional)
-    if best_params is not None:
-        y_model = multi_gaussian(x_fit, best_params)
-        r2_hypothesis = compute_r2(y_fit, y_model)
-    else:
-        r2_hypothesis = 0.0
-
-    if r2_hypothesis < agnostic_r2_threshold:
-        agnostic_params, agnostic_aicc, agnostic_rss = _agnostic_fit(
-            x_fit, y_fit, position_bounds, fwhm_range,
-            min_peak_separation, max_peaks, y_max,
-        )
-        if agnostic_aicc < best_aicc and agnostic_params is not None:
-            warnings.append("agnostic_fit_better")
-            best_aicc = agnostic_aicc
-            best_rss = agnostic_rss
-            best_params = agnostic_params
-
-    return best_params, best_aicc, best_rss, warnings
 
 
 def clip_cosmic_spikes(y_fit: np.ndarray) -> np.ndarray:
@@ -343,19 +180,11 @@ def fit_fluorescence_spectrum(
     saturation_threshold: float = 60000.0,
     saturation_channel_limit: int = 5,
     overlap_exclusion: Tuple[float, float] = (337.4, 338.4),
-    strategy: str = "agnostic",
-    agnostic_r2_threshold: float = 0.7,
-    doublet_ratio_range: Tuple[float, float] = (0.7, 1.3),
 ) -> FluorFitResult:
     """Fit multi-Gaussian model to fluorescence spectrum.
 
-    Supports two strategies:
-    - "agnostic" (default): Discovery mode — tries 1 to max_peaks unconstrained,
-      AICc selection. No amplitude ratio constraints; only rejects closely
-      overlapping peaks.
-    - "hypothesis": Feature scan → constrained candidate models → AICc selection.
-      Enforces Ce3+ doublet amplitude ratio constraint for group1a+group1b.
-      Falls back to agnostic fit if hypothesis R² < agnostic_r2_threshold.
+    Fit one through max_peaks Gaussians with the specified minimum peak
+    separation and select the model with the lowest AICc.
 
     No baseline correction is applied. Saturated channels are masked
     or the fit is skipped if saturation is extensive. The R2/R3 overlap
@@ -385,9 +214,6 @@ def fit_fluorescence_spectrum(
         saturation_threshold: CCD saturation level (counts).
         saturation_channel_limit: Channels at saturation before fit is skipped.
         overlap_exclusion: R2/R3 overlap zone to exclude (nm).
-        strategy: "agnostic" (default) or "hypothesis".
-        agnostic_r2_threshold: R² below which hypothesis triggers agnostic diagnostic.
-        doublet_ratio_range: Allowed amp_1a/amp_1b ratio for Ce3+ doublet [lo, hi].
 
     Returns:
         FluorFitResult with peaks in wavelength (nm) units.
@@ -486,7 +312,6 @@ def fit_fluorescence_spectrum(
     n_masked_total = n_overlap + n_sat_masked
     y_max = float(np.max(y_fit)) if y_fit.size > 0 else 1.0
     n_data = x_fit.size
-    fit_warnings: List[str] = []
 
     # --- Early bail-out: skip fitting if no channel exceeds SNR threshold ---
     # After despiking removes cosmic rays, check if the tallest feature
@@ -509,24 +334,10 @@ def fit_fluorescence_spectrum(
             warnings=["below_snr_threshold"],
         )
 
-    # --- Model selection by strategy ---
-    if strategy == "hypothesis":
-        best_params, best_aicc, best_rss, hyp_warnings = _hypothesis_fit(
-            x_fit, y_fit, noise_std, y_max,
-            wavelength, intensity,
-            agnostic_r2_threshold=agnostic_r2_threshold,
-            position_bounds=position_bounds,
-            fwhm_range=fwhm_range,
-            min_peak_separation=min_peak_separation,
-            max_peaks=max_peaks,
-            doublet_ratio_range=doublet_ratio_range,
-        )
-        fit_warnings.extend(hyp_warnings)
-    else:
-        best_params, best_aicc, best_rss = _agnostic_fit(
-            x_fit, y_fit, position_bounds, fwhm_range,
-            min_peak_separation, max_peaks, y_max,
-        )
+    best_params, best_aicc, best_rss = _agnostic_fit(
+        x_fit, y_fit, position_bounds, fwhm_range,
+        min_peak_separation, max_peaks, y_max,
+    )
 
     if best_params is None or best_params.size == 0:
         return FluorFitResult(
@@ -539,7 +350,7 @@ def fit_fluorescence_spectrum(
             fit_skipped=False,
             n_saturated_channels=n_saturated,
             n_masked_channels=n_masked_total,
-            warnings=fit_warnings or ["fit_failed"],
+            warnings=["fit_failed"],
         )
 
     # --- Compute fit quality and build peak list ---
@@ -603,7 +414,6 @@ def fit_fluorescence_spectrum(
         fit_skipped=False,
         n_saturated_channels=n_saturated,
         n_masked_channels=n_masked_total,
-        warnings=fit_warnings,
     )
 
 

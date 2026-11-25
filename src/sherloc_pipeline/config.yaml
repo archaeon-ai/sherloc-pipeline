@@ -224,19 +224,6 @@ fluorescence_fitting:
     - {label: group1b,  lo: 322.0, hi: 329.0}    # Ce3+ doublet (long)
     - {label: group2,   lo: 329.0, hi: 355.0}    # Ce3+ in phosphate
 
-  # Feature scan for hypothesis-driven fitting
-  feature_scan:
-    prominence_factor: 3.0            # Multiplier on noise_std for detection
-    group_windows:
-      group3:  [270.0, 295.0]
-      group1a: [295.0, 315.0]         # Wider than assignment for detection
-      group1b: [315.0, 332.0]
-      group2:  [329.0, 357.0]
-
-  # Hypothesis fitting strategy
-  strategy: "agnostic"                # "agnostic" (default) or "hypothesis"
-  agnostic_r2_threshold: 0.7          # If hypothesis R² < this, run agnostic diagnostic
-
   # Parallelism: number of worker processes for per-point fluorescence fitting.
   # 0 = auto (half of available CPU cores), 1 = sequential (no multiprocessing).
   # Uses shared resolve_parallel_workers() utility (see also fitting.parallel_workers).

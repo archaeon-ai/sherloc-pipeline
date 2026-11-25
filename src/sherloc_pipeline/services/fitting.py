@@ -3191,8 +3191,7 @@ class FittingService:
           1. **Prepare** — sequential DB reads, spectrum decompression, R123 stitching
           2. **Fit** — parallel per-point fitting via ProcessPoolExecutor
              (configurable via ``fluorescence_fitting.parallel_workers``)
-          3. **Post-process** — sequential group assignment, cross-modal annotation,
-             DB persistence, and optional plot generation
+          3. **Post-process** — sequential group assignment, DB persistence, and optional plot generation
 
         The fitting phase includes an early bail-out: if the maximum feature
         prominence (max − median, after despiking) is below ``snr_threshold ×
@@ -3237,7 +3236,7 @@ class FittingService:
             )
             from sherloc_pipeline.core.fluor_fitting import fit_fluorescence_spectrum
             from sherloc_pipeline.visualization.fitting_plots import plot_fluor_fit_overlay
-            from sherloc_pipeline.core.fluor_id import assign_fluor_group, classify_fluor_peaks, score_cooccurrences
+            from sherloc_pipeline.core.fluor_id import assign_fluor_group, classify_fluor_peaks
             from sherloc_pipeline.core.calibration import calculate_loupe_wavelength_wavenumber
             from sherloc_pipeline.core.r123_stitching import stitch_r123_spectrum
 
@@ -3261,7 +3260,6 @@ class FittingService:
             max_peaks = int(fluor_cfg.get("max_peaks", 4))
             saturation_threshold = float(fluor_cfg.get("saturation_threshold", 60000.0))
             saturation_channel_limit = int(fluor_cfg.get("saturation_channel_limit", 5))
-            strategy = str(fluor_cfg.get("strategy", "agnostic"))
             min_fwhm_nm = float(fluor_cfg.get("min_fwhm_nm", 8.0))
 
             # Pre-compute 2148-channel wavelength axis from Loupe calibration
@@ -3419,7 +3417,6 @@ class FittingService:
                         'r123': r123,
                         'saturation_threshold': point_saturation,
                         'link_spectrum_id': entry["link_spectrum_id"],
-                        'scan_point_id': scan_point.id,
                     })
 
                 input_meta = fluor_inputs.summarize_inputs(
@@ -3444,7 +3441,7 @@ class FittingService:
                 # each fit_fluorescence_spectrum() call is independent, CPU-bound
                 # (differential evolution), and requires no DB access. We fan out
                 # across a ProcessPoolExecutor, then collect results for sequential
-                # post-processing (group assignment, cross-modal annotation, DB writes).
+                # post-processing (group assignment and DB writes).
                 #
                 # Worker count is configurable via fluorescence_fitting.parallel_workers:
                 #   0 = auto (half of CPU cores, balances throughput vs system responsiveness)
@@ -3459,7 +3456,6 @@ class FittingService:
                     snr_threshold=snr_threshold,
                     min_fwhm_nm=min_fwhm_nm,
                     saturation_channel_limit=saturation_channel_limit,
-                    strategy=strategy,
                 )
 
                 from sherloc_pipeline.core.utils import resolve_parallel_workers
@@ -3478,7 +3474,6 @@ class FittingService:
                 for inp, fit_result in zip(fit_inputs, fit_results):
                     point_idx = inp['point_idx']
                     link_spectrum_id = inp['link_spectrum_id']
-                    scan_point_id = inp['scan_point_id']
 
                     if fit_result.fit_skipped:
                         if fit_result.is_saturated:
@@ -3501,25 +3496,7 @@ class FittingService:
                     fluor_groups = [assign_fluor_group(p.center_nm) for p in fit_result.peaks]
                     fluor_groups = classify_fluor_peaks(fluor_groups, fit_result.peaks)
 
-                    # Cross-modal annotation: query Raman peaks for same scan point
-                    raman_peaks = session.query(FittedPeakORM).filter(
-                        FittedPeakORM.spectrum_id.in_(
-                            session.query(SpectrumORM.id).filter_by(
-                                scan_point_id=scan_point_id
-                            )
-                        ),
-                        FittedPeakORM.fit_modality.in_(["minerals", "organics", "hydration"]),
-                    ).all()
-                    raman_assignments = [
-                        rp.mineral_assignment for rp in raman_peaks
-                        if rp.mineral_assignment is not None
-                    ]
-                    cooccurrence_scores = score_cooccurrences(fluor_groups, raman_assignments)
-
-                    # Construct FittedPeakORM objects with group assignment + co-occurrence
-                    for i, peak in enumerate(fit_result.peaks):
-                        group_label = fluor_groups[i]
-                        confidence = cooccurrence_scores[i].confidence_boost if i < len(cooccurrence_scores) else None
+                    for peak, group_label in zip(fit_result.peaks, fluor_groups):
                         orm_peak = FittedPeakORM(
                             id=str(uuid4()),
                             spectrum_id=link_spectrum_id,
@@ -3532,7 +3509,7 @@ class FittingService:
                             snr=peak.snr,
                             fit_quality=fit_result.r2,
                             mineral_assignment=group_label,
-                            assignment_confidence=confidence,
+                            assignment_confidence=None,
                             is_saturated=fit_result.is_saturated,
                             # center_cm1, fwhm_cm1 left as NULL for fluorescence
                         )
@@ -3547,7 +3524,7 @@ class FittingService:
                             'snr': peak.snr,
                             'group': group_label,
                             'r2': fit_result.r2,
-                            'cooccurrence_confidence': confidence,
+                            'cooccurrence_confidence': None,
                         })
 
                     # Collect summary row for fitted point

@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
+- Fluorescence fitting now always uses the agnostic Gaussian fit. Detecting a
+  group 1a band no longer adds a candidate 1a/1b doublet with a prescribed
+  amplitude ratio. The default fit gives the same peaks, group assignments,
+  and output fields. The bundled configuration has a new hash.
+  Older configurations that select `fluorescence_fitting.strategy: hypothesis`
+  still load and now produce agnostic fits. The fit API ignores a supplied
+  `strategy` field. Python callers of `fit_fluorescence_spectrum` should omit
+  `strategy`, `agnostic_r2_threshold`, and `doublet_ratio_range`.
+- Fluorescence fits no longer score group assignments against Raman peaks at
+  the same point. Newly fitted peaks have NULL `assignment_confidence` in the
+  database and an empty `cooccurrence_confidence` field in the accepted-peaks
+  CSV. The Python functions `score_cooccurrences` and `aggregate_co_occurrences`
+  have been removed. Fluorescence groups and fitted peak parameters are unchanged.
 - Removed `sherloc extract-training` and `FittingService.extract_training_jsonl`,
   which wrote fitted peaks and generated phase labels to JSONL. The export's
   `detect_doublets` helper and `DoubletRecord` type were also removed.

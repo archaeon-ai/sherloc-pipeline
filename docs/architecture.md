@@ -45,7 +45,7 @@ package). They form three rough layers:
 | `api/` | Notebook-friendly functional API. Stateless wrappers around services and core, intended for Jupyter use. | `spectral.py` — `process_scan_average`, `process_subset_average`, `process_point`, `load_point_spectrum`, `load_reference_spectrum`, `plot_spectrum`, `plot_overlay`. |
 | `web/` | FastAPI app + Svelte frontend. Read-mostly exploration UI. | `app.py` (factory + middlewares), `auth.py` (CF Access JWT validation), `routes/` (12 modules), `frontend/` (Svelte). |
 | `services/` | Orchestrators that compose `core` primitives and persist results. | `pipeline.py` (the 7-step run), `handoff.py` (optional atomic delivery manifest), `ingestion.py` / `pds_ingestion.py` / `pixl_ingestion.py`, `spectral.py`, `map_fitting.py`, `spectrogram.py`, `preprocessing.py`. |
-| `core/` | Pure algorithmic primitives. Should not depend on `services/`. | `preprocessing.py`, `baseline.py`, `fitting.py` (Raman cm⁻¹), `fluor_fitting.py` / `fluor_id.py` / `fluor_detection.py` (fluorescence in nm), `calibration.py`, `r1_extraction.py`, `r123_stitching.py`, `mineral_id.py`, `pds_client.py`, `pds_parsers.py`. |
+| `core/` | Pure algorithmic primitives. Should not depend on `services/`. | `preprocessing.py`, `baseline.py`, `fitting.py` (Raman cm⁻¹), `fluor_fitting.py` / `fluor_id.py` (fluorescence in nm), `calibration.py`, `r1_extraction.py`, `r123_stitching.py`, `mineral_id.py`, `pds_client.py`, `pds_parsers.py`. |
 | `models/` | Pydantic DTOs + a small type registry. Shared between CLI/API/web/services. | `spectra.py`, `fitting.py`, `instrument.py`, `pds.py`, `pixl.py`, `spectrogram.py`. |
 | `database/` | SQLAlchemy ORM, connection management, Alembic glue. | `models.py` (17 ORMs), `connection.py` (`get_engine`, `init_pds_database`), `pixl_models.py`. |
 | `visualization/` | Matplotlib figure generation. | `fitting_plots.py`, `spatial.py`, `preprocessing_plots.py`, `cooccurrence.py`. |
@@ -105,15 +105,15 @@ canonical batch path. Seven steps:
 2. **Raman fitting** (cm⁻¹ space) for `minerals`, `organics`,
    `hydration`. F-test or AICc model selection.
 3. **Raman peak persistence** for the three Raman domains.
-4. **Fluorescence fitting** (nm space) — agnostic AICc default, or
-   an optional hypothesis-driven strategy with falling-back-to-agnostic
-   when constrained models score poorly. The hypothesis-driven strategy can fit the
-   group 1 doublet (Ce³⁺-bearing anhydrite;
-   Haney et al. 2026, *JGR Planets*, https://doi.org/10.1029/2025JE009385).
-   The fluorescence group numbers follow Sharma et al. 2023, *Nature*,
-   https://doi.org/10.1038/s41586-023-06143-z.
-   This pipeline splits group 1 into 1a and 1b.
-   Co-occurrence confidence is scored against the Raman peaks from step 3.
+4. **Fluorescence fitting** (nm space) — AICc selects the number of Gaussian
+   peaks. After fitting, the pipeline assigns a group label to each peak using
+   the group numbers of [Sharma et al. (2023)](https://doi.org/10.1038/s41586-023-06143-z).
+   This pipeline splits group 1 into 1a (shorter wavelength) and 1b (longer
+   wavelength) and labels each peak on its own; Haney et al. (2026,
+   https://doi.org/10.1029/2025JE009385) discuss this wavelength range as
+   Ce³⁺-bearing anhydrite.
+   Group assignments use the fluorescence peak wavelengths. New fluorescence
+   peaks have NULL assignment confidence in the database.
 5. **Per-scan averages** — fits of the scan's R1 mean and trimmed-mean
    spectra. The trimmed mean cuts 2 % from each tail, raised for small
    scans so that at least one point is cut from each tail (a 25-point
