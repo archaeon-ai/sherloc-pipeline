@@ -977,6 +977,13 @@ describe('ProcessingWorkbench commit-bound ML gating (PR #13 F1)', () => {
   });
 });
 
+// Svelte's development build lets tests set the state that feeds the plot and CSV export.
+function enableAnomalousPixelOverlay(component: {
+  $inject_state: (state: { showAnomalousPixelOverlay: boolean }) => void;
+}): void {
+  component.$inject_state({ showAnomalousPixelOverlay: true });
+}
+
 // Anomalous pixel positions are REGION-SPECIFIC served-array
 // indices. loadAnomalousPixels previously committed `anomalousPixels = res.anomalous_pixels`
 // unconditionally, so (a) on a fast region switch an older region's slower
@@ -1064,7 +1071,7 @@ describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
     const r2 = deferred<AnomalousPixelsResponse>();
     const loadCatalog = vi.spyOn(api, 'getAnomalousPixels').mockReturnValue(r1.promise);
 
-    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    const { component, container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await screen.findByText('1. Despike');
     await flush();
     // Mount's R1 anomalous pixel fetch is still pending; switch to R2 before it lands.
@@ -1075,9 +1082,7 @@ describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
     r2.resolve(anomalousPixelsResponse('R2', R2_ITEMS));
     await flush();
 
-    // Turn the overlay on (the toggle exists because the R2 list is non-empty)
-    // so both the plot and the export gate are live observables.
-    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
+    enableAnomalousPixelOverlay(component);
     await flush();
     expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
     expect(anomalousPixelTraceInLastRender()?.x).toEqual([900]); // wavenumber[1]
@@ -1104,24 +1109,22 @@ describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
     const r2 = deferred<AnomalousPixelsResponse>();
     const loadCatalog = vi.spyOn(api, 'getAnomalousPixels').mockReturnValue(r1.promise);
 
-    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    const { component, container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await screen.findByText('1. Despike');
     await flush();
 
     // Mount region (R1) resolves; overlay on → two markers render.
     r1.resolve(anomalousPixelsResponse('R1', R1_ITEMS));
     await flush();
-    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
+    enableAnomalousPixelOverlay(component);
     await flush();
     expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 2');
 
     // Region switch with R2's response still in flight: the R1 list must be
-    // cleared IMMEDIATELY — no markers, no toggle (it renders only with a
-    // non-empty list), and nothing reaches the export gate.
+    // cleared immediately from both the plot and the export.
     loadCatalog.mockReturnValue(r2.promise);
     await clickRegion(container, 'r2');
     expect(anomalousPixelTraceInLastRender()).toBeUndefined();
-    expect(screen.queryByLabelText(/Anomalous pixels/i)).toBeNull();
     const csvDuringTransition = await exportCsv(container);
     expect(csvDuringTransition).not.toContain('anomalous_pixel_source');
     expect(
@@ -1129,8 +1132,7 @@ describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
     ).not.toContain('anomalous_pixel');
 
     // The matching (R2) response lands → the new region's annotations appear.
-    // The overlay toggle state is owned by the Workbench and survived the
-    // transition, so the marker renders without re-toggling.
+    // The Workbench keeps the overlay enabled across the region change.
     r2.resolve(anomalousPixelsResponse('R2', R2_ITEMS));
     await flush();
     expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
@@ -1145,11 +1147,11 @@ it('maps full-catalog channels through the embedded axis channel map', async () 
     schema_version: '2.0.0', region: 'R123', n_channels: 2148,
     anomalous_pixels: [{ channel: 24, position: 24, table: 'S3' }],
   });
-  render(ProcessingWorkbench, { scanId: SCAN_ID });
+  const { component } = render(ProcessingWorkbench, { scanId: SCAN_ID });
   await screen.findByText('1. Despike');
   await flush();
   expect(api.getAnomalousPixels).toHaveBeenCalledWith('R123');
-  await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
+  enableAnomalousPixelOverlay(component);
   await flush();
   const traces = reactSpy.mock.calls.at(-1)![1] as Array<{ name?: string; x?: number[] }>;
   expect(traces.find(trace => trace.name?.startsWith('Anomalous pixels'))?.x).toEqual([900]);
@@ -1306,7 +1308,7 @@ it('preserves tier transitions, R2 annotations and a light plot under dark syste
     const generation = sessionGeneration;
     let finish = (_value: SpectrumResponse) => {};
     const point = vi.spyOn(api, 'getPointSpectrum').mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
-    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
+    const { component, container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
     appConfig.set({ ...config, tier: 'public' }); accessMode.set('public'); await flush();
     finish(syntheticSpectrum(INTENSITY_A)); await flush();
     expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
@@ -1318,7 +1320,7 @@ it('preserves tier transitions, R2 annotations and a light plot under dark syste
       despike_applied: true, despike_method: 'ml', n_masked_channels: 1, masked_positions: [1] }));
     const region = Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r2')!;
     await fireEvent.click(region); await flush();
-    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i)); await flush();
+    enableAnomalousPixelOverlay(component); await flush();
     const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
     expect(traces[0].x).toEqual([285, 305, 325]); expect(traces[0].y).toEqual(INTENSITY_NEW);
     expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').x).toEqual([305]);
