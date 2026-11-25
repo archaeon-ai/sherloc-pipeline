@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 API_SCHEMA_VERSION = "1.0.0"
+#: ``GET /api/spectra/badpix``: 2.0.0 replaced ``tier`` and ``source`` with ``table``.
+BADPIX_SCHEMA_VERSION = "2.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -369,28 +371,18 @@ class SubsetResponse(BaseModel):
     despike_params_used: Optional[Dict[str, Any]] = None
 
 
-# Known-noisy detector-channel annotation layer (issue #9). A STATIC list
-# served by ``GET /api/spectra/badpix?region=...``; the asset never changes at
-# runtime and there is no DB involvement. This is an ANNOTATION surface,
-# entirely separate from despiking — nothing here masks or alters spectral
-# values. Additive endpoint, so API_SCHEMA_VERSION stays "1.0.0".
 class BadpixChannelItem(BaseModel):
-    #: 0-based index INTO the served wavenumber/intensity array for the
-    #: requested region view (the same coordinate system as
-    #: ``masked_positions`` — so a marker at ``position`` lands on
-    #: ``wavenumber[position]``). For R123 the served array is the full
-    #: 2148-channel stitch, so ``position == channel``.
-    position: int
-    #: Absolute 0-based CCD channel index (0..2147).
-    channel: int
-    #: 1 = CR-confusable elevated-noise; 2 = stable hot (cancels in dark sub).
-    tier: int
-    #: Attribution: ``dark_veto`` | ``jb25`` | ``both``.
-    source: str
+    """One display marker from Jakubek et al. 2025, Supplemental Tables S3 and S4."""
+
+    position: int  # 0-based index in the served array for the requested region
+    channel: int  # Absolute 0-based CCD index (0..2147)
+    table: Literal["S3", "S4"]
 
 
 class BadpixResponse(BaseModel):
-    schema_version: str = API_SCHEMA_VERSION
+    """Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)."""
+
+    schema_version: str = BADPIX_SCHEMA_VERSION
     region: str
     n_channels: int
     badpix: List[BadpixChannelItem] = Field(default_factory=list)

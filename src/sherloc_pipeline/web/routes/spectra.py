@@ -704,21 +704,7 @@ def _compute_average(
 
 @lru_cache(maxsize=len(VALID_REGIONS))
 def _badpix_items_for_region(region: str) -> tuple:
-    """Curated known-noisy channels mapped to a region's served positions.
-
-    Issue #9 annotation layer. The curated table (``core.badpix``) carries
-    ABSOLUTE CCD channel indices; this maps each into the position INTO THE
-    SERVED ARRAY for the requested region view (the same coordinate system as
-    the issue-#8 ``masked_positions`` — reusing ``_channels_to_served_positions``
-    keeps the marker placement identical to the ML spike markers). A channel
-    outside the region's served selection is dropped (e.g. an R2 channel for a
-    ``region=R1`` view). For ``R123`` the served array is the full
-    2148-channel stitch, so position == channel (identity).
-
-    Static + cached per region: the asset never changes at runtime, so this is
-    computed once per region for the process lifetime. Returns a tuple of
-    ``BadpixChannelItem`` (hashable cache value; the route copies into a list).
-    """
+    """Map absolute CCD indices to positions in the requested region's served array."""
     _, _, mask = _get_wavelength_wavenumber(region)
     selected_channels = np.where(mask)[0]
     # Position INTO the served array for each absolute channel; channels not in
@@ -733,8 +719,7 @@ def _badpix_items_for_region(region: str) -> tuple:
             BadpixChannelItem(
                 position=pos,
                 channel=rec.channel,
-                tier=rec.tier,
-                source=rec.source,
+                table=rec.table,
             )
         )
     items.sort(key=lambda it: it.position)
@@ -743,23 +728,14 @@ def _badpix_items_for_region(region: str) -> tuple:
 
 @router.get("/spectra/badpix", response_model=BadpixResponse)
 def get_badpix_channels(region: str = Query("R1")) -> BadpixResponse:
-    """Known-noisy detector channels for a region view (issue #9 annotation).
+    """Return anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4).
 
-    Returns the curated known-noisy channels mapped to positions INTO the
-    served array for ``region`` (``R1 | R2 | R3 | R123``; R123 = full-stitch
-    identity). This is a STATIC list — no scan, no DB, no despike interaction
-    whatsoever. It is an annotation surface only: the analyst toggles it on to
-    see "known-noisy channel" markers, and it never masks or alters any
-    spectral value. Tier 1 identifies channels that are noisy in dark frames.
-
-    Each item is ``{position, channel, tier, source}``: ``position`` indexes
-    the served wavenumber/intensity arrays for this region; ``channel`` is the
-    absolute CCD index; ``tier`` 1 = CR-confusable elevated-noise, 2 = stable
-    hot; ``source`` ∈ ``dark_veto | jb25 | both``.
+    Each item gives the position in the region's served array, the absolute CCD
+    channel and the supplemental table. In the full R123 view, position equals
+    channel. The overlay marks these positions without changing spectral values.
 
     Raises:
-        HTTPException(400): if ``region`` is not one of the valid regions
-            (matches the spectra endpoints' invalid-region contract).
+        HTTPException(400): if ``region`` is not one of the valid regions.
     """
     if region not in VALID_REGIONS:
         raise HTTPException(status_code=400, detail=f"Invalid region: {region}")

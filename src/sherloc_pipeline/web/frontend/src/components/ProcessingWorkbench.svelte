@@ -990,8 +990,10 @@
         <div class="ref-cite">Whitaker, D.A. &amp; Hayes, K. (2018). A simple algorithm for despiking Raman spectra. <i>Chemometrics Intell. Lab. Syst.</i>, 179, 82–84. <a href="https://doi.org/10.1016/j.chemolab.2018.06.009" target="_blank">doi:10.1016/j.chemolab.2018.06.009</a></div>
       </div>
       <div class="ref-section">
-        <b>2. Background subtraction</b> — Instrument background reference
-        <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79, 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
+        <b>2. Background subtraction</b> — This pipeline’s stowed-arm correction subtracts a trimmed-mean reference. Its automatic scale factor is the number of shots per spectrum divided by 900.
+        Jakubek et al. subtract the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting.
+        The overlay marks anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4). These pixels fell beyond ±3σ in stowed-arm scans more often than expected from noise.
+        <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79(6), 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
       </div>
       <div class="ref-section">
         <b>3. Baseline</b> — Adaptive smoothness penalized least squares (asPLS)

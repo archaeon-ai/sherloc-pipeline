@@ -264,8 +264,8 @@ beforeEach(() => {
   // despike-focused tests never hit the real fetch path (and the overlay
   // stays absent). The PR #11 F1 tests override this with deferred promises.
   vi.spyOn(api, 'getBadpixChannels').mockResolvedValue({
-    schema_version: '1.0.0',
-    region: 'R1',
+    schema_version: '2.0.0',
+    region: 'R123',
     n_channels: 3,
     badpix: [],
   });
@@ -309,6 +309,11 @@ describe('ProcessingWorkbench references panel', () => {
     expect(background).toBeDefined();
     // The instrument-background step is not dark frame subtraction (active minus dark).
     expect(background).not.toMatch(/dark frame/i);
+    // The step names this pipeline's correction and the paper's separately.
+    expect(background).toContain('This pipeline’s stowed-arm correction subtracts a trimmed-mean reference.');
+    expect(background).toContain('the number of shots per spectrum divided by 900');
+    expect(background).toContain('anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)');
+    expect(background).toContain('the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting');
     expect(background).toContain('Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover');
     const cites = Array.from(container.querySelectorAll('.ref-cite')).map((c) => c.textContent ?? '');
     const loupe = cites.find((t) => t.includes('nasa/Loupe'));
@@ -976,19 +981,17 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
 
   function badpixResponse(
     region: string,
-    items: Array<{ position: number; channel: number; tier: number; source: string }>,
+    items: BadpixResponse['badpix'],
   ): BadpixResponse {
-    return { schema_version: '1.0.0', region, n_channels: 3, badpix: items };
+    return { schema_version: '2.0.0', region, n_channels: 3, badpix: items };
   }
 
-  // The R1 (mount-region) list and the R2 list are deliberately
-  // distinguishable in every observable: count (2 vs 1), positions (0,2 vs 1),
-  // and source (jb25 vs g5_eps) — so a stale overwrite cannot pass unnoticed.
-  const R1_ITEMS = [
-    { position: 0, channel: 52, tier: 1, source: 'jb25' },
-    { position: 2, channel: 54, tier: 2, source: 'jb25' },
+  // Different positions and tables distinguish the two region responses.
+  const R1_ITEMS: BadpixResponse['badpix'] = [
+    { position: 0, channel: 52, table: 'S3' },
+    { position: 2, channel: 54, table: 'S3' },
   ];
-  const R2_ITEMS = [{ position: 1, channel: 600, tier: 1, source: 'g5_eps' }];
+  const R2_ITEMS: BadpixResponse['badpix'] = [{ position: 1, channel: 600, table: 'S4' }];
 
   /** The badpix marker trace in the MOST RECENT RamanView render (only the
    *  final Plotly.react call counts — absence there means the overlay is not
@@ -1000,7 +1003,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
       mode?: string;
       x?: number[];
     }>;
-    return traces.find((t) => t.mode === 'markers' && /Known-noisy/.test(t.name ?? ''));
+    return traces.find((t) => t.mode === 'markers' && /Anomalous pixels/.test(t.name ?? ''));
   }
 
   /** Click the region-selector button labeled `label` ('r2', 'full', ...). */
@@ -1059,9 +1062,9 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
 
     // Turn the overlay on (the toggle exists because the R2 list is non-empty)
     // so both the plot and the export gate are live observables.
-    await fireEvent.click(screen.getByLabelText(/Known-noisy channels/i));
+    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
     await flush();
-    expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (1)');
+    expect(badpixTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
     expect(badpixTraceInLastRender()?.x).toEqual([900]); // wavenumber[1]
 
     // The OBSOLETE region's (R1, mount-time) response lands last — the
@@ -1069,14 +1072,11 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     // (a stale commit would re-render with R1's two markers at 800/1000).
     r1.resolve(badpixResponse('R1', R1_ITEMS));
     await flush();
-    expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (1)');
+    expect(badpixTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
     expect(badpixTraceInLastRender()?.x).toEqual([900]);
 
-    // Export gate: the CSV carries R2's annotation (row pattern 0,1,0 and
-    // g5_eps provenance), not the stale R1 list (1,0,1 / jb25).
     const csv = await exportCsv(container);
-    expect(csv).toContain('# badpix_source: g5_eps');
-    expect(csv).not.toContain('jb25');
+    expect(csvProvenance(csv).annotations.badpix).toEqual(R2_ITEMS);
     const header = csv.split('\n').find((l) => l.startsWith('wavenumber'))!.split(',');
     const bIdx = header.indexOf('badpix');
     expect(bIdx).toBeGreaterThan(-1);
@@ -1096,9 +1096,9 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     // Mount region (R1) resolves; overlay on → two markers render.
     r1.resolve(badpixResponse('R1', R1_ITEMS));
     await flush();
-    await fireEvent.click(screen.getByLabelText(/Known-noisy channels/i));
+    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
     await flush();
-    expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (2)');
+    expect(badpixTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 2');
 
     // Region switch with R2's response still in flight: the R1 list must be
     // cleared IMMEDIATELY — no markers, no toggle (it renders only with a
@@ -1106,7 +1106,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     loadCatalog.mockReturnValue(r2.promise);
     await clickRegion(container, 'r2');
     expect(badpixTraceInLastRender()).toBeUndefined();
-    expect(screen.queryByLabelText(/Known-noisy channels/i)).toBeNull();
+    expect(screen.queryByLabelText(/Anomalous pixels/i)).toBeNull();
     const csvDuringTransition = await exportCsv(container);
     expect(csvDuringTransition).not.toContain('badpix_source');
     expect(
@@ -1118,7 +1118,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     // transition, so the marker renders without re-toggling.
     r2.resolve(badpixResponse('R2', R2_ITEMS));
     await flush();
-    expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (1)');
+    expect(badpixTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
     expect(badpixTraceInLastRender()?.x).toEqual([900]);
   });
 });
@@ -1127,17 +1127,17 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
 it('maps full-catalog channels through the embedded axis channel map', async () => {
   getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_A, { channel_indices: [21, 24, 30] }));
   vi.spyOn(api, 'getBadpixChannels').mockResolvedValue({
-    schema_version: '1.0.0', region: 'R123', n_channels: 2148,
-    badpix: [{ channel: 24, position: 24, tier: 1, source: 'both' }],
+    schema_version: '2.0.0', region: 'R123', n_channels: 2148,
+    badpix: [{ channel: 24, position: 24, table: 'S3' }],
   });
   render(ProcessingWorkbench, { scanId: SCAN_ID });
   await screen.findByText('1. Despike');
   await flush();
   expect(api.getBadpixChannels).toHaveBeenCalledWith('R123');
-  await fireEvent.click(screen.getByLabelText(/Known-noisy channels/i));
+  await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
   await flush();
   const traces = reactSpy.mock.calls.at(-1)![1] as Array<{ name?: string; x?: number[] }>;
-  expect(traces.find(trace => trace.name?.startsWith('Known-noisy'))?.x).toEqual([900]);
+  expect(traces.find(trace => trace.name?.startsWith('Anomalous pixels'))?.x).toEqual([900]);
 });
 
 function syntheticPdsResponse(mode: string, values: number[]): SpectrumResponse {
@@ -1524,18 +1524,18 @@ describe('capability-off legacy Workbench regression', () => {
       expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
       expect(get(currentHash)).toBe('#/scan/synthetic/workbench'); expect(get(appConfig)?.tier).toBe('public');
       expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_A);
-      vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '1', region: 'R123', n_channels: 3,
-        badpix: [{ position: 1, channel: 600, tier: 1, source: 'synthetic-noisy' }] });
+      vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '2.0.0', region: 'R123', n_channels: 3,
+        badpix: [{ position: 1, channel: 600, table: 'S4' }] });
       point.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW, { region: 'R2', wavelength: [285, 305, 325],
         despike_applied: true, despike_method: 'ml', n_masked_channels: 1, masked_positions: [1] }));
       const region = Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r2')!;
       await fireEvent.click(region); await flush();
-      await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
+      await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i)); await flush();
       expect(screen.queryByLabelText('Evidence desk')).toBeNull();
       const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
       expect(traces[0].x).toEqual([285, 305, 325]); expect(traces[0].y).toEqual(INTENSITY_NEW);
       expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').x).toEqual([305]);
-      expect(traces.find((trace: { name: string }) => trace.name === 'Known-noisy channels (1)').x).toEqual([305]);
+      expect(traces.find((trace: { name: string }) => trace.name === 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1').x).toEqual([305]);
       expect(layout.xaxis.title.text).toBe('Wavelength (nm)');
       expect(layout.plot_bgcolor).toBe('#ffffff'); expect(layout.paper_bgcolor).toBe('#ffffff');
       expect(traces[0].line.color).toBe('#1e293b'); expect(layout.font.color).toBeUndefined();
@@ -1583,13 +1583,13 @@ it.each(['tier', 'access'])('accepts fresh spectrum, annotations and processing 
   expect(container.querySelector('.export-trigger')).toBeNull();
   expect(container.querySelector('.aci-viewer')).toBeNull();
   getAvg.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW));
-  vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '1', region: 'R123', n_channels: 3,
-    badpix: [{ position: 1, channel: 600, tier: 1, source: 'synthetic-noisy' }] });
+  vi.mocked(api.getBadpixChannels).mockResolvedValue({ schema_version: '2.0.0', region: 'R123', n_channels: 3,
+    badpix: [{ position: 1, channel: 600, table: 'S4' }] });
   revalidate(); await flush();
   expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
   await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'processing' } }); await flush();
-  await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
-  expect(csvProvenance(await exportCsv(container)).annotations.badpix[0].source).toBe('synthetic-noisy');
+  await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i)); await flush();
+  expect(csvProvenance(await exportCsv(container)).annotations.badpix).toEqual([{ position: 1, channel: 600, table: 'S4' }]);
   vi.spyOn(api, 'postFit').mockResolvedValue(fakeFit());
   const card = Array.from(container.querySelectorAll('.step-title')).find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
   await fireEvent.click(card.querySelector('.step-header')!);

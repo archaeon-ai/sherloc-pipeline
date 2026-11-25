@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ProcessingSnapshot } from '../lib/types';
+  import type { BadpixChannel, ProcessingSnapshot } from '../lib/types';
   import { onDestroy } from 'svelte';
   import { appConfig, accessMode } from '../lib/stores';
   import { ApiError, getReferences, getReference, identifyStoredPoint } from '../lib/api';
@@ -19,6 +19,7 @@
 
   export let snapshot: ProcessingSnapshot | null = null;
   export let contextKey: string;
+  export let badpix: BadpixChannel[] = [];
   export let showBadpix = false;
   // The current scan's shots per point, stored with a pin for the shared chain's auto background scale.
   export let shotsPerPoint: number | null = null;
@@ -198,7 +199,7 @@
   }
   $: primary = evidenceTrace(snapshot, {
     spike_mask: $$restProps.spikeMask ?? null, spike_method: $$restProps.spikeMethod ?? null,
-    badpix: showBadpix ? $$restProps.badpix : null,
+    badpix: showBadpix ? badpix : null,
   });
   $: unsupportedRegion = snapshot?.trace?.region === 'R123';
   $: nativeDomain = primary?.nativeDomain ?? (
@@ -268,7 +269,7 @@
       wavenumber={snapshot?.raman.wavenumber ?? []} intensity={snapshot?.raman.intensity ?? []}
       artifacts={snapshot?.artifacts ?? null} processingChain={snapshot?.processingChain ?? []}
       spikeMask={$$restProps.spikeMask ?? null} spikeMethod={$$restProps.spikeMethod ?? null}
-      badpix={showBadpix ? $$restProps.badpix : null}
+      badpix={showBadpix ? badpix : null}
       evidenceMode={comparing} evidenceDisplays={comparing ? displays : []} evidenceShared={comparing ? sharedEvidence : null}
       exportFigure={(format) => plot?.downloadAs(format)} />
   </div>
@@ -289,7 +290,7 @@
     selectionMode={committedMode} selectedIndices={committedIndices}
     selectedPointIdx={committedMode === 'point' ? committedIndices[0] ?? null : null}
     nPoints={Number(committedSelection?.n_points ?? committedIndices.length)} averagingMethod={committedAverage}
-    processingTrace={primary} bind:showBadpix evidenceMode={comparing}
+    processingTrace={primary} {badpix} bind:showBadpix evidenceMode={comparing}
     comparisonTraces={comparing ? viewed : []} primaryTrace={comparing ? primary : null} sharedEvidence={comparing ? sharedEvidence : null}
     stacked={view === 'stacked'} {theme} on:viewRangeChange />
 </section>

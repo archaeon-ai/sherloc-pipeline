@@ -377,31 +377,13 @@ Returned masks are absolute channel indices (0–2147) on each region's
 2148-channel plane. The `none` and `modz` methods require no extra and produce
 no masks from this package.
 
-### 2.2.2 Known-Noisy Channel Annotation (distinct from cosmic-ray despiking)
+### 2.2.2 Anomalous pixel overlay
 
-Some individual detector channels are intrinsically noisier than their
-neighbors — a fixed property of the CCD, separate from the transient
-cosmic-ray hits that despiking targets. The pipeline ships a curated table of
-these **known-noisy channels** (`data/badpix_channels.csv`) and exposes them as
-an analyst-visible **annotation layer**, served by `GET /api/spectra/badpix`.
-This layer is **completely separate from cosmic-ray despiking**: it never
-masks, replaces, interpolates, or alters any spectral value — it only marks
-where the known-noisy channels fall, on demand, when the analyst opts in.
-
-The distinction matters because a known-noisy marker says nothing about
-whether a band at that channel is real. A tier 1 channel enters the table only
-when it is noisy with the laser off (in a dark frame). Inside the hi-carb window
-(1075-1105 cm⁻¹ in `config.yaml`), R1 channels 136 and 138 are listed and
-channel 137 between them is not. Turning the layer on marks the listed
-channels and changes no value.
-
-The curated table carries two tiers. **Tier 1** channels are elevated-noise
-channels whose excursions a cosmic-ray detector could plausibly confuse for
-real hits (the operationally relevant set for analysis caution). **Tier 2**
-channels are stable hot pixels that cancel out under dark-frame subtraction;
-they are retained for raw-plane analyses. Each entry also records its
-attribution source — a detector characterization over the mission spectral
-corpus, the published mission bad-pixel table (Jakubek et al. 2025), or both.
+The optional Workbench overlay marks anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4).
+In stowed-arm scans, these pixels fell beyond ±3σ more often than expected from noise.
+Table S3 covers the R1 Raman region and Table S4 covers the R2 and R3 fluorescence regions.
+The overlay reads absolute CCD indices from `data/badpix_channels.csv` through
+`GET /api/spectra/badpix` and changes no spectral value.
 
 ---
 

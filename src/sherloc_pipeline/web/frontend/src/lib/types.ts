@@ -197,21 +197,11 @@ export interface SpectrumResponse {
   despike_params_used?: DespikeParams;
 }
 
-// --- Badpix annotation layer (issue #9) ---
-
-/**
- * One known-noisy detector channel for the analyst annotation overlay. Wholly
- * separate from despiking — it never masks or alters spectral values.
- * `position` indexes the served wavenumber/intensity arrays for the requested
- * region (same coordinate system as `masked_positions`); `channel` is the
- * absolute CCD index; `tier` 1 = CR-confusable elevated-noise, 2 = stable hot;
- * `source` ∈ dark_veto | jb25 | both.
- */
+/** A marker for anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4). */
 export interface BadpixChannel {
-  position: number;
-  channel: number;
-  tier: number;
-  source: string;
+  position: number; // 0-based index in the served array
+  channel: number; // Absolute 0-based CCD index
+  table: 'S3' | 'S4';
 }
 
 export interface BadpixResponse {

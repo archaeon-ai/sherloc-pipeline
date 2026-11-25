@@ -2,7 +2,7 @@
   import type { EvidenceDisplay } from '../lib/evidenceTypes';
   import { evidenceCsv, evidenceExport } from '../lib/evidenceStore';
   import type { SharedEvidence } from '../lib/evidenceStore';
-  import type { ExportTrace, ProcessingArtifacts } from '../lib/types';
+  import type { BadpixChannel, ExportTrace, ProcessingArtifacts } from '../lib/types';
 
   import type { IdentificationEvidence } from '../lib/identification';
   export let identification: IdentificationEvidence | null = null;
@@ -37,14 +37,8 @@
   // artifact even when the active method is 'none' (PR #10 review F1).
   export let spikeMask: boolean[] | null = null;
   export let spikeMethod: 'ml' | 'modz' | null = null;
-  // Known-noisy channel annotation export (issue #9). The badpix column is
-  // emitted iff this prop is non-null — the Workbench passes the list only when
-  // the overlay toggle is ON (mirroring the spike-mask explicit-props gate:
-  // ProcessingWorkbench is the single authority). Each entry's `position`
-  // indexes the served array, so the column is 0/1 per served row. A
-  // `# badpix_source:` header records the annotation source set. Fully separate
-  // from despiking — these channels are annotated, never masked.
-  export let badpix: { position: number; tier: number; source: string }[] | null = null;
+  // The overlay toggle controls the annotation column and its citation.
+  export let badpix: BadpixChannel[] | null = null;
 
   let open = false;
   let showProvenanceModal = false;
@@ -181,14 +175,9 @@
       lines.push(`# spike_mask_method: ${spikeMethod}`);
     }
 
-    // Known-noisy channel annotation (issue #9): emitted iff the explicit
-    // `badpix` prop carries the list (the Workbench gates on the overlay
-    // toggle, not us). The badpix=1 column marks ANNOTATED channels, NOT
-    // removed ones — distinct from spike_mask, which marks despiked channels.
     const hasBadpix = badpix !== null && badpix.length > 0;
     if (hasBadpix) {
-      const sources = [...new Set(badpix!.map((b) => b.source))].sort();
-      lines.push(`# badpix_source: ${sources.join(',')}`);
+      lines.push('# badpix_source: Jakubek et al. 2025, Supplemental Tables S3 and S4, doi:10.1177/00037028241280081');
     }
 
     // Build columns based on stage
@@ -212,7 +201,7 @@
     }
 
     if (hasBadpix) {
-      // 0/1 per served row: 1 where a served position is annotated known-noisy.
+      // 0/1 per served row: 1 where a served position is annotated as an anomalous pixel.
       const badpixCol = new Array<number>(channelCount).fill(0);
       for (const b of badpix!) {
         if (b.position >= 0 && b.position < badpixCol.length) badpixCol[b.position] = 1;

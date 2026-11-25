@@ -3,7 +3,7 @@
   import type { EvidenceDomain, EvidenceTheme, EvidenceTrace } from '../lib/evidenceTypes';
   import { comparisonDisplays, evidenceColor, nativeRenderTrace, evidenceExport, nativeFigureEvidence } from '../lib/evidenceStore';
   import type { SharedEvidence } from '../lib/evidenceStore';
-  import type { Peak } from '../lib/types';
+  import type { BadpixChannel, Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
   // Dynamic import for plotly (same pattern as SpectrumPlot.svelte)
@@ -19,14 +19,8 @@
   // the displayed trace ("Spikes"); 'ml' = stored-mask removal positions on the
   // already-cleaned trace ("ML-masked"). null falls back to the generic label.
   export let spikeMethod: 'ml' | 'modz' | null = null;
-  // Known-noisy channel annotation overlay (issue #9). Each entry is a served-
-  // array position plus its tier/source provenance. This is an ANNOTATION
-  // layer fully separate from despiking — it never alters the trace, only
-  // marks positions. Distinct glyph from the red-triangle spike markers
-  // (hollow blue diamonds), with its OWN default-OFF toggle. `showBadpix` is
-  // bindable so the Workbench (the export authority) can gate the CSV column on
-  // the same toggle that drives the overlay.
-  export let badpix: { position: number; tier: number; source: string }[] = [];
+  const badpixLabel = 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)';
+  export let badpix: BadpixChannel[] = [];
   export let showBadpix: boolean = false;
   export let background: number[] | null = null;     // dashed gray background line
   export let backgroundScaled: number[] | null = null;
@@ -332,12 +326,7 @@
       }
     }
 
-    // Known-noisy channel markers (issue #9): hollow blue diamonds at the
-    // annotated served positions. Deliberately a DISTINCT glyph + color from
-    // the filled red-triangle spike markers (colorblind-safe pairing: shape
-    // AND hue differ, so the two never read as the same marker). This overlay
-    // is annotation-only \u2014 it sits on the displayed trace and never alters it,
-    // and has no relationship to despike state.
+    // Draw each annotation at the displayed sample value.
     if (showBadpix && badpix.length > 0) {
       const bpX: number[] = [];
       const bpY: number[] = [];
@@ -346,7 +335,7 @@
         if (bp.position >= 0 && bp.position < xData.length) {
           bpX.push(xData[bp.position]);
           bpY.push(intensity[bp.position]);
-          bpCustom.push([bp.tier, bp.source]);
+          bpCustom.push([bp.channel, bp.table]);
         }
       }
       if (bpX.length > 0) {
@@ -356,7 +345,7 @@
           customdata: bpCustom,
           type: 'scatter',
           mode: 'markers',
-          name: `Known-noisy channels (${bpX.length})`,
+          name: `${badpixLabel} · ${bpX.length}`,
           marker: {
             symbol: 'diamond-open',
             size: 9,
@@ -364,8 +353,8 @@
             line: { color: '#0369a1', width: 1.5 },
           },
           hovertemplate:
-            `Known-noisy channel at %{x:.1f} ${xUnit}` +
-            '<br>tier %{customdata[0]} \u00B7 source %{customdata[1]}<extra></extra>',
+            `Anomalous pixel at %{x:.1f} ${xUnit}` +
+            '<br>CCD channel %{customdata[0]} · Table %{customdata[1]}<extra></extra>',
         });
       }
     }
@@ -730,7 +719,7 @@
         <label class="toggle-label"><input type="checkbox" bind:checked={showOverlaySpikes} on:change={renderPlot} /> Spikes</label>
       {/if}
       {#if badpix.length > 0}
-        <label class="toggle-label"><input type="checkbox" bind:checked={showBadpix} on:change={renderPlot} /> Known-noisy channels</label>
+        <label class="toggle-label"><input type="checkbox" bind:checked={showBadpix} on:change={renderPlot} /> {badpixLabel}</label>
       {/if}
     </div>
     <div class="export-bar">

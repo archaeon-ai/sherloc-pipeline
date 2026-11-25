@@ -44,7 +44,7 @@ describe('getPointSpectrum — ensureAuthenticated gate (issue #17)', () => {
 describe('getBadpixChannels — static per-region client cache (issue #9)', () => {
   function badpixResponse(region: string) {
     return new Response(
-      JSON.stringify({ schema_version: '1.0.0', region, n_channels: 523, badpix: [] }),
+      JSON.stringify({ schema_version: '2.0.0', region, n_channels: 523, badpix: [] }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     );
   }

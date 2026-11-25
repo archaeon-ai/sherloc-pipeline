@@ -240,7 +240,7 @@ export async function postSubsetAverage(
   });
 }
 
-// --- Spectra: known-noisy channel annotation (issue #9) ---
+// --- Spectra: anomalous pixel annotation ---
 
 /**
  * Client-side cache of the static badpix list, keyed by region. The endpoint
@@ -251,10 +251,8 @@ export async function postSubsetAverage(
 const badpixCache = new Map<string, Promise<BadpixResponse>>();
 
 /**
- * Fetch the known-noisy detector channels for a region view (issue #9). Static
- * annotation layer — no scan, no DB, no despike interaction. Cached per region
- * client-side. Maps to served-array positions for the region the caller is
- * displaying (`R1 | R2 | R3 | R123`).
+ * Fetch the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
+ * in the requested region, with served positions and supplemental table identifiers.
  */
 export async function getBadpixChannels(region: string): Promise<BadpixResponse> {
   const cached = badpixCache.get(region);

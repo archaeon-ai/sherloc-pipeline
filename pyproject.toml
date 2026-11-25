@@ -130,10 +130,8 @@ where = ["src"]
 # them without per-tier R2 keys. Without this entry the v1.0-beta VPS
 # deployment regressed to "Background file not found" (issue #13).
 #
-# data/badpix_channels.csv ships the curated known-noisy detector-channel
-# table served by `GET /api/spectra/badpix` for the analyst annotation
-# layer (issue #9). Resolved via importlib.resources at module load; the
-# wheel-installed runtime image needs the entry to serve the endpoint.
+# The overlay reads the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
+# from the packaged data/badpix_channels.csv file.
 [tool.setuptools.package-data]
 sherloc_pipeline = ["config.yaml", "data/background/*.csv", "data/badpix_channels.csv", "core/identification/recipes/*.json"]
 

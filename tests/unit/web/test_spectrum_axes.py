@@ -276,8 +276,8 @@ def test_static_badpix_callers_keep_regional_loupe_mapping(monkeypatch):
         np.array([249., 251., 300.]), np.array([1., 2., 3.]),
     ))
     monkeypatch.setattr(spectra, "load_badpix_channels", lambda: [
-        SimpleNamespace(channel=1, tier=1, source="both"),
-        SimpleNamespace(channel=2, tier=2, source="both"),
+        SimpleNamespace(channel=1, table="S3"),
+        SimpleNamespace(channel=2, table="S4"),
     ])
     spectra._badpix_items_for_region.cache_clear()
     try:
