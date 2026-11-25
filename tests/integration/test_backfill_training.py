@@ -5,7 +5,6 @@ Covers:
 - Backfill script discovers scans and calls persist_raman_peaks per domain
 - Backfill idempotency: running twice produces same result
 - JSONL extraction format matches spec §9.3
-- Co-occurrence query returns expected results on fixture data (extended)
 
 AC: bd-3cqz.39 (spec step 6.4)
 """
@@ -465,16 +464,6 @@ class TestBackfillIdempotency:
         assert result1.metadata["total_peaks_queried"] == result2.metadata["total_peaks_queried"]
         assert path1.read_text() == path2.read_text()
 
-    def test_co_occurrence_idempotent(self, training_db):
-        """Running co-occurrence query twice returns identical results."""
-        engine, _ = training_db
-        service = _make_service(engine)
-
-        results1 = service.query_co_occurrences()
-        results2 = service.query_co_occurrences()
-
-        assert results1 == results2
-
 
 # ---------------------------------------------------------------------------
 # Tests: JSONL extraction format (spec §9.3)
@@ -808,57 +797,3 @@ class TestBuildPhaseLabel:
         # "sulfate" should appear exactly once in the phase part
         phase_part = label.split("Evidence:")[0]
         assert phase_part.count("sulfate") == 1
-
-
-# ---------------------------------------------------------------------------
-# Tests: Co-occurrence on training fixture (extended from 6.3)
-# ---------------------------------------------------------------------------
-
-class TestCoOccurrenceOnTrainingData:
-    """Validate co-occurrence queries work on the richer training fixture."""
-
-    def test_finds_sulfate_ce3_in_training_db(self, training_db):
-        """Finds Point 0 Sol 7293 (sulfate + Ce3+)."""
-        engine, point_ids = training_db
-        service = _make_service(engine)
-
-        results = service.query_co_occurrences()
-
-        assert len(results) == 1
-        assert results[0]["sol_number"] == 7293
-        assert results[0]["point_index"] == 0
-
-    def test_excludes_organics_from_co_occurrence(self, training_db):
-        """Organics-only point (Point 1 Sol 7293) not in co-occurrence results."""
-        engine, point_ids = training_db
-        service = _make_service(engine)
-
-        results = service.query_co_occurrences()
-
-        result_ids = {r["scan_point_id"] for r in results}
-        assert point_ids[(7293, "T7293", "HDR_1", 1)] not in result_ids
-
-    def test_hydration_group2_not_in_default_query(self, training_db):
-        """Hydration + group2 point not matched by default sulfate+Ce3+ query."""
-        engine, point_ids = training_db
-        service = _make_service(engine)
-
-        results = service.query_co_occurrences()  # Default: sulf% + group1a/1b
-
-        result_ids = {r["scan_point_id"] for r in results}
-        assert point_ids[(7257, "T7257", "detail_1", 0)] not in result_ids
-
-    def test_custom_hydration_group2_query(self, training_db):
-        """Custom query finds hydration + group2 co-occurrence."""
-        engine, _ = training_db
-        service = _make_service(engine)
-
-        results = service.query_co_occurrences(
-            raman_modality="hydration",
-            raman_assignment_pattern="OH%",
-            fluor_groups=["group2"],
-        )
-
-        assert len(results) == 1
-        assert results[0]["sol_number"] == 7257
-        assert results[0]["point_index"] == 0

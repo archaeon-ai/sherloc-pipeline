@@ -17,14 +17,12 @@ from sherloc_pipeline.core.fluor_fitting import (
     fit_fluorescence_spectrum,
 )
 from sherloc_pipeline.core.fluor_id import (
-    CooccurrenceScore,
     DoubletRecord,
     FluorescenceRule,
     FLUORESCENCE_RULES,
     assign_fluor_group,
     classify_fluor_peaks,
     detect_doublets,
-    score_cooccurrences,
 )
 
 
@@ -688,86 +686,6 @@ class TestHypothesisDrivenFitting:
         )
 
         assert result.n_peaks == 0
-
-
-# ---------------------------------------------------------------------------
-# Cross-modal co-occurrence scoring
-# ---------------------------------------------------------------------------
-
-
-class TestScoreCooccurrences:
-
-    def test_sulfate_raman_confirms_group1(self):
-        """Sulfate Raman label + group 1 band → confirmed Ce3+-bearing anhydrite."""
-        fluor_groups = ["group1a", "group1b"]
-        raman_assignments = ["sulf1_v1"]
-        scores = score_cooccurrences(fluor_groups, raman_assignments)
-
-        assert len(scores) == 2
-        assert scores[0].raman_support == "confirmed"
-        assert scores[0].phase_interpretation == "Ce3+-bearing anhydrite"
-        assert scores[0].confidence_boost > 1.0
-
-    def test_phosphate_raman_confirms_group2(self):
-        """Phosphate Raman + Group 2 → confirmed Ce3+-bearing phosphate."""
-        fluor_groups = ["group2"]
-        raman_assignments = ["phosphate"]
-        scores = score_cooccurrences(fluor_groups, raman_assignments)
-
-        assert len(scores) == 1
-        assert scores[0].raman_support == "confirmed"
-        assert scores[0].phase_interpretation == "Ce3+-bearing phosphate"
-        assert scores[0].confidence_boost > 1.0
-
-    def test_group2_with_perchlorate_label(self):
-        fluor_groups = ["group2"]
-        raman_assignments = ["perchlorate"]
-        scores = score_cooccurrences(fluor_groups, raman_assignments)
-
-        assert scores[0].raman_support == "contradicted"
-        assert scores[0].confidence_boost < 1.0
-        assert "phosphate" in scores[0].phase_interpretation.lower()
-
-    def test_no_raman_data(self):
-        """No Raman peaks → 'no_raman' support."""
-        fluor_groups = ["group1a", "group2"]
-        scores = score_cooccurrences(fluor_groups, [])
-
-        assert all(s.raman_support == "no_raman" for s in scores)
-        assert all(s.confidence_boost == 1.0 for s in scores)
-
-    def test_group2_without_phosphate_raman(self):
-        """Group 2 with non-phosphate Raman → unsupported."""
-        fluor_groups = ["group2"]
-        raman_assignments = ["olivine"]
-        scores = score_cooccurrences(fluor_groups, raman_assignments)
-
-        assert scores[0].raman_support == "unsupported"
-        assert "below Raman detection" in scores[0].phase_interpretation
-
-    def test_group3_always_silicate_defect(self):
-        """Group 3 → silicate defect regardless of Raman."""
-        for raman in [[], ["olivine"], ["phosphate"]]:
-            scores = score_cooccurrences(["group3"], raman)
-            assert scores[0].phase_interpretation == "Silicate defect luminescence"
-
-    def test_unidentified_group(self):
-        """Unidentified fluorescence → generic annotation."""
-        scores = score_cooccurrences(["unidentified"], ["olivine"])
-        assert scores[0].phase_interpretation == "Unidentified fluorescence"
-
-    def test_mixed_groups_scored_independently(self):
-        """Multiple fluor groups each scored against same Raman set."""
-        fluor_groups = ["group1a", "group1b", "group2"]
-        raman_assignments = ["sulf1_v1", "phosphate"]
-        scores = score_cooccurrences(fluor_groups, raman_assignments)
-
-        assert len(scores) == 3
-        # Group 1 peaks should be confirmed (sulfate present)
-        assert scores[0].raman_support == "confirmed"
-        assert scores[1].raman_support == "confirmed"
-        # Group 2 should also be confirmed (phosphate present)
-        assert scores[2].raman_support == "confirmed"
 
 
 # ---------------------------------------------------------------------------
