@@ -671,18 +671,14 @@ does not gain a method selector.
 
 ---
 
-## Web HTTP API — Known-noisy channel annotation (issue #9)
+## Web HTTP API — Anomalous channel annotation
 
 `GET /api/spectra/badpix?region=R1|R2|R3|R123`
 
-Returns the curated list of **known-noisy detector channels** for a region
-view, as an analyst-visible annotation layer. This is a **static** list — it
-takes **no scan id**, touches **no database**, and has **no interaction with
-despiking whatsoever**. It is an annotation surface only: it never masks,
-replaces, or alters any spectral value. Some channels can carry both real
-mineral signal **and** intrinsic detector noise; cosmic-ray despiking must
-never touch a real spectral band, yet the analyst can still surface
-"known-noisy channel" on demand from this independent annotation layer.
+Returns the static list of anomalous detector channels for a region view.
+The endpoint requires no scan ID or database access. The overlay marks
+channels without changing spectral values. A marked channel can also carry
+a real mineral signal.
 
 `region` defaults to `R1`; an invalid region returns **400** (matching the
 spectra endpoints' invalid-region contract). `schema_version` stays `1.0.0`
@@ -707,8 +703,8 @@ spectra endpoints' invalid-region contract). `schema_version` stays `1.0.0`
 | `n_channels` | int | length of the served array for that region |
 | `badpix[].position` | int | **0-based position into the served `wavenumber`/`intensity` arrays** for this region — the same coordinate system as `masked_positions`, so a marker at `position` lands on `wavenumber[position]`. For `R123` the served array is the full 2148-channel stitch, so `position == channel` |
 | `badpix[].channel` | int | absolute CCD channel index, `0..2147` |
-| `badpix[].tier` | int | `1` = CR-confusable elevated-noise channel; `2` = stable hot pixel that cancels in dark subtraction |
-| `badpix[].source` | str | attribution: `dark_veto` (defect detected in dark frames), `jb25` (published mission bad-pixel table), or `both` |
+| `badpix[].tier` | int | `1` for channels flagged by this pipeline's dark-frame test. The paper lists the 11 tier `2` channels and the test did not flag them. |
+| `badpix[].source` | str | `dark_veto` for the pipeline's dark-frame test alone, `jb25` for the published list of anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) alone, or `both` for channels identified by both sources. |
 
 Channels outside the requested region's served selection are omitted (e.g. an
 R2 channel is not returned for a `region=R1` view). The list is sorted by

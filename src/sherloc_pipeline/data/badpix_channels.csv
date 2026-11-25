@@ -1,30 +1,30 @@
-# SHERLOC detector known-noisy channel annotation table
+# SHERLOC anomalous detector channels
 #
-# Curated list of detector CCD channels flagged as known-noisy for the
-# analyst-visible badpix annotation layer (issue #9). This is an ANNOTATION
-# asset only: it never masks, replaces, or alters spectral values.
+# The overlay marks these CCD channels without changing spectral values.
 #
 # Full rebuild 2026-06-17 on a DARK-PLANE veto (all regions). The prior
 # epsilon=(active-dark) rate criterion was inverted: it flagged active-only REAL
 # Raman/fluorescence bands (e.g. the sulfate nu1 channels 129/130/131 and the
-# carbonate nu1 apex 137) and missed true RTS defects whose active~dark
-# excursions cancel in epsilon. A genuine defect must fire with the laser OFF;
-# a spectral band cannot. tier-1 = dark |z|>4 rate >= max(0.5%, 6x region
-# median) over 177,067 frames. JB25-attested channels preserved (external
-# authority; stable hot pixels are dark-LEVEL, not RTS-rate).
-#   Cross-ref: Jakubek et al. 2025, Appl. Spectrosc. 79(6), 904-918,
-#   doi:10.1177/00037028241280081.
+# carbonate nu1 apex 137) and missed anomalous channels whose active and dark
+# excursions cancel in epsilon.
 #
-# Tier semantics:
-#   tier 1 = dark-plane-confirmed flickering/RTS defect (CR-confusable).
-#   tier 2 = JB25 stable hot pixel, dark-quiet (epsilon-quiet); raw-plane only.
+# Tier 1: this pipeline's dark-frame test flagged the channel. Across 177,067
+# frames, the rate of dark-frame |z| > 4 was at least the larger of 0.5%
+# and six times the median rate for the region.
+# Published list of anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4),
+# Appl. Spectrosc. 79(6), 904–918, doi:10.1177/00037028241280081.
+# Tier 2: the paper lists these 11 channels and this pipeline's dark-frame
+# test did not flag them.
 #
 # Source attribution (column `source`):
-#   dark_veto = dark-plane-confirmed defect (2026-06-17 rebuild)
-#   jb25      = published mission bad-pixel table (Jakubek et al. 2025), dark-quiet
-#   both      = dark-confirmed AND JB25-attested
+#   dark_veto = pipeline dark-frame test only
+#   jb25      = published list only
+#   both      = pipeline dark-frame test and published list
 #
 # region = detector region (R1 Raman, R2/R3 fluorescence) the channel falls in.
+# Because the pipeline assigns R1/R2/R3 by the wavelength bounds in config.yaml
+# and the paper uses pixel ranges, channels such as 1615 and 1651 fall in R2
+# here and R3 in the paper.
 # channel = absolute CCD channel index (0-based, 0..2147).
 region,channel,tier,source
 R1,54,1,dark_veto

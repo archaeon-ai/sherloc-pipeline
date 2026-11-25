@@ -377,31 +377,28 @@ Returned masks are absolute channel indices (0–2147) on each region's
 2148-channel plane. The `none` and `modz` methods require no extra and produce
 no masks from this package.
 
-### 2.2.2 Known-Noisy Channel Annotation (distinct from cosmic-ray despiking)
+### 2.2.2 Anomalous channel annotation
 
-Some individual detector channels are intrinsically noisier than their
-neighbors — a fixed property of the CCD, separate from the transient
-cosmic-ray hits that despiking targets. The pipeline ships a curated table of
-these **known-noisy channels** (`data/badpix_channels.csv`) and exposes them as
-an analyst-visible **annotation layer**, served by `GET /api/spectra/badpix`.
-This layer is **completely separate from cosmic-ray despiking**: it never
-masks, replaces, interpolates, or alters any spectral value — it only marks
-where the known-noisy channels fall, on demand, when the analyst opts in.
+The optional Workbench overlay marks anomalous detector channels listed in
+`data/badpix_channels.csv` and served by `GET /api/spectra/badpix`. It leaves
+spectral values intact and operates independently of cosmic-ray despiking.
 
-The distinction matters because a known-noisy marker says nothing about
-whether a band at that channel is real. A tier 1 channel enters the table only
-when it is noisy with the laser off (in a dark frame). Inside the hi-carb window
+A spectral band can fall on a marked channel. Inside the hi-carb window
 (1075-1105 cm⁻¹ in `config.yaml`), R1 channels 136 and 138 are listed and
-channel 137 between them is not. Turning the layer on marks the listed
-channels and changes no value.
+channel 137 between them is not.
 
-The curated table carries two tiers. **Tier 1** channels are elevated-noise
-channels whose excursions a cosmic-ray detector could plausibly confuse for
-real hits (the operationally relevant set for analysis caution). **Tier 2**
-channels are stable hot pixels that cancel out under dark-frame subtraction;
-they are retained for raw-plane analyses. Each entry also records its
-attribution source — a detector characterization over the mission spectral
-corpus, the published mission bad-pixel table (Jakubek et al. 2025), or both.
+**Tier 1** comprises channels flagged by this pipeline's dark-frame test.
+Excursions at these channels can resemble cosmic-ray hits.
+Across 177,067 frames, the fraction with |z| > 4 at each channel had to reach
+the larger of 0.5% and six times the median fraction for the region.
+`dark_veto` identifies channels found only by this test. Of the 36 anomalous
+pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4), 25 also meet the
+dark-frame criterion and carry the source `both`. The paper lists the 11
+**tier 2** channels (`jb25`) and this pipeline's dark-frame test did not flag them.
+
+Because the pipeline assigns R1/R2/R3 by the wavelength bounds in
+`config.yaml` and the paper uses pixel ranges, channels such as 1615 and
+1651 fall in R2 here and R3 in the paper.
 
 ---
 

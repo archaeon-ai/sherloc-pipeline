@@ -1,24 +1,14 @@
-"""Known-noisy detector-channel annotation table (issue #9).
+"""Anomalous detector channels for the optional spectral annotation overlay.
 
-The pipeline ships a curated CSV of detector CCD channels flagged as
-known-noisy (``sherloc_pipeline/data/badpix_channels.csv``). This module
-parses that asset ONCE at import via :mod:`importlib.resources` (so editable
-installs, wheel installs, and source checkouts all resolve it) and exposes the
-records to the web layer.
+The web layer reads absolute CCD channel indices from
+``sherloc_pipeline/data/badpix_channels.csv``. The overlay marks listed
+channels without changing spectral values or the cosmic-ray despiking mask.
 
-The badpix table is an ANNOTATION asset only. It is fully separate from
-cosmic-ray (CR) despiking: nothing here masks, replaces, or alters any
-spectral value; it only lets an analyst surface "known-noisy channel" on
-demand.
-
-Tier semantics (carried through verbatim from the asset header):
-
-- tier 1 = flickering / RTS defect detected in dark frames (CR-confusable).
-- tier 2 = stable hot pixels that cancel in dark subtraction (epsilon-quiet),
-  documented in the published mission bad-pixel table.
-
-Source attribution: ``dark_veto`` (dark frame detection),
-``jb25`` (published mission bad-pixel table), or ``both``.
+This pipeline's dark-frame test flagged the tier 1 channels. Their source is
+``dark_veto`` for the test alone or ``both`` for channels also in the list of
+anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4).
+The paper lists the 11 tier 2 channels (``jb25``) and the dark-frame test
+did not flag them.
 """
 
 from __future__ import annotations
@@ -34,7 +24,7 @@ VALID_BADPIX_SOURCES = {"dark_veto", "jb25", "both", "g5_eps"}
 
 @dataclass(frozen=True)
 class BadpixChannel:
-    """One curated known-noisy detector channel.
+    """One anomalous detector channel.
 
     ``channel`` is the absolute 0-based CCD channel index (0..2147); the web
     layer maps it to a served-array position for the requested region view.
@@ -71,7 +61,7 @@ def _parse_badpix_csv(text: str) -> Tuple[BadpixChannel, ...]:
 
 @lru_cache(maxsize=1)
 def load_badpix_channels() -> Tuple[BadpixChannel, ...]:
-    """Return the curated known-noisy channel records (parsed once, cached).
+    """Return the anomalous channel records (parsed once, cached).
 
     The asset never changes at runtime, so the parse is memoized for the
     process lifetime. Resolved via :mod:`importlib.resources` so the wheel

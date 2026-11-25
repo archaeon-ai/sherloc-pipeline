@@ -1,6 +1,6 @@
-"""``GET /api/spectra/badpix`` known-noisy channel annotation layer (issue #9).
+"""``GET /api/spectra/badpix`` anomalous channel annotation layer.
 
-The badpix endpoint serves a STATIC curated list of known-noisy detector
+The endpoint serves a static list of anomalous detector
 channels, mapped to positions INTO the served array for a region view. It is
 an annotation surface only — wholly separate from cosmic-ray despiking, with
 no DB involvement. These tests pin:
@@ -30,8 +30,8 @@ from tests.unit.web.conftest import _FakeConfig
 N_CHANNELS = 2148
 # Channel 137 (1086.7 cm-1) is not in the table.
 CARBONATE_APEX_CHANNEL = 137
-# A genuine R1 defect that remains (JB25-attested, dark-firing, ~1307.1 cm-1),
-# used for the position-mapping checks that 137 previously anchored.
+# This pipeline's dark-frame test flagged R1 channel 160 (~1307.1 cm-1).
+# Jakubek et al. 2025 list this anomalous pixel in Supplemental Table S3.
 KEPT_R1_DEFECT_CHANNEL = 160
 
 
@@ -83,7 +83,7 @@ async def client(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_r1_channel_137_not_badpix(client):
-    """Channel 137 is absent from the R1 badpix list."""
+    """Channel 137 is absent from the list of anomalous R1 channels."""
     data = (await client.get("/api/spectra/badpix", params={"region": "R1"})).json()
     apex = [it for it in data["badpix"] if it["channel"] == CARBONATE_APEX_CHANNEL]
     assert apex == [], "carbonate apex 137 is real signal, must NOT be in the badpix list"

@@ -117,7 +117,7 @@
       "path": "src/sherloc_pipeline/data/badpix_channels.csv",
       "category": "operator-derived-archived",
       "instrument": "sherloc",
-      "description": "Curated known-noisy detector-channel annotation table (issue #9): absolute CCD channel indices + tier + source, rebuilt 2026-06-17 on a dark-plane outlier-rate veto over the archived mission frame corpus (a defect must fire with the laser OFF; active-only Raman/fluorescence bands are excluded), cross-checked against the published mission bad-pixel table (Jakubek et al. 2025). No measurement values; ships in the wheel and is served by GET /api/spectra/badpix"
+      "description": "Absolute CCD channel indices, tiers and sources for the annotation overlay served by GET /api/spectra/badpix. The table combines this pipeline's 2026-06-17 dark-frame test on archived mission frames with the list of anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4). The packaged CSV contains no measurement values."
     },
     {
       "path": "docs/img/map-mode.png",

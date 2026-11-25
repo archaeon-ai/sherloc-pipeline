@@ -197,15 +197,17 @@ export interface SpectrumResponse {
   despike_params_used?: DespikeParams;
 }
 
-// --- Badpix annotation layer (issue #9) ---
+// --- Anomalous channel annotation ---
 
 /**
- * One known-noisy detector channel for the analyst annotation overlay. Wholly
+ * One anomalous detector channel for the analyst annotation overlay. Wholly
  * separate from despiking — it never masks or alters spectral values.
  * `position` indexes the served wavenumber/intensity arrays for the requested
  * region (same coordinate system as `masked_positions`); `channel` is the
- * absolute CCD index; `tier` 1 = CR-confusable elevated-noise, 2 = stable hot;
- * `source` ∈ dark_veto | jb25 | both.
+ * absolute CCD index. This pipeline's dark-frame test flagged tier 1 channels.
+ * Their source is `dark_veto` for the test alone or `both` for channels also
+ * listed as anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4).
+ * The paper lists the tier 2 channels (jb25) and the test did not flag them.
  */
 export interface BadpixChannel {
   position: number;

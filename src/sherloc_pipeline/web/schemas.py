@@ -369,7 +369,7 @@ class SubsetResponse(BaseModel):
     despike_params_used: Optional[Dict[str, Any]] = None
 
 
-# Known-noisy detector-channel annotation layer (issue #9). A STATIC list
+# Anomalous detector channel annotation layer. A STATIC list
 # served by ``GET /api/spectra/badpix?region=...``; the asset never changes at
 # runtime and there is no DB involvement. This is an ANNOTATION surface,
 # entirely separate from despiking — nothing here masks or alters spectral
@@ -383,9 +383,11 @@ class BadpixChannelItem(BaseModel):
     position: int
     #: Absolute 0-based CCD channel index (0..2147).
     channel: int
-    #: 1 = CR-confusable elevated-noise; 2 = stable hot (cancels in dark sub).
+    #: This pipeline's dark-frame test flagged the tier 1 channels. The paper
+    #: lists the tier 2 channels and the test did not flag them.
     tier: int
-    #: Attribution: ``dark_veto`` | ``jb25`` | ``both``.
+    #: dark_veto = this pipeline's dark-frame test, jb25 = the list of anomalous
+    #: pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4), both = both sources.
     source: str
 
 

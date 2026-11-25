@@ -1112,9 +1112,11 @@ the new `reclassify-*` commands.
 ## [4.4.2] - 2026-06-17
 
 ### Fixed
-- The badpix annotation table uses dark frames to identify tier-1 channels.
-  The `dark_veto` source marks these channels. The overlay marks listed
-  channels without changing spectral values.
+- The anomalous channel overlay marks tier 1 channels flagged by this pipeline's
+  dark-frame test. Of the 36 anomalous pixels (Jakubek et al. 2025, Supplemental
+  Tables S3 and S4), the test flagged 25 (`both`). The paper lists the other 11
+  (`jb25`, tier 2) and the dark-frame test did not flag them. The remaining
+  channels come from the dark-frame test alone (`dark_veto`).
 
 ## [4.4.1] - 2026-06-12
 
@@ -1127,8 +1129,8 @@ the new `reclassify-*` commands.
   union count. The CSV `spike_mask` column follows the same rule. Marker eligibility
   is bound to the committed spectrum's selection context (not live UI state), so
   selection transitions and failed refetches cannot render a stale aggregate mask as
-  a point mask. modz markers (computed on the displayed trace) and the badpix overlay
-  are unchanged; the `masked_positions` API field is unchanged. (#12)
+  a point mask. modz markers (computed on the displayed trace) and the anomalous
+  channel overlay are unchanged; the `masked_positions` API field is unchanged. (#12)
 
 ## [4.4.0] - 2026-06-12
 
@@ -1140,13 +1142,13 @@ the new `reclassify-*` commands.
   in modz mode, behind the existing overlay toggle, with method-aware labels; the CSV
   export emits the `spike_mask` column in ML mode with a `# spike_mask_method:`
   provenance header. (#8)
-- **Badpix annotation layer**: curated known-noisy-channel asset (121 channels — 108
-  CR-confusable elevated-noise + 13 stable hot — from the 2026 detector
-  characterization cross-checked against the published mission bad-pixel table,
-  Jakubek et al. 2025, Appl. Spectrosc. 79(6), 904–918), served at
-  `GET /api/spectra/badpix?region=` as served-array positions; rendered as a separate
-  default-off overlay (hollow blue diamonds, tier+source on hover), fully independent
-  of CR despiking; optional toggle-gated `badpix` CSV export column. (#9)
+- Added an optional overlay for 121 anomalous detector channels (108 in tier 1
+  and 13 in tier 2 in this release). The 2026 detector characterization was
+  cross-checked against the list of anomalous pixels (Jakubek et al. 2025,
+  Supplemental Tables S3 and S4). `GET /api/spectra/badpix?region=` returns
+  positions in the served arrays. The overlay is off by default and operates
+  independently of cosmic-ray despiking. Hollow blue diamonds show the tier
+  and source on hover. Enabling the overlay adds the `badpix` CSV column. (#9)
 
 ### Fixed
 - References panel: corrected the Jakubek et al. citation year (2024 → 2025;
