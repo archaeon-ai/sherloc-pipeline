@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-11-24
+
 ### Upgrade notes
+- **Breaking changes for web API and Python callers.** The anomalous-pixel
+  route is now `GET /api/spectra/anomalous-pixels` (the old
+  `/api/spectra/badpix` path is not served), with schema version `2.0.0`,
+  the list field `anomalous_pixels` and items `{position, channel, table}`.
+  The CSV export column is `anomalous_pixel` and its header line
+  `# anomalous_pixel_source:`. The removed Python modules and functions are
+  listed under Removed; code that imported them must keep its own copy or pin
+  5.7.8. `sherloc` commands and the documented Python API
+  (`sherloc_pipeline.api`) are unchanged.
 - **Existing databases need one migration before data commands run.** This
   change adds Alembic revision `a4d795f0a25e` (three nullable columns on
   `fitted_peaks`). Data commands on an older database stop with the schema
@@ -119,6 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used them. Commands, web routes, fits, and stored data are unchanged.
 
 ### Fixed
+- **The downgrade of `a4d795f0a25e` keeps both `fit_modality` triggers.**
 - **One PDS cache directory.** `pds-download` and `pds-ingest` read
   `pds.cache_dir` from the config (override `SHERLOC_PDS_CACHE_DIR`) when no
   `--output-dir` / `--pds-dir` is given, the same directory the web app and
