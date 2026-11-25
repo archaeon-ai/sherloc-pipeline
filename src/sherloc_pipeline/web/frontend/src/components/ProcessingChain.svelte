@@ -321,13 +321,22 @@
     if (d.generation !== inputGeneration) return;
     const input = fitInput(chainNow());
     if (d.inputIntensity !== input) return;
-    // Don't include baseline from fit response — fit no longer applies a baseline
-    // (workbench's BaselineStep is the canonical source). Letting d.baseline (all zeros)
-    // through would clobber the BaselineStep baseline already in artifacts.
+    // The hydration fit removes a line from its input. Keep the total baseline
+    // in this snapshot while preserving the input to a subsequent fit.
+    const fitRange = d.params.wavenumber_range;
+    const priorBaseline = afterBaselineIntensity ? baseline : undefined;
+    const combinedRange = priorBaseline && appliedBaselineRange && fitRange
+      ? [Math.min(appliedBaselineRange[0], fitRange[0]), Math.max(appliedBaselineRange[1], fitRange[1])]
+      : priorBaseline ? appliedBaselineRange : fitRange;
+    const fitBaseline = d.params.domain === 'hydration' ? {
+      baseline: d.baseline.map((v, i) => v + (priorBaseline?.[i] ?? 0)),
+      baselineRange: combinedRange,
+    } : {};
     emitState(
       'raman_fitted',
       d.corrected,
       {
+        ...fitBaseline,
         fitCurve: d.fitCurve,
         peaks: d.peaks,
         residual: d.residual,

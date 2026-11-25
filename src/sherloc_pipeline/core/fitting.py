@@ -113,6 +113,71 @@ def build_initial_params(x: np.ndarray, y: np.ndarray, peak_idxs: List[int],
     return np.array(params, dtype=float)
 
 
+def hydration_seed_signal(y: np.ndarray, n_edge: int = 5) -> np.ndarray:
+    """Subtract the endpoint means for the initial peak search."""
+    return y - np.linspace(y[:n_edge].mean(), y[-n_edge:].mean(), y.size)
+
+
+class _LinearBaseline:
+    """Eliminate the two linear coefficients at each Gaussian least-squares step."""
+
+    def __init__(self, x, data, roi):
+        self.x, self.data = x, data
+        half_range = (roi[1] - roi[0]) / 2
+        z = (x - (roi[0] + half_range)) / half_range
+        self.q, _ = np.linalg.qr(np.column_stack([np.ones(x.size), z]))
+
+    def project(self, values):
+        """Remove the least-squares straight line from each column."""
+        return values - self.q @ (self.q.T @ values)
+
+    def line(self, band):
+        remainder = self.data - band
+        return remainder - self.project(remainder)
+
+    def residual(self, params):
+        return self.project(multi_gaussian(self.x, params) - self.data)
+
+    def jacobian(self, params):
+        columns = []
+        for center, amplitude, width in params.reshape(-1, 3):
+            u = (self.x - center) / width
+            profile = np.exp(-4 * np.log(2) * u * u)
+            d_center = 8 * np.log(2) * amplitude * profile * u / width
+            columns.extend((d_center, profile, d_center * u))
+        return self.project(np.column_stack(columns))
+
+
+def hydration_parsimony(cfg: Dict) -> Dict:
+    """Use the shared AICc controls and record the hydration F-test comparison."""
+    parsimony = dict(cfg.get("parsimony") or {})
+    parsimony["model_selection"] = "aicc"
+    if "hydration_ftest_alpha" in cfg:
+        parsimony["ftest_alpha"] = cfg["hydration_ftest_alpha"]
+    return parsimony
+
+
+def fit_hydration_spectrum(
+    x: np.ndarray, y: np.ndarray, cfg: Dict, roi: Tuple[float, float], noise_std: Optional[float] = None,
+) -> Tuple[FitResult, np.ndarray, np.ndarray]:
+    """Return the selected fit, Gaussian sum and fitted line on the input axis."""
+    mask = (x >= roi[0]) & (x <= roi[1])
+    if noise_std is None:
+        noise_std = compute_noise_std(x, y, cfg=cfg)
+    seed_signal = np.zeros_like(y, dtype=float)
+    line = np.zeros_like(seed_signal)
+    if not mask.any():
+        result = FitResult([], 0.0, float('inf'), 0, ["no_peaks_detected"], n_samples=0)
+        return result, seed_signal, line
+    seed_signal[mask] = hydration_seed_signal(y[mask])
+    baseline = _LinearBaseline(x[mask], y[mask], roi)
+    cfg = {**cfg, "parsimony": hydration_parsimony(cfg)}
+    result, band = fit_spectrum(x, seed_signal, cfg, roi=roi, noise_std=noise_std,
+                                linear_baseline=baseline)
+    line[mask] = baseline.line(band[mask])
+    return result, band, line
+
+
 def fit_spectrum(
     x_cm1: np.ndarray,
     y: np.ndarray,
@@ -122,6 +187,8 @@ def fit_spectrum(
     noise_std: Optional[float] = None,
     negative_spike_sigma: Optional[float] = None,
     cr_mask_cm1: Optional[Sequence[float]] = None,
+    *,
+    linear_baseline: Optional[_LinearBaseline] = None,
 ) -> Tuple[FitResult, np.ndarray]:
     """Fit multiple Gaussians to a single spectrum with soft slit preference and low-FWHM penalty.
 
@@ -152,6 +219,8 @@ def fit_spectrum(
     min_display_snr = float(cfg.get('min_display_snr', 2.0))
     amp_sigma_mult = float(cfg.get('min_amp_sigma_multiplier', 0.5))
 
+    baseline_params = 2 if linear_baseline is not None else 0
+
     # Detect seed peaks and prefilter by seed SNR, unless explicit seed centers provided
     if noise_std is None:
         noise_std = compute_noise_std(x_cm1, y, cfg=cfg)
@@ -164,6 +233,7 @@ def fit_spectrum(
         n_negative_masked = int(np.count_nonzero(~keep))
         if n_negative_masked:
             x, y_roi = x[keep], y_roi[keep]
+    null_dof = max(0, x.size - max(1, baseline_params))
     mask_warnings = [f"negative_spike_channels_masked:{n_negative_masked}"] if n_negative_masked else []
     if x.size == 0:
         # Every ROI channel was masked (or the ROI is empty): nothing to fit.
@@ -183,7 +253,7 @@ def fit_spectrum(
         pre_snr_min = float(cfg.get('min_seed_snr', 2.0))
         seed_idxs_all = [i for i in seed_idxs_all if (y_roi[i] >= pre_snr_min * noise_std)]
         if not seed_idxs_all:
-            return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1),
+            return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=null_dof,
                              warnings=mask_warnings + ["no_peaks_detected"], n_samples=int(x.size)), np.zeros_like(y)
 
     # Model selection configuration
@@ -278,13 +348,19 @@ def fit_spectrum(
                     ub.extend([roi[1], np.inf, fwhm_max])
                 bounds = (np.array(lb, dtype=float), np.array(ub, dtype=float))
                 try:
-                    res = least_squares(
-                        _residuals, p0, args=(x, y_roi, fit_min, slit_w, slit_wt, low_edge), method='trf', bounds=bounds, max_nfev=5000
-                    )
-                    params = res.x
-                    y_model = multi_gaussian(x, params)
-                    rss = float(np.sum((y_roi - y_model) ** 2))
-                    aicc = _compute_aicc(n_samples=x.size, rss=rss, num_params=params.size)
+                    if linear_baseline is None:
+                        res = least_squares(
+                            _residuals, p0, args=(x, y_roi, fit_min, slit_w, slit_wt, low_edge),
+                            method='trf', bounds=bounds, max_nfev=5000,
+                        )
+                        params = res.x
+                        rss = float(np.sum((y_roi - multi_gaussian(x, params)) ** 2))
+                    else:
+                        res = least_squares(linear_baseline.residual, p0, jac=linear_baseline.jacobian,
+                                            method='trf', bounds=bounds, max_nfev=5000)
+                        params = res.x
+                        rss = float(res.fun @ res.fun)
+                    aicc = _compute_aicc(n_samples=x.size, rss=rss, num_params=params.size + baseline_params)
                     # The log records every size, the merge-skip included; it decides nothing.
                     would_drop = _merge_would_drop(params, min_amp, min_display_snr, noise_std, min_sep)
                     size_rows.append(dict(p=p, seed_ranks=ranks, params=[float(v) for v in params],
@@ -298,21 +374,24 @@ def fit_spectrum(
                     size_rows.append(dict(p=p, seed_ranks=ranks, params=None, rss=None, aicc=None,
                                           aicc_eligible=eligible, merge_skip=False, failed=True))
                     continue
-            size_log = SizeLog(n=int(x.size), rss0=float(np.sum(y_roi ** 2)), rows=size_rows,
-                               ftest_alpha=ftest_alpha)
+            null = y_roi if linear_baseline is None else linear_baseline.project(linear_baseline.data)
+            size_log = SizeLog(n=int(x.size), rss0=float(np.sum(null ** 2)), rows=size_rows,
+                               ftest_alpha=ftest_alpha, baseline_params=baseline_params)
 
     gates = dict(noise_std=noise_std, filt_min=filt_min, snr_min=snr_min, r2_min=r2_min,
                  sharpness_max=float(cfg.get('posthoc_filters', {}).get('sharpness_max', 3.0)),
                  min_amp=min_amp, min_display_snr=min_display_snr, min_sep=min_sep, cr_mask_cm1=cr_mask_cm1)
 
     def _ftest_peaks(prm: np.ndarray) -> Tuple[List[PeakFit], float]:
-        r2_f = float(compute_r2(y_roi, multi_gaussian(x, prm)))
-        return _finalize_peaks(prm, x, y_roi, r2_f, gates, size_log.ranks_for(prm), size_log), r2_f
+        band = multi_gaussian(x, prm)
+        corrected = y_roi if linear_baseline is None else linear_baseline.data - linear_baseline.line(band)
+        r2_f = float(compute_r2(corrected, band))
+        return _finalize_peaks(prm, x, corrected, r2_f, gates, size_log.ranks_for(prm), size_log), r2_f
 
     # Fallback if nothing succeeded
     if best is None:
         selection = size_log.record(aicc_params=None, ftest_peaks_fn=_ftest_peaks) if size_log is not None else None
-        return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=max(0, x.size - 1),
+        return FitResult(peaks=[], r2=0.0, rss=float('inf'), dof=null_dof,
                          warnings=mask_warnings + ["fit_failed"], n_samples=int(x.size),
                          selection=selection), np.zeros_like(y)
 
@@ -321,9 +400,10 @@ def fit_spectrum(
     full_model = np.zeros_like(y)
     full_model[mask] = multi_gaussian(x_roi_all, params) if n_negative_masked else y_model
 
-    r2 = compute_r2(y_roi, y_model)
+    corrected = y_roi if linear_baseline is None else linear_baseline.data - linear_baseline.line(y_model)
+    r2 = compute_r2(corrected, y_model)
     rss = best[2]
-    dof = max(0, x.size - params.size)
+    dof = max(0, x.size - params.size - baseline_params)
     # noise estimate: use caller-provided value, else configurable window (default 2000–2100 cm^-1)
     if noise_std is None:
         noise_std = compute_noise_std(x_cm1, y, cfg=cfg)
@@ -333,7 +413,7 @@ def fit_spectrum(
     if size_log is not None:
         slot_ranks = size_log.ranks_for(params)
         selection = size_log.record(aicc_params=params, ftest_peaks_fn=_ftest_peaks)
-    peaks = _finalize_peaks(params, x, y_roi, r2, gates, slot_ranks, size_log)
+    peaks = _finalize_peaks(params, x, corrected, r2, gates, slot_ranks, size_log)
     return FitResult(peaks=peaks, r2=float(r2), rss=rss, dof=dof, warnings=list(mask_warnings),
                      n_samples=int(x.size), selection=selection), full_model
 
@@ -405,10 +485,11 @@ class SizeLog:
     ``aicc_min_peaks``) and whether ``reject_merged_candidates`` skipped it. Both rules choose from these same fits (the F-test path refits size p from the same
     start with the same bounds), so the F-test pick needs no extra fit: the longest run of sizes
     from 1 whose step p-value is below alpha, stopping at a failed fit or no degrees of freedom,
-    as ``fit_spectrum``'s F-test branch does. Size 0 is the null model y = 0.
+    as ``fit_spectrum``'s F-test branch does. Size 0 contains only the baseline.
     """
 
-    def __init__(self, n: int, rss0: float, rows: List[Dict], ftest_alpha: float):
+    def __init__(self, n: int, rss0: float, rows: List[Dict], ftest_alpha: float, baseline_params: int = 0):
+        self.baseline_params = baseline_params
         self.n, self.rss0, self.rows, self.alpha = n, rss0, rows, ftest_alpha
         self.by_p = {r['p']: r for r in rows}
 
@@ -420,7 +501,7 @@ class SizeLog:
 
     def _aicc(self, p: int) -> Optional[float]:
         if p == 0:
-            return float(_compute_aicc(n_samples=self.n, rss=self.rss0, num_params=0))
+            return float(_compute_aicc(n_samples=self.n, rss=self.rss0, num_params=self.baseline_params))
         r = self.by_p.get(p)
         return None if r is None or r['failed'] else r['aicc']
 
@@ -429,7 +510,8 @@ class SizeLog:
         a0, a1 = self._aicc(k - 1), self._aicc(k)
         gain = None if a0 is None or a1 is None else float(a0 - a1)
         r0, r1 = self._rss(k - 1), self._rss(k)
-        dof0, dof1 = self.n - 3 * (k - 1), self.n - 3 * k
+        dof1 = self.n - self.baseline_params - 3 * k
+        dof0 = dof1 + 3
         pval = None
         if r0 is not None and r1 is not None and dof1 > 0:
             pval = float(_f_test_pvalue(r0, r1, dof0, dof1, delta_params=3))
@@ -494,7 +576,11 @@ PEAK_TABLE_COLUMNS = [
 ]
 
 
-def save_peak_table(peaks: List[PeakFit], output_csv_path: str) -> None:
+def fwhm_at_cap(fwhm: float, cap: float) -> bool:
+    return abs(fwhm - cap) <= 1.0
+
+
+def save_peak_table(peaks: List[PeakFit], output_csv_path: str, *, fwhm_cap: Optional[float] = None) -> None:
     """Write a point's peak table. A point with no peaks gets a header-only
     table, so readers see zero rows instead of an unparseable empty file."""
     import pandas as pd
@@ -516,7 +602,12 @@ def save_peak_table(peaks: List[PeakFit], output_csv_path: str) -> None:
         }
         for p in peaks
     ]
-    pd.DataFrame(rows, columns=PEAK_TABLE_COLUMNS).to_csv(output_csv_path, index=False)
+    columns = PEAK_TABLE_COLUMNS
+    if fwhm_cap is not None:
+        columns = [*columns, 'fwhm_at_cap']
+        for row in rows:
+            row['fwhm_at_cap'] = fwhm_at_cap(row['fwhm_cm1'], fwhm_cap)
+    pd.DataFrame(rows, columns=columns).to_csv(output_csv_path, index=False)
 
 
 

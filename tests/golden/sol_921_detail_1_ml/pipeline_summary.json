@@ -3,7 +3,7 @@
   "generated_at": "2026-11-24T15:17:16.949772+00:00",
   "n_points": 100,
   "peak_counts": {
-    "hydration": 13,
+    "hydration": 12,
     "minerals": 30,
     "organics": 0
   },
@@ -28,7 +28,7 @@
     "reviewed",
     "reject_reason"
   ],
-  "review_n_rows": 44,
+  "review_n_rows": 43,
   "scan": "detail_1",
   "sol": "0921",
   "spectra_shape": [
@@ -36,5 +36,5 @@
     523
   ],
   "target": "Amherst_Point",
-  "total_peaks": 43
+  "total_peaks": 42
 }

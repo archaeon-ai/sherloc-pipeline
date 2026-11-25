@@ -109,6 +109,11 @@ async def test_point_fit_slit_preference_by_domain(synthetic_fit_client, monkeyp
         fitted["slit_pref_weight"] = cfg["slit_pref_weight"]
         return SimpleNamespace(peaks=[], r2=0.6), np.zeros(len(x))
 
+    def hydration_fit(x, y, cfg, roi):
+        result, band = fit(x, y, cfg)
+        return result, band, np.zeros_like(x)
+
+    monkeypatch.setattr(processing, "fit_hydration_spectrum", hydration_fit)
     monkeypatch.setattr(processing, "fit_spectrum", fit)
     monkeypatch.setattr(processing, "load_mineral_rules", lambda **kwargs: [])
     response = await client.post("/api/process/fit", json={
@@ -1252,3 +1257,23 @@ def test_built_wheel_ships_background_csvs(tmp_path):
         f"{in_wheel_bg}. This is the production-artifact regression "
         f"issue #13 was originally about."
     )
+
+
+@pytest.mark.asyncio
+async def test_hydration_returns_joint_line_and_aicc_provenance(synthetic_fit_client):
+    client, _ = synthetic_fit_client
+    x = np.linspace(1950, 3900, 300)
+    line = 20 + .02 * (x - 2800)
+    band = 25 * np.exp(-4 * np.log(2) * ((x - 3800) / 299.5) ** 2)
+    response = await client.post("/api/process/fit", json={
+        "wavenumber": x.tolist(), "intensity": (line + band).tolist(),
+        "params": {"fitting": {"domain": "hydration", "wavenumber_range": [2800, 3900],
+                               "fwhm_bounds": [50, 300], "model_selection": "f-test"}},
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["provenance"]["params_used"]["fitting"]["model_selection"] == result["model_selection_method"] == "aicc"
+    roi = x >= 2800
+    np.testing.assert_allclose(np.array(result["baseline"])[roi], line[roi], atol=1e-6)
+    np.testing.assert_allclose(np.array(result["corrected"])[roi], band[roi], atol=1e-6)
+    np.testing.assert_allclose(np.array(result["residual"])[roi], 0, atol=1e-6)

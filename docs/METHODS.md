@@ -580,6 +580,15 @@ With `parsimony.reject_merged_candidates: true` (default), a candidate is skippe
 
 **Cosmic-ray review flag:** when a spectrum's cosmic-ray mask positions are supplied, each fitted peak carries `cr_mask_review` (a mask channel lies within center ± FWHM/2). It is a review flag only: it never removes a peak and never changes the fit input.
 
+**Hydration fitting:** Within 2800–3900 cm⁻¹, each candidate model fits a straight line and one or
+two Gaussian components together. The line through the means of the first and last five channels
+is used to find starting peaks and to estimate batch noise over 2800–3000 cm⁻¹. Among eligible
+component counts, the fit uses the lowest AICc, counting three parameters per Gaussian and two
+for the line. The fit computes R² and sharpness after subtracting the selected line. The batch
+fit accepts centers from 3000 through 3900 cm⁻¹ and uses a 50–300 cm⁻¹ fit width range.
+Persistence requires SNR ≥ 3, FWHM ≥ 25 cm⁻¹ and record R² > 0.
+For hydration, `fwhm_at_cap` is true when the fitted FWHM is within 1 cm⁻¹ of the configured upper bound and false otherwise, with NULL for other domains and for rows written before this field.
+
 **Mineral fit input:** laser-normalized, dark-subtracted spectrum, asPLS-baselined (`normalized_baselined`); spikes are handled by negative-spike exclusion and the cosmic-ray review flag (not standard "despiked" as used for organics, hydration and fluorescence fitting).
 
 ```python
@@ -598,15 +607,15 @@ For fluorescence fitting (`domain="fluorescence"`), AICc is used for model selec
 - `step_p` = the F-test p-value of the same step (the statistic above, Δk = 3).
 - `kept_by` = `both` when the F-test pick, derived from the same fits, also persists a component within 2 cm⁻¹ of this one through the same persist gates (SNR, FWHM, sharpness, the domain gates, and the R² floor applied to the F-test pick's own R²); `aicc` when it does not. `ftest` is reserved for a component only the F-test pick keeps; those are not persisted.
 
-The F-test pick needs no extra fit (with `aicc_min_peaks` above 1, the sizes below it are fitted for the log only): both rules refit a given size from the same start with the same bounds, so the sequential F-test's stopping point can be read from the AICc search's sizes (size 0 is the null model y = 0). All three marks are NULL when not computed: rows fitted by earlier versions, fits with no size search (the hydration F-test rule, the organics D+G fit with fixed seeds, `model_selection: "ftest"`), and a step whose size failed to fit. `aicc_gain` and `step_p` also appear as columns of each point's peak table.
+The F-test pick needs no extra fit (with `aicc_min_peaks` above 1, the sizes below it are fitted for the log only): both rules refit a given size from the same start with the same bounds, so the sequential F-test's stopping point can be read from the AICc search's sizes (size 0 is a straight line for hydration and zero for other Raman fits). All three marks are NULL when not computed: rows fitted by earlier versions, fits with no size search (the organics D+G fit with fixed seeds, `model_selection: "ftest"`), and a step whose size failed to fit. `aicc_gain` and `step_p` also appear as columns of each point's peak table.
 
-For the mineral fit and the organics G fit, the size log is written per point, as compact JSON, beside the peak table: `..._point<N>_fit_peaks.csv` → `..._point<N>_fit_sizes.json` (organics G fit: `..._organics_g_sizes.json`). It is never loaded into a database; a non-finite number (for example AICc at an RSS of exactly 0) is written as null. Format `fit-sizes/1`:
+For mineral, organics G and hydration fits, the size log is written per point, as compact JSON, beside the peak table: `..._point<N>_fit_peaks.csv` → `..._point<N>_fit_sizes.json` (organics G fit: `..._organics_g_sizes.json`, hydration: `..._hydration_sizes.json`). It is never loaded into a database; a non-finite number (for example AICc at an RSS of exactly 0) is written as null. Format `fit-sizes/1`:
 
 | Field | Meaning |
 |---|---|
 | `version` | `"fit-sizes/1"` |
 | `n` | channels the fit used |
-| `rss0`, `aicc0` | RSS and AICc of the null model y = 0 |
+| `rss0`, `aicc0` | RSS and AICc of the model with zero Gaussian components |
 | `ftest_alpha` | the F-test significance level |
 | `sizes[]` | one entry per size `p`: `seed_ranks` (seed height rank of each parameter slot), `params` (center, amplitude, FWHM per peak), `rss`, `aicc`, `aicc_eligible` (false below `aicc_min_peaks`: logged for the F-test pick and the steps, never picked by AICc), `merge_skip` (skipped by `reject_merged_candidates`), `failed` (the fit raised; `params`, `rss`, `aicc` are null), `step_aicc_gain`, `step_p` |
 | `aicc_size` | the size AICc kept (null: no size was admissible) |

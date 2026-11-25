@@ -702,7 +702,7 @@ def _fit_point_hydration(
     scan: str,
 ) -> Dict[str, Any]:
     """Fit hydration for a single point (picklable worker)."""
-    from sherloc_pipeline.core.fitting import fit_spectrum, save_peak_table
+    from sherloc_pipeline.core.fitting import fit_hydration_spectrum, fwhm_at_cap, hydration_seed_signal, save_peak_table
     from sherloc_pipeline.visualization.fitting_plots import plot_fit_overlay
 
     point_idx = point_data['point_idx']
@@ -715,7 +715,7 @@ def _fit_point_hydration(
     # (see _remove_stale_artifacts).
     peaks_csv = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_hydration_peaks.csv"
     png_path = out_path / f"{sol}_{target}_{scan}_R1_point{point_idx}_hydration_fit.png"
-    owned_artifacts = [peaks_csv, png_path]
+    owned_artifacts = [peaks_csv, png_path, size_sidecar_path(peaks_csv)]
 
     # Extract hydration window
     x_oh = x[oh_mask]
@@ -731,11 +731,7 @@ def _fit_point_hydration(
             'warnings': [],
         }
 
-    # Linear endpoint baseline
-    left_avg = float(np.mean(y_oh[:n_edge]))
-    right_avg = float(np.mean(y_oh[-n_edge:]))
-    baseline = np.linspace(left_avg, right_avg, len(y_oh))
-    y_bl = y_oh - baseline
+    y_bl = hydration_seed_signal(y_oh, n_edge)
 
     # Estimate noise from the baselined 2800–3000 cm⁻¹ interval if it has at least three samples.
     quiet_mask = (x_oh >= 2800.0) & (x_oh <= 3000.0)
@@ -756,11 +752,7 @@ def _fit_point_hydration(
             'warnings': [],
         }
 
-    # Inject baselined hydration window for fit_spectrum
-    y_for_fit = np.zeros_like(y_full)
-    y_for_fit[oh_mask] = y_bl
-
-    oh_result, oh_model = fit_spectrum(x, y_for_fit, fit_cfg_oh, roi=oh_roi, noise_std=noise_std)
+    oh_result, oh_model, line = fit_hydration_spectrum(x, y_full, fit_cfg_oh, oh_roi, noise_std)
 
     # R² quality gate
     if oh_result.r2 < r2_min:
@@ -786,9 +778,23 @@ def _fit_point_hydration(
 
     # Export if accepted
     if oh_pass:
-        save_peak_table(accepted_peaks, str(peaks_csv))
+        width_cap = fit_cfg_oh['fwhm_max_cm1']
+        save_peak_table(accepted_peaks, str(peaks_csv), fwhm_cap=width_cap)
+        selection = oh_result.selection
+        if selection and selection['ftest_peaks']:
+            # Apply the worker gates to the comparison fit before the persist reader compares centers.
+            selection['ftest_peaks'] = [
+                {**row, 'fwhm_at_cap': fwhm_at_cap(row['fwhm_cm1'], width_cap)}
+                for row in selection['ftest_peaks']
+                if row['pass_r2'] and center_lo <= row['center_cm1'] <= center_hi
+            ]
+        sidecar = _write_size_sidecar(peaks_csv, selection)
+        if sidecar is not None:
+            artifacts.append(sidecar)
         artifacts.append(peaks_csv)
 
+        y_for_fit = np.zeros_like(y_full)
+        y_for_fit[oh_mask] = y_oh - line[oh_mask]
         plot_fit_overlay(
             x, y_for_fit, plot_mask_oh, oh_result, oh_model,
             str(png_path),
@@ -1547,10 +1553,9 @@ class FittingService:
         scaled by the largest mean photodiode reading in the scan divided by that
         point's mean reading across laser shots. Neither file has an asPLS baseline
         removed. Preprocessing subtracts the instrument background only from scan
-        averages. The fit uses a linear endpoint baseline over the hydration window.
-        Broad O-H bands are hard to confuse with cosmic rays, so the fit reads
-        the despiked branch (minerals stay non-despiked). The R² (≥ 0.25),
-        FWHM (≥ 50 cm⁻¹), and F-test significance gates still apply.
+        averages. Each candidate model fits its straight baseline and hydration
+        components together. AICc selects the component count. The default
+        fit requires R² ≥ 0.25 and constrains FWHM to 50–300 cm⁻¹.
 
         Idempotent under a configuration change: per-point artifacts and the
         accepted-peaks summary are removed when a re-run no longer produces
@@ -1695,7 +1700,6 @@ class FittingService:
             fwhm_min = float(fit_cfg.get('hydration_fwhm_min_cm1', 50.0))
             fwhm_max = float(fit_cfg.get('hydration_fwhm_max_cm1', 300.0))
             r2_min = float(fit_cfg.get('hydration_r2_min', 0.25))
-            ftest_alpha = float(fit_cfg.get('hydration_ftest_alpha', 0.01))
             center_lo, center_hi = fit_cfg.get('hydration_center_range', [3000.0, 3900.0])
 
             # Build fit config for hydration (passed to fit_spectrum)
@@ -1707,10 +1711,6 @@ class FittingService:
             fit_cfg_oh['slit_pref_weight'] = 0.0  # No slit preference for hydration
             fit_cfg_oh['min_snr'] = min_snr
             fit_cfg_oh['r_squared_min'] = r2_min
-            fit_cfg_oh['parsimony'] = {
-                'model_selection': 'ftest',
-                'ftest_alpha': ftest_alpha,
-            }
 
             oh_mask = (x >= oh_roi[0]) & (x <= oh_roi[1])
             plot_mask_oh = (x >= oh_plot[0]) & (x <= oh_plot[1])
@@ -3066,6 +3066,7 @@ class FittingService:
                             kept_by=_kept_by(float(row['center_cm1']), ftest_centers),
                             aicc_gain=_optional_float(row.get('aicc_gain')),
                             step_p=_optional_float(row.get('step_p')),
+                            fwhm_at_cap=_optional_bool(row.get('fwhm_at_cap')),
                         )
                         all_peaks.append(peak)
 

@@ -210,6 +210,8 @@ class FittedPeak(IdentifiableModel):
         description="F-test p-value of the step from k-1 to k peaks; None = not computed",
     )
 
+    fwhm_at_cap: Optional[bool] = None
+
     # Derived quantities
     area: Optional[float] = Field(
         default=None,

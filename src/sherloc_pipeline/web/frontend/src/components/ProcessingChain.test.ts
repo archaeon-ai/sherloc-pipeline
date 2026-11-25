@@ -9,9 +9,10 @@
 // pure unit test on either child alone wouldn't catch the regression.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent } from '@testing-library/svelte';
+import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import ProcessingChain from './ProcessingChain.svelte';
+import FittingWorkspace from './FittingWorkspace.svelte';
 import * as api from '../lib/api';
 import type { BackgroundResponse, DespikeResponse, FitResponse } from '../lib/types';
 
@@ -589,4 +590,53 @@ describe('ProcessingChain — despike method selector kick', () => {
     const lastEmit = stateUpdate.mock.calls[stateUpdate.mock.calls.length - 1][0];
     expect(lastEmit.raman.intensity).toEqual(DESPIKED_NEW);
   });
+});
+
+it.each(['processing chain', 'fitting workspace'])('renders hydration controls in the %s', async view => {
+  if (view === 'fitting workspace') {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ scan: { target: 'Sample', sol_number: 1 } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ wavenumber: WAVENUMBER_A, intensity: INTENSITY_A })));
+  }
+  const ui = view === 'fitting workspace'
+    ? render(FittingWorkspace, { props: { scanId: 'sample' } })
+    : render(ProcessingChain, { props: { wavenumber: WAVENUMBER_A, intensity: INTENSITY_A } });
+  if (view === 'processing chain') {
+    await fireEvent.click(getStepCard(ui.container, '4. Peak Fit').querySelector('.step-header')!);
+  }
+  const domain = await ui.findByRole('combobox', { name: 'Domain' });
+  expect(ui.getByRole('combobox', { name: /Model Selection/i })).toBeInTheDocument();
+  await fireEvent.change(domain, { target: { value: 'hydration' } });
+  expect.soft(ui.getByRole('slider', { name: /Max Peaks/i })).toHaveValue('2');
+  expect.soft(ui.queryByRole('combobox', { name: /Model Selection/i })).not.toBeInTheDocument();
+});
+
+it('keeps the joint hydration baseline in the fitted snapshot', async () => {
+  const wavenumber = [2800, 3075, 3350, 3625, 3900];
+  vi.spyOn(api, 'postBaseline').mockResolvedValue({
+    schema_version: '1', raw: INTENSITY_A, wavenumber,
+    corrected: [1, 2, 3, 4, 5], baseline: [9, 10, 12, 9, 6],
+    params_used: { method: 'aspls', lam: 123, max_iter: 2 },
+  });
+  vi.spyOn(api, 'postFit').mockResolvedValue({
+    schema_version: '1', peaks: [], n_peaks: 0, r_squared: 0.8, wavenumber,
+    model_selection_method: 'aicc', corrected: [0, 0, 0, 0, 0],
+    residual: [0, 0, 0, 0, 0], baseline: [1, 2, 3, 4, 5],
+    provenance: { params_used: {}, config_hash: 'synthetic-fit', calibration_version: null,
+      intensity_unit: null, wavenumber_unit: 'cm-1' },
+  });
+  const stateUpdate = vi.fn();
+  const { container, component } = render(ProcessingChain, { props: { wavenumber, intensity: INTENSITY_A } });
+  component.$on('stateUpdate', e => stateUpdate(e.detail));
+  await fireEvent.click(getBaselineCheckbox(container));
+  const card = getStepCard(container, '4. Peak Fit');
+  await fireEvent.click(card.querySelector('.step-header')!);
+  await fireEvent.change(card.querySelector('#rf-domain')!, { target: { value: 'hydration' } });
+  await fireEvent.click(card.querySelector('.btn-primary')!);
+  expect.soft(api.postFit).toHaveBeenCalledWith(expect.objectContaining({
+    intensity: [1, 2, 3, 4, 5],
+    params: expect.objectContaining({ fitting: expect.objectContaining({ model_selection: 'aicc', max_peaks: 2 }) }),
+  }));
+  await waitFor(() => expect(stateUpdate.mock.calls.at(-1)![0].stage).toBe('raman_fitted'));
+  expect(stateUpdate.mock.calls.at(-1)![0].artifacts.baseline).toEqual(INTENSITY_A);
 });

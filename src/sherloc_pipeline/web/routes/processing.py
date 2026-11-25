@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from scipy import interpolate
 
 from sherloc_pipeline.core.baseline import BaselineParams, fit_baseline
-from sherloc_pipeline.core.fitting import fit_spectrum, multi_gaussian
+from sherloc_pipeline.core.fitting import fit_hydration_spectrum, fit_spectrum, hydration_parsimony, multi_gaussian
 from sherloc_pipeline.core.fluor_fitting import fit_fluorescence_spectrum
 from sherloc_pipeline.core.fluor_id import assign_fluor_group
 from sherloc_pipeline.core.mineral_id import (
@@ -262,13 +262,22 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
         # Override only the selection method: the configured AICc settings
         # (threshold, bounds, reject_merged_candidates) must reach the fitter.
         base_parsimony = dict(fit_cfg.get("parsimony") or {})
-        if fit_params_schema.model_selection == "f-test":
+        if domain == "hydration":
+            fit_cfg["parsimony"] = hydration_parsimony(fit_cfg)
+        elif fit_params_schema.model_selection == "f-test":
             fit_cfg["parsimony"] = {**base_parsimony, "model_selection": "ftest", "ftest_alpha": 0.01}
         else:
             fit_cfg["parsimony"] = {**base_parsimony, "model_selection": "aicc"}
 
         try:
-            fit_result, y_model_full = fit_spectrum(x, corrected, fit_cfg)
+            if domain == "hydration":
+                fit_result, y_model_full, line = fit_hydration_spectrum(
+                    x, corrected, fit_cfg, tuple(fit_params_schema.wavenumber_range)
+                )
+                baseline = baseline + line
+                corrected = corrected - line
+            else:
+                fit_result, y_model_full = fit_spectrum(x, corrected, fit_cfg)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Fitting failed: {exc}")
 
@@ -312,7 +321,7 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
             )
 
         r_squared = fit_result.r2
-        model_selection_method = fit_params_schema.model_selection
+        model_selection_method = "aicc" if domain == "hydration" else fit_params_schema.model_selection
 
     if y_model_full is not None and len(y_model_full) > 0:
         residual = corrected - y_model_full[: len(corrected)]
