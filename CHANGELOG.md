@@ -88,6 +88,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cosmic-ray detector, is unchanged. Code that imported any of these must
   keep its own copy or pin an earlier release. Commands, web routes, fits and
   the documented Python API (`sherloc_pipeline.api`) are unchanged.
+- **The findings summary, silicate hump detector, and detail-scan spectrogram
+  plots are removed.** This removes `summarize_findings` and
+  `detect_silicate_hump` from `sherloc_pipeline.services.pipeline`, and the
+  `sherloc_pipeline.visualization.spectrograms` module with its
+  `SpectrogramVisualizationConfig`, `SpectrogramVisualizationPipeline`, and
+  `SpatialSpectralData` classes. No `sherloc` command, web route, or batch run
+  used them. Commands, web routes, fits, and stored data are unchanged.
 
 ### Fixed
 - **One PDS cache directory.** `pds-download` and `pds-ingest` read
