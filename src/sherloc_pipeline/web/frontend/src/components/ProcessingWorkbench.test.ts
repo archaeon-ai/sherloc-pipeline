@@ -309,6 +309,11 @@ describe('ProcessingWorkbench references panel', () => {
     expect(background).toBeDefined();
     // The instrument-background step is not dark frame subtraction (active minus dark).
     expect(background).not.toMatch(/dark frame/i);
+    // The step names this pipeline's correction and the paper's separately.
+    expect(background).toContain('This pipeline’s stowed-arm correction subtracts a trimmed-mean reference.');
+    expect(background).toContain('the number of shots per spectrum divided by 900');
+    expect(background).toContain('list anomalous pixels in Supplemental Tables S3 and S4');
+    expect(background).toContain('the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting');
     expect(background).toContain('Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover');
     const cites = Array.from(container.querySelectorAll('.ref-cite')).map((c) => c.textContent ?? '');
     const loupe = cites.find((t) => t.includes('nasa/Loupe'));
