@@ -106,12 +106,12 @@ canonical batch path. Seven steps:
    `hydration`. F-test or AICc model selection.
 3. **Raman peak persistence** for the three Raman domains.
 4. **Fluorescence fitting** (nm space) — AICc selects the number of Gaussian
-   peaks. The pipeline checks for doublets in the Group-1 wavelength window
-   (Ce³⁺-bearing anhydrite;
-   Haney et al. 2026, *JGR Planets*, https://doi.org/10.1029/2025JE009385).
-   The fluorescence group numbers follow Sharma et al. 2023, *Nature*,
-   https://doi.org/10.1038/s41586-023-06143-z.
-   This pipeline splits group 1 into 1a and 1b.
+   peaks. After fitting, the pipeline assigns a group label to each peak using
+   the group numbers of [Sharma et al. (2023)](https://doi.org/10.1038/s41586-023-06143-z).
+   This pipeline splits group 1 into 1a (shorter wavelength) and 1b (longer
+   wavelength) and labels each peak on its own; Haney et al. (2026,
+   https://doi.org/10.1029/2025JE009385) discuss this wavelength range as
+   Ce³⁺-bearing anhydrite. Only the training export pairs peaks into doublets.
    Co-occurrence confidence is scored against the Raman peaks from step 3.
 5. **Per-scan averages** — fits of the scan's R1 mean and trimmed-mean
    spectra. The trimmed mean cuts 2 % from each tail, raised for small
