@@ -34,9 +34,6 @@
   export let isAverageMode: boolean = true;
   export let isSinglePoint: boolean = false;
   export let onRegionSwitch: ((region: string) => void) | null = null;
-  // Forwarded to RamanFitStep → /api/process/fit so the backend quality
-  // classifier applies the calibration-scan downgrade rule (v4.1.12).
-  export let targetType: string | null = null;
   export let visibleRange: [number, number] | null = null;
 
   // --- Despike method selector (issue #6) ---
@@ -394,7 +391,6 @@
     {wavelength}
     intensity={fitStepInput}
     {onRegionSwitch}
-    {targetType}
     {inputGeneration}
     on:apply={onFitApply}
   />

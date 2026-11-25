@@ -73,8 +73,6 @@
       fitResult = await postFit({
         wavenumber: spectrum.wavenumber,
         intensity: spectrum.intensity,
-        // Pass the scan target type to the fit-quality classifier.
-        target_type: scan?.target_type ?? undefined,
         params: {
           baseline: $baselineParams,
           fitting: {

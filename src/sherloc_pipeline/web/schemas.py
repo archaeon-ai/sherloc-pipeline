@@ -481,8 +481,6 @@ class FitRequest(BaseModel):
     wavenumber: List[float]
     intensity: List[float]
     params: Optional[ProcessingParamsSchema] = None
-    # Optional scan target type for the fit-quality classifier.
-    target_type: Optional[str] = None
 
 
 class PeakDTO(BaseModel):
