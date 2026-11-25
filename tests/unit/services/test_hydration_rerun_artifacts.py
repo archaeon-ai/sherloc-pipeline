@@ -1,13 +1,4 @@
-"""Re-running fitting into a populated results directory (#38).
-
-The cosmic-ray veto is a config flag, so the realistic upgrade path is
-"fit with it off, then fit again with it on, same results directory". Artifacts
-are only written when peaks survive, so unless the fitter actively removes what
-it no longer produces, the earlier run's per-point CSV survives — and
-``persist_raman_peaks`` rediscovers exactly that CSV, restoring the peak the
-veto rejected. These tests drive the real ``FittingService.fit_hydration`` end
-to end over a synthetic scan to pin that down.
-"""
+"""Fitting again into a populated results directory with synthetic scan data."""
 
 import copy
 from pathlib import Path
@@ -46,13 +37,11 @@ def _cosmic_ray_scan_csv(results_base: Path) -> Path:
     return csv_path
 
 
-def _service(tmp_path, veto_enabled: bool) -> FittingService:
+def _service(tmp_path, **fitting_overrides) -> FittingService:
     cfg = copy.deepcopy(load_config())
     cfg.fitting = dict(cfg.fitting or {})
     cfg.fitting["parallel_workers"] = 1
-    cfg.fitting["hydration_cr_veto"] = {
-        "enabled": veto_enabled, "action": "reject",
-    }
+    cfg.fitting.update(fitting_overrides)
     context = RuntimeContext.bootstrap(
         data_dir=tmp_path / "data", results_dir=tmp_path / "results", config=cfg
     )
@@ -90,23 +79,23 @@ def _artifact_paths(results_base):
     )
 
 
-def test_veto_off_then_on_leaves_no_hydration_artifacts(tmp_path, results_base):
+def test_zero_peak_rerun_removes_earlier_hydration_artifacts(tmp_path, results_base):
     peaks_csv, png, acc_csv = _artifact_paths(results_base)
 
-    off = _run_fit(_service(tmp_path, veto_enabled=False), results_base)
-    assert off.metadata["total_accepted_peaks"] == 1
+    first = _run_fit(_service(tmp_path), results_base)
+    assert first.metadata["total_accepted_peaks"] == 1
     assert peaks_csv.exists() and png.exists() and acc_csv.exists()
 
-    on = _run_fit(_service(tmp_path, veto_enabled=True), results_base)
-    assert on.metadata["total_accepted_peaks"] == 0
+    second = _run_fit(_service(tmp_path, hydration_min_snr=1e6), results_base)
+    assert second.metadata["total_accepted_peaks"] == 0
     assert not peaks_csv.exists(), "stale per-point CSV would be re-persisted"
-    assert not png.exists(), "stale overlay would still show the vetoed fit"
+    assert not png.exists(), "stale overlay would still show the previous fit"
     assert not acc_csv.exists(), "stale accepted-peaks summary would read as current"
 
 
 def test_summary_csv_is_still_written_on_a_zero_result_run(tmp_path, results_base):
     """The scan-level summary still describes a run that accepted nothing."""
-    _run_fit(_service(tmp_path, veto_enabled=True), results_base)
+    _run_fit(_service(tmp_path, hydration_min_snr=1e6), results_base)
 
     summary = results_base / f"{SOL}_{TARGET}_{SCAN}_R1_hydration_summary.csv"
     assert summary.exists()
@@ -130,10 +119,10 @@ def test_run_marker_records_this_runs_accepted_count(tmp_path, results_base):
     """
     marker = _marker_path(results_base)
 
-    _run_fit(_service(tmp_path, veto_enabled=False), results_base)
+    _run_fit(_service(tmp_path), results_base)
     assert _read_fit_run_marker(marker)["accepted_peaks"] == 1
 
-    _run_fit(_service(tmp_path, veto_enabled=True), results_base)
+    _run_fit(_service(tmp_path, hydration_min_snr=1e6), results_base)
     assert _read_fit_run_marker(marker)["accepted_peaks"] == 0
 
 
@@ -141,10 +130,10 @@ def test_failed_stale_artifact_removal_fails_the_fit(tmp_path, results_base):
     """A cleanup that could not delete must not report success.
 
     Reporting success would leave the previous run's peak CSV on disk for
-    ``persist_raman_peaks`` to rediscover, restoring the vetoed peak.
+    ``persist_raman_peaks`` to rediscover, restoring the previous peak.
     """
     peaks_csv, _png, _acc = _artifact_paths(results_base)
-    _run_fit(_service(tmp_path, veto_enabled=False), results_base)
+    _run_fit(_service(tmp_path), results_base)
     assert peaks_csv.exists()
 
     real_unlink = Path.unlink
@@ -156,7 +145,7 @@ def test_failed_stale_artifact_removal_fails_the_fit(tmp_path, results_base):
 
     with patch.object(Path, "unlink", refuse_peaks_csv):
         with pytest.raises(Exception) as exc_info:
-            _run_fit(_service(tmp_path, veto_enabled=True), results_base)
+            _run_fit(_service(tmp_path, hydration_min_snr=1e6), results_base)
 
     assert "failed to remove stale artifact" in str(exc_info.value)
     assert peaks_csv.exists(), "the undeletable CSV is exactly the risk"
@@ -202,7 +191,7 @@ def test_hydration_fit_with_no_point_columns_leaves_no_completed_marker(tmp_path
     _pointless_scan_csv(base)
 
     with pytest.raises(FittingError) as exc_info:
-        _run_fit(_service(tmp_path, veto_enabled=False), base)
+        _run_fit(_service(tmp_path), base)
     assert "No point columns found to fit" in str(exc_info.value)
 
     marker = _fit_run_marker_path(
@@ -220,7 +209,7 @@ def test_organics_fit_with_no_point_columns_leaves_no_completed_marker(tmp_path)
         base / f"{SOL}_{TARGET}_{SCAN}_R1_normalized_baselined.csv", index=False
     )
 
-    service = _service(tmp_path, veto_enabled=False)
+    service = _service(tmp_path)
     scan_ctx = MagicMock()
     scan_ctx.base_data_dir = base
     scan_ctx.results_dir = base
@@ -251,7 +240,7 @@ def test_accepted_summary_write_failure_fails_the_fit(tmp_path, results_base):
     """
     _peaks_csv, _png, acc_csv = _artifact_paths(results_base)
 
-    first = _run_fit(_service(tmp_path, veto_enabled=False), results_base)
+    first = _run_fit(_service(tmp_path), results_base)
     assert first.metadata["total_accepted_peaks"] == 1
     assert acc_csv.exists()
 
@@ -264,7 +253,7 @@ def test_accepted_summary_write_failure_fails_the_fit(tmp_path, results_base):
 
     with patch.object(pd.DataFrame, "to_csv", refuse_accepted_summary):
         with pytest.raises(FittingError) as exc_info:
-            _run_fit(_service(tmp_path, veto_enabled=False), results_base)
+            _run_fit(_service(tmp_path), results_base)
 
     assert "accepted-peaks summary" in str(exc_info.value)
     assert not acc_csv.exists(), "the previous run's R2 values must not survive"
@@ -337,13 +326,13 @@ def test_mineral_point_failure_cleans_its_artifacts_and_blocks_completion(
     """
     peaks_csv, png, _acc = _mineral_paths(mineral_base)
 
-    _run_mineral_fit(_service(tmp_path, veto_enabled=False), mineral_base)
+    _run_mineral_fit(_service(tmp_path), mineral_base)
     assert peaks_csv.exists()
 
     with patch("sherloc_pipeline.core.fitting.fit_spectrum",
                side_effect=RuntimeError("solver diverged")):
         with pytest.raises(FittingError) as exc_info:
-            _run_mineral_fit(_service(tmp_path, veto_enabled=False), mineral_base)
+            _run_mineral_fit(_service(tmp_path), mineral_base)
 
     assert "Mineral fitting failed for point" in str(exc_info.value)
     assert not peaks_csv.exists(), "stale peak table would be re-persisted"
@@ -355,7 +344,7 @@ def test_mineral_aicc_summary_write_failure_fails_the_fit(tmp_path, mineral_base
     """The AICc summary supplies per-point R2 to persistence; it must be current."""
     aicc_csv = mineral_base / f"{SOL}_{TARGET}_{SCAN}_R1_fit_aicc_summary.csv"
 
-    _run_mineral_fit(_service(tmp_path, veto_enabled=False), mineral_base)
+    _run_mineral_fit(_service(tmp_path), mineral_base)
     assert aicc_csv.exists()
 
     real_to_csv = pd.DataFrame.to_csv
@@ -367,7 +356,7 @@ def test_mineral_aicc_summary_write_failure_fails_the_fit(tmp_path, mineral_base
 
     with patch.object(pd.DataFrame, "to_csv", refuse_aicc):
         with pytest.raises(FittingError) as exc_info:
-            _run_mineral_fit(_service(tmp_path, veto_enabled=False), mineral_base)
+            _run_mineral_fit(_service(tmp_path), mineral_base)
 
     assert "AICc summary" in str(exc_info.value)
     assert not aicc_csv.exists(), "the previous run's R2 values must not survive"
@@ -415,14 +404,14 @@ def test_hydration_rerun_over_fewer_points_drops_the_vanished_points(tmp_path):
     base = tmp_path / "results" / SCAN
     _multi_point_scan_csv(base, [0, 1])
 
-    _run_fit(_service(tmp_path, veto_enabled=False), base)
+    _run_fit(_service(tmp_path), base)
     kept_csv, kept_png = _hydration_point_paths(base, 0)
     gone_csv, gone_png = _hydration_point_paths(base, 1)
     assert kept_csv.exists() and gone_csv.exists()
 
     # Re-export the scan with point 1 removed, then re-fit into the same dir.
     _multi_point_scan_csv(base, [0])
-    result = _run_fit(_service(tmp_path, veto_enabled=False), base)
+    result = _run_fit(_service(tmp_path), base)
 
     assert result.metadata["points_fitted"] == 1
     assert kept_csv.exists() and kept_png.exists()
@@ -434,7 +423,7 @@ def test_hydration_rerun_over_fewer_points_drops_the_vanished_points(tmp_path):
     assert marker["points_fitted"] == 1
 
     # What persistence would actually rediscover now matches the run.
-    discovered = _service(tmp_path, veto_enabled=False)._discover_peak_csvs(
+    discovered = _service(tmp_path)._discover_peak_csvs(
         base / "hydration_fit", SOL, TARGET, SCAN, "R1", "hydration"
     )
     assert {idx for _path, idx in discovered} == {0}
@@ -444,10 +433,10 @@ def test_scan_level_artifacts_survive_the_obsolete_point_sweep(tmp_path):
     """The sweep is keyed on the `point{i}` token: summaries must be untouched."""
     base = tmp_path / "results" / SCAN
     _multi_point_scan_csv(base, [0, 1])
-    _run_fit(_service(tmp_path, veto_enabled=False), base)
+    _run_fit(_service(tmp_path), base)
 
     _multi_point_scan_csv(base, [0])
-    _run_fit(_service(tmp_path, veto_enabled=False), base)
+    _run_fit(_service(tmp_path), base)
 
     fit_dir = base / "hydration_fit"
     assert (fit_dir / f"{SOL}_{TARGET}_{SCAN}_R1_hydration_accepted_peaks.csv").exists()
@@ -459,7 +448,7 @@ def test_undeletable_obsolete_point_artifact_blocks_completion(tmp_path):
     """If the vanished point's CSV cannot be removed, the run must not complete."""
     base = tmp_path / "results" / SCAN
     _multi_point_scan_csv(base, [0, 1])
-    _run_fit(_service(tmp_path, veto_enabled=False), base)
+    _run_fit(_service(tmp_path), base)
 
     gone_csv, _gone_png = _hydration_point_paths(base, 1)
     real_unlink = Path.unlink
@@ -472,7 +461,7 @@ def test_undeletable_obsolete_point_artifact_blocks_completion(tmp_path):
     _multi_point_scan_csv(base, [0])
     with patch.object(Path, "unlink", refuse_point1):
         with pytest.raises(Exception) as exc_info:
-            _run_fit(_service(tmp_path, veto_enabled=False), base)
+            _run_fit(_service(tmp_path), base)
 
     assert "failed to remove stale artifact" in str(exc_info.value)
     assert gone_csv.exists(), "the undeletable CSV is exactly the risk"
@@ -500,7 +489,7 @@ def test_mineral_rerun_over_fewer_points_drops_the_vanished_points(tmp_path):
     """Same guarantee on the minerals path, whose filenames carry the region."""
     base = tmp_path / "results" / SCAN
     _mineral_multi_point_csv(base, [0, 1])
-    _run_mineral_fit(_service(tmp_path, veto_enabled=False), base)
+    _run_mineral_fit(_service(tmp_path), base)
 
     fit_dir = base / "minerals_fit"
     kept = fit_dir / f"{SOL}_{TARGET}_{SCAN}_R1_point0_fit_peaks.csv"
@@ -508,7 +497,7 @@ def test_mineral_rerun_over_fewer_points_drops_the_vanished_points(tmp_path):
     assert kept.exists() and gone.exists()
 
     _mineral_multi_point_csv(base, [0])
-    _run_mineral_fit(_service(tmp_path, veto_enabled=False), base)
+    _run_mineral_fit(_service(tmp_path), base)
 
     assert kept.exists()
     assert not gone.exists(), "stale point-1 peaks would be re-persisted"

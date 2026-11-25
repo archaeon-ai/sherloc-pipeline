@@ -130,12 +130,7 @@ def _despike_interpolation_method(config) -> str:
 
 
 def _modz_params_from_config(config) -> DespikeParams:
-    """Build modz ``DespikeParams`` from the bundled config defaults.
-
-    Delegates to :func:`core.preprocessing.despike_params_from_config`, the
-    single source of truth every despiker caller shares, so this route cannot
-    drift from the CLI pipeline or the hydration cosmic-ray veto.
-    """
+    """Use the same modz despiker settings as the CLI pipeline."""
     return despike_params_from_config(config)
 
 
