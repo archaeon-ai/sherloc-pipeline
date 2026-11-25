@@ -582,11 +582,18 @@ With `parsimony.reject_merged_candidates: true` (default), a candidate is skippe
 
 **Hydration fitting:** Within 2800–3900 cm⁻¹, each candidate model fits a straight line and one or
 two Gaussian components together. The line through the means of the first and last five channels
-is used to find starting peaks and to estimate batch noise over 2800–3000 cm⁻¹. Among eligible
+is used to find starting peaks. Among eligible
 component counts, the fit uses the lowest AICc, counting three parameters per Gaussian and two
 for the line. The fit computes R² and sharpness after subtracting the selected line. The batch
 fit accepts centers from 3000 through 3900 cm⁻¹ and uses a 50–300 cm⁻¹ fit width range.
-Persistence requires SNR ≥ 3, FWHM ≥ 25 cm⁻¹ and record R² > 0.
+For each point, the batch fit measures noise on its input spectrum, which by default is
+laser-normalized R1 before baseline correction, despiked when available. It fits a straight line
+by least squares to the channels from 2000 through 2100 cm⁻¹ and takes the population standard
+deviation after subtracting that line. With fewer than three channels in this interval, it uses
+the standard deviation from 2800 through 3000 cm⁻¹ after subtracting the line through the end
+means. If that interval also has fewer than three channels, it uses the entire hydration fit
+range after the same subtraction. This noise sets the pre-fit and seed thresholds, the minimum
+amplitude and each component's SNR. Persistence requires SNR ≥ 3, FWHM ≥ 25 cm⁻¹ and record R² > 0.
 For hydration, `fwhm_at_cap` is true when the fitted FWHM is within 1 cm⁻¹ of the configured upper bound and false otherwise, with NULL for other domains and for rows written before this field.
 
 **Mineral fit input:** laser-normalized, dark-subtracted spectrum, asPLS-baselined (`normalized_baselined`); spikes are handled by negative-spike exclusion and the cosmic-ray review flag (not standard "despiked" as used for organics, hydration and fluorescence fitting).

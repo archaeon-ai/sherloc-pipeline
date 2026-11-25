@@ -1,9 +1,9 @@
 {
-  "config_hash": "874cf78b3a651fa1a00e02ca6e7fc5ef26e0744c87438d0716420a3b052b088e",
-  "generated_at": "2026-11-24T15:17:16.949772+00:00",
+  "config_hash": "511b503c149da1b6bfa97c728b3eebdcecdc998720b06d603885deb149e2d9ad",
+  "generated_at": "2026-11-25T15:33:31.931162+00:00",
   "n_points": 100,
   "peak_counts": {
-    "hydration": 12,
+    "hydration": 13,
     "minerals": 30,
     "organics": 0
   },
@@ -28,7 +28,7 @@
     "reviewed",
     "reject_reason"
   ],
-  "review_n_rows": 43,
+  "review_n_rows": 44,
   "scan": "detail_1",
   "sol": "0921",
   "spectra_shape": [
@@ -36,5 +36,5 @@
     523
   ],
   "target": "Amherst_Point",
-  "total_peaks": 42
+  "total_peaks": 43
 }

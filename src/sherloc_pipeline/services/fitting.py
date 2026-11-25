@@ -682,6 +682,20 @@ def _attach_cr_mask_wavenumbers(
     return None
 
 
+def _batch_hydration_noise(
+    x: np.ndarray, y: np.ndarray, window: Tuple[float, float], x_oh: np.ndarray, seed_signal: np.ndarray,
+) -> float:
+    """Measure scatter about a local line, using the hydration seed signal for short windows."""
+    mask = (x >= window[0]) & (x <= window[1])
+    if np.count_nonzero(mask) >= 3:
+        shifts, values = x[mask], y[mask]
+        line = np.polyfit(shifts, values, 1)
+        return float(np.std(values - np.polyval(line, shifts), ddof=0))
+
+    quiet = (x_oh >= 2800.0) & (x_oh <= 3000.0)
+    return float(np.std(seed_signal[quiet] if np.count_nonzero(quiet) >= 3 else seed_signal))
+
+
 def _fit_point_hydration(
     point_data: Dict[str, Any],
     *,
@@ -733,12 +747,8 @@ def _fit_point_hydration(
 
     y_bl = hydration_seed_signal(y_oh, n_edge)
 
-    # Estimate noise from the baselined 2800–3000 cm⁻¹ interval if it has at least three samples.
-    quiet_mask = (x_oh >= 2800.0) & (x_oh <= 3000.0)
-    if np.sum(quiet_mask) >= 3:
-        noise_std = float(np.std(y_bl[quiet_mask]))
-    else:
-        noise_std = float(np.std(y_bl))
+    window = fit_cfg_oh.get('hydration_noise_window', (2000.0, 2100.0))
+    noise_std = _batch_hydration_noise(x, y_full, window, x_oh, y_bl)
 
     # Pre-fit SNR gate
     y_max = float(np.max(y_bl))

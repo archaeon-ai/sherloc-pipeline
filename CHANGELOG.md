@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Batch hydration now measures noise at each point from 2000–2100 cm⁻¹ after subtracting a
+  straight line fitted in that interval. It uses the previous 2800–3000 cm⁻¹ estimate when
+  fewer than three channels are available. More marginal hydration peaks pass the threshold
+  for storage on reprocessing. The bundled configuration hash changes. Map and Workbench
+  noise estimates are unchanged. The map measures scatter after asPLS baseline correction
+  over R1. The Workbench measures scatter after any baseline correction in the user's selected
+  range. Both use 2000–2100 cm⁻¹ by default and use the whole input if that interval is empty.
+
 - Hydration fits now fit a straight baseline together with the Gaussian components and choose the
   component count by AICc. Batch hydration writes the same per-point size log and selection marks
   as minerals and organics G. The new `fwhm_at_cap` field records whether a hydration width lies
