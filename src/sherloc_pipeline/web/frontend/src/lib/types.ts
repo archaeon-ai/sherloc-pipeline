@@ -267,8 +267,6 @@ export interface FitRequest {
   wavenumber: number[];
   intensity: number[];
   params?: ProcessingParams;
-  // Target type of the active scan, used by the fit-quality classifier.
-  target_type?: string;
 }
 
 export interface Peak {
