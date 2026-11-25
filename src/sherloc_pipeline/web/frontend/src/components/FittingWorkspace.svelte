@@ -35,7 +35,7 @@
   const domainDefaults: Record<string, { range: [number, number]; fwhm: [number, number]; snr: number; peaks: number }> = {
     minerals: { range: [700, 1200], fwhm: [22, 90], snr: 3.0, peaks: 5 },
     organics: { range: [1250, 1850], fwhm: [40, 200], snr: 2.0, peaks: 2 },
-    hydration: { range: [2800, 3900], fwhm: [50, 300], snr: 2.0, peaks: 3 },
+    hydration: { range: [2800, 3900], fwhm: [50, 300], snr: 2.0, peaks: 2 },
   };
 
   function applyDomainDefaults() {
@@ -81,7 +81,7 @@
             max_peaks: maxPeaks,
             min_snr: minSnr,
             fwhm_bounds: [fwhmMin, fwhmMax],
-            model_selection: modelSelection,
+            model_selection: domain === 'hydration' ? 'aicc' : modelSelection,
           },
         },
       });
@@ -261,13 +261,15 @@
               </div>
             </div>
 
-            <div class="param-group">
-              <label for="p-model">Model Selection</label>
-              <select id="p-model" bind:value={modelSelection}>
-                <option value="f-test">F-test</option>
-                <option value="aicc">AICc</option>
-              </select>
-            </div>
+            {#if domain !== 'hydration'}
+              <div class="param-group">
+                <label for="p-model">Model Selection</label>
+                <select id="p-model" bind:value={modelSelection}>
+                  <option value="f-test">F-test</option>
+                  <option value="aicc">AICc</option>
+                </select>
+              </div>
+            {/if}
 
             <hr style="border: none; border-top: 1px solid var(--color-border); margin: 8px 0" />
 

@@ -114,7 +114,7 @@ When `SHERLOC_AUTH_MODE=auth0`, these are required:
 | `SHERLOC_AUTH0_AUDIENCE` | non-empty |
 | `SHERLOC_AUTH0_SPA_CLIENT_ID` | non-empty (surfaced via `/api/config`) |
 | `SHERLOC_AUTH0_IDENTITY_CLAIM_URI` | non-empty namespace URI (validated by `config_check` since v4.1.14) |
-| `SHERLOC_ALEMBIC_TARGET` | exact `b7e4f3a9c1d2` retained-path, `17db1a1940d6` cleanup, `a13c4e5f6071` reference-catalog, `4f638701cf7c` cr-mask-review, or `a4d795f0a25e` selection-marks revision; symbolic `head` is rejected in auth0 mode |
+| `SHERLOC_ALEMBIC_TARGET` | exact `b7e4f3a9c1d2` retained-path, `17db1a1940d6` cleanup, `a13c4e5f6071` reference-catalog, `4f638701cf7c` cr-mask-review, `a4d795f0a25e` selection-marks, or `dba3f925e841` hydration-width revision; symbolic `head` is rejected in auth0 mode |
 | `PHASE_TIER` | ∈ `{team, public}` |
 | `AWS_ACCESS_KEY_ID` | non-empty |
 | `AWS_SECRET_ACCESS_KEY` | non-empty |
@@ -212,7 +212,8 @@ deliberate decision rather than silent drift. See
 
 | Element | Value |
 |---|---|
-| Current head | `a4d795f0a25e` (`add_selection_marks_to_fitted_peaks`) |
+| Current head | `dba3f925e841` (`add_fwhm_at_cap`) |
+| Selection-marks revision | `a4d795f0a25e` (`add_selection_marks_to_fitted_peaks`) |
 | Cr-mask-review revision | `4f638701cf7c` (`add_cr_mask_review_to_fitted_peaks`) |
 | Reference-catalog revision | `a13c4e5f6071` (`add_reference_release_catalog`) |
 | Activation-compatible retained-path revision | `b7e4f3a9c1d2` (`prepare_context_images_retained_path_epoch`) |
@@ -220,16 +221,15 @@ deliberate decision rather than silent drift. See
 | Boot order | `python -m sherloc_pipeline.web.config_check` → `alembic upgrade "$SHERLOC_ALEMBIC_TARGET"` → uvicorn |
 | Contract guarantee | Single head (no fork); migrations idempotent; the head is in `config_check.VALID_ALEMBIC_TARGETS` |
 
-Auth0 deployments must set `SHERLOC_ALEMBIC_TARGET` to one of the five exact
+Auth0 deployments must set `SHERLOC_ALEMBIC_TARGET` to one of the six exact
 reviewed revisions above. The retained-path revision preserves legacy values
 while admitting `r2_rel_key`-only writers. Selecting `17db1a1940d6` is the
 separate destructive cleanup action; selecting the catalog revision, the
-cr-mask-review revision or the selection-marks head also includes that cleanup
-ancestor. The cr-mask-review revision adds one nullable column
-(`fitted_peaks.cr_mask_review`) and the head adds three
-(`fitted_peaks.kept_by`, `aicc_gain`, `step_p`); the web service never reads
-them, so serving is unaffected at the earlier targets, while data commands
-(which require the database at the code's head) need it applied first. The env template retains the activation-compatible
+cr-mask-review revision, the selection-marks revision or the current head also
+includes that cleanup ancestor. The later revisions add nullable columns to
+`fitted_peaks`: `cr_mask_review`, then `kept_by`, `aicc_gain` and `step_p`,
+then `fwhm_at_cap`. The web service can serve the earlier targets. Data commands
+require the database at the current head. The env template retains the activation-compatible
 revision. Missing, symbolic (`head`), stale, or
 unknown targets fail startup validation in auth0 mode.
 

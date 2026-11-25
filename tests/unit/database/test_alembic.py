@@ -533,3 +533,30 @@ class TestSelectionMarksColumns:
 
         command.upgrade(config, "head")
         assert schema(db_path) == (head_objects, head_columns)
+
+
+def test_hydration_width_mark_round_trip(alembic_config):
+    config, path = alembic_config
+    previous = "a4d795f0a25e"
+    command.upgrade(config, previous)
+    insert = ("INSERT INTO fitted_peaks (id, spectrum_id, peak_type, amplitude, fit_modality, created_at) "
+              "VALUES (?, 's1', 'gaussian', 1.0, ?, '2026-01-01')")
+    with closing(sqlite3.connect(path)) as db:
+        db.execute(insert, ("p1", "hydration"))
+        db.commit()
+    for operation, revision, has_mark in [(command.upgrade, "head", True),
+                                          (command.downgrade, previous, False),
+                                          (command.upgrade, "head", True)]:
+        operation(config, revision)
+        with closing(sqlite3.connect(path)) as db:
+            columns = {r[1] for r in db.execute("PRAGMA table_info(fitted_peaks)")}
+            assert ("fwhm_at_cap" in columns) == has_mark
+            assert db.execute("SELECT id, fit_modality FROM fitted_peaks").fetchall() == [("p1", "hydration")]
+            if has_mark:
+                assert db.execute("SELECT fwhm_at_cap FROM fitted_peaks").fetchone() == (None,)
+                db.execute("UPDATE fitted_peaks SET fwhm_at_cap = 1")
+                db.commit()
+            with pytest.raises(sqlite3.IntegrityError, match="invalid fit_modality value"):
+                db.execute(insert, ("p2", "invalid"))
+            with pytest.raises(sqlite3.IntegrityError, match="invalid fit_modality value"):
+                db.execute("UPDATE fitted_peaks SET fit_modality = 'invalid'")

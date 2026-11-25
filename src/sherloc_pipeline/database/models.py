@@ -1000,6 +1000,7 @@ class FittedPeakORM(Base):
     kept_by: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     aicc_gain: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     step_p: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fwhm_at_cap: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1037,6 +1038,7 @@ class FittedPeakORM(Base):
             kept_by=self.kept_by,
             aicc_gain=self.aicc_gain,
             step_p=self.step_p,
+            fwhm_at_cap=self.fwhm_at_cap,
             area=self.area,
             snr=self.snr,
             fit_quality=self.fit_quality,
@@ -1069,6 +1071,7 @@ class FittedPeakORM(Base):
             kept_by=peak.kept_by,
             aicc_gain=peak.aicc_gain,
             step_p=peak.step_p,
+            fwhm_at_cap=peak.fwhm_at_cap,
             area=peak.area,
             snr=peak.snr,
             fit_quality=peak.fit_quality,

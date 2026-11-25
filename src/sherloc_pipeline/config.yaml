@@ -157,11 +157,11 @@ fitting:
   hydration_fit_range: [2800, 3900]   # O-H stretch search window (Phua et al. 2024)
   hydration_plot_range: [2600, 4000]
   hydration_max_peaks: 2              # typical decomposition into 1–2 Gaussians
-  hydration_min_snr: 3.0              # This pipeline's pre-fit gate. The F-test governs multi-peak fits.
+  hydration_min_snr: 3.0              # This pipeline's pre-fit gate.
   hydration_fwhm_min_cm1: 50.0        # minimum FWHM of a hydration peak (cm-1)
   hydration_fwhm_max_cm1: 300.0       # maximum FWHM of a hydration peak (cm-1)
   hydration_r2_min: 0.25              # quality gate (matches mineral standard)
-  hydration_ftest_alpha: 0.01         # F-test for hydration model selection
+  hydration_ftest_alpha: 0.01         # F-test comparison recorded in the hydration size log
   hydration_use_prebaseline: true     # use R1_normalized.csv, not _baselined
   hydration_center_range: [3000.0, 3900.0]  # This pipeline's peak center range (cm-1)
 

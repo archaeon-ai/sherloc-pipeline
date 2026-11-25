@@ -206,7 +206,7 @@ def _alembic_config():
 # The Alembic head this code expects. A constant, so data commands can check
 # a database without the migration scripts (a wheel install does not ship
 # them); tests/unit/database/test_schema_guard.py pins it to alembic/versions.
-SCHEMA_HEADS = ("a4d795f0a25e",)
+SCHEMA_HEADS = ("dba3f925e841",)
 
 
 def alembic_heads() -> tuple:

@@ -915,7 +915,7 @@ There is no single cross-field validation function. The cross-field rule the dat
 
 ### Schema Evolution
 
-Use Alembic for migrations (batch mode for SQLite). Current head: `a4d795f0a25e` (21 migrations).
+Use Alembic for migrations (batch mode for SQLite). Current head: `dba3f925e841` (22 migrations).
 
 ```python
 # Example migration
@@ -924,6 +924,7 @@ def upgrade():
 ```
 
 Recent migrations:
+- `dba3f925e841`: Add nullable `fitted_peaks.fwhm_at_cap`
 - `a4d795f0a25e`: Add nullable selection marks `fitted_peaks.kept_by`, `aicc_gain`, `step_p` (existing rows NULL)
 - `4f638701cf7c`: Add nullable `fitted_peaks.cr_mask_review` (single ADD COLUMN; existing rows NULL)
 - `a13c4e5f6071`: Add immutable reference release catalog tables

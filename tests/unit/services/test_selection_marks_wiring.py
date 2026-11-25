@@ -181,3 +181,17 @@ def test_a_non_finite_value_is_written_as_null(tmp_path):
                                      "sizes": [{"p": 1, "aicc": float("nan"), "params": [1.0, float("inf")]}]})
     rec = json.loads(side.read_text())
     assert rec["aicc0"] is None and rec["sizes"][0]["aicc"] is None and rec["sizes"][0]["params"] == [1.0, None]
+
+
+def test_hydration_marks_reach_fitted_peaks(populated_db, results_all):
+    engine, _, _ = populated_db
+    csv = results_all / "hydration_fit" / "0851_Lake_Haiyaha_detail_1_R1_point0_hydration_peaks.csv"
+    pd.DataFrame([_row(3500, fwhm_cm1=299.5, fwhm_at_cap=True, aicc_gain=18.5, step_p=.003),
+                  _row(3700, fwhm_at_cap=False, aicc_gain=3.2, step_p=.05)]).to_csv(csv, index=False)
+    _sidecar(csv, [_row(3500, pass_r2=True)])
+    _call_persist_raman(_make_service(engine), results_all, "hydration")
+    with get_session(engine) as session:
+        rows = session.query(FittedPeakORM).order_by(FittedPeakORM.center_cm1).all()
+        marked = [r.to_pydantic() for r in rows if r.center_cm1 in (3500, 3700)]
+        assert [(p.kept_by, p.aicc_gain, p.step_p, p.fwhm_at_cap) for p in marked] == [
+            ("both", 18.5, .003, True), ("aicc", 3.2, .05, False)]

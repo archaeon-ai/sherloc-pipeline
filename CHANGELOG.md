@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Hydration fits now fit a straight baseline together with the Gaussian components and choose the
+  component count by AICc. Batch hydration writes the same per-point size log and selection marks
+  as minerals and organics G. The new `fwhm_at_cap` field records whether a hydration width lies
+  within 1 cm⁻¹ of its upper bound (300 cm⁻¹ by default). Reprocessing changes hydration rows.
+  Fits in other domains are unchanged. A change in the hydration row count can renumber later
+  entries in the combined review table.
+
 ### Removed
 - The hydration cosmic-ray veto, off by default, has been removed. The shipped
   configuration produces the same fits and has a new configuration hash.

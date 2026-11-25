@@ -51,7 +51,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
   const domainDefaults: Record<string, { range: [number, number]; fwhm: [number, number]; snr: number; peaks: number; unit: string }> = {
     minerals:      { range: [700, 1200],   fwhm: [22, 90],   snr: 3.0,  peaks: 5, unit: 'cm⁻¹' },
     organics:      { range: [1250, 1850],  fwhm: [40, 200],  snr: 2.0,  peaks: 2, unit: 'cm⁻¹' },
-    hydration:     { range: [2800, 3900],  fwhm: [50, 300],  snr: 2.0,  peaks: 3, unit: 'cm⁻¹' },
+    hydration:     { range: [2800, 3900],  fwhm: [50, 300],  snr: 2.0,  peaks: 2, unit: 'cm⁻¹' },
     fluorescence:  { range: [276, 357],    fwhm: [7, 35],    snr: 10.0, peaks: 4, unit: 'nm' },
   };
 
@@ -113,7 +113,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
     const params: FitParams = {
       domain, wavenumber_range: [waveMin, waveMax], max_peaks: maxPeaks,
       min_snr: minSnr, fwhm_bounds: [fwhmMin, fwhmMax],
-      model_selection: isFluor ? 'aicc' : modelSelection,
+      model_selection: isFluor || domain === 'hydration' ? 'aicc' : modelSelection,
     };
     fitting = true;
     error = '';
@@ -225,7 +225,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
         </div>
       </div>
 
-      {#if !isFluor}
+      {#if !isFluor && domain !== 'hydration'}
       <div class="param-group">
         <label for="rf-model" class="label-with-info">
           Model Selection

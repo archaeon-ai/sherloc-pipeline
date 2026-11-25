@@ -30,7 +30,7 @@ from sherloc_pipeline.core.calibration import (
     calculate_loupe_wavelength_wavenumber,
     get_region_wavelength_mask,
 )
-from sherloc_pipeline.core.fitting import FILTER_FWHM_MIN_CM1_DEFAULT, fit_spectrum
+from sherloc_pipeline.core.fitting import FILTER_FWHM_MIN_CM1_DEFAULT, fit_hydration_spectrum, fit_spectrum
 from sherloc_pipeline.core.mineral_id import (
     MineralRule,
     assign_min_id,
@@ -401,10 +401,7 @@ def _fit_raman_domain(
             "min_display_snr": fitting_cfg.get("min_display_snr", 2.0),
             "min_amp_sigma_multiplier": fitting_cfg.get("min_amp_sigma_multiplier", 0.3),
             "noise_estimation": fitting_cfg.get("noise_estimation", {"window": [2000.0, 2100.0]}),
-            "parsimony": {
-                "model_selection": "ftest",
-                "ftest_alpha": fitting_cfg.get("hydration_ftest_alpha", 0.01),
-            },
+            "hydration_ftest_alpha": fitting_cfg.get("hydration_ftest_alpha", 0.01),
             "posthoc_filters": fitting_cfg.get("posthoc_filters", {}),
         }
         assign_fn = classify_hydration_band
@@ -414,12 +411,15 @@ def _fit_raman_domain(
 
     # Run fitting
     try:
-        fit_result, _ = fit_spectrum(
-            x, y, cfg, roi=roi,
-            negative_spike_sigma=(
-                fitting_cfg.get("minerals_negative_spike_sigma") if domain == "minerals" else None
-            ),
-        )
+        if domain == "hydration":
+            fit_result, _, _ = fit_hydration_spectrum(x, y, cfg, roi)
+        else:
+            fit_result, _ = fit_spectrum(
+                x, y, cfg, roi=roi,
+                negative_spike_sigma=(
+                    fitting_cfg.get("minerals_negative_spike_sigma") if domain == "minerals" else None
+                ),
+            )
     except Exception as exc:
         logger.debug("Raman fit failed for domain=%s: %s", domain, exc)
         return DomainResult(status="missing")
