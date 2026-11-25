@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Workbench References box text has been replaced.
 - Batch hydration now measures noise at each point from 2000–2100 cm⁻¹ after subtracting a
   straight line fitted in that interval. It uses the previous 2800–3000 cm⁻¹ estimate when
   fewer than three channels are available. More marginal hydration peaks pass the threshold

@@ -297,28 +297,45 @@ it('shows a temporary retry notice as a status beside the error area', async () 
 });
 
 describe('ProcessingWorkbench references panel', () => {
-  it('names the background step and cites its sources as published', async () => {
+  it('shows the exact headings and citations in section order', async () => {
     const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await flush();
     await fireEvent.click(screen.getByRole('button', { name: 'References' }));
     await tick();
-    const sections = Array.from(container.querySelectorAll('.ref-section')).map((s) => s.textContent ?? '');
-    const background = sections.find((t) => t.includes('2. Background subtraction'));
-    expect(background).toBeDefined();
-    // The instrument-background step is not dark frame subtraction (active minus dark).
-    expect(background).not.toMatch(/dark frame/i);
-    // The step names this pipeline's correction and the paper's separately.
-    expect(background).toContain('This pipeline’s stowed-arm correction subtracts a trimmed-mean reference.');
-    expect(background).toContain('the number of shots per spectrum divided by 900');
-    expect(background).toContain('anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)');
-    expect(background).toContain('the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting');
-    expect(background).toContain('Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover');
-    const cites = Array.from(container.querySelectorAll('.ref-cite')).map((c) => c.textContent ?? '');
-    const loupe = cites.find((t) => t.includes('nasa/Loupe'));
-    expect(loupe).toContain('Uckert, K. (2022). nasa/Loupe: LoupeV5.1.5 (version LoupeV5.1.5a). Zenodo.');
-    expect(loupe).not.toContain('et al.');
-    const baseline = sections.find((t) => t.includes('pybaselines'));
-    expect(baseline).not.toMatch(/Erb, 20\d\d/);
+    const panel = container.querySelector('.refs-panel')!;
+    const sections = Array.from(panel.querySelectorAll(':scope > .ref-section'));
+    const expected = [
+      [
+        '0. SHERLOC instrument and Loupe software',
+        "Bhartia, R. et al. (2021). Perseverance's Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation. Space Sci. Rev., 217, 58. doi:10.1007/s11214-021-00812-z",
+        'Uckert, K. (2022). nasa/Loupe: LoupeV5.1.5 (version LoupeV5.1.5a). Zenodo. doi:10.5281/zenodo.7062998',
+      ],
+      [
+        '1. Despiking',
+        "'modz' algorithm adapted from Whitaker, D.A. & Hayes, K. (2018). A simple algorithm for despiking Raman spectra. Chemometrics Intell. Lab. Syst., 179, 82–84. doi:10.1016/j.chemolab.2018.06.009",
+      ],
+      [
+        '2. Spectral background',
+        "'arm-stowed' subtraction adapted from Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. Appl. Spectrosc., 79(6), 904–918. doi:10.1177/00037028241280081",
+      ],
+      [
+        '3. Baseline — Adaptive smoothness penalized least squares (asPLS) with pybaselines',
+        'Zhang, F. et al. (2020). Baseline correction for infrared spectra using adaptive smoothness parameter penalized least squares method. Spectroscopy Letters, 53(3), 222–233. doi:10.1080/00387010.2020.1730908',
+        'Erb, D. pybaselines. doi:10.5281/zenodo.5608581',
+      ],
+      [
+        '4. Raman and fluorescence fitting — Multi-Gaussian with sequential F-test and AICc',
+        'Branch, M.A., Coleman, T.F. & Li, Y. (1999). A subspace, interior, and conjugate gradient method for large-scale bound-constrained minimization problems. SIAM J. Sci. Comput., 21(1), 1–23. doi:10.1137/S1064827595289108',
+        'Burnham, K.P. & Anderson, D.R. (2002). Model Selection and Multimodel Inference. Springer.',
+      ],
+    ];
+    expect(sections).toHaveLength(expected.length);
+    for (const [index, section] of sections.entries()) {
+      const citations = Array.from(section.querySelectorAll(':scope > .ref-cite'));
+      expect(citations.map((cite) => cite.textContent)).toEqual(expected[index].slice(1));
+      expect(section.textContent?.replace(/\n +/g, ' ')).toBe(expected[index].join(' '));
+    }
+    expect(panel.textContent?.replace(/\n +/g, ' ')).toBe(expected.flat().join(' '));
   });
 });
 
