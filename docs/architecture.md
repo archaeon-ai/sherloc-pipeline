@@ -27,7 +27,7 @@ package). They form three rough layers:
                 │  core (algorithms)            visualization   │
                 │  fitting / fluor_fitting /    fitting_plots / │   primitives
                 │  baseline / preprocessing /   spatial /       │
-                │  calibration / r1_extraction  spectrograms    │
+                │  calibration / r1_extraction  cooccurrence    │
                 │  / r123_stitching / mineral_id                │
                 │                                               │
                 │  vision (ACI image reading)                   │
@@ -48,7 +48,7 @@ package). They form three rough layers:
 | `core/` | Pure algorithmic primitives. Should not depend on `services/`. | `preprocessing.py`, `baseline.py`, `fitting.py` (Raman cm⁻¹), `fluor_fitting.py` / `fluor_id.py` / `fluor_detection.py` (fluorescence in nm), `calibration.py`, `r1_extraction.py`, `r123_stitching.py`, `mineral_id.py`, `pds_client.py`, `pds_parsers.py`. |
 | `models/` | Pydantic DTOs + a small type registry. Shared between CLI/API/web/services. | `spectra.py`, `fitting.py`, `instrument.py`, `pds.py`, `pixl.py`, `spectrogram.py`. |
 | `database/` | SQLAlchemy ORM, connection management, Alembic glue. | `models.py` (17 ORMs), `connection.py` (`get_engine`, `init_pds_database`), `pixl_models.py`. |
-| `visualization/` | Matplotlib/Plotly figure generation. | `fitting_plots.py`, `spatial.py`, `spectrograms.py`, `preprocessing_plots.py`, `cooccurrence.py`. |
+| `visualization/` | Matplotlib figure generation. | `fitting_plots.py`, `spatial.py`, `preprocessing_plots.py`, `cooccurrence.py`. |
 | `ml_despike/` | ML cosmic-ray detector: frozen manifest (sha256-pinned ONNX), sha256-verified fetch/cache, certified 8-channel featurization, ONNX CPU inference. Behind the `[ml-despike]` extra; never imported by `modz`/`none` paths. | `manifest.py`, `featurize.py`, `artifact.py`, `detector.py`. |
 | `vision/` | ACI image reading (VICAR/PDS3 `.IMG`). | `img_reader.py`. |
 | `data/` | Packaged spectral references. The Workbench overlay marks anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) without changing spectral values. | `background/` (arm-stowed and fused-silica calibration spectra), `badpix_channels.csv`. |
