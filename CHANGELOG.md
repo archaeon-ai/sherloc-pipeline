@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
+- Fluorescence fits no longer score group assignments against Raman peaks at
+  the same point. Newly fitted peaks have NULL `assignment_confidence` in the
+  database and an empty `cooccurrence_confidence` field in the accepted-peaks
+  CSV. The Python functions `score_cooccurrences` and `aggregate_co_occurrences`
+  have been removed. Fluorescence groups and fitted peak parameters are unchanged.
 - The hydration cosmic-ray veto, off by default, has been removed. The shipped
   configuration produces the same fits and has a new configuration hash.
   The fitter ignores `fitting.hydration_cr_veto` in older configurations.
