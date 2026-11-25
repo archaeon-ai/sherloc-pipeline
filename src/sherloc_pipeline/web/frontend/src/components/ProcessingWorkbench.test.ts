@@ -962,7 +962,7 @@ describe('ProcessingWorkbench commit-bound ML gating (PR #13 F1)', () => {
   });
 });
 
-// PR #11 review F1 (Major): anomalous pixel positions are REGION-SPECIFIC served-array
+// Anomalous pixel positions are REGION-SPECIFIC served-array
 // indices. loadAnomalousPixels previously committed `anomalousPixels = res.anomalous_pixels`
 // unconditionally, so (a) on a fast region switch an older region's slower
 // response could resolve last and overwrite the new region's annotations, and
@@ -970,7 +970,7 @@ describe('ProcessingWorkbench commit-bound ML gating (PR #13 F1)', () => {
 // the new region loaded. The fix mirrors the spectrum loader's generation
 // guard and clears the list at request start. These tests drive the race with
 // hand-controlled (deferred) getAnomalousPixels responses.
-describe('ProcessingWorkbench anomalous pixel staleness guard (PR #11 F1)', () => {
+describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
   function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
     let resolve!: (v: T) => void;
     const promise = new Promise<T>((r) => {
