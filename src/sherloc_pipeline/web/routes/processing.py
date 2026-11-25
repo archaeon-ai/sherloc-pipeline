@@ -176,10 +176,7 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
     peaks: list[PeakDTO] = []
 
     if is_fluor:
-        # Fluorescence: use fit_fluorescence_spectrum (differential evolution +
-        # agnostic AICc, doublet-aware). The Raman fit_spectrum() does not work
-        # in nm space and was producing single-peak fits across the Berry Hollow
-        # Ce3+ doublet (group1a ~304 nm + group1b ~326 nm).
+        # Fit fluorescence peaks in wavelength space (nm).
         fluor_cfg_obj = (
             config.get("fluorescence_fitting", {})
             if isinstance(config, dict)
@@ -209,7 +206,6 @@ def process_fit(request: Request, body: FitRequest) -> FitResponse:
                 saturation_threshold=float(fluor_cfg.get("saturation_threshold", 60000.0)),
                 saturation_channel_limit=int(fluor_cfg.get("saturation_channel_limit", 5)),
                 overlap_exclusion=tuple(fluor_cfg.get("overlap_exclusion", [337.4, 338.4])),
-                strategy=str(fluor_cfg.get("strategy", "agnostic")),
             )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Fluorescence fitting failed: {exc}")

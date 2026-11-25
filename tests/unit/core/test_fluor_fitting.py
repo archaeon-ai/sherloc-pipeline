@@ -71,10 +71,10 @@ class TestSingleGaussianFit:
         intensity = _synth_spectrum(wl, [(true_center, true_amp, true_fwhm)], noise_std=10.0)
 
         result = fit_fluorescence_spectrum(
-            wl, intensity, noise_std=10.0, max_peaks=2, strategy="agnostic",
+            wl, intensity, noise_std=10.0, max_peaks=2,
         )
 
-        assert result.n_peaks >= 1
+        assert result.n_peaks == 1
         assert not result.fit_skipped
         # Find the peak closest to the true center
         best = min(result.peaks, key=lambda p: abs(p.center_nm - true_center))
@@ -155,23 +155,23 @@ class TestMultiGaussianFit:
             fit_range=(276.0, 355.0), position_bounds=(270.0, 355.0),
         )
 
-        assert result.n_peaks >= 2
+        assert result.n_peaks == 2
         centers = sorted(p.center_nm for p in result.peaks)
         # Both peaks recovered within 2 nm
         assert abs(centers[0] - 290.0) < 2.0
         assert abs(centers[-1] - 335.0) < 2.0
 
     def test_three_peak_recovery(self):
-        """Three Gaussians spanning fit range recovered (agnostic strategy)."""
+        """Three Gaussians spanning fit range recovered."""
         wl = _make_wavelength(n=1000)
         peaks_true = [(285.0, 2500.0, 15.0), (305.0, 3500.0, 18.0), (340.0, 3000.0, 20.0)]
         intensity = _synth_spectrum(wl, peaks_true, noise_std=8.0)
 
         result = fit_fluorescence_spectrum(
-            wl, intensity, noise_std=8.0, max_peaks=3, strategy="agnostic",
+            wl, intensity, noise_std=8.0, max_peaks=3,
         )
 
-        assert result.n_peaks >= 3
+        assert result.n_peaks == 3
         centers = sorted(p.center_nm for p in result.peaks)
         assert abs(centers[0] - 285.0) < 2.0
         assert abs(centers[1] - 305.0) < 2.0
@@ -595,99 +595,6 @@ class TestResultStructure:
 
         result = fit_fluorescence_spectrum(wl, intensity, noise_std=10.0)
         assert result.n_masked_channels >= 0  # overlap zone counted
-
-
-# ---------------------------------------------------------------------------
-# Hypothesis-driven fitting tests
-# ---------------------------------------------------------------------------
-
-
-class TestHypothesisDrivenFitting:
-
-    def test_hypothesis_group2_single_peak(self):
-        """Group 2: the hypothesis strategy fits one peak."""
-        wl = _make_wavelength(n=500)
-        intensity = _synth_spectrum(
-            wl, [(340.0, 5000.0, 22.0)], noise_std=15.0
-        )
-
-        result = fit_fluorescence_spectrum(
-            wl, intensity, noise_std=15.0,
-            strategy="hypothesis", max_peaks=3,
-        )
-
-        # Should fit as 1 peak, not split into 2
-        assert result.n_peaks == 1, (
-            f"Expected 1 peak for Group 2 asymmetric band, got {result.n_peaks}: "
-            f"{[(p.center_nm, p.fwhm_nm) for p in result.peaks]}"
-        )
-        assert abs(result.peaks[0].center_nm - 340.0) < 3.0
-        assert result.r2 > 0.9
-
-    def test_hypothesis_group1_doublet(self):
-        """Ce3+ doublet (304+325 nm) → hypothesis recovers 2 peaks."""
-        wl = _make_wavelength(n=800)
-        intensity = _synth_spectrum(
-            wl,
-            [(304.0, 5000.0, 10.0), (325.0, 3000.0, 10.0)],
-            noise_std=10.0,
-        )
-
-        result = fit_fluorescence_spectrum(
-            wl, intensity, noise_std=10.0,
-            strategy="hypothesis", max_peaks=3,
-        )
-
-        assert result.n_peaks >= 2
-        centers = sorted(p.center_nm for p in result.peaks)
-        assert abs(centers[0] - 304.0) < 3.0
-        assert abs(centers[1] - 325.0) < 3.0
-
-    def test_hypothesis_group3_plus_group2(self):
-        """Group 3 + Group 2 → M4 model (2 peaks)."""
-        wl = _make_wavelength(n=800)
-        intensity = _synth_spectrum(
-            wl,
-            [(280.0, 3000.0, 15.0), (340.0, 4000.0, 20.0)],
-            noise_std=10.0,
-        )
-
-        result = fit_fluorescence_spectrum(
-            wl, intensity, noise_std=10.0,
-            strategy="hypothesis", max_peaks=3,
-        )
-
-        assert result.n_peaks >= 2
-        centers = sorted(p.center_nm for p in result.peaks)
-        assert abs(centers[0] - 280.0) < 3.0
-        assert abs(centers[-1] - 340.0) < 3.0
-
-    def test_agnostic_strategy_still_works(self):
-        """strategy='agnostic' is the default path and works correctly."""
-        wl = _make_wavelength()
-        intensity = _synth_spectrum(wl, [(305.0, 5000.0, 20.0)], noise_std=10.0)
-
-        result = fit_fluorescence_spectrum(
-            wl, intensity, noise_std=10.0,
-            strategy="agnostic", max_peaks=2,
-        )
-
-        assert result.n_peaks >= 1
-        assert result.r2 > 0.9
-
-    def test_hypothesis_noise_only_returns_no_peaks(self):
-        """Pure noise → hypothesis scan detects nothing → M0 wins → 0 peaks."""
-        wl = _make_wavelength()
-        rng = np.random.default_rng(42)
-        # Zero-mean noise (dark-subtracted, no fluorescence signal)
-        intensity = rng.normal(0.0, 10.0, size=wl.size)
-
-        result = fit_fluorescence_spectrum(
-            wl, intensity, noise_std=10.0,
-            strategy="hypothesis",
-        )
-
-        assert result.n_peaks == 0
 
 
 # ---------------------------------------------------------------------------

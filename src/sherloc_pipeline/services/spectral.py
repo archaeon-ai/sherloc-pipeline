@@ -1426,7 +1426,6 @@ class SpectralService:
                 min_fwhm_nm=float(fluor_cfg.get("min_fwhm_nm", 8.0)),
                 saturation_threshold=float(fluor_cfg.get("saturation_threshold", 60000.0)),
                 saturation_channel_limit=int(fluor_cfg.get("saturation_channel_limit", 5)),
-                strategy=str(fluor_cfg.get("strategy", "agnostic")),
             )
             metadata["fit"] = True
             metadata["n_peaks"] = fluor_result.n_peaks
@@ -1544,7 +1543,6 @@ class SpectralService:
                 min_fwhm_nm=float(fluor_cfg.get("min_fwhm_nm", 8.0)),
                 saturation_threshold=float(fluor_cfg.get("saturation_threshold", 60000.0)),
                 saturation_channel_limit=int(fluor_cfg.get("saturation_channel_limit", 5)),
-                strategy=str(fluor_cfg.get("strategy", "agnostic")),
             )
             metadata["fit"] = True
             metadata["n_peaks"] = fluor_result.n_peaks

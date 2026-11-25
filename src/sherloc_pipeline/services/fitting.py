@@ -3261,7 +3261,6 @@ class FittingService:
             max_peaks = int(fluor_cfg.get("max_peaks", 4))
             saturation_threshold = float(fluor_cfg.get("saturation_threshold", 60000.0))
             saturation_channel_limit = int(fluor_cfg.get("saturation_channel_limit", 5))
-            strategy = str(fluor_cfg.get("strategy", "agnostic"))
             min_fwhm_nm = float(fluor_cfg.get("min_fwhm_nm", 8.0))
 
             # Pre-compute 2148-channel wavelength axis from Loupe calibration
@@ -3459,7 +3458,6 @@ class FittingService:
                     snr_threshold=snr_threshold,
                     min_fwhm_nm=min_fwhm_nm,
                     saturation_channel_limit=saturation_channel_limit,
-                    strategy=strategy,
                 )
 
                 from sherloc_pipeline.core.utils import resolve_parallel_workers

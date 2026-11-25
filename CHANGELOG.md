@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
+- Fluorescence fitting now always uses the agnostic Gaussian fit. Detecting a
+  group 1a band no longer adds a candidate 1a/1b doublet with a prescribed
+  amplitude ratio. The default fit gives the same peaks, group assignments,
+  and output fields. The bundled configuration has a new hash.
+  Older configurations that select `fluorescence_fitting.strategy: hypothesis`
+  still load and now produce agnostic fits. The fit API ignores a supplied
+  `strategy` field. Python callers of `fit_fluorescence_spectrum` should omit
+  `strategy`, `agnostic_r2_threshold`, and `doublet_ratio_range`.
 - The hydration cosmic-ray veto, off by default, has been removed. The shipped
   configuration produces the same fits and has a new configuration hash.
   The fitter ignores `fitting.hydration_cr_veto` in older configurations.

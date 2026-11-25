@@ -227,20 +227,6 @@ fluorescence_fitting:
   # Doublet detection
   doublet_snr_threshold: 10.0         # Both peaks must exceed (matches snr_threshold)
   doublet_separation_range: [18, 29]  # nm, expected separation
-  doublet_ratio_range: [0.7, 1.3]      # [lo, hi] intensity ratio (amp_1a/amp_1b); empirical
-
-  # Feature scan for hypothesis-driven fitting
-  feature_scan:
-    prominence_factor: 3.0            # Multiplier on noise_std for detection
-    group_windows:
-      group3:  [270.0, 295.0]
-      group1a: [295.0, 315.0]         # Wider than assignment for detection
-      group1b: [315.0, 332.0]
-      group2:  [329.0, 357.0]
-
-  # Hypothesis fitting strategy
-  strategy: "agnostic"                # "agnostic" (default) or "hypothesis"
-  agnostic_r2_threshold: 0.7          # If hypothesis R² < this, run agnostic diagnostic
 
   # Parallelism: number of worker processes for per-point fluorescence fitting.
   # 0 = auto (half of available CPU cores), 1 = sequential (no multiprocessing).
