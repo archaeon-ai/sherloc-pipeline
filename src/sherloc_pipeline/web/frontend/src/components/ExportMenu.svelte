@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AnomalousPixel, ExportTrace, ProcessingArtifacts } from '../lib/types';
+  import type { ExportTrace, ProcessingArtifacts } from '../lib/types';
 
   export let trace: ExportTrace | null = null;
   export let scanId: string = '';
@@ -26,8 +26,6 @@
   // artifact even when the active method is 'none' (PR #10 review F1).
   export let spikeMask: boolean[] | null = null;
   export let spikeMethod: 'ml' | 'modz' | null = null;
-  // The overlay toggle controls the annotation column and its citation.
-  export let anomalousPixels: AnomalousPixel[] | null = null;
 
   let open = false;
   let showProvenanceModal = false;
@@ -99,10 +97,7 @@
         wavelength_unit: provenance?.wavelength_unit ?? 'nm', intensity_unit: provenance?.intensity_unit ?? null },
       data: { wavenumber, wavelength: trace?.wavelength ?? null, intensity,
         channel_indices: trace?.channel_indices ?? [], source_intensity: trace?.intensity ?? null },
-      annotations: {
-        ...(spikeMask && spikeMethod ? { spike_method: spikeMethod, spike_mask: spikeMask } : {}),
-        ...(anomalousPixels?.length ? { anomalous_pixels: anomalousPixels } : {}),
-      },
+      annotations: spikeMask && spikeMethod ? { spike_method: spikeMethod, spike_mask: spikeMask } : {},
     };
   }
 
@@ -162,11 +157,6 @@
       lines.push(`# spike_mask_method: ${spikeMethod}`);
     }
 
-    const hasAnomalousPixels = anomalousPixels !== null && anomalousPixels.length > 0;
-    if (hasAnomalousPixels) {
-      lines.push('# anomalous_pixel_source: Jakubek et al. 2025, Supplemental Tables S3 and S4, doi:10.1177/00037028241280081');
-    }
-
     // Build columns based on stage
     const columns: string[] = ['wavenumber'];
     const data: number[][] = [wavenumber];
@@ -185,16 +175,6 @@
     if (hasSpikeMask) {
       columns.push('spike_mask');
       data.push(spikeMask!.map(v => v ? 1 : 0));
-    }
-
-    if (hasAnomalousPixels) {
-      // 0/1 per served row: 1 where a served position is annotated as an anomalous pixel.
-      const anomalousPixelCol = new Array<number>(wavenumber.length).fill(0);
-      for (const b of anomalousPixels!) {
-        if (b.position >= 0 && b.position < anomalousPixelCol.length) anomalousPixelCol[b.position] = 1;
-      }
-      columns.push('anomalous_pixel');
-      data.push(anomalousPixelCol);
     }
 
     if (stage === 'bg_subtracted') {

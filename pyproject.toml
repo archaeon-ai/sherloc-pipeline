@@ -129,9 +129,6 @@ where = ["src"]
 # importlib.resources so the wheel-installed runtime image can serve
 # them without per-tier R2 keys. Without this entry the v1.0-beta VPS
 # deployment regressed to "Background file not found" (issue #13).
-#
-# The overlay reads the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
-# from the packaged data/anomalous_pixels.csv file.
 [tool.setuptools.package-data]
 sherloc_pipeline = ["config.yaml", "data/background/*.csv", "data/anomalous_pixels.csv"]
 

@@ -18,7 +18,7 @@ vi.mock('./auth', () => ({
   getSession: () => null,
 }));
 
-import { AuthRequiredError, getAnomalousPixels, getPointSpectrum } from './api';
+import { AuthRequiredError, getPointSpectrum } from './api';
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -38,32 +38,5 @@ describe('getPointSpectrum — ensureAuthenticated gate (issue #17)', () => {
     // do not leak unauthenticated point-spectrum requests under Auth0
     // mode (the durable defect issue #17 captured).
     expect(fetchSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe('getAnomalousPixels — static per-region client cache (issue #9)', () => {
-  function anomalousPixelsResponse(region: string) {
-    return new Response(
-      JSON.stringify({ schema_version: '2.0.0', region, n_channels: 523, anomalous_pixels: [] }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    );
-  }
-
-  it('fetches once per region and serves later calls from cache', async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockImplementation(() => Promise.resolve(anomalousPixelsResponse('R1')));
-
-    const a = await getAnomalousPixels('R1');
-    const b = await getAnomalousPixels('R1');
-    expect(a).toBe(b); // same cached promise result
-    expect(a.region).toBe('R1');
-    // A different region triggers a fresh request; R1 stays cached.
-    fetchSpy.mockImplementation(() => Promise.resolve(anomalousPixelsResponse('R2')));
-    await getAnomalousPixels('R2');
-    // R1 fetched once + R2 fetched once = two network calls total.
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(fetchSpy.mock.calls[0][0]).toContain('/spectra/anomalous-pixels?region=R1');
-    expect(fetchSpy.mock.calls[1][0]).toContain('/spectra/anomalous-pixels?region=R2');
   });
 });

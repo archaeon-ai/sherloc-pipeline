@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries in the combined review table.
 
 ### Removed
+- Removed the anomalous-pixel checkbox and its trace from the spectrum view. Workbench CSV exports no longer include the `anomalous_pixel` column or the `# anomalous_pixel_source` header line. Spectrum fits are unchanged.
 - Fluorescence fitting now always uses the agnostic Gaussian fit. Detecting a
   group 1a band no longer adds a candidate 1a/1b doublet with a prescribed
   amplitude ratio. The default fit gives the same peaks, group assignments,

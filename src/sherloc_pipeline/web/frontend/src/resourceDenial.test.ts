@@ -24,9 +24,6 @@ it.each(['resource', 'tier', 'authentication'])('handles a bookmarked scan %s de
   window.location.hash = '#/scan/synthetic-scan/workbench';
   let refuse!: () => void;
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-    if (url.startsWith('/api/spectra/anomalous-pixels')) {
-      return new Response(JSON.stringify({ schema_version: '2.0.0', region: 'R1', n_channels: 0, anomalous_pixels: [] }));
-    }
     if (url === '/api/scans/synthetic-scan') {
       await new Promise<void>((resolve) => { refuse = resolve; });
       return new Response(JSON.stringify({ detail: 'Synthetic resource denied' }), {

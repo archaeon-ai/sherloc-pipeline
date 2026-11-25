@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, afterUpdate, onDestroy, createEventDispatcher } from 'svelte';
-  import type { AnomalousPixel, Peak } from '../lib/types';
+  import type { Peak } from '../lib/types';
   import { buildPeakElements } from '../lib/spectrumLabels';
 
   // Dynamic import for plotly (same pattern as SpectrumPlot.svelte)
@@ -16,9 +16,6 @@
   // the displayed trace ("Spikes"); 'ml' = stored-mask removal positions on the
   // already-cleaned trace ("ML-masked"). null falls back to the generic label.
   export let spikeMethod: 'ml' | 'modz' | null = null;
-  const anomalousPixelLabel = 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)';
-  export let anomalousPixels: AnomalousPixel[] = [];
-  export let showAnomalousPixels: boolean = false;
   export let background: number[] | null = null;     // dashed gray background line
   export let backgroundScaled: number[] | null = null;
   export let baseline: number[] | null = null;       // dashed red baseline curve
@@ -278,39 +275,6 @@
             line: { color: '#991b1b', width: 1 },
           },
           hovertemplate: `${hoverVerb} at %{x:.1f} ${xUnit}<br>Intensity: %{y:.1f}<extra></extra>`,
-        });
-      }
-    }
-
-    // Draw each annotation at the displayed sample value.
-    if (showAnomalousPixels && anomalousPixels.length > 0) {
-      const bpX: number[] = [];
-      const bpY: number[] = [];
-      const bpCustom: [number, string][] = [];
-      for (const bp of anomalousPixels) {
-        if (bp.position >= 0 && bp.position < xData.length) {
-          bpX.push(xData[bp.position]);
-          bpY.push(intensity[bp.position]);
-          bpCustom.push([bp.channel, bp.table]);
-        }
-      }
-      if (bpX.length > 0) {
-        traces.push({
-          x: bpX,
-          y: bpY,
-          customdata: bpCustom,
-          type: 'scatter',
-          mode: 'markers',
-          name: `${anomalousPixelLabel} · ${bpX.length}`,
-          marker: {
-            symbol: 'diamond-open',
-            size: 9,
-            color: '#0369a1',
-            line: { color: '#0369a1', width: 1.5 },
-          },
-          hovertemplate:
-            `Anomalous pixel at %{x:.1f} ${xUnit}` +
-            '<br>CCD channel %{customdata[0]} · Table %{customdata[1]}<extra></extra>',
         });
       }
     }
@@ -611,9 +575,6 @@
       {/if}
       {#if spikeMask}
         <label class="toggle-label"><input type="checkbox" bind:checked={showOverlaySpikes} on:change={renderPlot} /> Spikes</label>
-      {/if}
-      {#if anomalousPixels.length > 0}
-        <label class="toggle-label"><input type="checkbox" bind:checked={showAnomalousPixels} on:change={renderPlot} /> {anomalousPixelLabel}</label>
       {/if}
     </div>
     <div class="export-bar">

@@ -8,10 +8,8 @@
     getAverageSpectrum,
     getPointSpectrum,
     postSubsetAverage,
-    getAnomalousPixels,
   } from '../lib/api';
   import { ApiError } from '../lib/api';
-  import type { AnomalousPixel } from '../lib/types';
   import type {
     ScanDetail,
     SpectrumResponse,
@@ -92,42 +90,6 @@
   $: mlMethodLabel = spectrum?.despike_method ?? null;
   $: mlNMaskedChannels = spectrum?.n_masked_channels ?? 0;
   $: mlMissingRegions = spectrum?.despike_missing_regions ?? [];
-
-  // Fetch the full detector catalog; map absolute channels through the
-  // committed trace so embedded axes can select different region channels.
-  let anomalousPixelCatalog: AnomalousPixel[] = [];
-  $: anomalousPixels = mapAnomalousPixels(anomalousPixelCatalog, spectrum?.channel_indices ?? []);
-
-  function mapAnomalousPixels(catalog: AnomalousPixel[], channels: number[]): AnomalousPixel[] {
-    const positions = new Map(channels.map((channel, position) => [channel, position]));
-    return catalog.filter(item => positions.has(item.channel))
-      .map(item => ({ ...item, position: positions.get(item.channel)! }));
-  }
-  let showAnomalousPixelOverlay = false;
-  $: exportAnomalousPixels = showAnomalousPixelOverlay && anomalousPixels.length > 0 ? anomalousPixels : null;
-
-  // Drop older annotation requests during region transitions.
-  let anomalousPixelRequestGen = 0;
-
-  async function loadAnomalousPixels(): Promise<void> {
-    if (destroyed || mountedSession !== sessionGeneration) return;
-    const gen = ++anomalousPixelRequestGen;
-    // Region transition: clear immediately so the previous region's
-    // annotations neither render nor export while the new region's list is
-    // in flight (their positions would be wrong for the new served array).
-    anomalousPixelCatalog = [];
-    try {
-      const res = await getAnomalousPixels('R123');
-      // Stale-response guard: a newer request started while this one was in
-      // flight — drop this response entirely.
-      if (gen !== anomalousPixelRequestGen || mountedSession !== sessionGeneration) return;
-      anomalousPixelCatalog = res.anomalous_pixels;
-    } catch {
-      // Annotation layer is best-effort: a failed fetch must never break the
-      // spectrum view. The list was already cleared at request start, so the
-      // (now-absent) overlay simply stays hidden.
-    }
-  }
 
   // References panel
   let showRefs = false;
@@ -251,14 +213,12 @@
   onDestroy(() => {
     destroyed = true;
     spectrumRequestGen += 1;
-    anomalousPixelRequestGen += 1;
   });
 
   onMount(async () => {
     processingState.set(null);
     undoStack.set([]);
     await loadScan();
-    await loadAnomalousPixels();
   });
 
   async function loadScan(): Promise<void> {
@@ -468,9 +428,6 @@
     if (reg !== 'R1' && despikeMethod === 'modz') {
       despikeMethod = 'none';
     }
-    // Refresh independently of the spectrum; a failed annotation fetch
-    // never blocks the reload.
-    loadAnomalousPixels();
     reloadAndReset();
   }
 
@@ -563,7 +520,6 @@
       artifacts={currentState?.artifacts ?? null}
       spikeMask={effectiveSpikeMask}
       spikeMethod={effectiveSpikeMethod}
-      anomalousPixels={exportAnomalousPixels}
       {processingChain}
     />
   </div>
@@ -753,8 +709,6 @@
                 stage={currentStage}
                 spikeMask={effectiveSpikeMask}
                 spikeMethod={effectiveSpikeMethod}
-                {anomalousPixels}
-                bind:showAnomalousPixels={showAnomalousPixelOverlay}
                 background={currentState?.artifacts?.background ?? null}
                 backgroundScaled={currentState?.artifacts?.backgroundScaled ?? null}
                 baseline={baselineOverlay}
@@ -872,7 +826,6 @@
       <div class="ref-section">
         <b>2. Background subtraction</b> — This pipeline’s stowed-arm correction subtracts a trimmed-mean reference. Its automatic scale factor is the number of shots per spectrum divided by 900.
         Jakubek et al. subtract the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting.
-        The overlay marks anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4). These pixels fell beyond ±3σ in stowed-arm scans more often than expected from noise.
         <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79(6), 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
       </div>
       <div class="ref-section">

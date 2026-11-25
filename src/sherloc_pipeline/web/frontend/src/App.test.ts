@@ -46,7 +46,6 @@ describe('App routing', () => {
 
   it('remounts the Workbench when only the subset changes', async () => {
     const load = vi.spyOn(api, 'getScan').mockRejectedValue(new Error('Synthetic scan unavailable'));
-    vi.spyOn(api, 'getAnomalousPixels').mockRejectedValue(new Error('No synthetic channels'));
     const hash = '#/scan/test-id/workbench?points=0,2';
     window.history.replaceState(null, '', hash);
     currentHash.set(hash);

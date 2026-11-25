@@ -13,8 +13,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import type { AnomalousPixel } from '../lib/types';
-import anomalousPixelCsv from '../../../../data/anomalous_pixels.csv?raw';
 
 // Spy that captures every Plotly.react call (the component re-runs
 // renderPlot on toggle changes via afterUpdate).
@@ -96,20 +94,6 @@ function spikeTrace(): { name?: string; x?: number[] } | undefined {
   return lastTraces().find(
     (t) => t.mode === 'markers' && /Spikes|ML-masked/.test(t.name ?? ''),
   );
-}
-
-/** The anomalous pixel marker trace, if rendered (issue #9). */
-function anomalousPixelTrace():
-  | { name?: string; x?: number[]; mode?: string; marker?: { symbol?: string; color?: string } }
-  | undefined {
-  return (
-    lastTraces() as Array<{
-      name?: string;
-      x?: number[];
-      mode?: string;
-      marker?: { symbol?: string; color?: string };
-    }>
-  ).find((t) => t.mode === 'markers' && /Anomalous pixels/.test(t.name ?? ''));
 }
 
 describe('RamanView — issue #18 polish on the Workbench-routed component', () => {
@@ -336,118 +320,13 @@ describe('RamanView — ML/modz spike-marker provenance label (issue #8)', () =>
   });
 });
 
-describe('RamanView — anomalous pixel annotation overlay', () => {
-  const wavenumber = Array.from({ length: 100 }, (_, i) => 640 + i * 10);
-  const intensity = wavenumber.map((wn) => Math.exp(-((wn - 1016) ** 2) / 5000));
-  const anomalousPixels: AnomalousPixel[] = [
-    { position: 12, channel: 106, table: 'S3' },
-    { position: 50, channel: 160, table: 'S3' },
-  ];
-
-  it('marks all 36 published channels on the full R123 view', async () => {
-    const rows = anomalousPixelCsv.trim().split('\n').filter(line => !line.startsWith('#'));
-    const catalog = rows.slice(1).map(row => {
-      const [channel, table] = row.split(',');
-      if (table !== 'S3' && table !== 'S4') throw new Error(`Invalid table in ${row}`);
-      return { position: Number(channel), channel: Number(channel), table };
-    }) satisfies AnomalousPixel[];
-    const axis = Array.from({ length: 2148 }, (_, i) => i);
-    render(RamanView, { region: 'R123', wavenumber: axis, intensity: axis,
-      anomalousPixels: catalog, showAnomalousPixels: true });
-    await flush();
-    const trace = anomalousPixelTrace();
-    expect(trace?.x).toHaveLength(36);
-    expect(trace?.x).toEqual(catalog.map(item => item.channel));
-  });
-
-  it('default-OFF: no anomalous pixel trace until the toggle is enabled', async () => {
-    render(RamanView, {
-      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels },
-    });
-    await flush();
-    // showAnomalousPixels defaults to false → overlay not rendered.
-    expect(anomalousPixelTrace()).toBeUndefined();
-    // The dedicated toggle is present (the data is available).
-    // (asserted in the toggle test below)
-  });
-
-  it('renders hollow blue diamonds at anomalous pixel positions when showAnomalousPixels is on', async () => {
-    render(RamanView, {
-      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels, showAnomalousPixels: true },
-    });
-    await flush();
-    const trace = anomalousPixelTrace();
-    expect(trace, 'expected an anomalous pixel marker trace').toBeDefined();
-    expect(trace?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 2');
-    // Markers sit at the annotated served positions.
-    expect(trace?.x).toEqual([wavenumber[12], wavenumber[50]]);
-    expect(trace).toMatchObject({ customdata: [[106, 'S3'], [160, 'S3']] });
-    // Distinct glyph + color from the filled red triangle spike markers.
-    expect(trace?.marker?.symbol).toBe('diamond-open');
-    expect(trace?.marker?.color).toBe('#0369a1');
-  });
-
-  it('glyph + color are distinct from the spike markers (colorblind-safe pairing)', async () => {
-    // Both overlays active: spike markers (filled red triangles) and anomalous pixels
-    // (hollow blue diamonds) must never read as the same marker.
-    const spikeMask = wavenumber.map((_, i) => i === 5);
-    render(RamanView, {
-      props: {
-        wavenumber,
-        intensity,
-        rawIntensity: intensity,
-        stage: 'raw',
-        spikeMask,
-        spikeMethod: 'ml',
-        anomalousPixels,
-        showAnomalousPixels: true,
-      },
-    });
-    await flush();
-    const spike = lastTraces().find(
-      (t) => (t as { marker?: { symbol?: string } }).marker?.symbol === 'triangle-up',
-    ) as { marker?: { symbol?: string; color?: string } } | undefined;
-    const bp = anomalousPixelTrace();
-    expect(spike?.marker?.symbol).toBe('triangle-up');
-    expect(bp?.marker?.symbol).toBe('diamond-open');
-    expect(spike?.marker?.symbol).not.toBe(bp?.marker?.symbol);
-    expect(spike?.marker?.color).not.toBe(bp?.marker?.color);
-  });
-
-  it('the "Anomalous pixels" toggle gates the overlay', async () => {
-    const { getByLabelText } = render(RamanView, {
-      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels },
-    });
-    await flush();
-    expect(anomalousPixelTrace()).toBeUndefined();
-
-    const cb = getByLabelText(/Anomalous pixels/i) as HTMLInputElement;
-    expect(cb.checked).toBe(false); // default OFF
-    await fireEvent.click(cb);
-    await flush();
-    expect(anomalousPixelTrace()).toBeDefined();
-  });
-
-  it('renders no toggle and no trace when there are no anomalous pixels', async () => {
-    const { queryByLabelText } = render(RamanView, {
-      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels: [], showAnomalousPixels: true },
-    });
-    await flush();
-    expect(anomalousPixelTrace()).toBeUndefined();
-    expect(queryByLabelText(/Anomalous pixels/i)).toBeNull();
-  });
-});
-
-
 it('renders R2 channel annotations on the active wavelength axis', async () => {
   render(RamanView, { region: 'R2', wavenumber: [800, 900, 1000], wavelength: [285, 305, 325],
     intensity: [1, 2, 3], spikeMask: [false, true, false], spikeMethod: 'ml',
-    anomalousPixels: [{ position: 2, channel: 640, table: 'S4' }], showAnomalousPixels: true,
     stage: 'raman_fitted', baseline: [1, 1, 1], fitCurve: [2, 2, 2], residual: [0, 0, 0], showResidual: true });
   await flush();
   const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
   expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)')).toMatchObject({ x: [305], y: [2] });
-  expect(traces.find((trace: { name: string }) => trace.name === 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1')).toMatchObject({ x: [325], y: [3] });
   expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').hovertemplate).toContain('nm');
   expect(traces.find((trace: { name: string }) => trace.name === 'fit')).toBeTruthy();
   expect(layout.xaxis2.range).toEqual([640, 4200]);

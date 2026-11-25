@@ -7,7 +7,6 @@ import type {
   ScanDetailResponse,
   ScanPointsResponse,
   SpectrumResponse,
-  AnomalousPixelsResponse,
   BaselineRequest,
   BaselineResponse,
   FitRequest,
@@ -238,30 +237,6 @@ export async function postSubsetAverage(
     method: 'POST',
     body: JSON.stringify(body),
   });
-}
-
-// --- Spectra: anomalous pixel annotation ---
-
-/**
- * Client-side cache of the static anomalous pixel list, keyed by region. The endpoint
- * serves a fixed asset that never changes at runtime, so we fetch once per
- * region view and reuse. The cache holds the in-flight promise so concurrent
- * callers for the same region share a single request.
- */
-const anomalousPixelCache = new Map<string, Promise<AnomalousPixelsResponse>>();
-
-/**
- * Fetch the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
- * in the requested region, with served positions and supplemental table identifiers.
- */
-export async function getAnomalousPixels(region: string): Promise<AnomalousPixelsResponse> {
-  const cached = anomalousPixelCache.get(region);
-  if (cached) return cached;
-  const req = fetchJson<AnomalousPixelsResponse>(`/spectra/anomalous-pixels${buildQuery({ region })}`);
-  anomalousPixelCache.set(region, req);
-  // Drop a rejected promise so a transient failure can be retried.
-  req.catch(() => anomalousPixelCache.delete(region));
-  return req;
 }
 
 // --- Processing ---

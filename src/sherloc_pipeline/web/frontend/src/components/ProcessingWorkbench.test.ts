@@ -14,13 +14,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MockInstance } from 'vitest';
-import { render, fireEvent, screen } from '@testing-library/svelte';
+import { render, fireEvent, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { get } from 'svelte/store';
 import * as api from '../lib/api';
 import { pointSelection, processingState } from '../lib/processingStore';
 import { accessMode, appConfig, scienceAuthorized, currentHash, sessionGeneration, clearSessionState, processingNotice } from '../lib/stores';
-import type { AnomalousPixelsResponse, FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
+import type { FitResponse, ProcessingSnapshot, SpectrumParams, SpectrumResponse } from '../lib/types';
 import ProcessingWorkbench from './ProcessingWorkbench.svelte';
 
 // Module-level react spy so the issue-#8 tests can inspect the traces the
@@ -258,15 +258,6 @@ beforeEach(() => {
     n_points: 1,
   });
   getAvg = vi.spyOn(api, 'getAverageSpectrum').mockResolvedValue(fakeSpectrum(INTENSITY_A));
-  // Anomalous pixel annotation fetch (issue #9): default to an empty list so the
-  // despike-focused tests never hit the real fetch path (and the overlay
-  // stays absent). The PR #11 F1 tests override this with deferred promises.
-  vi.spyOn(api, 'getAnomalousPixels').mockResolvedValue({
-    schema_version: '2.0.0',
-    region: 'R123',
-    n_channels: 3,
-    anomalous_pixels: [],
-  });
   // AciViewer mounts inside the workbench; reject its image fetch with the
   // auth placeholder path so no real network/auth machinery runs.
   vi.spyOn(api, 'fetchAciImage').mockRejectedValue(new api.AuthRequiredError());
@@ -310,7 +301,6 @@ describe('ProcessingWorkbench references panel', () => {
     // The step names this pipeline's correction and the paper's separately.
     expect(background).toContain('This pipeline’s stowed-arm correction subtracts a trimmed-mean reference.');
     expect(background).toContain('the number of shots per spectrum divided by 900');
-    expect(background).toContain('anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)');
     expect(background).toContain('the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting');
     expect(background).toContain('Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover');
     const cites = Array.from(container.querySelectorAll('.ref-cite')).map((c) => c.textContent ?? '');
@@ -960,182 +950,36 @@ describe('ProcessingWorkbench commit-bound ML gating (PR #13 F1)', () => {
   });
 });
 
-// Anomalous pixel positions are REGION-SPECIFIC served-array
-// indices. loadAnomalousPixels previously committed `anomalousPixels = res.anomalous_pixels`
-// unconditionally, so (a) on a fast region switch an older region's slower
-// response could resolve last and overwrite the new region's annotations, and
-// (b) with the overlay ON, exportAnomalousPixels kept the previous region's list while
-// the new region loaded. The fix mirrors the spectrum loader's generation
-// guard and clears the list at request start. These tests drive the race with
-// hand-controlled (deferred) getAnomalousPixels responses.
-describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
-  function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
-    let resolve!: (v: T) => void;
-    const promise = new Promise<T>((r) => {
-      resolve = r;
-    });
-    return { promise, resolve };
-  }
-
-  function anomalousPixelsResponse(
-    region: string,
-    items: AnomalousPixelsResponse['anomalous_pixels'],
-  ): AnomalousPixelsResponse {
-    return { schema_version: '2.0.0', region, n_channels: 3, anomalous_pixels: items };
-  }
-
-  // Different positions and tables distinguish the two region responses.
-  const R1_ITEMS: AnomalousPixelsResponse['anomalous_pixels'] = [
-    { position: 0, channel: 52, table: 'S3' },
-    { position: 2, channel: 54, table: 'S3' },
-  ];
-  const R2_ITEMS: AnomalousPixelsResponse['anomalous_pixels'] = [{ position: 1, channel: 600, table: 'S4' }];
-
-  /** The anomalous pixel marker trace in the MOST RECENT RamanView render (only the
-   *  final Plotly.react call counts — absence there means the overlay is not
-   *  currently rendered, unlike the history-searching lastSpikeTrace). */
-  function anomalousPixelTraceInLastRender(): { name?: string; x?: number[] } | undefined {
-    expect(reactSpy.mock.calls.length).toBeGreaterThan(0);
-    const traces = reactSpy.mock.calls[reactSpy.mock.calls.length - 1][1] as Array<{
-      name?: string;
-      mode?: string;
-      x?: number[];
-    }>;
-    return traces.find((t) => t.mode === 'markers' && /Anomalous pixels/.test(t.name ?? ''));
-  }
-
-  /** Click the region-selector button labeled `label` ('r2', 'full', ...). */
-  async function clickRegion(container: HTMLElement, label: string): Promise<void> {
-    const btn = Array.from(container.querySelectorAll<HTMLButtonElement>('.region-btn')).find(
-      (b) => b.textContent?.trim() === label,
-    );
-    expect(btn, `no region button labeled "${label}"`).toBeDefined();
-    await fireEvent.click(btn!);
+describe('Workbench anomalous pixel removal', () => {
+  async function openSpectrum() {
+    // Channel 160 is in the published table. Supply its entry if the view requests it.
+    getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_A, { channel_indices: [159, 160, 161] }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({
+      schema_version: '2.0.0', region: 'R123', n_channels: 2148,
+      anomalous_pixels: [{ channel: 160, position: 160, table: 'S3' }],
+    }));
+    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    const grid = await screen.findByRole('checkbox', { name: 'Grid' });
     await flush();
+    return { container, toolbar: within(grid.closest<HTMLElement>('.overlay-toggles')!) };
   }
 
-  /** Export the CSV and return its captured text (Blob/URL/anchor stubbed). */
-  async function exportCsv(container: HTMLElement): Promise<string> {
-    let capturedCsv = '';
-    vi.stubGlobal(
-      'Blob',
-      class {
-        constructor(parts: string[]) {
-          capturedCsv = parts.join('');
-        }
-      },
-    );
-    (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi.fn(() => 'blob:mock');
-    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    try {
-      const trigger = container.querySelector<HTMLButtonElement>('.export-trigger');
-      expect(trigger, 'no Export trigger').not.toBeNull();
-      await fireEvent.click(trigger!);
-      await tick();
-      await fireEvent.click(screen.getByText('CSV at current stage'));
-      await tick();
-      expect(capturedCsv).not.toBe('');
-      return capturedCsv;
-    } finally {
-      vi.unstubAllGlobals();
+  it('omits the anomalous pixels checkbox from the spectrum toolbar', async () => {
+    const { toolbar } = await openSpectrum();
+    expect(toolbar.queryByRole('checkbox', { name: /anomalous pixels/i })).toBeNull();
+  });
+
+  it('omits the anomalous pixel column and source line when exporting with all overlays enabled', async () => {
+    const { container, toolbar } = await openSpectrum();
+    for (const checkbox of toolbar.queryAllByRole('checkbox', { checked: false })) {
+      await fireEvent.click(checkbox);
     }
-  }
-
-  it('drops an obsolete region\'s slower anomalous pixel response (render AND export)', async () => {
-    const r1 = deferred<AnomalousPixelsResponse>();
-    const r2 = deferred<AnomalousPixelsResponse>();
-    const loadCatalog = vi.spyOn(api, 'getAnomalousPixels').mockReturnValue(r1.promise);
-
-    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
-    await screen.findByText('1. Despike');
-    await flush();
-    // Mount's R1 anomalous pixel fetch is still pending; switch to R2 before it lands.
-    loadCatalog.mockReturnValue(r2.promise);
-    await clickRegion(container, 'r2');
-
-    // The CURRENT region's (R2) response lands and commits.
-    r2.resolve(anomalousPixelsResponse('R2', R2_ITEMS));
-    await flush();
-
-    // Turn the overlay on (the toggle exists because the R2 list is non-empty)
-    // so both the plot and the export gate are live observables.
-    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
-    await flush();
-    expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
-    expect(anomalousPixelTraceInLastRender()?.x).toEqual([900]); // wavenumber[1]
-
-    // The OBSOLETE region's (R1, mount-time) response lands last — the
-    // generation guard must drop it: the plot keeps R2's single marker
-    // (a stale commit would re-render with R1's two markers at 800/1000).
-    r1.resolve(anomalousPixelsResponse('R1', R1_ITEMS));
-    await flush();
-    expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
-    expect(anomalousPixelTraceInLastRender()?.x).toEqual([900]);
-
     const csv = await exportCsv(container);
-    expect(csvProvenance(csv).annotations.anomalous_pixels).toEqual(R2_ITEMS);
-    const header = csv.split('\n').find((l) => l.startsWith('wavenumber'))!.split(',');
-    const bIdx = header.indexOf('anomalous_pixel');
-    expect(bIdx).toBeGreaterThan(-1);
-    const rows = csv.split('\n').filter((l) => /^\d/.test(l)).map((r) => r.split(','));
-    expect(rows.map((r) => r[bIdx])).toEqual(['0', '1', '0']);
+    const columns = csv.split('\n').find(line => line.startsWith('wavenumber,'))!.split(',');
+    expect(columns).toContain('intensity');
+    expect.soft(columns).not.toContain('anomalous_pixel');
+    expect(csv).not.toMatch(/^# anomalous_pixel_source\b/m);
   });
-
-  it('clears the previous region\'s annotations during the transition until the matching response lands', async () => {
-    const r1 = deferred<AnomalousPixelsResponse>();
-    const r2 = deferred<AnomalousPixelsResponse>();
-    const loadCatalog = vi.spyOn(api, 'getAnomalousPixels').mockReturnValue(r1.promise);
-
-    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
-    await screen.findByText('1. Despike');
-    await flush();
-
-    // Mount region (R1) resolves; overlay on → two markers render.
-    r1.resolve(anomalousPixelsResponse('R1', R1_ITEMS));
-    await flush();
-    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
-    await flush();
-    expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 2');
-
-    // Region switch with R2's response still in flight: the R1 list must be
-    // cleared IMMEDIATELY — no markers, no toggle (it renders only with a
-    // non-empty list), and nothing reaches the export gate.
-    loadCatalog.mockReturnValue(r2.promise);
-    await clickRegion(container, 'r2');
-    expect(anomalousPixelTraceInLastRender()).toBeUndefined();
-    expect(screen.queryByLabelText(/Anomalous pixels/i)).toBeNull();
-    const csvDuringTransition = await exportCsv(container);
-    expect(csvDuringTransition).not.toContain('anomalous_pixel_source');
-    expect(
-      csvDuringTransition.split('\n').find((l) => l.startsWith('wavenumber')),
-    ).not.toContain('anomalous_pixel');
-
-    // The matching (R2) response lands → the new region's annotations appear.
-    // The overlay toggle state is owned by the Workbench and survived the
-    // transition, so the marker renders without re-toggling.
-    r2.resolve(anomalousPixelsResponse('R2', R2_ITEMS));
-    await flush();
-    expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
-    expect(anomalousPixelTraceInLastRender()?.x).toEqual([900]);
-  });
-});
-
-
-it('maps full-catalog channels through the embedded axis channel map', async () => {
-  getAvg.mockResolvedValue(fakeSpectrum(INTENSITY_A, { channel_indices: [21, 24, 30] }));
-  vi.spyOn(api, 'getAnomalousPixels').mockResolvedValue({
-    schema_version: '2.0.0', region: 'R123', n_channels: 2148,
-    anomalous_pixels: [{ channel: 24, position: 24, table: 'S3' }],
-  });
-  render(ProcessingWorkbench, { scanId: SCAN_ID });
-  await screen.findByText('1. Despike');
-  await flush();
-  expect(api.getAnomalousPixels).toHaveBeenCalledWith('R123');
-  await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
-  await flush();
-  const traces = reactSpy.mock.calls.at(-1)![1] as Array<{ name?: string; x?: number[] }>;
-  expect(traces.find(trace => trace.name?.startsWith('Anomalous pixels'))?.x).toEqual([900]);
 });
 
 function syntheticPdsResponse(mode: string, values: number[]): SpectrumResponse {
@@ -1277,7 +1121,7 @@ it('rejects a late processing result after sign-out', async () => {
   expect(get(processingState)).toBeNull();
 });
 
-it('preserves tier transitions, R2 annotations and a light plot under dark system theme', async () => {
+it('preserves tier transitions, R2 spike markers and a light plot under dark system theme', async () => {
   const matchMedia = vi.fn(() => ({ matches: true }));
   vi.stubGlobal('matchMedia', matchMedia);
   try {
@@ -1295,17 +1139,13 @@ it('preserves tier transitions, R2 annotations and a light plot under dark syste
     expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
     expect(get(currentHash)).toBe('#/scan/synthetic/workbench'); expect(get(appConfig)?.tier).toBe('public');
     expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_A);
-    vi.mocked(api.getAnomalousPixels).mockResolvedValue({ schema_version: '2.0.0', region: 'R123', n_channels: 3,
-      anomalous_pixels: [{ position: 1, channel: 600, table: 'S4' }] });
     point.mockResolvedValue(syntheticSpectrum(INTENSITY_NEW, { region: 'R2', wavelength: [285, 305, 325],
       despike_applied: true, despike_method: 'ml', n_masked_channels: 1, masked_positions: [1] }));
     const region = Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r2')!;
     await fireEvent.click(region); await flush();
-    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i)); await flush();
     const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
     expect(traces[0].x).toEqual([285, 305, 325]); expect(traces[0].y).toEqual(INTENSITY_NEW);
     expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').x).toEqual([305]);
-    expect(traces.find((trace: { name: string }) => trace.name === 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1').x).toEqual([305]);
     expect(layout.xaxis.title.text).toBe('Wavelength (nm)');
     expect(layout.plot_bgcolor).toBe('#ffffff'); expect(layout.paper_bgcolor).toBe('#ffffff');
     expect(traces[0].line.color).toBe('#1e293b'); expect(layout.font.color).toBeUndefined();

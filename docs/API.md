@@ -707,11 +707,6 @@ Example showing the first R1 item:
 | `anomalous_pixels[].channel` | int | Absolute 0-based CCD channel index, 0..2147 |
 | `anomalous_pixels[].table` | str | Supplemental table listing the pixel. S3 covers R1 Raman and S4 covers R2 and R3 fluorescence. |
 
-When the overlay is enabled and the view contains anomalous pixels, the CSV export
-includes an `anomalous_pixel` column (1 for a marked row, 0 otherwise) and a
-`# anomalous_pixel_source:` citation line. JSON provenance lists the marked items
-under `annotations.anomalous_pixels`.
-
 Jakubek, R.S. et al. (2025), Spectral Background Calibration of Scanning Habitable
 Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC)
 Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous
