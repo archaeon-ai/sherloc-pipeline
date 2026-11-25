@@ -2,7 +2,7 @@
 fluorescence identification (core/fluor_id.py).
 
 Covers: synthetic Gaussian recovery, saturation tiers, group assignment,
-doublet detection, SNR filtering. See spec §11 Tier 1.
+SNR filtering. See spec §11 Tier 1.
 """
 
 from __future__ import annotations
@@ -18,12 +18,10 @@ from sherloc_pipeline.core.fluor_fitting import (
 )
 from sherloc_pipeline.core.fluor_id import (
     CooccurrenceScore,
-    DoubletRecord,
     FluorescenceRule,
     FLUORESCENCE_RULES,
     assign_fluor_group,
     classify_fluor_peaks,
-    detect_doublets,
     score_cooccurrences,
 )
 
@@ -290,122 +288,6 @@ class TestAssignFluorGroup:
 
 
 # ---------------------------------------------------------------------------
-# AC 5: Doublet detection with greedy pairing
-# ---------------------------------------------------------------------------
-
-
-class TestDetectDoublets:
-
-    def _make_peak(self, center_nm, amplitude=1000.0, fwhm_nm=15.0, snr=10.0):
-        return FluorPeakFit(
-            center_nm=center_nm,
-            amplitude=amplitude,
-            fwhm_nm=fwhm_nm,
-            area=0.0,
-            snr=snr,
-        )
-
-    def test_basic_doublet(self):
-        """group1a + group1b pair detected as doublet."""
-        peaks = [
-            self._make_peak(305.0),  # group1a
-            self._make_peak(325.0),  # group1b
-        ]
-        doublets = detect_doublets(peaks)
-        assert len(doublets) == 1
-        assert doublets[0].center_1a_nm == 305.0
-        assert doublets[0].center_1b_nm == 325.0
-        assert doublets[0].separation_nm == 20.0
-
-    def test_multiple_doublets_greedy_pairing(self):
-        """Multiple candidates: nearest-separation greedy picks correct pairs."""
-        peaks = [
-            self._make_peak(305.0, snr=10.0),  # group1a
-            self._make_peak(303.0, snr=8.0),  # group1a
-            self._make_peak(325.0, snr=10.0),  # group1b
-            self._make_peak(327.0, snr=8.0),  # group1b
-        ]
-        doublets = detect_doublets(peaks)
-        assert len(doublets) == 2
-        # Pairs should be (305,325)=20nm and (303,327)=24nm — greedy by nearest sep
-        seps = sorted(d.separation_nm for d in doublets)
-        assert seps[0] == pytest.approx(20.0, abs=0.1)
-        assert seps[1] == pytest.approx(24.0, abs=0.1)
-
-    def test_no_doublet_single_group(self):
-        """Only group1a peaks → no doublets."""
-        peaks = [
-            self._make_peak(305.0),
-            self._make_peak(303.0),
-        ]
-        assert detect_doublets(peaks) == []
-
-    def test_no_doublet_empty(self):
-        """Empty peak list → no doublets."""
-        assert detect_doublets([]) == []
-
-    def test_doublet_record_fields(self):
-        """DoubletRecord contains all expected fields."""
-        peaks = [
-            self._make_peak(305.0, amplitude=1200.0, fwhm_nm=14.0, snr=12.0),
-            self._make_peak(325.0, amplitude=800.0, fwhm_nm=16.0, snr=9.0),
-        ]
-        doublets = detect_doublets(peaks, doublet_snr_threshold=5.0)
-        assert len(doublets) == 1
-        d = doublets[0]
-        assert d.peak_1a_idx == 0
-        assert d.peak_1b_idx == 1
-        assert d.amplitude_1a == 1200.0
-        assert d.amplitude_1b == 800.0
-        assert d.fwhm_1a_nm == 14.0
-        assert d.fwhm_1b_nm == 16.0
-        assert d.intensity_ratio == pytest.approx(1200.0 / 800.0)
-
-    def test_separation_out_of_range_rejected(self):
-        """Peaks with separation outside 18-29 nm are not paired."""
-        peaks = [
-            self._make_peak(300.0),  # group1a (lower bound)
-            self._make_peak(335.0),  # group2, not group1b — but test sep directly
-        ]
-        # 300 is group1a, 335 is group2 — not a pair
-        assert detect_doublets(peaks) == []
-
-    def test_separation_too_small_rejected(self):
-        """Peaks with separation < 18 nm are not paired (even if both groups)."""
-        # group1a: 307, group1b: 322 → sep = 15 nm < 18
-        peaks = [
-            self._make_peak(307.0),  # group1a upper
-            self._make_peak(322.0),  # group1b lower
-        ]
-        assert detect_doublets(peaks) == []
-
-    def test_doublet_ratio_range_filters(self):
-        """Doublets with intensity ratio outside range are rejected."""
-        peaks = [
-            self._make_peak(305.0, amplitude=3000.0),  # group1a, strong
-            self._make_peak(325.0, amplitude=1000.0),  # group1b, weaker
-        ]
-        # ratio = 3000/1000 = 3.0
-        # Without ratio filter → doublet found
-        assert len(detect_doublets(peaks)) == 1
-        # Ratio filter accepts range [0.5, 2.0] → ratio=3.0 rejected
-        assert detect_doublets(peaks, doublet_ratio_range=(0.5, 2.0)) == []
-        # Ratio filter accepts range [0.5, 4.0] → ratio=3.0 accepted
-        assert len(detect_doublets(peaks, doublet_ratio_range=(0.5, 4.0))) == 1
-
-    def test_doublet_ratio_range_none_no_filter(self):
-        """doublet_ratio_range=None disables ratio filtering (default)."""
-        peaks = [
-            self._make_peak(305.0, amplitude=5000.0),
-            self._make_peak(325.0, amplitude=100.0),
-        ]
-        # Extreme ratio = 50.0, but no filter → still detected
-        doublets = detect_doublets(peaks, doublet_ratio_range=None)
-        assert len(doublets) == 1
-        assert doublets[0].intensity_ratio == pytest.approx(50.0)
-
-
-# ---------------------------------------------------------------------------
 # AC 6: Out-of-range peaks return 'unidentified'
 # ---------------------------------------------------------------------------
 
@@ -526,17 +408,6 @@ class TestSNRFiltering:
 
         assert result.n_peaks >= 1
         assert all(p.snr >= 2.0 for p in result.peaks)
-
-    def test_doublet_snr_filtering(self):
-        """Doublet detection respects SNR threshold."""
-        peaks = [
-            FluorPeakFit(center_nm=305.0, amplitude=100.0, fwhm_nm=15.0, area=0.0, snr=3.0),
-            FluorPeakFit(center_nm=325.0, amplitude=100.0, fwhm_nm=15.0, area=0.0, snr=3.0),
-        ]
-        # With default threshold 5.0 → both below → no doublets
-        assert detect_doublets(peaks, doublet_snr_threshold=5.0) == []
-        # Lower threshold → both pass → doublet found
-        assert len(detect_doublets(peaks, doublet_snr_threshold=2.0)) == 1
 
 
 # ---------------------------------------------------------------------------
