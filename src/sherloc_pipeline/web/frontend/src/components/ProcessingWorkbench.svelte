@@ -866,22 +866,20 @@
         <div class="ref-cite">Uckert, K. (2022). nasa/Loupe: LoupeV5.1.5 (version LoupeV5.1.5a). Zenodo. <a href="https://doi.org/10.5281/zenodo.7062998" target="_blank">doi:10.5281/zenodo.7062998</a></div>
       </div>
       <div class="ref-section">
-        <b>1. Despiking</b> — Rolling-median MAD z-score adapted from Whitaker &amp; Hayes (2018)
-        <div class="ref-cite">Whitaker, D.A. &amp; Hayes, K. (2018). A simple algorithm for despiking Raman spectra. <i>Chemometrics Intell. Lab. Syst.</i>, 179, 82–84. <a href="https://doi.org/10.1016/j.chemolab.2018.06.009" target="_blank">doi:10.1016/j.chemolab.2018.06.009</a></div>
+        <b>1. Despiking</b>
+        <div class="ref-cite">'modz' algorithm adapted from Whitaker, D.A. &amp; Hayes, K. (2018). A simple algorithm for despiking Raman spectra. <i>Chemometrics Intell. Lab. Syst.</i>, 179, 82–84. <a href="https://doi.org/10.1016/j.chemolab.2018.06.009" target="_blank">doi:10.1016/j.chemolab.2018.06.009</a></div>
       </div>
       <div class="ref-section">
-        <b>2. Background subtraction</b> — This pipeline’s stowed-arm correction subtracts a trimmed-mean reference. Its automatic scale factor is the number of shots per spectrum divided by 900.
-        Jakubek et al. subtract the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting.
-        The overlay marks anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4). These pixels fell beyond ±3σ in stowed-arm scans more often than expected from noise.
-        <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79(6), 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
+        <b>2. Spectral background</b>
+        <div class="ref-cite">'arm-stowed' subtraction adapted from Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79(6), 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
       </div>
       <div class="ref-section">
-        <b>3. Baseline</b> — Adaptive smoothness penalized least squares (asPLS)
+        <b>3. Baseline</b> — Adaptive smoothness penalized least squares (asPLS) with pybaselines
         <div class="ref-cite">Zhang, F. et al. (2020). Baseline correction for infrared spectra using adaptive smoothness parameter penalized least squares method. <i>Spectroscopy Letters</i>, 53(3), 222–233. <a href="https://doi.org/10.1080/00387010.2020.1730908" target="_blank">doi:10.1080/00387010.2020.1730908</a></div>
         <div class="ref-cite">Erb, D. pybaselines. <a href="https://doi.org/10.5281/zenodo.5608581" target="_blank">doi:10.5281/zenodo.5608581</a></div>
       </div>
       <div class="ref-section">
-        <b>4. Raman Fit</b> — Multi-Gaussian with sequential F-test
+        <b>4. Raman and fluorescence fitting</b> — Multi-Gaussian with sequential F-test and AICc
         <div class="ref-cite">Branch, M.A., Coleman, T.F. &amp; Li, Y. (1999). A subspace, interior, and conjugate gradient method for large-scale bound-constrained minimization problems. <i>SIAM J. Sci. Comput.</i>, 21(1), 1–23. <a href="https://doi.org/10.1137/S1064827595289108" target="_blank">doi:10.1137/S1064827595289108</a></div>
         <div class="ref-cite">Burnham, K.P. &amp; Anderson, D.R. (2002). <i>Model Selection and Multimodel Inference</i>. Springer.</div>
       </div>
