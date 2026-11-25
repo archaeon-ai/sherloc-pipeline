@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.1] - 2026-11-25
+
+### Changed
+
+- The Workbench no longer shows the anomalous-pixels overlay control. The overlay code and the `GET /api/spectra/anomalous-pixels` route remain.
+- The Workbench References box text has been replaced.
+- The Model Selection dropdowns now start on AICc. F-test remains available.
+
 ## [6.0.0] - 2026-11-24
 
 ### Upgrade notes

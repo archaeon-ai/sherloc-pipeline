@@ -63,7 +63,7 @@ one minimizing AICc&nbsp;=&nbsp;<i>n</i>&nbsp;ln(RSS/<i>n</i>) + 2<i>k</i> + 2<i
   let minSnr = 3.0;
   let fwhmMin = 22;
   let fwhmMax = 90;
-  let modelSelection: 'f-test' | 'aicc' = 'f-test';
+  let modelSelection: 'f-test' | 'aicc' = 'aicc';
 
   let fitting = false;
   let error = '';

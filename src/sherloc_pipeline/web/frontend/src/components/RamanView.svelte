@@ -718,9 +718,6 @@
       {#if spikeMask}
         <label class="toggle-label"><input type="checkbox" bind:checked={showOverlaySpikes} on:change={renderPlot} /> Spikes</label>
       {/if}
-      {#if anomalousPixels.length > 0}
-        <label class="toggle-label"><input type="checkbox" bind:checked={showAnomalousPixels} on:change={renderPlot} /> {anomalousPixelLabel}</label>
-      {/if}
     </div>
     <div class="export-bar">
       <span class="stage-badge">{stageLabels[stage] || stage}{selectionMode !== 'point' ? ` · ${averagingMethod.replace('_', ' ')}` : ''}</span>

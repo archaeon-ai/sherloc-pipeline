@@ -590,3 +590,33 @@ describe('ProcessingChain — despike method selector kick', () => {
     expect(lastEmit.raman.intensity).toEqual(DESPIKED_NEW);
   });
 });
+
+describe('Workbench peak fit model selection', () => {
+  async function openPeakFit() {
+    const ui = render(ProcessingChain, { props: { wavenumber: WAVENUMBER_A, intensity: INTENSITY_A } });
+    await fireEvent.click(ui.getByRole('button', { name: /4\. Peak Fit/ }));
+    return ui;
+  }
+
+  it('starts on AICc and offers both methods', async () => {
+    const ui = await openPeakFit();
+    const select = ui.getByRole('combobox', { name: /Model Selection/i }) as HTMLSelectElement;
+    expect(Array.from(select.options, option => [option.value, option.label])).toEqual([
+      ['f-test', 'F-test'],
+      ['aicc', 'AICc'],
+    ]);
+    expect(select).toHaveValue('aicc');
+  });
+
+  it.each(['aicc', 'f-test'])('sends %s in the mineral fit request', async method => {
+    const postFit = vi.spyOn(api, 'postFit').mockReturnValue(new Promise(() => {}));
+    const ui = await openPeakFit();
+    if (method === 'f-test') {
+      await fireEvent.change(ui.getByRole('combobox', { name: /Model Selection/i }), { target: { value: method } });
+    }
+    await fireEvent.click(ui.getByRole('button', { name: 'Fit Spectrum' }));
+    expect(postFit).toHaveBeenCalledWith(expect.objectContaining({
+      params: expect.objectContaining({ fitting: expect.objectContaining({ domain: 'minerals', model_selection: method }) }),
+    }));
+  });
+});

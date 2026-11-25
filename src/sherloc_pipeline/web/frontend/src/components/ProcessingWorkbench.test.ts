@@ -299,28 +299,45 @@ it('shows a temporary retry notice as a status beside the error area', async () 
 });
 
 describe('ProcessingWorkbench references panel', () => {
-  it('names the background step and cites its sources as published', async () => {
+  it('shows the exact headings and citations in section order', async () => {
     const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await flush();
     await fireEvent.click(screen.getByRole('button', { name: 'References' }));
     await tick();
-    const sections = Array.from(container.querySelectorAll('.ref-section')).map((s) => s.textContent ?? '');
-    const background = sections.find((t) => t.includes('2. Background subtraction'));
-    expect(background).toBeDefined();
-    // The instrument-background step is not dark frame subtraction (active minus dark).
-    expect(background).not.toMatch(/dark frame/i);
-    // The step names this pipeline's correction and the paper's separately.
-    expect(background).toContain('This pipeline’s stowed-arm correction subtracts a trimmed-mean reference.');
-    expect(background).toContain('the number of shots per spectrum divided by 900');
-    expect(background).toContain('anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)');
-    expect(background).toContain('the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting');
-    expect(background).toContain('Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover');
-    const cites = Array.from(container.querySelectorAll('.ref-cite')).map((c) => c.textContent ?? '');
-    const loupe = cites.find((t) => t.includes('nasa/Loupe'));
-    expect(loupe).toContain('Uckert, K. (2022). nasa/Loupe: LoupeV5.1.5 (version LoupeV5.1.5a). Zenodo.');
-    expect(loupe).not.toContain('et al.');
-    const baseline = sections.find((t) => t.includes('pybaselines'));
-    expect(baseline).not.toMatch(/Erb, 20\d\d/);
+    const panel = container.querySelector('.refs-panel')!;
+    const sections = Array.from(panel.querySelectorAll(':scope > .ref-section'));
+    const expected = [
+      [
+        '0. SHERLOC instrument and Loupe software',
+        "Bhartia, R. et al. (2021). Perseverance's Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Investigation. Space Sci. Rev., 217, 58. doi:10.1007/s11214-021-00812-z",
+        'Uckert, K. (2022). nasa/Loupe: LoupeV5.1.5 (version LoupeV5.1.5a). Zenodo. doi:10.5281/zenodo.7062998',
+      ],
+      [
+        '1. Despiking',
+        "'modz' algorithm adapted from Whitaker, D.A. & Hayes, K. (2018). A simple algorithm for despiking Raman spectra. Chemometrics Intell. Lab. Syst., 179, 82–84. doi:10.1016/j.chemolab.2018.06.009",
+      ],
+      [
+        '2. Spectral background',
+        "'arm-stowed' subtraction adapted from Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. Appl. Spectrosc., 79(6), 904–918. doi:10.1177/00037028241280081",
+      ],
+      [
+        '3. Baseline — Adaptive smoothness penalized least squares (asPLS) with pybaselines',
+        'Zhang, F. et al. (2020). Baseline correction for infrared spectra using adaptive smoothness parameter penalized least squares method. Spectroscopy Letters, 53(3), 222–233. doi:10.1080/00387010.2020.1730908',
+        'Erb, D. pybaselines. doi:10.5281/zenodo.5608581',
+      ],
+      [
+        '4. Raman and fluorescence fitting — Multi-Gaussian with sequential F-test and AICc',
+        'Branch, M.A., Coleman, T.F. & Li, Y. (1999). A subspace, interior, and conjugate gradient method for large-scale bound-constrained minimization problems. SIAM J. Sci. Comput., 21(1), 1–23. doi:10.1137/S1064827595289108',
+        'Burnham, K.P. & Anderson, D.R. (2002). Model Selection and Multimodel Inference. Springer.',
+      ],
+    ];
+    expect(sections).toHaveLength(expected.length);
+    for (const [index, section] of sections.entries()) {
+      const citations = Array.from(section.querySelectorAll(':scope > .ref-cite'));
+      expect(citations.map((cite) => cite.textContent)).toEqual(expected[index].slice(1));
+      expect(section.textContent?.replace(/\n +/g, ' ')).toBe(expected[index].join(' '));
+    }
+    expect(panel.textContent?.replace(/\n +/g, ' ')).toBe(expected.flat().join(' '));
   });
 });
 
@@ -962,6 +979,13 @@ describe('ProcessingWorkbench commit-bound ML gating (PR #13 F1)', () => {
   });
 });
 
+// Svelte's development build lets tests set the state that feeds the plot and CSV export.
+function enableAnomalousPixelOverlay(component: {
+  $inject_state: (state: { showAnomalousPixelOverlay: boolean }) => void;
+}): void {
+  component.$inject_state({ showAnomalousPixelOverlay: true });
+}
+
 // Anomalous pixel positions are REGION-SPECIFIC served-array
 // indices. loadAnomalousPixels previously committed `anomalousPixels = res.anomalous_pixels`
 // unconditionally, so (a) on a fast region switch an older region's slower
@@ -1049,7 +1073,7 @@ describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
     const r2 = deferred<AnomalousPixelsResponse>();
     const loadCatalog = vi.spyOn(api, 'getAnomalousPixels').mockReturnValue(r1.promise);
 
-    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    const { component, container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await screen.findByText('1. Despike');
     await flush();
     // Mount's R1 anomalous pixel fetch is still pending; switch to R2 before it lands.
@@ -1060,9 +1084,7 @@ describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
     r2.resolve(anomalousPixelsResponse('R2', R2_ITEMS));
     await flush();
 
-    // Turn the overlay on (the toggle exists because the R2 list is non-empty)
-    // so both the plot and the export gate are live observables.
-    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
+    enableAnomalousPixelOverlay(component);
     await flush();
     expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
     expect(anomalousPixelTraceInLastRender()?.x).toEqual([900]); // wavenumber[1]
@@ -1089,24 +1111,22 @@ describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
     const r2 = deferred<AnomalousPixelsResponse>();
     const loadCatalog = vi.spyOn(api, 'getAnomalousPixels').mockReturnValue(r1.promise);
 
-    const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
+    const { component, container } = render(ProcessingWorkbench, { scanId: SCAN_ID });
     await screen.findByText('1. Despike');
     await flush();
 
     // Mount region (R1) resolves; overlay on → two markers render.
     r1.resolve(anomalousPixelsResponse('R1', R1_ITEMS));
     await flush();
-    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
+    enableAnomalousPixelOverlay(component);
     await flush();
     expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 2');
 
     // Region switch with R2's response still in flight: the R1 list must be
-    // cleared IMMEDIATELY — no markers, no toggle (it renders only with a
-    // non-empty list), and nothing reaches the export gate.
+    // cleared immediately from both the plot and the export.
     loadCatalog.mockReturnValue(r2.promise);
     await clickRegion(container, 'r2');
     expect(anomalousPixelTraceInLastRender()).toBeUndefined();
-    expect(screen.queryByLabelText(/Anomalous pixels/i)).toBeNull();
     const csvDuringTransition = await exportCsv(container);
     expect(csvDuringTransition).not.toContain('anomalous_pixel_source');
     expect(
@@ -1114,8 +1134,7 @@ describe('ProcessingWorkbench anomalous pixel staleness guard', () => {
     ).not.toContain('anomalous_pixel');
 
     // The matching (R2) response lands → the new region's annotations appear.
-    // The overlay toggle state is owned by the Workbench and survived the
-    // transition, so the marker renders without re-toggling.
+    // The Workbench keeps the overlay enabled across the region change.
     r2.resolve(anomalousPixelsResponse('R2', R2_ITEMS));
     await flush();
     expect(anomalousPixelTraceInLastRender()?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1');
@@ -1130,11 +1149,11 @@ it('maps full-catalog channels through the embedded axis channel map', async () 
     schema_version: '2.0.0', region: 'R123', n_channels: 2148,
     anomalous_pixels: [{ channel: 24, position: 24, table: 'S3' }],
   });
-  render(ProcessingWorkbench, { scanId: SCAN_ID });
+  const { component } = render(ProcessingWorkbench, { scanId: SCAN_ID });
   await screen.findByText('1. Despike');
   await flush();
   expect(api.getAnomalousPixels).toHaveBeenCalledWith('R123');
-  await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
+  enableAnomalousPixelOverlay(component);
   await flush();
   const traces = reactSpy.mock.calls.at(-1)![1] as Array<{ name?: string; x?: number[] }>;
   expect(traces.find(trace => trace.name?.startsWith('Anomalous pixels'))?.x).toEqual([900]);
@@ -1518,7 +1537,7 @@ describe('capability-off legacy Workbench regression', () => {
       const invalidate = vi.spyOn(await import('../lib/evidenceStore'), 'invalidateEvidence');
       let finish = (_value: SpectrumResponse) => {};
       const point = vi.spyOn(api, 'getPointSpectrum').mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
-      const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
+      const { component, container } = render(ProcessingWorkbench, { scanId: SCAN_ID, queryParams: { point: '0' } }); await flush();
       appConfig.set({ ...config, tier: 'public' }); accessMode.set('public'); await flush();
       finish(syntheticSpectrum(INTENSITY_A)); await flush();
       expect(get(scienceAuthorized)).toBe(true); expect(sessionGeneration).toBe(generation);
@@ -1530,7 +1549,7 @@ describe('capability-off legacy Workbench regression', () => {
         despike_applied: true, despike_method: 'ml', n_masked_channels: 1, masked_positions: [1] }));
       const region = Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r2')!;
       await fireEvent.click(region); await flush();
-      await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i)); await flush();
+      enableAnomalousPixelOverlay(component); await flush();
       expect(screen.queryByLabelText('Evidence desk')).toBeNull();
       const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
       expect(traces[0].x).toEqual([285, 305, 325]); expect(traces[0].y).toEqual(INTENSITY_NEW);
@@ -1569,7 +1588,7 @@ it.each(['tier', 'access'])('accepts fresh spectrum, annotations and processing 
   scienceAuthorized.set(true);
   currentHash.set('#/scan/synthetic/workbench');
   vi.mocked(api.getScan).mockResolvedValue({ schema_version: '1', scan: { ...fakeScan(), ml_mask_count: 0 } });
-  const { container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
+  const { component, container } = render(ProcessingWorkbench, { scanId: SCAN_ID }); await flush();
   await fireEvent.click(screen.getByRole('button', { name: 'Pin current trace' }));
   const generation = sessionGeneration;
   let revalidate = () => {};
@@ -1588,7 +1607,7 @@ it.each(['tier', 'access'])('accepts fresh spectrum, annotations and processing 
   revalidate(); await flush();
   expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
   await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'processing' } }); await flush();
-  await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i)); await flush();
+  enableAnomalousPixelOverlay(component); await flush();
   expect(csvProvenance(await exportCsv(container)).annotations.anomalous_pixels).toEqual([{ position: 1, channel: 600, table: 'S4' }]);
   vi.spyOn(api, 'postFit').mockResolvedValue(fakeFit());
   const card = Array.from(container.querySelectorAll('.step-title')).find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
