@@ -3,7 +3,7 @@
 # Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC)
 # Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous
 # Martian Spectral Component, Appl. Spectrosc. 79(6), 904–918, doi:10.1177/00037028241280081.
-# In stowed-arm scans, these pixels fell beyond ±3σ far more often than noise would produce.
+# In stowed-arm scans, these pixels fell beyond ±3σ more often than expected from noise.
 # channel is the absolute 0-based CCD index. S3 covers the R1 Raman region and
 # S4 covers the R2 and R3 fluorescence regions. The overlay only marks these channels
 # and changes no spectral value.

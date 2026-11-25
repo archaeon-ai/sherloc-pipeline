@@ -677,7 +677,7 @@ does not gain a method selector.
 
 Returns the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
 within the requested view, sorted by served position. In stowed-arm scans, these
-pixels fell beyond ±3σ far more often than noise would produce. The overlay is
+pixels fell beyond ±3σ more often than expected from noise. The overlay is
 off by default and marks channels without changing spectral values.
 
 The endpoint requires no scan ID or database access. The default region is

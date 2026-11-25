@@ -1124,7 +1124,7 @@ the new `reclassify-*` commands.
 ## [4.4.2] - 2026-06-17
 
 ### Fixed
-- The anomalous channel overlay marks tier 1 channels flagged by this pipeline's
+- The channel overlay marks tier 1 channels flagged by this pipeline's
   dark-frame test. Of the 36 anomalous pixels (Jakubek et al. 2025, Supplemental
   Tables S3 and S4), the test flagged 25 (`both`). The paper lists the other 11
   (`jb25`, tier 2) and the dark-frame test did not flag them. The remaining
@@ -1141,8 +1141,8 @@ the new `reclassify-*` commands.
   union count. The CSV `spike_mask` column follows the same rule. Marker eligibility
   is bound to the committed spectrum's selection context (not live UI state), so
   selection transitions and failed refetches cannot render a stale aggregate mask as
-  a point mask. modz markers (computed on the displayed trace) and the anomalous
-  channel overlay are unchanged; the `masked_positions` API field is unchanged. (#12)
+  a point mask. modz markers (computed on the displayed trace) and the detector-channel
+  overlay are unchanged; the `masked_positions` API field is unchanged. (#12)
 
 ## [4.4.0] - 2026-06-12
 
@@ -1154,8 +1154,8 @@ the new `reclassify-*` commands.
   in modz mode, behind the existing overlay toggle, with method-aware labels; the CSV
   export emits the `spike_mask` column in ML mode with a `# spike_mask_method:`
   provenance header. (#8)
-- Added an optional overlay for 121 anomalous detector channels (108 in tier 1
-  and 13 in tier 2 in this release). The 2026 detector characterization was
+- Added an optional overlay for 121 detector channels flagged by this pipeline's
+  2026 detector characterization (108 in tier 1 and 13 in tier 2 in this release). The 2026 detector characterization was
   cross-checked against the list of anomalous pixels (Jakubek et al. 2025,
   Supplemental Tables S3 and S4). `GET /api/spectra/badpix?region=` returns
   positions in the served arrays. The overlay is off by default and operates
