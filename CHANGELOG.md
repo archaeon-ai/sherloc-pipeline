@@ -57,7 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Calibration and engineering scans can receive `pass` on the same criteria
   as other scans.
 - The map classification editor now opens with the fitter's class windows
-  for minerals, organics, hydration, and fluorescence.
+  for minerals, organics, hydration, and fluorescence. It assigns shared
+  endpoints as the fitter does and labels and orders layers by their applied
+  window centers.
 - **The batch hydration fit carries no slit-width preference** (`slit_pref_weight` 0, as the map fit does), so its centers and widths do not depend on the scale of the spectrum.
 - **The web point fit for hydration carries no slit-width preference** (`slit_pref_weight` 0 on `/api/process/fit` with domain `hydration`), as the batch and map hydration fits do.
 - **The web point fit for organics carries no slit-width preference** (`slit_pref_weight` 0 on `/api/process/fit` with domain `organics`), as the batch and map organics fits do.
