@@ -9,11 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The Workbench References box text has been replaced.
-- The Workbench no longer shows the anomalous-pixels overlay control. The overlay code and the `GET /api/spectra/anomalous-pixels` route remain.
-
-- The Model Selection dropdowns now start on AICc. F-test remains available.
-
 - Batch hydration now measures noise at each point from 2000–2100 cm⁻¹ after subtracting a
   straight line fitted in that interval. It uses the previous 2800–3000 cm⁻¹ estimate when
   fewer than three channels are available. More marginal hydration peaks pass the threshold
@@ -66,6 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The downgrade of `4f638701cf7c` keeps both `fit_modality` triggers.**
+
+## [6.0.1] - 2026-11-25
+
+### Changed
+
+- The Workbench no longer shows the anomalous-pixels overlay control. The overlay code and the `GET /api/spectra/anomalous-pixels` route remain.
+- The Workbench References box text has been replaced.
+- The Model Selection dropdowns now start on AICc. F-test remains available.
 
 ## [6.0.0] - 2026-11-24
 
