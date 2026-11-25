@@ -25,7 +25,7 @@
   let minSnr = 3.0;
   let fwhmMin = 22;
   let fwhmMax = 90;
-  let modelSelection: 'f-test' | 'aicc' = 'f-test';
+  let modelSelection: 'f-test' | 'aicc' = 'aicc';
 
   let showResidual = false;
   let showFit = false;
