@@ -704,9 +704,9 @@ def _compute_average(
 
 @lru_cache(maxsize=len(VALID_REGIONS))
 def _badpix_items_for_region(region: str) -> tuple:
-    """Curated known-noisy channels mapped to a region's served positions.
+    """Anomalous detector channels mapped to a region's served positions.
 
-    Issue #9 annotation layer. The curated table (``core.badpix``) carries
+    The channel table (``core.badpix``) carries
     ABSOLUTE CCD channel indices; this maps each into the position INTO THE
     SERVED ARRAY for the requested region view (the same coordinate system as
     the issue-#8 ``masked_positions`` — reusing ``_channels_to_served_positions``
@@ -743,19 +743,20 @@ def _badpix_items_for_region(region: str) -> tuple:
 
 @router.get("/spectra/badpix", response_model=BadpixResponse)
 def get_badpix_channels(region: str = Query("R1")) -> BadpixResponse:
-    """Known-noisy detector channels for a region view (issue #9 annotation).
+    """Anomalous detector channels for a region view.
 
-    Returns the curated known-noisy channels mapped to positions INTO the
+    Returns the anomalous detector channels mapped to positions INTO the
     served array for ``region`` (``R1 | R2 | R3 | R123``; R123 = full-stitch
     identity). This is a STATIC list — no scan, no DB, no despike interaction
     whatsoever. It is an annotation surface only: the analyst toggles it on to
-    see "known-noisy channel" markers, and it never masks or alters any
-    spectral value. Tier 1 identifies channels that are noisy in dark frames.
+    see anomalous pixel markers, and it never masks or alters any
+    spectral value.
 
     Each item is ``{position, channel, tier, source}``: ``position`` indexes
     the served wavenumber/intensity arrays for this region; ``channel`` is the
-    absolute CCD index; ``tier`` 1 = CR-confusable elevated-noise, 2 = stable
-    hot; ``source`` ∈ ``dark_veto | jb25 | both``.
+    absolute CCD index; ``tier`` 1 = flagged by this pipeline's dark-frame test, 2 =
+    listed as an anomalous pixel by Jakubek et al. 2025 (Supplemental Tables S3
+    and S4) and not flagged by the test; ``source`` ∈ ``dark_veto | jb25 | both``.
 
     Raises:
         HTTPException(400): if ``region`` is not one of the valid regions

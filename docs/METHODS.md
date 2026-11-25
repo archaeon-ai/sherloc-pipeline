@@ -385,7 +385,8 @@ spectral values intact and operates independently of cosmic-ray despiking.
 
 A spectral band can fall on a marked channel. Inside the hi-carb window
 (1075-1105 cm⁻¹ in `config.yaml`), R1 channels 136 and 138 are listed and
-channel 137 between them is not.
+channel 137 between them is not. Turning the layer on marks the listed
+channels and changes no value.
 
 **Tier 1** comprises channels flagged by this pipeline's dark-frame test.
 Excursions at these channels can resemble cosmic-ray hits.

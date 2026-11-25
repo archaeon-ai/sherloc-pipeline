@@ -2,12 +2,6 @@
 #
 # The overlay marks these CCD channels without changing spectral values.
 #
-# Full rebuild 2026-06-17 on a DARK-PLANE veto (all regions). The prior
-# epsilon=(active-dark) rate criterion was inverted: it flagged active-only REAL
-# Raman/fluorescence bands (e.g. the sulfate nu1 channels 129/130/131 and the
-# carbonate nu1 apex 137) and missed anomalous channels whose active and dark
-# excursions cancel in epsilon.
-#
 # Tier 1: this pipeline's dark-frame test flagged the channel. Across 177,067
 # frames, the rate of dark-frame |z| > 4 was at least the larger of 0.5%
 # and six times the median rate for the region.

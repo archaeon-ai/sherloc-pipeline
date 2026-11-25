@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because the journal lists them.
 
 ### Changed
+- The Workbench overlay of masked detector channels is labeled "Anomalous pixels"
+  (toggle, trace and hover text; it was "Known-noisy channels"). The docs, the
+  channel table header and the API reference call the paper's list "anomalous
+  pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)" and state which
+  channels come from this pipeline's dark-frame test. No channel or value changes.
 - **The batch hydration fit carries no slit-width preference** (`slit_pref_weight` 0, as the map fit does), so its centers and widths do not depend on the scale of the spectrum.
 - **The web point fit for hydration carries no slit-width preference** (`slit_pref_weight` 0 on `/api/process/fit` with domain `hydration`), as the batch and map hydration fits do.
 - **The web point fit for organics carries no slit-width preference** (`slit_pref_weight` 0 on `/api/process/fit` with domain `organics`), as the batch and map organics fits do.

@@ -37,7 +37,7 @@
   // artifact even when the active method is 'none' (PR #10 review F1).
   export let spikeMask: boolean[] | null = null;
   export let spikeMethod: 'ml' | 'modz' | null = null;
-  // Known-noisy channel annotation export (issue #9). The badpix column is
+  // Anomalous pixel annotation export. The badpix column is
   // emitted iff this prop is non-null — the Workbench passes the list only when
   // the overlay toggle is ON (mirroring the spike-mask explicit-props gate:
   // ProcessingWorkbench is the single authority). Each entry's `position`
@@ -181,7 +181,7 @@
       lines.push(`# spike_mask_method: ${spikeMethod}`);
     }
 
-    // Known-noisy channel annotation (issue #9): emitted iff the explicit
+    // Anomalous pixel annotation: emitted iff the explicit
     // `badpix` prop carries the list (the Workbench gates on the overlay
     // toggle, not us). The badpix=1 column marks ANNOTATED channels, NOT
     // removed ones — distinct from spike_mask, which marks despiked channels.
@@ -212,7 +212,7 @@
     }
 
     if (hasBadpix) {
-      // 0/1 per served row: 1 where a served position is annotated known-noisy.
+      // 0/1 per served row: 1 where a served position is annotated as an anomalous pixel.
       const badpixCol = new Array<number>(channelCount).fill(0);
       for (const b of badpix!) {
         if (b.position >= 0 && b.position < badpixCol.length) badpixCol[b.position] = 1;

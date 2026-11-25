@@ -132,7 +132,7 @@ function spikeTrace(): { name?: string; x?: number[] } | undefined {
   );
 }
 
-/** The known-noisy (badpix) marker trace, if rendered (issue #9). */
+/** The anomalous pixel (badpix) marker trace, if rendered (issue #9). */
 function badpixTrace():
   | { name?: string; x?: number[]; mode?: string; marker?: { symbol?: string; color?: string } }
   | undefined {
@@ -143,7 +143,7 @@ function badpixTrace():
       mode?: string;
       marker?: { symbol?: string; color?: string };
     }>
-  ).find((t) => t.mode === 'markers' && /Known-noisy/.test(t.name ?? ''));
+  ).find((t) => t.mode === 'markers' && /Anomalous pixels/.test(t.name ?? ''));
 }
 
 describe('RamanView — issue #18 polish on the Workbench-routed component', () => {
@@ -370,7 +370,7 @@ describe('RamanView — ML/modz spike-marker provenance label (issue #8)', () =>
   });
 });
 
-describe('RamanView — known-noisy channel annotation overlay (issue #9)', () => {
+describe('RamanView — anomalous pixel annotation overlay', () => {
   const wavenumber = Array.from({ length: 100 }, (_, i) => 640 + i * 10);
   const intensity = wavenumber.map((wn) => Math.exp(-((wn - 1016) ** 2) / 5000));
   const badpix = [
@@ -395,8 +395,8 @@ describe('RamanView — known-noisy channel annotation overlay (issue #9)', () =
     });
     await flush();
     const trace = badpixTrace();
-    expect(trace, 'expected a known-noisy marker trace').toBeDefined();
-    expect(trace?.name).toBe('Known-noisy channels (2)');
+    expect(trace, 'expected an anomalous pixel marker trace').toBeDefined();
+    expect(trace?.name).toBe('Anomalous pixels (2)');
     // Markers sit at the annotated served positions.
     expect(trace?.x).toEqual([wavenumber[12], wavenumber[50]]);
     // Distinct glyph + color from the filled red triangle spike markers.
@@ -431,14 +431,14 @@ describe('RamanView — known-noisy channel annotation overlay (issue #9)', () =
     expect(spike?.marker?.color).not.toBe(bp?.marker?.color);
   });
 
-  it('the "Known-noisy channels" toggle gates the overlay', async () => {
+  it('the "Anomalous pixels" toggle gates the overlay', async () => {
     const { getByLabelText } = render(RamanView, {
       props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', badpix },
     });
     await flush();
     expect(badpixTrace()).toBeUndefined();
 
-    const cb = getByLabelText(/Known-noisy channels/i) as HTMLInputElement;
+    const cb = getByLabelText(/Anomalous pixels/i) as HTMLInputElement;
     expect(cb.checked).toBe(false); // default OFF
     await fireEvent.click(cb);
     await flush();
@@ -451,7 +451,7 @@ describe('RamanView — known-noisy channel annotation overlay (issue #9)', () =
     });
     await flush();
     expect(badpixTrace()).toBeUndefined();
-    expect(queryByLabelText(/Known-noisy channels/i)).toBeNull();
+    expect(queryByLabelText(/Anomalous pixels/i)).toBeNull();
   });
 });
 
@@ -464,7 +464,7 @@ it.each([false, true])('renders R2 channel annotations on the active wavelength 
   await flush();
   const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
   expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)')).toMatchObject({ x: [305], y: [2] });
-  expect(traces.find((trace: { name: string }) => trace.name === 'Known-noisy channels (1)')).toMatchObject({ x: [325], y: [3] });
+  expect(traces.find((trace: { name: string }) => trace.name === 'Anomalous pixels (1)')).toMatchObject({ x: [325], y: [3] });
   expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').hovertemplate).toContain('nm');
   expect(Boolean(traces.find((trace: { name: string }) => trace.name === 'fit'))).toBe(!evidenceDesk);
   if (!evidenceDesk) { expect(layout.xaxis2.range).toEqual([640, 4200]); expect(layout.xaxis2.autorange).toBe(false); }

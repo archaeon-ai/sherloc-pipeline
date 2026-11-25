@@ -19,7 +19,7 @@
   // the displayed trace ("Spikes"); 'ml' = stored-mask removal positions on the
   // already-cleaned trace ("ML-masked"). null falls back to the generic label.
   export let spikeMethod: 'ml' | 'modz' | null = null;
-  // Known-noisy channel annotation overlay (issue #9). Each entry is a served-
+  // Anomalous pixel annotation overlay. Each entry is a served-
   // array position plus its tier/source provenance. This is an ANNOTATION
   // layer fully separate from despiking — it never alters the trace, only
   // marks positions. Distinct glyph from the red-triangle spike markers
@@ -332,7 +332,7 @@
       }
     }
 
-    // Known-noisy channel markers (issue #9): hollow blue diamonds at the
+    // Anomalous pixel markers: hollow blue diamonds at the
     // annotated served positions. Deliberately a DISTINCT glyph + color from
     // the filled red-triangle spike markers (colorblind-safe pairing: shape
     // AND hue differ, so the two never read as the same marker). This overlay
@@ -356,7 +356,7 @@
           customdata: bpCustom,
           type: 'scatter',
           mode: 'markers',
-          name: `Known-noisy channels (${bpX.length})`,
+          name: `Anomalous pixels (${bpX.length})`,
           marker: {
             symbol: 'diamond-open',
             size: 9,
@@ -364,7 +364,7 @@
             line: { color: '#0369a1', width: 1.5 },
           },
           hovertemplate:
-            `Known-noisy channel at %{x:.1f} ${xUnit}` +
+            `Anomalous pixel at %{x:.1f} ${xUnit}` +
             '<br>tier %{customdata[0]} \u00B7 source %{customdata[1]}<extra></extra>',
         });
       }
@@ -730,7 +730,7 @@
         <label class="toggle-label"><input type="checkbox" bind:checked={showOverlaySpikes} on:change={renderPlot} /> Spikes</label>
       {/if}
       {#if badpix.length > 0}
-        <label class="toggle-label"><input type="checkbox" bind:checked={showBadpix} on:change={renderPlot} /> Known-noisy channels</label>
+        <label class="toggle-label"><input type="checkbox" bind:checked={showBadpix} on:change={renderPlot} /> Anomalous pixels</label>
       {/if}
     </div>
     <div class="export-bar">

@@ -1000,7 +1000,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
       mode?: string;
       x?: number[];
     }>;
-    return traces.find((t) => t.mode === 'markers' && /Known-noisy/.test(t.name ?? ''));
+    return traces.find((t) => t.mode === 'markers' && /Anomalous pixels/.test(t.name ?? ''));
   }
 
   /** Click the region-selector button labeled `label` ('r2', 'full', ...). */
@@ -1059,9 +1059,9 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
 
     // Turn the overlay on (the toggle exists because the R2 list is non-empty)
     // so both the plot and the export gate are live observables.
-    await fireEvent.click(screen.getByLabelText(/Known-noisy channels/i));
+    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
     await flush();
-    expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (1)');
+    expect(badpixTraceInLastRender()?.name).toBe('Anomalous pixels (1)');
     expect(badpixTraceInLastRender()?.x).toEqual([900]); // wavenumber[1]
 
     // The OBSOLETE region's (R1, mount-time) response lands last — the
@@ -1069,7 +1069,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     // (a stale commit would re-render with R1's two markers at 800/1000).
     r1.resolve(badpixResponse('R1', R1_ITEMS));
     await flush();
-    expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (1)');
+    expect(badpixTraceInLastRender()?.name).toBe('Anomalous pixels (1)');
     expect(badpixTraceInLastRender()?.x).toEqual([900]);
 
     // Export gate: the CSV carries R2's annotation (row pattern 0,1,0 and
@@ -1096,9 +1096,9 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     // Mount region (R1) resolves; overlay on → two markers render.
     r1.resolve(badpixResponse('R1', R1_ITEMS));
     await flush();
-    await fireEvent.click(screen.getByLabelText(/Known-noisy channels/i));
+    await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
     await flush();
-    expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (2)');
+    expect(badpixTraceInLastRender()?.name).toBe('Anomalous pixels (2)');
 
     // Region switch with R2's response still in flight: the R1 list must be
     // cleared IMMEDIATELY — no markers, no toggle (it renders only with a
@@ -1106,7 +1106,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     loadCatalog.mockReturnValue(r2.promise);
     await clickRegion(container, 'r2');
     expect(badpixTraceInLastRender()).toBeUndefined();
-    expect(screen.queryByLabelText(/Known-noisy channels/i)).toBeNull();
+    expect(screen.queryByLabelText(/Anomalous pixels/i)).toBeNull();
     const csvDuringTransition = await exportCsv(container);
     expect(csvDuringTransition).not.toContain('badpix_source');
     expect(
@@ -1118,7 +1118,7 @@ describe('ProcessingWorkbench badpix staleness guard (PR #11 F1)', () => {
     // transition, so the marker renders without re-toggling.
     r2.resolve(badpixResponse('R2', R2_ITEMS));
     await flush();
-    expect(badpixTraceInLastRender()?.name).toBe('Known-noisy channels (1)');
+    expect(badpixTraceInLastRender()?.name).toBe('Anomalous pixels (1)');
     expect(badpixTraceInLastRender()?.x).toEqual([900]);
   });
 });
@@ -1134,10 +1134,10 @@ it('maps full-catalog channels through the embedded axis channel map', async () 
   await screen.findByText('1. Despike');
   await flush();
   expect(api.getBadpixChannels).toHaveBeenCalledWith('R123');
-  await fireEvent.click(screen.getByLabelText(/Known-noisy channels/i));
+  await fireEvent.click(screen.getByLabelText(/Anomalous pixels/i));
   await flush();
   const traces = reactSpy.mock.calls.at(-1)![1] as Array<{ name?: string; x?: number[] }>;
-  expect(traces.find(trace => trace.name?.startsWith('Known-noisy'))?.x).toEqual([900]);
+  expect(traces.find(trace => trace.name?.startsWith('Anomalous pixels'))?.x).toEqual([900]);
 });
 
 function syntheticPdsResponse(mode: string, values: number[]): SpectrumResponse {
@@ -1530,12 +1530,12 @@ describe('capability-off legacy Workbench regression', () => {
         despike_applied: true, despike_method: 'ml', n_masked_channels: 1, masked_positions: [1] }));
       const region = Array.from(container.querySelectorAll('.region-btn')).find(button => button.textContent?.trim() === 'r2')!;
       await fireEvent.click(region); await flush();
-      await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
+      await fireEvent.click(screen.getByLabelText('Anomalous pixels')); await flush();
       expect(screen.queryByLabelText('Evidence desk')).toBeNull();
       const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
       expect(traces[0].x).toEqual([285, 305, 325]); expect(traces[0].y).toEqual(INTENSITY_NEW);
       expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').x).toEqual([305]);
-      expect(traces.find((trace: { name: string }) => trace.name === 'Known-noisy channels (1)').x).toEqual([305]);
+      expect(traces.find((trace: { name: string }) => trace.name === 'Anomalous pixels (1)').x).toEqual([305]);
       expect(layout.xaxis.title.text).toBe('Wavelength (nm)');
       expect(layout.plot_bgcolor).toBe('#ffffff'); expect(layout.paper_bgcolor).toBe('#ffffff');
       expect(traces[0].line.color).toBe('#1e293b'); expect(layout.font.color).toBeUndefined();
@@ -1588,7 +1588,7 @@ it.each(['tier', 'access'])('accepts fresh spectrum, annotations and processing 
   revalidate(); await flush();
   expect(get(processingState)?.raman.intensity).toEqual(INTENSITY_NEW);
   await fireEvent.change(screen.getByLabelText('View'), { target: { value: 'processing' } }); await flush();
-  await fireEvent.click(screen.getByLabelText('Known-noisy channels')); await flush();
+  await fireEvent.click(screen.getByLabelText('Anomalous pixels')); await flush();
   expect(csvProvenance(await exportCsv(container)).annotations.badpix[0].source).toBe('synthetic-noisy');
   vi.spyOn(api, 'postFit').mockResolvedValue(fakeFit());
   const card = Array.from(container.querySelectorAll('.step-title')).find(el => el.textContent?.trim() === '4. Peak Fit')!.closest('.step-card')!;
