@@ -157,6 +157,7 @@ fitting:
   hydration_fit_range: [2800, 3900]   # O-H stretch search window (Phua et al. 2024)
   hydration_plot_range: [2600, 4000]
   hydration_max_peaks: 2              # typical decomposition into 1–2 Gaussians
+  hydration_noise_window: [2000, 2100]  # Batch noise is the standard deviation after subtracting a line fitted in this interval (cm-1).
   hydration_min_snr: 3.0              # This pipeline's pre-fit gate.
   hydration_fwhm_min_cm1: 50.0        # minimum FWHM of a hydration peak (cm-1)
   hydration_fwhm_max_cm1: 300.0       # maximum FWHM of a hydration peak (cm-1)

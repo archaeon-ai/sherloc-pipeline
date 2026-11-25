@@ -113,3 +113,60 @@ def test_hydration_rejects_merged_candidate_when_enabled(monkeypatch):
         fit, _, _ = fitting.fit_hydration_spectrum(x, y, cfg, (2800, 3900), noise_std=1)
         assert fit.selection["sizes"][1]["merge_skip"] is reject
         assert fit.selection["aicc_size"] == (1 if reject else 2)
+
+
+def _noise_scan(tmp_path, shifts, window_values, **settings):
+    """Fit one synthetic band over a known background, with independently specified noise channels."""
+    base = tmp_path / "results" / SCAN
+    base.mkdir(parents=True, exist_ok=True)
+    x_oh = np.arange(2800., 3901., 5.)
+    band = gaussian(x_oh, 3400, 24, 120)
+    band[:41] += np.cos(np.arange(41) * np.pi) * 0.25
+    # The two large values bracket the noise interval and must be excluded.
+    x = np.r_[1999., shifts, 2101., x_oh]
+    y = np.r_[1000., window_values, -2000., band] + 100
+    stem = f"{SOL}_{TARGET}_{SCAN}_R1"
+    pd.DataFrame({"raman_shift": x, "0": y}).to_csv(base / f"{stem}_normalized.csv", index=False)
+    _run_fit(_service(tmp_path, **settings), base)
+    return base / "hydration_fit" / f"{stem}_point0_hydration_peaks.csv"
+
+
+def test_batch_hydration_noise_removes_local_line(tmp_path):
+    shifts = np.array([2000., 2012., 2088., 2100.])
+    residual = np.array([2., -2., -2., 2.])  # Zero mean, orthogonal to Raman shift.
+    for slope in (0., 0.75):
+        row, = pd.read_csv(_noise_scan(tmp_path, shifts, residual + slope * (shifts - 2000))).itertuples()
+        assert row.amplitude_a / row.snr == pytest.approx(2.)
+
+
+def test_batch_hydration_noise_fallback_below_three_channels(tmp_path):
+    from sherloc_pipeline.core.fitting import hydration_seed_signal
+
+    x_oh = np.arange(2800., 3901., 5.)
+    band = 100 + gaussian(x_oh, 3400, 24, 120)
+    band[:41] += np.cos(np.arange(41) * np.pi) * 0.25
+    expected = hydration_seed_signal(band)[x_oh <= 3000].std()
+    for shifts, values, noise in [
+        ([2000., 2100.], [50., -50.], expected),
+        ([2000., 2050., 2100.], [1., -2., 1.], np.sqrt(2)),
+    ]:
+        row, = pd.read_csv(_noise_scan(tmp_path, shifts, values)).itertuples()
+        assert row.amplitude_a / row.snr == pytest.approx(noise)
+
+
+def test_batch_hydration_noise_prefit_gate(tmp_path, monkeypatch):
+    from sherloc_pipeline.core import fitting
+
+    def unexpected_fit(*args, **kwargs):
+        pytest.fail("spectrum below the pre-fit SNR threshold reached the optimizer")
+
+    monkeypatch.setattr(fitting, "fit_hydration_spectrum", unexpected_fit)
+    path = _noise_scan(tmp_path, [2000, 2025, 2075, 2100], [10, -10, -10, 10])
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("threshold", ["min_seed_snr", "min_amp_sigma_multiplier", "min_display_snr"])
+def test_batch_hydration_noise_component_gates(tmp_path, threshold):
+    # The band clears the pre-fit gate. Its amplitude is about 12 times the local noise.
+    path = _noise_scan(tmp_path, [2000, 2025, 2075, 2100], [2, -2, -2, 2], **{threshold: 14})
+    assert not path.exists()
