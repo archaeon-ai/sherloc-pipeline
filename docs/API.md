@@ -671,14 +671,13 @@ does not gain a method selector.
 
 ---
 
-## Web HTTP API — Anomalous pixel overlay
+## Web HTTP API — Anomalous pixels
 
 `GET /api/spectra/anomalous-pixels?region=R1|R2|R3|R123`
 
 Returns the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
 within the requested view, sorted by served position. In stowed-arm scans, these
-pixels fell beyond ±3σ more often than expected from noise. The overlay is
-off by default and marks channels without changing spectral values.
+pixels fell beyond ±3σ more often than expected from noise.
 
 The endpoint requires no scan ID or database access. The default region is
 `R1`. An invalid region returns HTTP 400.
