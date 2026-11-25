@@ -224,10 +224,6 @@ fluorescence_fitting:
     - {label: group1b,  lo: 322.0, hi: 329.0}    # Ce3+ doublet (long)
     - {label: group2,   lo: 329.0, hi: 355.0}    # Ce3+ in phosphate
 
-  # Doublet detection
-  doublet_snr_threshold: 10.0         # Both peaks must exceed (matches snr_threshold)
-  doublet_separation_range: [18, 29]  # nm, expected separation
-
   # Parallelism: number of worker processes for per-point fluorescence fitting.
   # 0 = auto (half of available CPU cores), 1 = sequential (no multiprocessing).
   # Uses shared resolve_parallel_workers() utility (see also fitting.parallel_workers).

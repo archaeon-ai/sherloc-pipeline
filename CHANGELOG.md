@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database and an empty `cooccurrence_confidence` field in the accepted-peaks
   CSV. The Python functions `score_cooccurrences` and `aggregate_co_occurrences`
   have been removed. Fluorescence groups and fitted peak parameters are unchanged.
+- Removed `sherloc extract-training` and `FittingService.extract_training_jsonl`,
+  which wrote fitted peaks and generated phase labels to JSONL. The export's
+  `detect_doublets` helper and `DoubletRecord` type were also removed.
+  Peak fits and backfill results are unchanged. Older configurations still load
+  with `doublet_snr_threshold`, `doublet_separation_range`, or `doublet_ratio_range`
+  under `fluorescence_fitting`. Removing these unused defaults changes the configuration hash.
 - The hydration cosmic-ray veto, off by default, has been removed. The shipped
   configuration produces the same fits and has a new configuration hash.
   The fitter ignores `fitting.hydration_cr_veto` in older configurations.

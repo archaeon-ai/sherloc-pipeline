@@ -41,7 +41,7 @@ package). They form three rough layers:
 
 | Package | Purpose | Key modules |
 |---------|---------|-------------|
-| `cli/` | Typer entry point exposing every batch command. | `app.py` — 23 commands: `apply-review`, `backfill`, `backfill-fluor-inputs`, `backfill-masks`, `backfill-public-release`, `db-stats`, `extract-training`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`, `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`, `reclassify-product-roles`, `reclassify-scan-classes`, `reclassify-scan-types`, `reclassify-targets`, `refit`, `serve`; and two command groups, `references` and `identify`. |
+| `cli/` | Typer entry point exposing every batch command. | `app.py` — 22 commands: `apply-review`, `backfill`, `backfill-fluor-inputs`, `backfill-masks`, `backfill-public-release`, `db-stats`, `fit-fluor`, `full-pipeline`, `ingest`, `init`, `pds-download`, `pds-ingest`, `persist-peaks`, `pixl-ingest`, `plot`, `process-new`, `reclassify-product-roles`, `reclassify-scan-classes`, `reclassify-scan-types`, `reclassify-targets`, `refit`, `serve`; and two command groups, `references` and `identify`. |
 | `api/` | Notebook-friendly functional API. Stateless wrappers around services and core, intended for Jupyter use. | `spectral.py` — `process_scan_average`, `process_subset_average`, `process_point`, `load_point_spectrum`, `load_reference_spectrum`, `plot_spectrum`, `plot_overlay`. |
 | `web/` | FastAPI app + Svelte frontend. Read-mostly exploration UI. | `app.py` (factory + middlewares), `auth.py` (CF Access JWT validation), `routes/` (12 modules), `frontend/` (Svelte). |
 | `services/` | Orchestrators that compose `core` primitives and persist results. | `pipeline.py` (the 7-step run), `handoff.py` (optional atomic delivery manifest), `ingestion.py` / `pds_ingestion.py` / `pixl_ingestion.py`, `spectral.py`, `map_fitting.py`, `spectrogram.py`, `preprocessing.py`. |
@@ -111,7 +111,7 @@ canonical batch path. Seven steps:
    This pipeline splits group 1 into 1a (shorter wavelength) and 1b (longer
    wavelength) and labels each peak on its own; Haney et al. (2026,
    https://doi.org/10.1029/2025JE009385) discuss this wavelength range as
-   Ce³⁺-bearing anhydrite. Only the training export pairs peaks into doublets.
+   Ce³⁺-bearing anhydrite.
    Group assignments use the fluorescence peak wavelengths. New fluorescence
    peaks have NULL assignment confidence in the database.
 5. **Per-scan averages** — fits of the scan's R1 mean and trimmed-mean
