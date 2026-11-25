@@ -673,7 +673,7 @@ does not gain a method selector.
 
 ## Web HTTP API — Anomalous pixel overlay
 
-`GET /api/spectra/badpix?region=R1|R2|R3|R123`
+`GET /api/spectra/anomalous-pixels?region=R1|R2|R3|R123`
 
 Returns the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
 within the requested view, sorted by served position. In stowed-arm scans, these
@@ -692,7 +692,7 @@ Example showing the first R1 item:
   "schema_version": "2.0.0",
   "region": "R1",
   "n_channels": 523,
-  "badpix": [
+  "anomalous_pixels": [
     { "position": 54, "channel": 106, "table": "S3" }
   ]
 }
@@ -703,9 +703,14 @@ Example showing the first R1 item:
 | `schema_version` | str | `2.0.0` for this response |
 | `region` | str | Requested region view |
 | `n_channels` | int | Length of the served array for the region |
-| `badpix[].position` | int | 0-based position in the served array. For the full R123 view, `position == channel`. |
-| `badpix[].channel` | int | Absolute 0-based CCD channel index, 0..2147 |
-| `badpix[].table` | str | Supplemental table listing the pixel. S3 covers R1 Raman and S4 covers R2 and R3 fluorescence. |
+| `anomalous_pixels[].position` | int | 0-based position in the served array. For the full R123 view, `position == channel`. |
+| `anomalous_pixels[].channel` | int | Absolute 0-based CCD channel index, 0..2147 |
+| `anomalous_pixels[].table` | str | Supplemental table listing the pixel. S3 covers R1 Raman and S4 covers R2 and R3 fluorescence. |
+
+When the overlay is enabled and the view contains anomalous pixels, the CSV export
+includes an `anomalous_pixel` column (1 for a marked row, 0 otherwise) and a
+`# anomalous_pixel_source:` citation line. JSON provenance lists the marked items
+under `annotations.anomalous_pixels`.
 
 Jakubek, R.S. et al. (2025), Spectral Background Calibration of Scanning Habitable
 Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC)

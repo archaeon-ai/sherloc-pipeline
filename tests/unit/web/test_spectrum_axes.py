@@ -271,23 +271,23 @@ async def test_ml_lineage_preserves_each_mask_and_nonapplication(axis_client, ax
         assert max(data["intensity"]) < 10
 
 
-def test_static_badpix_callers_keep_regional_loupe_mapping(monkeypatch):
+def test_static_anomalous_pixel_callers_keep_regional_loupe_mapping(monkeypatch):
     monkeypatch.setattr(spectra, "calculate_loupe_wavelength_wavenumber", lambda **kwargs: (
         np.array([249., 251., 300.]), np.array([1., 2., 3.]),
     ))
-    monkeypatch.setattr(spectra, "load_badpix_channels", lambda: [
+    monkeypatch.setattr(spectra, "load_anomalous_pixels", lambda: [
         SimpleNamespace(channel=1, table="S3"),
         SimpleNamespace(channel=2, table="S4"),
     ])
-    spectra._badpix_items_for_region.cache_clear()
+    spectra._anomalous_pixel_items_for_region.cache_clear()
     try:
-        result = spectra.get_badpix_channels("R1")
+        result = spectra.get_anomalous_pixels("R1")
         assert result.n_channels == 1
-        assert [(item.channel, item.position) for item in result.badpix] == [(1, 0)]
-        result = spectra.get_badpix_channels("R123")
-        assert [(item.channel, item.position) for item in result.badpix] == [(1, 1), (2, 2)]
+        assert [(item.channel, item.position) for item in result.anomalous_pixels] == [(1, 0)]
+        result = spectra.get_anomalous_pixels("R123")
+        assert [(item.channel, item.position) for item in result.anomalous_pixels] == [(1, 1), (2, 2)]
     finally:
-        spectra._badpix_items_for_region.cache_clear()
+        spectra._anomalous_pixel_items_for_region.cache_clear()
 
 
 @pytest.mark.parametrize("excitation", [None, 0, float("nan")])

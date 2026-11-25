@@ -11,14 +11,14 @@ from functools import lru_cache
 
 
 @dataclass(frozen=True)
-class BadpixChannel:
+class AnomalousPixel:
     """Absolute 0-based CCD index and the supplemental table that lists it."""
 
     channel: int
     table: str
 
 
-def _parse_badpix_csv(text: str) -> tuple[BadpixChannel, ...]:
+def _parse_anomalous_pixels_csv(text: str) -> tuple[AnomalousPixel, ...]:
     """Read channel and table pairs, rejecting malformed or repeated entries."""
     rows = csv.reader(line for line in text.splitlines() if line and not line.startswith("#"))
     if next(rows, None) != ["channel", "table"]:
@@ -35,12 +35,12 @@ def _parse_badpix_csv(text: str) -> tuple[BadpixChannel, ...]:
         if channel in seen:
             raise ValueError(f"Duplicate CCD channel: {channel}")
         seen.add(channel)
-        records.append(BadpixChannel(channel, table))
+        records.append(AnomalousPixel(channel, table))
     return tuple(records)
 
 
 @lru_cache(maxsize=1)
-def load_badpix_channels() -> tuple[BadpixChannel, ...]:
+def load_anomalous_pixels() -> tuple[AnomalousPixel, ...]:
     """Return the anomalous channel records (parsed once, cached).
 
     The asset never changes at runtime, so the parse is memoized for the
@@ -49,6 +49,6 @@ def load_badpix_channels() -> tuple[BadpixChannel, ...]:
     """
     from importlib import resources
 
-    target = resources.files("sherloc_pipeline.data") / "badpix_channels.csv"
+    target = resources.files("sherloc_pipeline.data") / "anomalous_pixels.csv"
     text = target.read_text(encoding="utf-8")
-    return _parse_badpix_csv(text)
+    return _parse_anomalous_pixels_csv(text)

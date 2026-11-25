@@ -114,7 +114,7 @@
       "description": "Packaged copy of the fused-silica laboratory background (ships in the wheel)"
     },
     {
-      "path": "src/sherloc_pipeline/data/badpix_channels.csv",
+      "path": "src/sherloc_pipeline/data/anomalous_pixels.csv",
       "category": "metadata",
       "instrument": "sherloc",
       "description": "Absolute CCD indices and table identifiers for anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4), doi:10.1177/00037028241280081. Display annotations only."

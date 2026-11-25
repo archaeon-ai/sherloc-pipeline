@@ -2,7 +2,7 @@
   import type { EvidenceDisplay } from '../lib/evidenceTypes';
   import { evidenceCsv, evidenceExport } from '../lib/evidenceStore';
   import type { SharedEvidence } from '../lib/evidenceStore';
-  import type { BadpixChannel, ExportTrace, ProcessingArtifacts } from '../lib/types';
+  import type { AnomalousPixel, ExportTrace, ProcessingArtifacts } from '../lib/types';
 
   import type { IdentificationEvidence } from '../lib/identification';
   export let identification: IdentificationEvidence | null = null;
@@ -38,7 +38,7 @@
   export let spikeMask: boolean[] | null = null;
   export let spikeMethod: 'ml' | 'modz' | null = null;
   // The overlay toggle controls the annotation column and its citation.
-  export let badpix: BadpixChannel[] | null = null;
+  export let anomalousPixels: AnomalousPixel[] | null = null;
 
   let open = false;
   let showProvenanceModal = false;
@@ -113,7 +113,7 @@
         channel_indices: trace?.channel_indices ?? [], source_intensity: trace?.intensity ?? null },
       annotations: {
         ...(spikeMask && spikeMethod ? { spike_method: spikeMethod, spike_mask: spikeMask } : {}),
-        ...(badpix?.length ? { badpix } : {}),
+        ...(anomalousPixels?.length ? { anomalous_pixels: anomalousPixels } : {}),
       },
     };
   }
@@ -175,9 +175,9 @@
       lines.push(`# spike_mask_method: ${spikeMethod}`);
     }
 
-    const hasBadpix = badpix !== null && badpix.length > 0;
-    if (hasBadpix) {
-      lines.push('# badpix_source: Jakubek et al. 2025, Supplemental Tables S3 and S4, doi:10.1177/00037028241280081');
+    const hasAnomalousPixels = anomalousPixels !== null && anomalousPixels.length > 0;
+    if (hasAnomalousPixels) {
+      lines.push('# anomalous_pixel_source: Jakubek et al. 2025, Supplemental Tables S3 and S4, doi:10.1177/00037028241280081');
     }
 
     // Build columns based on stage
@@ -200,14 +200,14 @@
       data.push(spikeMask!.map(v => v ? 1 : 0));
     }
 
-    if (hasBadpix) {
+    if (hasAnomalousPixels) {
       // 0/1 per served row: 1 where a served position is annotated as an anomalous pixel.
-      const badpixCol = new Array<number>(channelCount).fill(0);
-      for (const b of badpix!) {
-        if (b.position >= 0 && b.position < badpixCol.length) badpixCol[b.position] = 1;
+      const anomalousPixelCol = new Array<number>(channelCount).fill(0);
+      for (const b of anomalousPixels!) {
+        if (b.position >= 0 && b.position < anomalousPixelCol.length) anomalousPixelCol[b.position] = 1;
       }
-      columns.push('badpix');
-      data.push(badpixCol);
+      columns.push('anomalous_pixel');
+      data.push(anomalousPixelCol);
     }
 
     if (stage === 'bg_subtracted') {

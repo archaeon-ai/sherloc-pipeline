@@ -382,8 +382,8 @@ no masks from this package.
 The optional Workbench overlay marks anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4).
 In stowed-arm scans, these pixels fell beyond ±3σ more often than expected from noise.
 Table S3 covers the R1 Raman region and Table S4 covers the R2 and R3 fluorescence regions.
-The overlay reads absolute CCD indices from `data/badpix_channels.csv` through
-`GET /api/spectra/badpix` and changes no spectral value.
+The overlay reads absolute CCD indices from `data/anomalous_pixels.csv` through
+`GET /api/spectra/anomalous-pixels` and changes no spectral value.
 
 ---
 

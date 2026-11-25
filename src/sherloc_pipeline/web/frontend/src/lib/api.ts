@@ -7,7 +7,7 @@ import type {
   ScanDetailResponse,
   ScanPointsResponse,
   SpectrumResponse,
-  BadpixResponse,
+  AnomalousPixelsResponse,
   BaselineRequest,
   BaselineResponse,
   FitRequest,
@@ -243,24 +243,24 @@ export async function postSubsetAverage(
 // --- Spectra: anomalous pixel annotation ---
 
 /**
- * Client-side cache of the static badpix list, keyed by region. The endpoint
+ * Client-side cache of the static anomalous pixel list, keyed by region. The endpoint
  * serves a fixed asset that never changes at runtime, so we fetch once per
  * region view and reuse. The cache holds the in-flight promise so concurrent
  * callers for the same region share a single request.
  */
-const badpixCache = new Map<string, Promise<BadpixResponse>>();
+const anomalousPixelCache = new Map<string, Promise<AnomalousPixelsResponse>>();
 
 /**
  * Fetch the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
  * in the requested region, with served positions and supplemental table identifiers.
  */
-export async function getBadpixChannels(region: string): Promise<BadpixResponse> {
-  const cached = badpixCache.get(region);
+export async function getAnomalousPixels(region: string): Promise<AnomalousPixelsResponse> {
+  const cached = anomalousPixelCache.get(region);
   if (cached) return cached;
-  const req = fetchJson<BadpixResponse>(`/spectra/badpix${buildQuery({ region })}`);
-  badpixCache.set(region, req);
+  const req = fetchJson<AnomalousPixelsResponse>(`/spectra/anomalous-pixels${buildQuery({ region })}`);
+  anomalousPixelCache.set(region, req);
   // Drop a rejected promise so a transient failure can be retried.
-  req.catch(() => badpixCache.delete(region));
+  req.catch(() => anomalousPixelCache.delete(region));
   return req;
 }
 

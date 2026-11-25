@@ -13,8 +13,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import type { BadpixChannel } from '../lib/types';
-import badpixCsv from '../../../../data/badpix_channels.csv?raw';
+import type { AnomalousPixel } from '../lib/types';
+import anomalousPixelCsv from '../../../../data/anomalous_pixels.csv?raw';
 
 // Spy that captures every Plotly.react call (the component re-runs
 // renderPlot on toggle changes via afterUpdate).
@@ -134,8 +134,8 @@ function spikeTrace(): { name?: string; x?: number[] } | undefined {
   );
 }
 
-/** The anomalous pixel (badpix) marker trace, if rendered (issue #9). */
-function badpixTrace():
+/** The anomalous pixel marker trace, if rendered (issue #9). */
+function anomalousPixelTrace():
   | { name?: string; x?: number[]; mode?: string; marker?: { symbol?: string; color?: string } }
   | undefined {
   return (
@@ -375,44 +375,44 @@ describe('RamanView — ML/modz spike-marker provenance label (issue #8)', () =>
 describe('RamanView — anomalous pixel annotation overlay', () => {
   const wavenumber = Array.from({ length: 100 }, (_, i) => 640 + i * 10);
   const intensity = wavenumber.map((wn) => Math.exp(-((wn - 1016) ** 2) / 5000));
-  const badpix: BadpixChannel[] = [
+  const anomalousPixels: AnomalousPixel[] = [
     { position: 12, channel: 106, table: 'S3' },
     { position: 50, channel: 160, table: 'S3' },
   ];
 
   it('marks all 36 published channels on the full R123 view', async () => {
-    const rows = badpixCsv.trim().split('\n').filter(line => !line.startsWith('#'));
+    const rows = anomalousPixelCsv.trim().split('\n').filter(line => !line.startsWith('#'));
     const catalog = rows.slice(1).map(row => {
       const [channel, table] = row.split(',');
       if (table !== 'S3' && table !== 'S4') throw new Error(`Invalid table in ${row}`);
       return { position: Number(channel), channel: Number(channel), table };
-    }) satisfies BadpixChannel[];
+    }) satisfies AnomalousPixel[];
     const axis = Array.from({ length: 2148 }, (_, i) => i);
     render(RamanView, { region: 'R123', wavenumber: axis, intensity: axis,
-      badpix: catalog, showBadpix: true });
+      anomalousPixels: catalog, showAnomalousPixels: true });
     await flush();
-    const trace = badpixTrace();
+    const trace = anomalousPixelTrace();
     expect(trace?.x).toHaveLength(36);
     expect(trace?.x).toEqual(catalog.map(item => item.channel));
   });
 
-  it('default-OFF: no badpix trace until the toggle is enabled', async () => {
+  it('default-OFF: no anomalous pixel trace until the toggle is enabled', async () => {
     render(RamanView, {
-      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', badpix },
+      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels },
     });
     await flush();
-    // showBadpix defaults to false → overlay not rendered.
-    expect(badpixTrace()).toBeUndefined();
+    // showAnomalousPixels defaults to false → overlay not rendered.
+    expect(anomalousPixelTrace()).toBeUndefined();
     // The dedicated toggle is present (the data is available).
     // (asserted in the toggle test below)
   });
 
-  it('renders hollow blue diamonds at badpix positions when showBadpix is on', async () => {
+  it('renders hollow blue diamonds at anomalous pixel positions when showAnomalousPixels is on', async () => {
     render(RamanView, {
-      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', badpix, showBadpix: true },
+      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels, showAnomalousPixels: true },
     });
     await flush();
-    const trace = badpixTrace();
+    const trace = anomalousPixelTrace();
     expect(trace, 'expected an anomalous pixel marker trace').toBeDefined();
     expect(trace?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 2');
     // Markers sit at the annotated served positions.
@@ -424,7 +424,7 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
   });
 
   it('glyph + color are distinct from the spike markers (colorblind-safe pairing)', async () => {
-    // Both overlays active: spike markers (filled red triangles) and badpix
+    // Both overlays active: spike markers (filled red triangles) and anomalous pixels
     // (hollow blue diamonds) must never read as the same marker.
     const spikeMask = wavenumber.map((_, i) => i === 5);
     render(RamanView, {
@@ -435,15 +435,15 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
         stage: 'raw',
         spikeMask,
         spikeMethod: 'ml',
-        badpix,
-        showBadpix: true,
+        anomalousPixels,
+        showAnomalousPixels: true,
       },
     });
     await flush();
     const spike = lastTraces().find(
       (t) => (t as { marker?: { symbol?: string } }).marker?.symbol === 'triangle-up',
     ) as { marker?: { symbol?: string; color?: string } } | undefined;
-    const bp = badpixTrace();
+    const bp = anomalousPixelTrace();
     expect(spike?.marker?.symbol).toBe('triangle-up');
     expect(bp?.marker?.symbol).toBe('diamond-open');
     expect(spike?.marker?.symbol).not.toBe(bp?.marker?.symbol);
@@ -452,24 +452,24 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
 
   it('the "Anomalous pixels" toggle gates the overlay', async () => {
     const { getByLabelText } = render(RamanView, {
-      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', badpix },
+      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels },
     });
     await flush();
-    expect(badpixTrace()).toBeUndefined();
+    expect(anomalousPixelTrace()).toBeUndefined();
 
     const cb = getByLabelText(/Anomalous pixels/i) as HTMLInputElement;
     expect(cb.checked).toBe(false); // default OFF
     await fireEvent.click(cb);
     await flush();
-    expect(badpixTrace()).toBeDefined();
+    expect(anomalousPixelTrace()).toBeDefined();
   });
 
-  it('renders no toggle and no trace when there are no badpix channels', async () => {
+  it('renders no toggle and no trace when there are no anomalous pixels', async () => {
     const { queryByLabelText } = render(RamanView, {
-      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', badpix: [], showBadpix: true },
+      props: { wavenumber, intensity, rawIntensity: intensity, stage: 'raw', anomalousPixels: [], showAnomalousPixels: true },
     });
     await flush();
-    expect(badpixTrace()).toBeUndefined();
+    expect(anomalousPixelTrace()).toBeUndefined();
     expect(queryByLabelText(/Anomalous pixels/i)).toBeNull();
   });
 });
@@ -478,7 +478,7 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
 it.each([false, true])('renders R2 channel annotations on the active wavelength axis (desk=%s)', async evidenceDesk => {
   render(RamanView, { evidenceDesk, region: 'R2', wavenumber: [800, 900, 1000], wavelength: [285, 305, 325],
     intensity: [1, 2, 3], spikeMask: [false, true, false], spikeMethod: 'ml',
-    badpix: [{ position: 2, channel: 640, table: 'S4' }], showBadpix: true,
+    anomalousPixels: [{ position: 2, channel: 640, table: 'S4' }], showAnomalousPixels: true,
     stage: 'raman_fitted', baseline: [1, 1, 1], fitCurve: [2, 2, 2], residual: [0, 0, 0], showResidual: true });
   await flush();
   const [, traces, layout] = reactSpy.mock.calls.at(-1)!;

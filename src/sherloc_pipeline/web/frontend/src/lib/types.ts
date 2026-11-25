@@ -198,17 +198,17 @@ export interface SpectrumResponse {
 }
 
 /** A marker for anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4). */
-export interface BadpixChannel {
+export interface AnomalousPixel {
   position: number; // 0-based index in the served array
   channel: number; // Absolute 0-based CCD index
   table: 'S3' | 'S4';
 }
 
-export interface BadpixResponse {
+export interface AnomalousPixelsResponse {
   schema_version: string;
   region: string;
   n_channels: number;
-  badpix: BadpixChannel[];
+  anomalous_pixels: AnomalousPixel[];
 }
 
 // --- Processing Params ---
