@@ -162,15 +162,18 @@ def fit_hydration_spectrum(
 ) -> Tuple[FitResult, np.ndarray, np.ndarray]:
     """Return the selected fit, Gaussian sum and fitted line on the input axis."""
     mask = (x >= roi[0]) & (x <= roi[1])
-    if noise_std is None:
-        noise_std = compute_noise_std(x, y, cfg=cfg)
     seed_signal = np.zeros_like(y, dtype=float)
     line = np.zeros_like(seed_signal)
     if not mask.any():
         result = FitResult([], 0.0, float('inf'), 0, ["no_peaks_detected"], n_samples=0)
         return result, seed_signal, line
-    seed_signal[mask] = hydration_seed_signal(y[mask])
-    baseline = _LinearBaseline(x[mask], y[mask], roi)
+    x_oh = x[mask]
+    seed = hydration_seed_signal(y[mask])
+    if noise_std is None:
+        window = cfg.get("hydration_noise_window", (2000.0, 2100.0))
+        noise_std = hydration_noise(x, y, window, x_oh, seed)
+    seed_signal[mask] = seed
+    baseline = _LinearBaseline(x_oh, y[mask], roi)
     cfg = {**cfg, "parsimony": hydration_parsimony(cfg)}
     result, band = fit_spectrum(x, seed_signal, cfg, roi=roi, noise_std=noise_std,
                                 linear_baseline=baseline)
@@ -627,6 +630,20 @@ def compute_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     if ss_tot == 0:
         return 0.0
     return 1.0 - ss_res / ss_tot
+
+
+def hydration_noise(
+    x: np.ndarray, y: np.ndarray, window: Tuple[float, float], x_oh: np.ndarray, seed_signal: np.ndarray,
+) -> float:
+    """Measure scatter about a local line, using the hydration seed signal for short windows."""
+    mask = (x >= window[0]) & (x <= window[1])
+    if np.count_nonzero(mask) >= 3:
+        shifts, values = x[mask], y[mask]
+        line = np.polyfit(shifts, values, 1)
+        return float(np.std(values - np.polyval(line, shifts), ddof=0))
+
+    quiet = (x_oh >= 2800.0) & (x_oh <= 3000.0)
+    return float(np.std(seed_signal[quiet] if np.count_nonzero(quiet) >= 3 else seed_signal))
 
 
 def compute_noise_std(

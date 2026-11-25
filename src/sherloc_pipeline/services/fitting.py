@@ -682,20 +682,6 @@ def _attach_cr_mask_wavenumbers(
     return None
 
 
-def _batch_hydration_noise(
-    x: np.ndarray, y: np.ndarray, window: Tuple[float, float], x_oh: np.ndarray, seed_signal: np.ndarray,
-) -> float:
-    """Measure scatter about a local line, using the hydration seed signal for short windows."""
-    mask = (x >= window[0]) & (x <= window[1])
-    if np.count_nonzero(mask) >= 3:
-        shifts, values = x[mask], y[mask]
-        line = np.polyfit(shifts, values, 1)
-        return float(np.std(values - np.polyval(line, shifts), ddof=0))
-
-    quiet = (x_oh >= 2800.0) & (x_oh <= 3000.0)
-    return float(np.std(seed_signal[quiet] if np.count_nonzero(quiet) >= 3 else seed_signal))
-
-
 def _fit_point_hydration(
     point_data: Dict[str, Any],
     *,
@@ -716,7 +702,9 @@ def _fit_point_hydration(
     scan: str,
 ) -> Dict[str, Any]:
     """Fit hydration for a single point (picklable worker)."""
-    from sherloc_pipeline.core.fitting import fit_hydration_spectrum, fwhm_at_cap, hydration_seed_signal, save_peak_table
+    from sherloc_pipeline.core.fitting import (
+        fit_hydration_spectrum, fwhm_at_cap, hydration_noise, hydration_seed_signal, save_peak_table,
+    )
     from sherloc_pipeline.visualization.fitting_plots import plot_fit_overlay
 
     point_idx = point_data['point_idx']
@@ -748,7 +736,7 @@ def _fit_point_hydration(
     y_bl = hydration_seed_signal(y_oh, n_edge)
 
     window = fit_cfg_oh.get('hydration_noise_window', (2000.0, 2100.0))
-    noise_std = _batch_hydration_noise(x, y_full, window, x_oh, y_bl)
+    noise_std = hydration_noise(x, y_full, window, x_oh, y_bl)
 
     # Pre-fit SNR gate
     y_max = float(np.max(y_bl))
