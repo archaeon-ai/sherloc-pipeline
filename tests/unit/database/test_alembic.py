@@ -397,6 +397,56 @@ class TestCrMaskReviewColumn:
         assert con.execute("SELECT id FROM fitted_peaks").fetchall() == [("p1",)]
         con.close()
 
+    def test_cr_mask_review_downgrade_preserves_fit_modality_guards(self, alembic_config, monkeypatch):
+        import sqlite3
+        from contextlib import closing
+
+        def schema(conn):
+            objects = conn.execute(
+                "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                "WHERE tbl_name = 'fitted_peaks' ORDER BY type, name"
+            )
+            return (
+                [(kind, name, table, " ".join(sql.split()) if kind == "table" else sql)
+                 for kind, name, table, sql in objects],
+                conn.execute("PRAGMA table_info(fitted_peaks)").fetchall(),
+            )
+
+        config, db_path = alembic_config
+        insert_peak = (
+            "INSERT INTO fitted_peaks (id, spectrum_id, peak_type, amplitude, fit_modality, created_at) "
+            "VALUES (?, 's1', 'gaussian', 1.0, ?, '2026-11-12 00:00:00')"
+        )
+        command.upgrade(config, "4f638701cf7c")
+        with closing(sqlite3.connect(db_path)) as conn:
+            original = schema(conn)
+            guards = [row for row in original[0] if row[0] == "trigger"]
+            assert [row[1] for row in guards] == ["check_fit_modality_insert", "check_fit_modality_update"]
+            conn.execute(insert_peak, ("p1", "minerals"))
+            conn.commit()
+
+        command.downgrade(config, "a13c4e5f6071")
+        with closing(sqlite3.connect(db_path)) as conn:
+            objects, columns = schema(conn)
+            assert [row for row in objects if row[0] == "trigger"] == guards
+            assert "cr_mask_review" not in {row[1] for row in columns}
+            assert conn.execute("SELECT id, fit_modality FROM fitted_peaks").fetchall() == [("p1", "minerals")]
+            with pytest.raises(sqlite3.IntegrityError, match="invalid fit_modality value"):
+                conn.execute(insert_peak, ("p2", "invalid"))
+            with pytest.raises(sqlite3.IntegrityError, match="invalid fit_modality value"):
+                conn.execute("UPDATE fitted_peaks SET fit_modality = 'invalid' WHERE id = 'p1'")
+
+        reference = db_path.with_name("reference.db")
+        with monkeypatch.context() as patch:
+            patch.setenv("PHASE_DATABASE_PATH", str(reference))
+            command.upgrade(config, "a13c4e5f6071")
+        with closing(sqlite3.connect(reference)) as conn:
+            assert (objects, columns) == schema(conn)
+
+        command.upgrade(config, "4f638701cf7c")
+        with closing(sqlite3.connect(db_path)) as conn:
+            assert schema(conn) == original
+
 
 class TestSelectionMarksColumns:
     """a4d795f0a25e: nullable fitted_peaks.kept_by / aicc_gain / step_p, existing rows NULL."""

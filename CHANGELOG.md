@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cr_mask_hit`, `cr_amplitude_drop_ratio`, or `fwhm_floor_pinned`.
   The report script `scripts/hydration_cr_veto_report.py` has also been removed.
 
+### Fixed
+
+- **The downgrade of `4f638701cf7c` keeps both `fit_modality` triggers.**
+
 ## [6.0.0] - 2026-11-24
 
 ### Upgrade notes
