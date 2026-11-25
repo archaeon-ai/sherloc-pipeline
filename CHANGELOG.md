@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- The hydration cosmic-ray veto, off by default, has been removed. The shipped
+  configuration produces the same fits and has a new configuration hash.
+  The fitter ignores `fitting.hydration_cr_veto` in older configurations.
+  The fit response and hydration result rows no longer include `cr_vetoed`, `cr_veto_flags`,
+  `cr_mask_hit`, `cr_amplitude_drop_ratio`, or `fwhm_floor_pinned`.
+  The report script `scripts/hydration_cr_veto_report.py` has also been removed.
+
 ## [6.0.0] - 2026-11-24
 
 ### Upgrade notes
@@ -92,12 +100,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   databases hold the longer value as they are.
 
 ### Removed
-- The hydration cosmic-ray veto, off by default, has been removed. The shipped
-  configuration produces the same fits and has a new configuration hash.
-  The fitter ignores `fitting.hydration_cr_veto` in older configurations.
-  The fit response and hydration result rows no longer include `cr_vetoed`, `cr_veto_flags`,
-  `cr_mask_hit`, `cr_amplitude_drop_ratio`, or `fwhm_floor_pinned`.
-  The report script `scripts/hydration_cr_veto_report.py` has also been removed.
 - **The "laser" background scaling method is removed.** Background
   subtraction on averages scales the background by pulses per point, the
   method every command and web route already used. Gone: the
