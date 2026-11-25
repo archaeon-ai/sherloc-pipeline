@@ -153,7 +153,7 @@ def test_public_feature_policy_defaults_off(clean_env, policy):
 
 @pytest.mark.parametrize("policy", [
     "{", "[]", "null", '{"unknown":true}',
-    '{"identification":{"enabled":"false"}}',
+    '{"references":{"mode":false}}',
     '{"public_release":null}', '{"public_release":{}}',
     '{"public_release":{"index_path":"synthetic.json"}}',
     '{"public_release":{"index_sha256":"' + "a" * 64 + '"}}',

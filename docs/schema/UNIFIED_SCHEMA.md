@@ -1023,7 +1023,7 @@ The R1 baseline path uses asPLS (`pybaselines.Baseline.aspls`); a `"poly"` linea
 
 ### B.4 Fluorescence-fitting parameters
 
-See `src/sherloc_pipeline/core/fluor_fitting.py`. Strategy is `"agnostic"` by default (1..max_peaks unconstrained Gaussians, AICc-selected; SNR ≥ 10 (`fluorescence_fitting.snr_threshold`), min peak separation 15 nm). The hypothesis-driven path produces constrained candidate models (M0–M7); when the best of them has R² < 0.7 it also runs an agnostic fit and keeps that fit if its AICc is lower. Group labels (`group1a`, `group1b`, `group2`, `group3`, `unidentified`) are post-hoc via `assign_fluor_group()`.
+See `src/sherloc_pipeline/core/fluor_fitting.py`. AICc selects among fits with 1 to `max_peaks` Gaussians. The default minimum peak separation is 15 nm and the SNR threshold is 10 (`fluorescence_fitting.snr_threshold`). Group labels (`group1a`, `group1b`, `group2`, `group3`, `unidentified`) are post-hoc via `assign_fluor_group()`.
 
 ### B.5 VICAR header keys parsed into `context_images.vicar_metadata`
 

@@ -47,12 +47,9 @@ def plot_co_occurrence_overlay(
         point_positions: List of (x, y) pixel coordinates for every scan
             point.  Indexing must match the point indices used in
             *co_occurrence_data*.
-        co_occurrence_data: Single pattern dict as returned by
-            :func:`~sherloc_pipeline.services.pipeline.aggregate_co_occurrences`.
-            Must contain ``point_indices`` (confirmed), ``n_points_raman_only``
-            and ``n_points_fluor_only`` are for metadata only — the caller
-            should also provide ``raman_only_indices`` and
-            ``fluor_only_indices`` lists if available.
+        co_occurrence_data: Point indices with both detections (``point_indices``),
+            with Raman alone (``raman_only_indices``), or with fluorescence
+            alone (``fluor_only_indices``).
         pattern_name: Human-readable pattern name for the title.
         output_path: Destination file path (.png or .pdf).
         marker_size: Scatter marker size in points^2.

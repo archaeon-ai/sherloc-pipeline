@@ -493,6 +493,50 @@ def _make_fluor_doublet_spectrum():
 
 
 @pytest.mark.asyncio
+async def test_fluorescence_fit_ignores_legacy_strategy(synthetic_fit_client, tmp_path):
+    """Older config files and request bodies produce the same agnostic doublet fit."""
+    from pathlib import Path
+
+    import yaml
+
+    from sherloc_pipeline import config as config_module
+
+    client, server = synthetic_fit_client
+    nm, intensity = _make_fluor_doublet_spectrum()
+    fitting = {"domain": "fluorescence", "wavenumber_range": [276, 355],
+               "fwhm_bounds": [10, 40], "max_peaks": 2, "min_snr": 3}
+    body = {"wavenumber": nm, "intensity": intensity, "params": {"fitting": fitting}}
+
+    config = yaml.safe_load(Path(config_module.__file__).with_name("config.yaml").read_text())
+    fluor = config["fluorescence_fitting"]
+    # The synthetic spectrum starts at 276 nm, beyond the default noise window.
+    fluor["noise_window"] = [276, 279]
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config))
+    server.fluorescence_fitting = config_module.load_config(path).fluorescence_fitting
+    response = await client.post("/api/process/fit", json=body)
+    assert response.status_code == 200, response.text
+    expected = response.json()
+    assert expected["n_peaks"] == 2
+
+    for value in ("agnostic", "hypothesis"):
+        fluor["strategy"] = value
+        path.write_text(yaml.safe_dump(config))
+        server.fluorescence_fitting = config_module.load_config(path).fluorescence_fitting
+        response = await client.post("/api/process/fit", json=body)
+        assert response.status_code == 200, response.text
+        actual = response.json()
+        assert actual["peaks"] == expected["peaks"]
+        assert actual["residual"] == expected["residual"]
+
+        fitting["strategy"] = value
+        response = await client.post("/api/process/fit", json=body)
+        assert response.status_code == 200, response.text
+        assert response.json() == actual
+        del fitting["strategy"]
+
+
+@pytest.mark.asyncio
 async def test_fit_routes_fluorescence_to_fluor_fitter(client):
     """Regression: domain="fluorescence" must hit fit_fluorescence_spectrum,
     not the Raman fit_spectrum. Bug history: a previous router change sent

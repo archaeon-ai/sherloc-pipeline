@@ -30,10 +30,7 @@ async function bootstrap(): Promise<App | AccessError | null> {
       || !config.capabilities
       || Object.values(config.capabilities).some((value) => typeof value !== 'boolean')
       || typeof config.capabilities.references !== 'boolean'
-      || typeof config.capabilities.identification !== 'boolean'
-      || typeof config.capabilities.experimental_candidates !== 'boolean'
       || (config.tier === 'public' && config.capabilities.references)
-      || (config.capabilities.identification && !config.capabilities.references)
     ) throw new Error('Invalid authorized configuration');
     appConfig.set(config);
     accessMode.set(config.access_mode);

@@ -41,15 +41,15 @@ def _receive(connection, deadline):
         while len(payload) < length:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ExecutionFailed("identification time limit reached")
+                raise ExecutionFailed("worker time limit reached")
             if not select.select([descriptor], [], [], remaining)[0]:
-                raise ExecutionFailed("identification time limit reached")
+                raise ExecutionFailed("worker time limit reached")
             try:
                 chunk = os.read(descriptor, min(length - len(payload), 65536))
             except BlockingIOError:
                 continue
             if not chunk:
-                raise ExecutionFailed("identification worker failed")
+                raise ExecutionFailed("worker failed")
             payload.extend(chunk)
         return payload
 
@@ -59,20 +59,20 @@ def _receive(connection, deadline):
     if length == -1:
         length = struct.unpack("!Q", read_exact(8))[0]
     elif length < 0:
-        raise ExecutionFailed("identification worker failed")
+        raise ExecutionFailed("worker failed")
     payload = read_exact(length)
     if time.monotonic() >= deadline:
-        raise ExecutionFailed("identification time limit reached")
+        raise ExecutionFailed("worker time limit reached")
     result = ForkingPickler.loads(payload)
     if time.monotonic() >= deadline:
-        raise ExecutionFailed("identification time limit reached")
+        raise ExecutionFailed("worker time limit reached")
     return result
 
 
 def run_process(function, args, timeout):
     """Spawn with detached arguments; always reap, including crash and timeout."""
     if timeout <= 0:
-        raise ExecutionFailed("identification time limit reached")
+        raise ExecutionFailed("worker time limit reached")
     deadline = time.monotonic() + timeout
     context = multiprocessing.get_context("spawn")
     reader, writer = context.Pipe(duplex=False)
@@ -84,7 +84,7 @@ def run_process(function, args, timeout):
         if not success:
             if result is not None:
                 raise WorkRejected(result)
-            raise ExecutionFailed("identification worker failed")
+            raise ExecutionFailed("worker failed")
         return result
     finally:
         reader.close()

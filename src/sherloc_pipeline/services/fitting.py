@@ -3192,8 +3192,7 @@ class FittingService:
           1. **Prepare** — sequential DB reads, spectrum decompression, R123 stitching
           2. **Fit** — parallel per-point fitting via ProcessPoolExecutor
              (configurable via ``fluorescence_fitting.parallel_workers``)
-          3. **Post-process** — sequential group assignment, cross-modal annotation,
-             DB persistence, and optional plot generation
+          3. **Post-process** — sequential group assignment, DB persistence, and optional plot generation
 
         The fitting phase includes an early bail-out: if the maximum feature
         prominence (max − median, after despiking) is below ``snr_threshold ×
@@ -3238,7 +3237,7 @@ class FittingService:
             )
             from sherloc_pipeline.core.fluor_fitting import fit_fluorescence_spectrum
             from sherloc_pipeline.visualization.fitting_plots import plot_fluor_fit_overlay
-            from sherloc_pipeline.core.fluor_id import assign_fluor_group, classify_fluor_peaks, score_cooccurrences
+            from sherloc_pipeline.core.fluor_id import assign_fluor_group, classify_fluor_peaks
             from sherloc_pipeline.core.calibration import calculate_loupe_wavelength_wavenumber
             from sherloc_pipeline.core.r123_stitching import stitch_r123_spectrum
 
@@ -3262,7 +3261,6 @@ class FittingService:
             max_peaks = int(fluor_cfg.get("max_peaks", 4))
             saturation_threshold = float(fluor_cfg.get("saturation_threshold", 60000.0))
             saturation_channel_limit = int(fluor_cfg.get("saturation_channel_limit", 5))
-            strategy = str(fluor_cfg.get("strategy", "agnostic"))
             min_fwhm_nm = float(fluor_cfg.get("min_fwhm_nm", 8.0))
 
             # Pre-compute 2148-channel wavelength axis from Loupe calibration
@@ -3420,7 +3418,6 @@ class FittingService:
                         'r123': r123,
                         'saturation_threshold': point_saturation,
                         'link_spectrum_id': entry["link_spectrum_id"],
-                        'scan_point_id': scan_point.id,
                     })
 
                 input_meta = fluor_inputs.summarize_inputs(
@@ -3445,7 +3442,7 @@ class FittingService:
                 # each fit_fluorescence_spectrum() call is independent, CPU-bound
                 # (differential evolution), and requires no DB access. We fan out
                 # across a ProcessPoolExecutor, then collect results for sequential
-                # post-processing (group assignment, cross-modal annotation, DB writes).
+                # post-processing (group assignment and DB writes).
                 #
                 # Worker count is configurable via fluorescence_fitting.parallel_workers:
                 #   0 = auto (half of CPU cores, balances throughput vs system responsiveness)
@@ -3460,7 +3457,6 @@ class FittingService:
                     snr_threshold=snr_threshold,
                     min_fwhm_nm=min_fwhm_nm,
                     saturation_channel_limit=saturation_channel_limit,
-                    strategy=strategy,
                 )
 
                 from sherloc_pipeline.core.utils import resolve_parallel_workers
@@ -3479,7 +3475,6 @@ class FittingService:
                 for inp, fit_result in zip(fit_inputs, fit_results):
                     point_idx = inp['point_idx']
                     link_spectrum_id = inp['link_spectrum_id']
-                    scan_point_id = inp['scan_point_id']
 
                     if fit_result.fit_skipped:
                         if fit_result.is_saturated:
@@ -3502,25 +3497,7 @@ class FittingService:
                     fluor_groups = [assign_fluor_group(p.center_nm) for p in fit_result.peaks]
                     fluor_groups = classify_fluor_peaks(fluor_groups, fit_result.peaks)
 
-                    # Cross-modal annotation: query Raman peaks for same scan point
-                    raman_peaks = session.query(FittedPeakORM).filter(
-                        FittedPeakORM.spectrum_id.in_(
-                            session.query(SpectrumORM.id).filter_by(
-                                scan_point_id=scan_point_id
-                            )
-                        ),
-                        FittedPeakORM.fit_modality.in_(["minerals", "organics", "hydration"]),
-                    ).all()
-                    raman_assignments = [
-                        rp.mineral_assignment for rp in raman_peaks
-                        if rp.mineral_assignment is not None
-                    ]
-                    cooccurrence_scores = score_cooccurrences(fluor_groups, raman_assignments)
-
-                    # Construct FittedPeakORM objects with group assignment + co-occurrence
-                    for i, peak in enumerate(fit_result.peaks):
-                        group_label = fluor_groups[i]
-                        confidence = cooccurrence_scores[i].confidence_boost if i < len(cooccurrence_scores) else None
+                    for peak, group_label in zip(fit_result.peaks, fluor_groups):
                         orm_peak = FittedPeakORM(
                             id=str(uuid4()),
                             spectrum_id=link_spectrum_id,
@@ -3533,7 +3510,7 @@ class FittingService:
                             snr=peak.snr,
                             fit_quality=fit_result.r2,
                             mineral_assignment=group_label,
-                            assignment_confidence=confidence,
+                            assignment_confidence=None,
                             is_saturated=fit_result.is_saturated,
                             # center_cm1, fwhm_cm1 left as NULL for fluorescence
                         )
@@ -3548,7 +3525,7 @@ class FittingService:
                             'snr': peak.snr,
                             'group': group_label,
                             'r2': fit_result.r2,
-                            'cooccurrence_confidence': confidence,
+                            'cooccurrence_confidence': None,
                         })
 
                     # Collect summary row for fitted point
@@ -3663,150 +3640,6 @@ class FittingService:
             )
             raise enrich(error, sol=sol, target=target, scan=scan)
 
-    def extract_training_jsonl(
-        self,
-        output_path: Path,
-        snr_threshold: float = 2.0,
-    ) -> ServiceResult:
-        """Extract unified training data as JSONL from fitted_peaks table.
-
-        Queries all peaks with SNR >= snr_threshold, groups by scan point,
-        builds cross-modal feature records with Raman + fluorescence peaks
-        and doublet detection per spec §9.3.
-
-        Args:
-            output_path: Path to write JSONL output file.
-            snr_threshold: Minimum SNR for peak inclusion (default 2.0).
-
-        Returns:
-            ServiceResult with record count and output path.
-        """
-        import json
-        from collections import defaultdict
-        from sherloc_pipeline.database.connection import get_engine, get_session
-        from sherloc_pipeline.database.models import (
-            FittedPeakORM, SpectrumORM, ScanPointORM, ScanORM,
-        )
-        from sherloc_pipeline.core.fluor_id import detect_doublets
-
-        if self._database_path is None:
-            raise FittingError(
-                "Database path required for training data extraction",
-                exit_code=1,
-            )
-
-        engine = get_engine(self._database_path)
-
-        with get_session(engine) as session:
-            # Query per spec §9.1
-            rows = (
-                session.query(
-                    FittedPeakORM,
-                    ScanPointORM.point_index,
-                    ScanORM.sol_number,
-                    ScanORM.target,
-                    ScanORM.scan_name,
-                    SpectrumORM.region,
-                    SpectrumORM.spectrum_type,
-                )
-                .join(SpectrumORM, SpectrumORM.id == FittedPeakORM.spectrum_id)
-                .join(ScanPointORM, ScanPointORM.id == SpectrumORM.scan_point_id)
-                .join(ScanORM, ScanORM.id == ScanPointORM.scan_id)
-                .filter(FittedPeakORM.snr >= snr_threshold)
-                .order_by(
-                    ScanORM.sol_number,
-                    ScanORM.target,
-                    ScanORM.scan_name,
-                    ScanPointORM.point_index,
-                    FittedPeakORM.fit_modality,
-                )
-                .all()
-            )
-
-            # Group by scan point
-            groups: Dict[tuple, List[FittedPeakORM]] = defaultdict(list)
-            for peak_orm, point_idx, sol_num, tgt, scan_name, _region, _spec_type in rows:
-                key = (sol_num, tgt or "", scan_name, point_idx)
-                groups[key].append(peak_orm)
-
-            # Build JSONL records
-            records: List[dict] = []
-            total_doublets = 0
-
-            for (sol_num, tgt, scan_name, point_idx), peaks in groups.items():
-                raman_peaks = [
-                    p for p in peaks
-                    if p.fit_modality in ("minerals", "organics", "hydration")
-                ]
-                fluor_peaks = [
-                    p for p in peaks if p.fit_modality == "fluorescence"
-                ]
-
-                if not raman_peaks and not fluor_peaks:
-                    continue
-
-                # Build input text per spec §9.3
-                parts = [f"Point {point_idx}, Sol {sol_num} {tgt} {scan_name}."]
-
-                # Raman peaks
-                raman_descs = []
-                for p in raman_peaks:
-                    label = p.mineral_assignment or "unknown"
-                    center = p.center_cm1 if p.center_cm1 is not None else 0.0
-                    snr_val = p.snr if p.snr is not None else 0.0
-                    raman_descs.append(
-                        f"{label} {center:.1f} cm-1 (SNR {snr_val:.0f})"
-                    )
-                if raman_descs:
-                    parts.append("Raman: " + ", ".join(raman_descs) + ".")
-
-                # Fluorescence peaks
-                fluor_descs = []
-                for p in fluor_peaks:
-                    group = p.mineral_assignment or "unidentified"
-                    center = p.center_nm if p.center_nm is not None else 0.0
-                    snr_val = p.snr if p.snr is not None else 0.0
-                    fluor_descs.append(
-                        f"{group} {center:.1f} nm (SNR {snr_val:.0f})"
-                    )
-                if fluor_descs:
-                    parts.append("Fluor: " + ", ".join(fluor_descs) + ".")
-
-                # Doublet detection
-                doublets = detect_doublets(fluor_peaks) if fluor_peaks else []
-                for d in doublets:
-                    parts.append(
-                        f"Doublet ratio {d.intensity_ratio:.2f}, "
-                        f"sep {d.separation_nm:.1f} nm."
-                    )
-                    total_doublets += 1
-
-                input_text = " ".join(parts)
-                output_text = _build_phase_label(
-                    raman_peaks, fluor_peaks, doublets
-                )
-
-                records.append({"input": input_text, "output": output_text})
-
-        # Write JSONL
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w") as f:
-            for record in records:
-                f.write(json.dumps(record) + "\n")
-
-        return ServiceResult(
-            summary=(
-                f"Extracted {len(records)} training records to {output_path}"
-            ),
-            artifacts=[output_path],
-            metadata={
-                "total_records": len(records),
-                "total_peaks_queried": len(rows),
-                "total_doublets": total_doublets,
-                "snr_threshold": snr_threshold,
-            },
-        )
-
     def query_co_occurrences(
         self,
         raman_modality: str = "minerals",
@@ -3887,74 +3720,3 @@ class FittingService:
                 }
                 for r in results
             ]
-
-
-def _build_phase_label(
-    raman_peaks: list,
-    fluor_peaks: list,
-    doublets: list,
-) -> str:
-    """Auto-generate a phase label from peak detections for training data.
-
-    Combines Raman mineral assignments and fluorescence group labels into
-    a human-readable phase identification string.
-    """
-    evidence: List[str] = []
-    phase_parts: List[str] = []
-
-    # Collect unique Raman mineral assignments
-    mineral_labels = set()
-    for p in raman_peaks:
-        if p.mineral_assignment:
-            mineral_labels.add(p.mineral_assignment)
-
-    for label in sorted(mineral_labels):
-        if "sulf" in label:
-            if "sulfate" not in phase_parts:
-                phase_parts.append("sulfate")
-            evidence.append(f"Ca-sulfate {label} Raman")
-        elif "carb" in label:
-            if "carbonate" not in phase_parts:
-                phase_parts.append("carbonate")
-            evidence.append(f"carbonate {label} Raman")
-        elif "oliv" in label:
-            if "olivine" not in phase_parts:
-                phase_parts.append("olivine")
-            evidence.append(f"olivine {label} Raman")
-        elif "phos" in label:
-            if "phosphate" not in phase_parts:
-                phase_parts.append("phosphate")
-            evidence.append(f"phosphate {label} Raman")
-        elif "D_band" in label or "G_band" in label:
-            if "organic carbon" not in phase_parts:
-                phase_parts.append("organic carbon")
-            evidence.append(f"organic {label}")
-        elif "OH_stretch" in label or "H2O_bend" in label:
-            if "hydrated phase" not in phase_parts:
-                phase_parts.append("hydrated phase")
-            evidence.append(f"hydration {label}")
-        else:
-            evidence.append(f"{label} Raman")
-
-    # Fluorescence groups
-    fluor_groups = set()
-    for p in fluor_peaks:
-        if p.mineral_assignment:
-            fluor_groups.add(p.mineral_assignment)
-
-    if doublets:
-        phase_parts.insert(0, "Ce3+-bearing")
-        evidence.append("Ce3+ fluorescent doublet")
-    elif fluor_groups & {"group1a", "group1b"}:
-        phase_parts.insert(0, "Ce3+-bearing")
-        evidence.append("Ce3+ fluorescence")
-
-    if "group2" in fluor_groups:
-        evidence.append("phosphate Ce3+ fluorescence")
-    if "group3" in fluor_groups:
-        evidence.append("silicate defect fluorescence")
-
-    phase = " ".join(phase_parts) if phase_parts else "unidentified phase"
-    ev = " + ".join(evidence) if evidence else "no diagnostic features"
-
-    return f"Phase: {phase}. Evidence: {ev}."

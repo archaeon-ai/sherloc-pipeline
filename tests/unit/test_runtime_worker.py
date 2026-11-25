@@ -57,15 +57,6 @@ def test_stalled_receipt_times_out_and_kills_and_reaps_the_worker(monkeypatch, t
     assert runtime.run_process(_large_payload, (1,), 5) == b"synthetic"
 
 
-def test_services_reexport_the_worker_objects():
-    # Imported here, not at module level: spawned targets in this module are pickled by
-    # reference, so its top-level imports load in every child.
-    from sherloc_pipeline.services import identification_runtime
-
-    for name in ("ExecutionFailed", "WorkRejected", "_receive", "_worker", "run_process"):
-        assert getattr(identification_runtime, name) is getattr(runtime, name)
-
-
 def test_worker_module_imports_neither_services_nor_scientific_stacks():
     # A spawned child imports this module before its target; keep that cost small.
     probe = ("import sys, sherloc_pipeline.runtime.worker; "

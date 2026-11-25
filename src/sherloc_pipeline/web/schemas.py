@@ -548,15 +548,11 @@ class FeaturesConfig(BaseModel):
 
 
 class CapabilitiesConfig(BaseModel):
-    evidence_desk: bool = False
     references: bool = False
-    identification: bool = False
-    experimental_candidates: bool = False
 
 
 class ConfigResponse(BaseModel):
     schema_version: str = API_SCHEMA_VERSION
-    evidence_policy_digest: str | None = None
     reference_release_id: str | None = None
     config_hash: Optional[str] = None
     fitting: Dict[str, Any]

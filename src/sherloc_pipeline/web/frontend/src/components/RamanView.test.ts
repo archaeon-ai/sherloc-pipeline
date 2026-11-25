@@ -36,42 +36,6 @@ vi.mock('plotly.js-basic-dist-min', () => ({
 
 import RamanView from './RamanView.svelte';
 import type { Peak } from '../lib/types';
-import type { IdentificationEvidence } from '../lib/identification';
-
-it.each([false, true])('names the four axis inputs when the evidence desk is enabled (%s)', async evidenceDesk => {
-  const { getByRole, queryByRole } = render(RamanView, {
-    evidenceDesk, wavenumber: [800, 900, 1000], intensity: [1, 2, 3],
-  });
-  await flush();
-  for (const name of ['X minimum', 'X maximum', 'Y minimum', 'Y maximum']) {
-    if (evidenceDesk) expect(getByRole('spinbutton', { name })).toBeTruthy();
-    else expect(queryByRole('spinbutton', { name })).toBeNull();
-  }
-});
-
-it('hides the axis inputs only while the identification fit is plotted', async () => {
-  const identification: IdentificationEvidence = {
-    result_digest: 'a'.repeat(64), source_digest: 'b'.repeat(64), status: 'candidate', reasons: [],
-    method: { method_id: 'raman-pearson', release_id: 'c'.repeat(64), support_min: .8, status: 'provisional' },
-    reference_release_id: 'd'.repeat(64), reference_subset_id: 'e'.repeat(64), ranking: [],
-    evidence: { grid: [810, 815, 820], mask: [true, false, true], prepared_trace: [.2, .3, .4],
-      inspection: { mask: [true, false, true], fit: [.1, .2, .3], residual: [.1, .1, .1] } },
-  };
-  const { component, queryByRole } = render(RamanView, {
-    evidenceDesk: true, wavenumber: [800, 900, 1000], intensity: [1, 2, 3],
-    identification, showIdentificationFit: true,
-  });
-  await flush();
-  expect(queryByRole('spinbutton', { name: 'X minimum' })).toBeNull();
-  expect(queryByRole('spinbutton', { name: 'Y maximum' })).toBeNull();
-  component.$set({ showIdentificationFit: false });
-  await flush();
-  expect(queryByRole('spinbutton', { name: 'X minimum' })).toBeTruthy();
-  // A fit that cannot be plotted falls back to the spectrum view, whose ranges still apply.
-  component.$set({ showIdentificationFit: true, identification: { ...identification, evidence: undefined } });
-  await flush();
-  expect(queryByRole('spinbutton', { name: 'Y maximum' })).toBeTruthy();
-});
 
 function fakePeak(overrides: Partial<Peak> = {}): Peak {
   return {
@@ -475,8 +439,8 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
 });
 
 
-it.each([false, true])('renders R2 channel annotations on the active wavelength axis (desk=%s)', async evidenceDesk => {
-  render(RamanView, { evidenceDesk, region: 'R2', wavenumber: [800, 900, 1000], wavelength: [285, 305, 325],
+it('renders R2 channel annotations on the active wavelength axis', async () => {
+  render(RamanView, { region: 'R2', wavenumber: [800, 900, 1000], wavelength: [285, 305, 325],
     intensity: [1, 2, 3], spikeMask: [false, true, false], spikeMethod: 'ml',
     anomalousPixels: [{ position: 2, channel: 640, table: 'S4' }], showAnomalousPixels: true,
     stage: 'raman_fitted', baseline: [1, 1, 1], fitCurve: [2, 2, 2], residual: [0, 0, 0], showResidual: true });
@@ -485,6 +449,7 @@ it.each([false, true])('renders R2 channel annotations on the active wavelength 
   expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)')).toMatchObject({ x: [305], y: [2] });
   expect(traces.find((trace: { name: string }) => trace.name === 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1')).toMatchObject({ x: [325], y: [3] });
   expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').hovertemplate).toContain('nm');
-  expect(Boolean(traces.find((trace: { name: string }) => trace.name === 'fit'))).toBe(!evidenceDesk);
-  if (!evidenceDesk) { expect(layout.xaxis2.range).toEqual([640, 4200]); expect(layout.xaxis2.autorange).toBe(false); }
+  expect(traces.find((trace: { name: string }) => trace.name === 'fit')).toBeTruthy();
+  expect(layout.xaxis2.range).toEqual([640, 4200]);
+  expect(layout.xaxis2.autorange).toBe(false);
 });

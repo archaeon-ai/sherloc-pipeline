@@ -43,7 +43,7 @@ beforeEach(async () => {
   const { getConfig } = await import('./lib/api');
   vi.mocked(getConfig).mockResolvedValue({
     access_mode: 'internal', tier: 'team',
-    capabilities: { references: false, identification: false, experimental_candidates: false },
+    capabilities: { references: false },
   } as never);
 });
 
@@ -92,7 +92,7 @@ describe('main.ts bootstrap', () => {
     expectClosed(null);
     expect(state.scienceMounts).toBe(0);
     resolve({ access_mode: 'public', tier: 'public', capabilities: {
-      references: false, identification: false, experimental_candidates: false,
+      references: false,
     } } as never);
     await pending;
     expect(document.querySelector('[data-testid="app-stub"]')).not.toBeNull();
@@ -135,9 +135,8 @@ describe('main.ts bootstrap', () => {
 
   it.each([
     { access_mode: 'internal', tier: 'public', capabilities: {} },
-    { access_mode: 'public', tier: 'public', capabilities: { references: true, identification: false, experimental_candidates: false } },
-    { access_mode: 'internal', tier: 'team', capabilities: { references: false, identification: true, experimental_candidates: false } },
-    { access_mode: 'internal', tier: 'team', capabilities: { references: 'false', identification: false, experimental_candidates: false } },
+    { access_mode: 'public', tier: 'public', capabilities: { references: true } },
+    { access_mode: 'internal', tier: 'team', capabilities: { references: 'false' } },
     { access_mode: 'internal', tier: 'team' },
   ])('rejects malformed or incompatible effective capabilities', async (config) => {
     vi.mocked((await import('./lib/api')).getConfig).mockResolvedValue(config as never);

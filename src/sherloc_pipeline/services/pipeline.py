@@ -14,8 +14,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from rich.console import Console
 
@@ -115,108 +114,6 @@ def print_scan_fit_summary(
         except Exception:
             pass
     return counts
-
-
-# ---------------------------------------------------------------------------
-# Post-hoc analysis functions (standalone, not PipelineService methods)
-# ---------------------------------------------------------------------------
-
-# Co-occurrence pattern definitions
-_CO_OCC_PATTERNS = [
-    {
-        "pattern": "Ce3+-bearing Ca-sulfate",
-        "raman_labels": {"sulf1_v1"},
-        "fluor_groups": {"group1a", "group1b"},
-        "raman_feature": "sulf1_v1",
-        "fluorescence_feature": "group1a + group1b",
-    },
-    {
-        "pattern": "Ce3+-bearing phosphate",
-        "raman_labels": {"phosphate"},
-        "fluor_groups": {"group2"},
-        "raman_feature": "phosphate",
-        "fluorescence_feature": "group2",
-    },
-    {
-        "pattern": "Silicate defect luminescence",
-        "raman_labels": {"pyroxene", "1050", "silicate_hump"},
-        "fluor_groups": {"group3"},
-        "raman_feature": "pyroxene / 1050 / silicate_hump",
-        "fluorescence_feature": "group3",
-    },
-]
-
-
-def aggregate_co_occurrences(
-    raman_peaks: List[Dict],
-    fluor_peaks: List[Dict],
-) -> List[Dict]:
-    """Aggregate per-point co-occurrence patterns into scan-level summary.
-
-    Args:
-        raman_peaks: List of Raman peak dicts with ``point_idx`` and
-            ``mineral_assignment`` keys.
-        fluor_peaks: List of fluorescence peak dicts with ``point_idx`` and
-            ``fluor_group`` keys.
-
-    Returns:
-        List of confirmed co-occurrence patterns with point counts.
-    """
-    # Build per-point sets
-    raman_by_point: Dict[int, Set[str]] = defaultdict(set)
-    fluor_by_point: Dict[int, Set[str]] = defaultdict(set)
-
-    for p in raman_peaks:
-        pidx = p.get("point_idx")
-        assignment = p.get("mineral_assignment")
-        if pidx is not None and assignment:
-            raman_by_point[pidx].add(assignment)
-
-    for p in fluor_peaks:
-        pidx = p.get("point_idx")
-        group = p.get("fluor_group")
-        if pidx is not None and group:
-            fluor_by_point[pidx].add(group)
-
-    all_points = set(raman_by_point.keys()) | set(fluor_by_point.keys())
-
-    results: List[Dict] = []
-
-    for pattern_def in _CO_OCC_PATTERNS:
-        confirmed_points: List[int] = []
-        raman_only_points: List[int] = []
-        fluor_only_points: List[int] = []
-        confidence_sum = 0.0
-        n_conf = 0
-
-        for pidx in sorted(all_points):
-            has_raman_match = bool(raman_by_point.get(pidx, set()) & pattern_def["raman_labels"])
-            has_fluor_match = bool(fluor_by_point.get(pidx, set()) & pattern_def["fluor_groups"])
-
-            if has_raman_match and has_fluor_match:
-                confirmed_points.append(pidx)
-                confidence_sum += 1.3
-                n_conf += 1
-            elif has_raman_match:
-                raman_only_points.append(pidx)
-            elif has_fluor_match:
-                fluor_only_points.append(pidx)
-
-        if not confirmed_points and not raman_only_points and not fluor_only_points:
-            continue
-
-        results.append({
-            "pattern": pattern_def["pattern"],
-            "raman_feature": pattern_def["raman_feature"],
-            "fluorescence_feature": pattern_def["fluorescence_feature"],
-            "n_points_confirmed": len(confirmed_points),
-            "n_points_raman_only": len(raman_only_points),
-            "n_points_fluor_only": len(fluor_only_points),
-            "point_indices": confirmed_points,
-            "mean_confidence": confidence_sum / n_conf if n_conf > 0 else 0.0,
-        })
-
-    return results
 
 
 def _run_r1_cr_masks(metadata: Dict[str, Any]) -> Optional[Dict[int, List[int]]]:
@@ -618,8 +515,6 @@ class PipelineService:
                     metadata["fluorescence_inputs"] = inputs_result
 
         # Step 3/7 - Raman Peak Persistence (unreadable peak CSVs are fatal) -----
-        # Runs before fluorescence: fit_fluorescence scores co-occurrence
-        # against the Raman rows in the DB, which must be this run's.
         persistence_metadata: Dict[str, Any] = {}
         if db_path.exists():
             self.console.print("[bold cyan]Step 3/7: Raman Peak Persistence[/bold cyan]")
@@ -898,5 +793,4 @@ __all__ = [
     "PipelineService",
     "archive_existing_results",
     "print_scan_fit_summary",
-    "aggregate_co_occurrences",
 ]
