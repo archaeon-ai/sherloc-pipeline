@@ -99,7 +99,6 @@ def test_fluor_backfill_counts_partially_committed_rows(fluor_bulk):
 
 
 def test_backfill_runs_raman_domains_before_fluorescence(fluor_bulk, monkeypatch):
-    # Fluorescence co-occurrence scoring reads the Raman rows, so they go first (#164).
     calls = []
     persist, fit = FittingService.persist_raman_peaks, FittingService.fit_fluorescence
 

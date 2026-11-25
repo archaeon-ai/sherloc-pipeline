@@ -345,7 +345,6 @@ export interface ConfigResponse {
     fwhm_range_nm: [number, number];
     max_peaks: number;
     snr_threshold: number;
-    strategy: string;
     fluorescence_rules: MineralRule[];
   };
   preprocessing: {

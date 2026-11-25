@@ -21,7 +21,6 @@ It also includes a browser-based web application — a Svelte single-page app on
 - **Fluorescence fitting** using differential evolution optimization with three-tier saturation handling
 - **Multi-domain persistence** to SQLite via a unified `fitted_peaks` table with `fit_modality` discriminator
 - **Backfill** all four domains (minerals, organics, hydration, fluorescence) across the full mission dataset
-- **Training data extraction** in JSONL format for cross-modal analysis (Raman + fluorescence co-occurrence)
 - **Spatial visualization** of peak detections overlaid on ACI context images
 
 ---
@@ -379,20 +378,20 @@ data/loupe/
 ```
 src/sherloc_pipeline/
 ├── cli/
-│   └── app.py                  # Command-line interface (23 commands and the `references` command group)
+│   └── app.py                  # Command-line interface (22 commands and the `references` command group)
 ├── services/
 │   ├── pipeline.py             # Full 7-step workflow orchestration
 │   ├── review.py               # Review propagation and overlay regeneration
 │   ├── spectral.py             # Spectral plotting and analysis (Raman + fluorescence)
 │   ├── preprocessing.py        # Despike, baseline, background subtraction
-│   ├── fitting.py              # Peak fitting, persistence, backfill, training data extraction
+│   ├── fitting.py              # Peak fitting, persistence, and backfill
 │   └── spatial.py              # Spatial overlay rendering
 ├── core/                       # Pure computation modules
 │   ├── data_ingestion.py       # Loupe format parsing
 │   ├── preprocessing.py        # Signal processing algorithms
 │   ├── fitting.py              # Raman spectral decomposition (multi-Gaussian)
 │   ├── fluor_fitting.py        # Fluorescence fitting (differential evolution, saturation handling)
-│   ├── fluor_id.py             # Fluorescence group assignment and doublet detection
+│   ├── fluor_id.py             # Fluorescence group assignment and co-occurrence scoring
 │   ├── spatial.py              # Overlay composition
 │   ├── accepted_assembler.py   # Review table aggregation
 │   └── mineral_id.py           # Mineral/organic/hydration band classification
@@ -665,19 +664,6 @@ sherloc backfill-masks --science --dry-run
 - `--science` - Mars targets + cal meteorite only
 - `--no-engineering` - Exclude engineering scans
 - `--dry-run` - Show scan count without processing
-
-### extract-training
-
-Extract unified JSONL training data across all peak domains:
-
-```bash
-sherloc extract-training --output training.jsonl --database ./phase.db
-```
-
-**Options:**
-- `--output PATH` - Output JSONL file path
-- `--database PATH` - Path to SQLite database
-- `--snr FLOAT` - Minimum SNR threshold (default: 2.0)
 
 ---
 

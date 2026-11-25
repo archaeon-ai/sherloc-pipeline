@@ -2666,7 +2666,6 @@ def backfill_cmd(
                     console.print(f"[red]Invalid domain: {d}[/red]")
                     console.print(f"  Valid options: {', '.join(all_domains)}")
                     raise typer.Exit(code=1)
-            # Raman first: fluorescence co-occurrence scoring reads the Raman rows.
             selected = [d for d in all_domains if d in selected]
         else:
             selected = all_domains
@@ -3393,104 +3392,6 @@ def backfill_fluor_inputs_cmd(
         console.print(f"[red]Stopped early ({result.stopped}); the scans above are committed.[/red]")
         raise typer.Exit(code=2)
     raise typer.Exit(code=1 if result.failed_scans else 0)
-
-
-@app.command("extract-training")
-def extract_training_cmd(
-    ctx: typer.Context,
-    output: Path = typer.Option(
-        "outputs/training_data.jsonl", "--output", "-o",
-        help="Output JSONL file path"
-    ),
-    database: Optional[Path] = typer.Option(
-        None, "--database", "-d",
-        help="Database path (defaults to ./phase.db)"
-    ),
-    snr_threshold: float = typer.Option(
-        2.0, "--snr", help="Minimum SNR threshold for peak inclusion"
-    ),
-):
-    """Extract unified training data as JSONL from fitted peaks.
-
-    Queries all persisted peaks (SNR >= threshold), groups by scan point,
-    and produces cross-modal feature records with Raman + fluorescence peaks,
-    doublet ratios, and auto-generated phase labels.
-
-    Format per spec section 9.3: each line is a JSON object with "input"
-    (textual description of peaks at a scan point) and "output" (phase label).
-
-    Examples:
-        sherloc extract-training
-        sherloc extract-training --output ./train.jsonl --snr 3.0
-    """
-    json_mode = (ctx.obj or {}).get("json", False)
-    if json_mode:
-        import logging as _logging
-        _logging.basicConfig(stream=sys.stderr)
-
-    try:
-        db_path = database or Path("./phase.db")
-        if not db_path.exists():
-            console.print(f"[red]Database not found: {db_path}[/red]")
-            raise typer.Exit(code=1)
-
-        from sherloc_pipeline.services.fitting import FittingService
-
-        service = FittingService(console=console, database_path=db_path)
-        result = service.extract_training_jsonl(
-            output_path=output,
-            snr_threshold=snr_threshold,
-        )
-
-        if json_mode:
-            import json as json_mod
-            output_obj = CLIResult(
-                pipeline_version=_pipeline_version,
-                command="extract-training",
-                result={
-                    "summary": result.summary,
-                    "output_path": str(output),
-                },
-                metadata=result.metadata or {},
-            )
-            print(json_mod.dumps(output_obj.model_dump(), default=str))
-        else:
-            console.print(f"\n[green]{result.summary}[/green]")
-            if result.metadata:
-                console.print(f"  Peaks queried: {result.metadata.get('total_peaks_queried', 0)}")
-                console.print(f"  Records written: {result.metadata.get('total_records', 0)}")
-                console.print(f"  Doublets detected: {result.metadata.get('total_doublets', 0)}")
-
-        sys.exit(0)
-
-    except SherlocServiceError as e:
-        if json_mode:
-            import json as json_mod
-            err = CLIError(
-                pipeline_version=_pipeline_version,
-                error_type=type(e).__name__,
-                message=e.message,
-                exit_code=e.exit_code,
-            )
-            print(json_mod.dumps(err.model_dump(), default=str), file=sys.stderr)
-        else:
-            console.print(f"\n[red]Training data extraction failed: {e.message}[/red]")
-        sys.exit(e.exit_code)
-    except typer.Exit:
-        raise
-    except Exception as e:
-        if json_mode:
-            import json as json_mod
-            err = CLIError(
-                pipeline_version=_pipeline_version,
-                error_type=type(e).__name__,
-                message=str(e),
-                exit_code=1,
-            )
-            print(json_mod.dumps(err.model_dump(), default=str), file=sys.stderr)
-        else:
-            console.print(f"\n[red]Training data extraction failed: {e}[/red]")
-        sys.exit(1)
 
 
 @app.command("reclassify-targets")
