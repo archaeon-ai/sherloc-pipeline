@@ -405,7 +405,7 @@ def _fit_raman_domain(
             "min_seed_snr": fitting_cfg.get("hydration_min_snr", 3.0),
             "min_display_snr": fitting_cfg.get("min_display_snr", 2.0),
             "min_amp_sigma_multiplier": fitting_cfg.get("min_amp_sigma_multiplier", 0.3),
-            "noise_estimation": fitting_cfg.get("noise_estimation", {"window": [2000.0, 2100.0]}),
+            "hydration_noise_window": fitting_cfg.get("hydration_noise_window", (2000.0, 2100.0)),
             "parsimony": hydration_parsimony(fitting_cfg),
             "posthoc_filters": fitting_cfg.get("posthoc_filters", {}),
         }
