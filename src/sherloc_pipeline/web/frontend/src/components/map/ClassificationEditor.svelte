@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import classWindows from '../../lib/classWindows.json';
   import type { ClassificationRule, ClassificationProfile } from '../../lib/types/map';
 
   export let hasFittedData = false;
@@ -9,26 +10,13 @@
     profileReset: void;
   }>();
 
-  // Default rules matching the fitting engine's actual class_ids
   function getDefaults(): ClassificationRule[] {
-    return [
-      { domain: 'minerals', class_id: 'olivine',   label: 'Olivine',      center: 836,  range: 30, snr_threshold: 3.0, disabled: false },
-      { domain: 'minerals', class_id: 'phosphate', label: 'Phosphate',    center: 962,  range: 20, snr_threshold: 3.0, disabled: false },
-      { domain: 'minerals', class_id: 'pyroxene',  label: 'Pyroxene',     center: 998,  range: 15, snr_threshold: 3.0, disabled: false },
-      { domain: 'minerals', class_id: 'sulf1_v1',  label: 'Sulfate ν1',   center: 1016, range: 8,  snr_threshold: 3.0, disabled: false },
-      { domain: 'minerals', class_id: 'sulf2_v1',  label: 'Sulfate ν1b',  center: 1026, range: 12, snr_threshold: 3.0, disabled: false },
-      { domain: 'minerals', class_id: '1050',      label: '1050',         center: 1050, range: 5,  snr_threshold: 3.0, disabled: false },
-      { domain: 'minerals', class_id: 'lo-carb',   label: 'Lo-Carbonate', center: 1067, range: 10, snr_threshold: 3.0, disabled: false },
-      { domain: 'minerals', class_id: 'hi-carb',   label: 'Hi-Carbonate', center: 1088, range: 15, snr_threshold: 3.0, disabled: false },
-      { domain: 'minerals', class_id: 'sulf_v3',   label: 'Sulfate ν3',   center: 1132, range: 20, snr_threshold: 3.0, disabled: false },
-      { domain: 'organics', class_id: 'D_band',    label: 'D Band',       center: 1350, range: 100, snr_threshold: 2.0, disabled: false },
-      { domain: 'organics', class_id: 'G_band',    label: 'G Band',       center: 1598, range: 100, snr_threshold: 2.0, disabled: false },
-      { domain: 'hydration', class_id: 'OH_stretch', label: 'OH Stretch',  center: 3434, range: 450, snr_threshold: 2.0, disabled: false },
-      { domain: 'fluorescence', class_id: 'group3',  label: 'Silicate Defect', center: 285, range: 12, snr_threshold: 10.0, disabled: false },
-      { domain: 'fluorescence', class_id: 'group1a', label: 'Ce³⁺ 1a',     center: 304, range: 6,  snr_threshold: 10.0, disabled: false },
-      { domain: 'fluorescence', class_id: 'group1b', label: 'Ce³⁺ 1b',     center: 326, range: 6,  snr_threshold: 10.0, disabled: false },
-      { domain: 'fluorescence', class_id: 'group2',  label: 'Ce³⁺ Phosphate', center: 341, range: 13, snr_threshold: 10.0, disabled: false },
-    ];
+    return classWindows.map(({ lo, hi, ...rule }) => ({
+      ...rule,
+      center: (lo + hi) / 2,
+      range: (hi - lo) / 2,
+      disabled: false,
+    }));
   }
 
   let rules: ClassificationRule[] = getDefaults();

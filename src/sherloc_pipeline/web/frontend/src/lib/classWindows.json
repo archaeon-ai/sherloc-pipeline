@@ -1,0 +1,18 @@
+[
+  {"domain": "minerals", "class_id": "olivine", "label": "Olivine", "lo": 810, "hi": 860, "snr_threshold": 3},
+  {"domain": "minerals", "class_id": "phosphate", "label": "Phosphate", "lo": 945, "hi": 980, "snr_threshold": 3},
+  {"domain": "minerals", "class_id": "pyroxene", "label": "Pyroxene", "lo": 980, "hi": 1008, "snr_threshold": 3},
+  {"domain": "minerals", "class_id": "sulf1_v1", "label": "Sulfate ν1", "lo": 1008, "hi": 1020, "snr_threshold": 3},
+  {"domain": "minerals", "class_id": "sulf2_v1", "label": "Sulfate ν1b", "lo": 1020, "hi": 1045, "snr_threshold": 3},
+  {"domain": "minerals", "class_id": "1050", "label": "1050", "lo": 1045, "hi": 1055, "snr_threshold": 3},
+  {"domain": "minerals", "class_id": "lo-carb", "label": "Lo-Carbonate", "lo": 1055, "hi": 1075, "snr_threshold": 3},
+  {"domain": "minerals", "class_id": "hi-carb", "label": "Hi-Carbonate", "lo": 1075, "hi": 1105, "snr_threshold": 3},
+  {"domain": "minerals", "class_id": "sulf_v3", "label": "Sulfate ν3", "lo": 1120, "hi": 1160, "snr_threshold": 3},
+  {"domain": "organics", "class_id": "D_band", "label": "D Band", "lo": 1250, "hi": 1450, "snr_threshold": 2},
+  {"domain": "organics", "class_id": "G_band", "label": "G Band", "lo": 1500, "hi": 1700, "snr_threshold": 2},
+  {"domain": "hydration", "class_id": "OH_stretch", "label": "OH Stretch", "lo": 3000, "hi": 4000, "snr_threshold": 2},
+  {"domain": "fluorescence", "class_id": "group3", "label": "Silicate Defect", "lo": 270, "hi": 295, "snr_threshold": 10},
+  {"domain": "fluorescence", "class_id": "group1a", "label": "Ce³⁺ 1a", "lo": 300, "hi": 307, "snr_threshold": 10},
+  {"domain": "fluorescence", "class_id": "group1b", "label": "Ce³⁺ 1b", "lo": 322, "hi": 329, "snr_threshold": 10},
+  {"domain": "fluorescence", "class_id": "group2", "label": "Ce³⁺ Phosphate", "lo": 329, "hi": 355, "snr_threshold": 10}
+]

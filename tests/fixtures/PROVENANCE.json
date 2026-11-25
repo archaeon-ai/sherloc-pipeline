@@ -163,6 +163,11 @@
       "description": "Frontend TypeScript config"
     },
     {
+      "path": "src/sherloc_pipeline/web/frontend/src/lib/classWindows.json",
+      "category": "metadata",
+      "description": "Default map classification windows (class id, label, window bounds, SNR threshold), equal to the fitter's class rules; no measured values"
+    },
+    {
       "path": "src/sherloc_pipeline/models/schemas/cli_contract.golden.json",
       "category": "metadata",
       "description": "Frozen structural contract (JSON schema + shape fingerprint) of the --json CLI output envelope; generated from the models by cli_contract.py, value-free"
