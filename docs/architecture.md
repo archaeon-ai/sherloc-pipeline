@@ -51,7 +51,7 @@ package). They form three rough layers:
 | `visualization/` | Matplotlib/Plotly figure generation. | `fitting_plots.py`, `spatial.py`, `spectrograms.py`, `preprocessing_plots.py`, `cooccurrence.py`. |
 | `ml_despike/` | ML cosmic-ray detector: frozen manifest (sha256-pinned ONNX), sha256-verified fetch/cache, certified 8-channel featurization, ONNX CPU inference. Behind the `[ml-despike]` extra; never imported by `modz`/`none` paths. | `manifest.py`, `featurize.py`, `artifact.py`, `detector.py`. |
 | `vision/` | ACI image reading (VICAR/PDS3 `.IMG`). | `img_reader.py`. |
-| `data/` | Static algorithmic reference data shipped with the package — tier-agnostic calibration inputs loaded via `importlib.resources`, not per-scan mission data. | `background/` (arm-stowed + fused-silica calibration spectra), `badpix_channels.csv`. |
+| `data/` | Packaged spectral references. The Workbench overlay marks anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) without changing spectral values. | `background/` (arm-stowed and fused-silica calibration spectra), `badpix_channels.csv`. |
 
 The full Pydantic + ORM schema and the Loupe wavelength polynomial
 are in [`docs/schema/UNIFIED_SCHEMA.md`](schema/UNIFIED_SCHEMA.md) and

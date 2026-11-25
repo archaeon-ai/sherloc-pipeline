@@ -671,46 +671,47 @@ does not gain a method selector.
 
 ---
 
-## Web HTTP API — Anomalous channel annotation
+## Web HTTP API — Anomalous pixel overlay
 
 `GET /api/spectra/badpix?region=R1|R2|R3|R123`
 
-Returns the static list of anomalous detector channels for a region view.
-The endpoint requires no scan ID or database access. The overlay marks
-channels without changing spectral values. A marked channel can also carry
-a real mineral signal.
+Returns the anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4)
+within the requested view, sorted by served position. In stowed-arm scans, these
+pixels fell beyond ±3σ far more often than noise would produce. The overlay is
+off by default and marks channels without changing spectral values.
 
-`region` defaults to `R1`; an invalid region returns **400** (matching the
-spectra endpoints' invalid-region contract). `schema_version` stays `1.0.0`
-(additive endpoint).
+The endpoint requires no scan ID or database access. The default region is
+`R1`. An invalid region returns HTTP 400.
 
 ### Response
 
+Example showing the first R1 item:
+
 ```json
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "region": "R1",
   "n_channels": 523,
   "badpix": [
-    { "position": 2, "channel": 54, "tier": 1, "source": "dark_veto" }
+    { "position": 54, "channel": 106, "table": "S3" }
   ]
 }
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
-| `region` | str | the requested region view |
-| `n_channels` | int | length of the served array for that region |
-| `badpix[].position` | int | **0-based position into the served `wavenumber`/`intensity` arrays** for this region — the same coordinate system as `masked_positions`, so a marker at `position` lands on `wavenumber[position]`. For `R123` the served array is the full 2148-channel stitch, so `position == channel` |
-| `badpix[].channel` | int | absolute CCD channel index, `0..2147` |
-| `badpix[].tier` | int | `1` for channels flagged by this pipeline's dark-frame test. The paper lists the 11 tier `2` channels and the test did not flag them. |
-| `badpix[].source` | str | `dark_veto` for the pipeline's dark-frame test alone, `jb25` for the published list of anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) alone, or `both` for channels identified by both sources. |
+| `schema_version` | str | `2.0.0` for this response |
+| `region` | str | Requested region view |
+| `n_channels` | int | Length of the served array for the region |
+| `badpix[].position` | int | 0-based position in the served array. For the full R123 view, `position == channel`. |
+| `badpix[].channel` | int | Absolute 0-based CCD channel index, 0..2147 |
+| `badpix[].table` | str | Supplemental table listing the pixel. S3 covers R1 Raman and S4 covers R2 and R3 fluorescence. |
 
-Channels outside the requested region's served selection are omitted (e.g. an
-R2 channel is not returned for a `region=R1` view). The list is sorted by
-served position. The frontend fetches it once per region view (cached
-client-side) and renders it as a separate, default-OFF overlay with a distinct
-glyph (hollow blue diamonds) from the red-triangle ML/modz spike markers.
+Jakubek, R.S. et al. (2025), Spectral Background Calibration of Scanning Habitable
+Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC)
+Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous
+Martian Spectral Component, *Appl. Spectrosc.* 79(6), 904–918,
+[doi:10.1177/00037028241280081](https://doi.org/10.1177/00037028241280081).
 
 ---
 

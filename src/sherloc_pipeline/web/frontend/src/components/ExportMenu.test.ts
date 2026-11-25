@@ -125,12 +125,11 @@ describe('ExportMenu CSV badpix column (issue #9)', () => {
     const csv = await exportCsv({
       stage: 'raw',
       badpix: [
-        { position: 0, tier: 1, source: 'g5_eps' },
-        { position: 2, tier: 2, source: 'jb25' },
+        { position: 0, channel: 106, table: 'S3' },
+        { position: 2, channel: 640, table: 'S4' },
       ],
     });
-    // Provenance header records the annotation source set (sorted, de-duped).
-    expect(csv).toContain('# badpix_source: g5_eps,jb25');
+    expect(csv.split('\n')).toContain('# badpix_source: Jakubek et al. 2025, Supplemental Tables S3 and S4, doi:10.1177/00037028241280081');
     const header = csv.split('\n').find((l) => l.startsWith('wavenumber'));
     expect(header).toContain('badpix');
     // 0/1 per served row: positions 0 and 2 flagged, position 1 clear.
@@ -143,7 +142,7 @@ describe('ExportMenu CSV badpix column (issue #9)', () => {
       stage: 'raw',
       spikeMask: [true, false, false],
       spikeMethod: 'ml',
-      badpix: [{ position: 2, tier: 1, source: 'both' }],
+      badpix: [{ position: 2, channel: 160, table: 'S3' }],
     });
     const header = csv.split('\n').find((l) => l.startsWith('wavenumber'))!.split(',');
     expect(header).toContain('spike_mask');
@@ -232,7 +231,7 @@ it('exports badpix positions against wavelength-only intensity rows', async () =
     trace: { wavelength: [281, 301, 321], wavenumber: [], intensity: [3, 5, 7], channel_indices: [0, 1, 2],
       source: { scan_id: 'synthetic' }, selection: { mode: 'average' },
       provenance: { calibration_version: null, wavenumber_unit: null, wavelength_unit: 'nm', intensity_unit: 'synthetic' } },
-    badpix: [{ position: 1, tier: 1, source: 'synthetic' }] });
+    badpix: [{ position: 1, channel: 1, table: 'S4' }] });
   const rows = csv.split('\n').filter(line => line && !line.startsWith('#'));
   const index = rows[0].split(',').indexOf('badpix');
   expect(rows.slice(1).map(row => row.split(',')[index])).toEqual(['0', '1', '0']);

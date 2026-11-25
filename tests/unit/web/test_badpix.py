@@ -1,26 +1,11 @@
-"""``GET /api/spectra/badpix`` anomalous channel annotation layer.
-
-The endpoint serves a static list of anomalous detector
-channels, mapped to positions INTO the served array for a region view. It is
-an annotation surface only — wholly separate from cosmic-ray despiking, with
-no DB involvement. These tests pin:
-
-- position-mapping correctness per region: a known channel maps to the served
-  position whose wavenumber matches the absolute channel's wavenumber;
-- channel 137 (1086.7 cm-1) is absent from the R1 table;
-- R123 identity (full-stitch served array → position == channel);
-- per-region item set matches the curated table restricted to that region;
-- response shape ({position, channel, tier, source}) + tier/source domains;
-- invalid region → 400 (matches the spectra endpoints' contract);
-- additive only — ``schema_version`` stays ``1.0.0``; no scan/DB needed.
-"""
+"""Display annotations served by GET /api/spectra/badpix."""
 
 import numpy as np
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from sherloc_pipeline.core.badpix import VALID_BADPIX_SOURCES, load_badpix_channels
+from sherloc_pipeline.core.badpix import _parse_badpix_csv, load_badpix_channels
 from sherloc_pipeline.core.calibration import (
     calculate_loupe_wavelength_wavenumber,
     get_region_wavelength_mask,
@@ -28,11 +13,26 @@ from sherloc_pipeline.core.calibration import (
 from tests.unit.web.conftest import _FakeConfig
 
 N_CHANNELS = 2148
-# Channel 137 (1086.7 cm-1) is not in the table.
-CARBONATE_APEX_CHANNEL = 137
-# This pipeline's dark-frame test flagged R1 channel 160 (~1307.1 cm-1).
-# Jakubek et al. 2025 list this anomalous pixel in Supplemental Table S3.
-KEPT_R1_DEFECT_CHANNEL = 160
+S3 = {106, 108, 125, 160, 174, 178, 256, 337, 361, 373, 393, 426, 442, 470, 473}
+S4 = {
+    640, 641, 689, 995, 996, 1070, 1106, 1133, 1134, 1330, 1456, 1505, 1506,
+    1615, 1651, 1743, 1775, 1780, 1864, 1877, 2091,
+}
+
+
+def test_published_channels_and_tables():
+    records = load_badpix_channels()
+    assert [r.channel for r in records] == sorted(S3 | S4)
+    assert {r.channel for r in records if r.table == "S3"} == S3
+    assert {r.channel for r in records if r.table == "S4"} == S4
+
+
+@pytest.mark.parametrize("rows", [
+    "160,S5", "-1,S3", "2148,S4", "160,S3\n160,S4", "x,S3", "160", "160,S3,extra",
+], ids=["table", "negative", "upper-bound", "duplicate", "noninteger", "short", "long"])
+def test_malformed_row_raises(rows):
+    with pytest.raises(ValueError):
+        _parse_badpix_csv("channel,table\n" + rows)
 
 
 def _selection(region: str) -> np.ndarray:
@@ -41,18 +41,6 @@ def _selection(region: str) -> np.ndarray:
     if region == "R123":
         return np.arange(N_CHANNELS)
     return np.where(get_region_wavelength_mask(wavelength, region))[0]
-
-
-def _served_position(region: str, abs_channel: int) -> int:
-    sel = _selection(region)
-    return int(np.where(sel == abs_channel)[0][0])
-
-
-def _served_wavenumber(region: str) -> np.ndarray:
-    wavelength, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=N_CHANNELS)
-    if region == "R123":
-        return wavenumber
-    return wavenumber[get_region_wavelength_mask(wavelength, region)]
 
 
 @pytest_asyncio.fixture()
@@ -76,34 +64,22 @@ async def client(monkeypatch):
     _reset_validator_for_tests()
 
 
-# ---------------------------------------------------------------------------
-# (a) position-mapping correctness per region
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_r1_channel_137_not_badpix(client):
-    """Channel 137 is absent from the list of anomalous R1 channels."""
     data = (await client.get("/api/spectra/badpix", params={"region": "R1"})).json()
-    apex = [it for it in data["badpix"] if it["channel"] == CARBONATE_APEX_CHANNEL]
-    assert apex == [], "carbonate apex 137 is real signal, must NOT be in the badpix list"
+    assert 137 not in {it["channel"] for it in data["badpix"]}
 
 
 @pytest.mark.asyncio
 async def test_r1_position_and_wavenumber_mapping(client):
-    """A known channel maps to the served position whose wavenumber matches the
-    absolute channel's wavenumber. R1's served selection starts mid-detector, so
-    position != channel."""
+    """Channel 160 is the most frequent anomalous pixel in the paper."""
     _, wavenumber = calculate_loupe_wavelength_wavenumber(n_channels=N_CHANNELS)
+    channels = _selection("R1")
     data = (await client.get("/api/spectra/badpix", params={"region": "R1"})).json()
-    rec = [it for it in data["badpix"] if it["channel"] == KEPT_R1_DEFECT_CHANNEL]
-    assert len(rec) == 1, "expected the kept R1 defect channel in the list"
-    rec = rec[0]
-    expected_pos = _served_position("R1", KEPT_R1_DEFECT_CHANNEL)
-    assert rec["position"] == expected_pos
-    assert rec["position"] != rec["channel"]
-    full_wn = _served_wavenumber("R1")
-    assert abs(full_wn[expected_pos] - wavenumber[KEPT_R1_DEFECT_CHANNEL]) < 0.01
+    rec = next(it for it in data["badpix"] if it["channel"] == 160)
+    assert rec["table"] == "S3"
+    assert rec["position"] != 160
+    assert wavenumber[channels][rec["position"]] == wavenumber[160]
 
 
 @pytest.mark.parametrize("region", ["R1", "R2", "R3"])
@@ -112,28 +88,14 @@ async def test_positions_match_served_selection(client, region):
     """Every returned position is the served index of its absolute channel."""
     data = (await client.get("/api/spectra/badpix", params={"region": region})).json()
     assert data["region"] == region
-    for it in data["badpix"]:
-        assert it["position"] == _served_position(region, it["channel"])
-    # positions are sorted + within the served array bounds.
-    positions = [it["position"] for it in data["badpix"]]
-    assert positions == sorted(positions)
-    assert all(0 <= p < data["n_channels"] for p in positions)
-
-
-@pytest.mark.asyncio
-async def test_per_region_item_set_matches_curated_table(client):
-    """The endpoint returns exactly the curated channels that fall in-region."""
-    recs = load_badpix_channels()
-    for region in ("R1", "R2", "R3"):
-        in_region = sorted(r.channel for r in recs if r.region == region)
-        data = (await client.get("/api/spectra/badpix", params={"region": region})).json()
-        got = sorted(it["channel"] for it in data["badpix"])
-        assert got == in_region
-
-
-# ---------------------------------------------------------------------------
-# (b) R123 composite — positions equal absolute channels (full-stitch identity)
-# ---------------------------------------------------------------------------
+    channels = _selection(region)
+    published = S3 if region == "R1" else S4
+    expected_table = "S3" if region == "R1" else "S4"
+    assert data["n_channels"] == len(channels)
+    assert data["badpix"] == [
+        {"position": pos, "channel": int(channel), "table": expected_table}
+        for pos, channel in enumerate(channels) if channel in published
+    ]
 
 
 @pytest.mark.asyncio
@@ -141,26 +103,16 @@ async def test_r123_identity_and_full_table(client):
     data = (await client.get("/api/spectra/badpix", params={"region": "R123"})).json()
     assert data["region"] == "R123"
     assert data["n_channels"] == N_CHANNELS
-    # R123 serves the full 2148-channel stitch → position == channel, and ALL
-    # curated channels (every region) are returned.
-    assert len(data["badpix"]) == len(load_badpix_channels())
-    for it in data["badpix"]:
-        assert it["position"] == it["channel"]
-
-
-# ---------------------------------------------------------------------------
-# (c) response shape + value domains
-# ---------------------------------------------------------------------------
+    assert [it["position"] for it in data["badpix"]] == sorted(S3 | S4)
+    assert all(it["position"] == it["channel"] for it in data["badpix"])
 
 
 @pytest.mark.asyncio
 async def test_item_shape_and_domains(client):
     data = (await client.get("/api/spectra/badpix", params={"region": "R123"})).json()
-    assert set(data["badpix"][0].keys()) == {"position", "channel", "tier", "source"}
     for it in data["badpix"]:
-        assert it["tier"] in (1, 2)
-        assert it["source"] in VALID_BADPIX_SOURCES
-        assert 0 <= it["channel"] < N_CHANNELS
+        assert set(it) == {"position", "channel", "table"}
+        assert it["table"] == ("S3" if it["channel"] in S3 else "S4")
 
 
 @pytest.mark.asyncio
@@ -168,11 +120,6 @@ async def test_default_region_is_r1(client):
     """Omitting ``region`` defaults to R1 (matches the spectra endpoints)."""
     data = (await client.get("/api/spectra/badpix")).json()
     assert data["region"] == "R1"
-
-
-# ---------------------------------------------------------------------------
-# (d) invalid region + additive schema version
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("region", ["R4", "raman", "", "r1"])
@@ -183,14 +130,9 @@ async def test_invalid_region_400(client, region):
 
 
 @pytest.mark.asyncio
-async def test_schema_version_unchanged(client):
+async def test_badpix_schema_version(client):
     data = (await client.get("/api/spectra/badpix", params={"region": "R1"})).json()
-    assert data["schema_version"] == "1.0.0"
-
-
-# ---------------------------------------------------------------------------
-# (e) does NOT interact with despike — no scan, no DB needed to serve it
-# ---------------------------------------------------------------------------
+    assert data["schema_version"] == "2.0.0"
 
 
 @pytest.mark.asyncio

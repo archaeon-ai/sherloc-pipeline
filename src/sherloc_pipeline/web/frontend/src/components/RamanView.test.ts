@@ -13,6 +13,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import type { BadpixChannel } from '../lib/types';
+import badpixCsv from '../../../../data/badpix_channels.csv?raw';
 
 // Spy that captures every Plotly.react call (the component re-runs
 // renderPlot on toggle changes via afterUpdate).
@@ -373,10 +375,26 @@ describe('RamanView — ML/modz spike-marker provenance label (issue #8)', () =>
 describe('RamanView — anomalous pixel annotation overlay', () => {
   const wavenumber = Array.from({ length: 100 }, (_, i) => 640 + i * 10);
   const intensity = wavenumber.map((wn) => Math.exp(-((wn - 1016) ** 2) / 5000));
-  const badpix = [
-    { position: 12, tier: 1, source: 'g5_eps' },
-    { position: 50, tier: 2, source: 'jb25' },
+  const badpix: BadpixChannel[] = [
+    { position: 12, channel: 106, table: 'S3' },
+    { position: 50, channel: 160, table: 'S3' },
   ];
+
+  it('marks all 36 published channels on the full R123 view', async () => {
+    const rows = badpixCsv.trim().split('\n').filter(line => !line.startsWith('#'));
+    const catalog = rows.slice(1).map(row => {
+      const [channel, table] = row.split(',');
+      if (table !== 'S3' && table !== 'S4') throw new Error(`Invalid table in ${row}`);
+      return { position: Number(channel), channel: Number(channel), table };
+    }) satisfies BadpixChannel[];
+    const axis = Array.from({ length: 2148 }, (_, i) => i);
+    render(RamanView, { region: 'R123', wavenumber: axis, intensity: axis,
+      badpix: catalog, showBadpix: true });
+    await flush();
+    const trace = badpixTrace();
+    expect(trace?.x).toHaveLength(36);
+    expect(trace?.x).toEqual(catalog.map(item => item.channel));
+  });
 
   it('default-OFF: no badpix trace until the toggle is enabled', async () => {
     render(RamanView, {
@@ -396,9 +414,10 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
     await flush();
     const trace = badpixTrace();
     expect(trace, 'expected an anomalous pixel marker trace').toBeDefined();
-    expect(trace?.name).toBe('Anomalous pixels (2)');
+    expect(trace?.name).toBe('Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 2');
     // Markers sit at the annotated served positions.
     expect(trace?.x).toEqual([wavenumber[12], wavenumber[50]]);
+    expect(trace).toMatchObject({ customdata: [[106, 'S3'], [160, 'S3']] });
     // Distinct glyph + color from the filled red triangle spike markers.
     expect(trace?.marker?.symbol).toBe('diamond-open');
     expect(trace?.marker?.color).toBe('#0369a1');
@@ -459,12 +478,12 @@ describe('RamanView — anomalous pixel annotation overlay', () => {
 it.each([false, true])('renders R2 channel annotations on the active wavelength axis (desk=%s)', async evidenceDesk => {
   render(RamanView, { evidenceDesk, region: 'R2', wavenumber: [800, 900, 1000], wavelength: [285, 305, 325],
     intensity: [1, 2, 3], spikeMask: [false, true, false], spikeMethod: 'ml',
-    badpix: [{ position: 2, tier: 1, source: 'synthetic-noisy' }], showBadpix: true,
+    badpix: [{ position: 2, channel: 640, table: 'S4' }], showBadpix: true,
     stage: 'raman_fitted', baseline: [1, 1, 1], fitCurve: [2, 2, 2], residual: [0, 0, 0], showResidual: true });
   await flush();
   const [, traces, layout] = reactSpy.mock.calls.at(-1)!;
   expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)')).toMatchObject({ x: [305], y: [2] });
-  expect(traces.find((trace: { name: string }) => trace.name === 'Anomalous pixels (1)')).toMatchObject({ x: [325], y: [3] });
+  expect(traces.find((trace: { name: string }) => trace.name === 'Anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4) · 1')).toMatchObject({ x: [325], y: [3] });
   expect(traces.find((trace: { name: string }) => trace.name === 'ML-masked (1)').hovertemplate).toContain('nm');
   expect(Boolean(traces.find((trace: { name: string }) => trace.name === 'fit'))).toBe(!evidenceDesk);
   if (!evidenceDesk) { expect(layout.xaxis2.range).toEqual([640, 4200]); expect(layout.xaxis2.autorange).toBe(false); }

@@ -1,14 +1,6 @@
-"""Anomalous detector channels for the optional spectral annotation overlay.
+"""Display annotations for anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4).
 
-The web layer reads absolute CCD channel indices from
-``sherloc_pipeline/data/badpix_channels.csv``. The overlay marks listed
-channels without changing spectral values or the cosmic-ray despiking mask.
-
-This pipeline's dark-frame test flagged the tier 1 channels. Their source is
-``dark_veto`` for the test alone or ``both`` for channels also in the list of
-anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4).
-The paper lists the 11 tier 2 channels (``jb25``) and the dark-frame test
-did not flag them.
+The overlay marks absolute CCD channels without changing spectral values.
 """
 
 from __future__ import annotations
@@ -16,51 +8,39 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import List, Tuple
-
-#: Allowed ``source`` attribution values in the curated asset.
-VALID_BADPIX_SOURCES = {"dark_veto", "jb25", "both", "g5_eps"}
 
 
 @dataclass(frozen=True)
 class BadpixChannel:
-    """One anomalous detector channel.
+    """Absolute 0-based CCD index and the supplemental table that lists it."""
 
-    ``channel`` is the absolute 0-based CCD channel index (0..2147); the web
-    layer maps it to a served-array position for the requested region view.
-    """
-
-    region: str
     channel: int
-    tier: int
-    source: str
+    table: str
 
 
-def _parse_badpix_csv(text: str) -> Tuple[BadpixChannel, ...]:
-    """Parse the curated CSV text into immutable records.
+def _parse_badpix_csv(text: str) -> tuple[BadpixChannel, ...]:
+    """Read channel and table pairs, rejecting malformed or repeated entries."""
+    rows = csv.reader(line for line in text.splitlines() if line and not line.startswith("#"))
+    if next(rows, None) != ["channel", "table"]:
+        raise ValueError("Expected channel,table header")
 
-    ``#``-prefixed provenance header lines are skipped; the first
-    non-comment line is the column header (``region,channel,tier,source``).
-    Returns a tuple (immutable, so the module-level cache cannot be mutated by
-    a caller).
-    """
-    data_lines = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
-    reader = csv.DictReader(data_lines)
-    records: List[BadpixChannel] = []
-    for row in reader:
-        records.append(
-            BadpixChannel(
-                region=row["region"].strip(),
-                channel=int(row["channel"]),
-                tier=int(row["tier"]),
-                source=row["source"].strip(),
-            )
-        )
+    records = []
+    seen = set()
+    for value, table in rows:
+        channel = int(value)
+        if not 0 <= channel <= 2147:
+            raise ValueError(f"CCD channel out of range: {channel}")
+        if table not in {"S3", "S4"}:
+            raise ValueError(f"Invalid supplemental table for channel {channel}: {table!r}")
+        if channel in seen:
+            raise ValueError(f"Duplicate CCD channel: {channel}")
+        seen.add(channel)
+        records.append(BadpixChannel(channel, table))
     return tuple(records)
 
 
 @lru_cache(maxsize=1)
-def load_badpix_channels() -> Tuple[BadpixChannel, ...]:
+def load_badpix_channels() -> tuple[BadpixChannel, ...]:
     """Return the anomalous channel records (parsed once, cached).
 
     The asset never changes at runtime, so the parse is memoized for the

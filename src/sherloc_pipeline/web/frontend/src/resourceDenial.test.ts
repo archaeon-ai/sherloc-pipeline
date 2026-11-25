@@ -25,7 +25,7 @@ it.each(['resource', 'tier', 'authentication'])('handles a bookmarked scan %s de
   let refuse!: () => void;
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.startsWith('/api/spectra/badpix')) {
-      return new Response(JSON.stringify({ schema_version: '1.0.0', region: 'R1', n_channels: 0, badpix: [] }));
+      return new Response(JSON.stringify({ schema_version: '2.0.0', region: 'R1', n_channels: 0, badpix: [] }));
     }
     if (url === '/api/scans/synthetic-scan') {
       await new Promise<void>((resolve) => { refuse = resolve; });

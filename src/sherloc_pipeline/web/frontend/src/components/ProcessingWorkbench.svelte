@@ -992,8 +992,9 @@
       </div>
       <div class="ref-section">
         <b>2. Background subtraction</b> — This pipeline’s stowed-arm correction subtracts a trimmed-mean reference. Its automatic scale factor is the number of shots per spectrum divided by 900.
-        Jakubek et al. describe the instrument background in stowed-arm scans and list anomalous pixels in Supplemental Tables S3 and S4. Their subtraction uses the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting.
-        <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79, 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
+        Jakubek et al. subtract the median of all stowed-arm spectra with a scale factor for each pulses-per-point setting.
+        The overlay marks anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4). These pixels fell beyond ±3σ in stowed-arm scans far more often than noise would produce.
+        <div class="ref-cite">Jakubek, R.S. et al. (2025). Spectral Background Calibration of Scanning Habitable Environments with Raman and Luminescence for Organics and Chemicals (SHERLOC) Spectrometer Onboard the Perseverance Rover Enables Identification of a Ubiquitous Martian Spectral Component. <i>Appl. Spectrosc.</i>, 79(6), 904–918. <a href="https://doi.org/10.1177/00037028241280081" target="_blank">doi:10.1177/00037028241280081</a></div>
       </div>
       <div class="ref-section">
         <b>3. Baseline</b> — Adaptive smoothness penalized least squares (asPLS)

@@ -191,14 +191,15 @@ describe('shared processing chain', () => {
     processed.stage = 'raman_fitted'; processed.params = { synthetic_fit: true };
     processed.processingChain = [{ step: 'despike', method: 'modz' }, { step: 'raman_fit', n_peaks: 1 }];
     processed.artifacts = { baseline: [0, 0, 0], fitCurve: [1, 1, 1] } as ProcessingSnapshot['artifacts'];
-    const own = evidenceTrace(processed, { spike_mask: [true, false, false], spike_method: 'modz', badpix: [1] })!;
+    const badpix = [{ position: 1, channel: 1, table: 'S3' }];
+    const own = evidenceTrace(processed, { spike_mask: [true, false, false], spike_method: 'modz', badpix })!;
     const derived = derivedTrace(own, chain, { ...outcome, derived_from: own.id })!;
     expect(derived.snapshot).not.toHaveProperty('artifacts');
     expect(derived.snapshot.params).toEqual({});
-    expect(derived.annotations).toEqual({ spike_mask: null, spike_method: null, badpix: [1] });
+    expect(derived.annotations).toEqual({ spike_mask: null, spike_method: null, badpix });
     expect(derived.derived!.original_processing_chain).toEqual(processed.processingChain);
     const despiked = derivedTrace(own, chain, { ...outcome, derived_from: own.id, spike_mask: [false, true, false] })!;
-    expect(despiked.annotations).toEqual({ spike_mask: [false, true, false], spike_method: 'modz', badpix: [1] });
+    expect(despiked.annotations).toEqual({ spike_mask: [false, true, false], spike_method: 'modz', badpix });
     const ml = evidenceTrace(snapshot(2), { spike_mask: [false, false, true], spike_method: 'ml', badpix: null })!;
     expect(derivedTrace(ml, chain, { ...outcome, derived_from: ml.id })!.annotations).toEqual(ml.annotations);
   });

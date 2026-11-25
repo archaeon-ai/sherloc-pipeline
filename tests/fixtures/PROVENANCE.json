@@ -115,9 +115,9 @@
     },
     {
       "path": "src/sherloc_pipeline/data/badpix_channels.csv",
-      "category": "operator-derived-archived",
+      "category": "metadata",
       "instrument": "sherloc",
-      "description": "Absolute CCD channel indices, tiers and sources for the annotation overlay served by GET /api/spectra/badpix. The table combines this pipeline's 2026-06-17 dark-frame test on archived mission frames with the list of anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4). The packaged CSV contains no measurement values."
+      "description": "Absolute CCD indices and table identifiers for anomalous pixels (Jakubek et al. 2025, Supplemental Tables S3 and S4), doi:10.1177/00037028241280081. Display annotations only."
     },
     {
       "path": "docs/img/map-mode.png",
