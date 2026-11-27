@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ACI image downloads from the PDS archive now keep a response only if it is an image file. The
+  body must start with a VICAR or PDS3 label, must not declare a text or HTML content type, and
+  must match its declared length. Before, any HTTP 200 response was saved under the `.IMG` name,
+  including an archive error page, and was never fetched again. A cached ACI file that is not an
+  image file is now deleted and fetched again.
+
 - **The downgrade of `4f638701cf7c` keeps both `fit_modality` triggers.**
 
 ## [6.0.1] - 2026-11-25
