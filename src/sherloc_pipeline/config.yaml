@@ -100,7 +100,8 @@ fitting:
   slit_pref_weight: 0.2               # soft bias toward slit width in objective/sorting
   low_fwhm_edge_penalty: 0.1          # penalty term weight for FWHM near lower bound
   max_peaks: 5
-  min_snr: 3.0
+  min_snr: 3.0                      # pass_snr flag, accepted-peaks files and the default display threshold
+  store_min_snr: 3.0                # SNR a component needs to be stored in fitted_peaks (all Raman domains)
   min_seed_snr: 2.0                 # do not seed peaks below this SNR
   min_display_snr: 2.0              # do not plot/report components below this SNR
   r_squared_min: 0.0                # no point-R2 bar on pass_r2; posthoc_filters.r2_min (R2 > 0) still gates persistence

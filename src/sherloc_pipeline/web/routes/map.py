@@ -31,6 +31,7 @@ from sherloc_pipeline.database.models import (
     SpectrumORM,
 )
 from sherloc_pipeline.web.data_access import DataAccessService
+from sherloc_pipeline.web.peak_display import display_min_snr, shown_peak_clause
 from sherloc_pipeline.web.r2_reader import (
     colorized_variant_exists,
     get_working_file,
@@ -144,6 +145,8 @@ def get_map_layers(request: Request, scan_id: str) -> MapLayersResponse:
         .join(SpectrumORM, SpectrumORM.id == FittedPeakORM.spectrum_id)
         .join(ScanPointORM, ScanPointORM.id == SpectrumORM.scan_point_id)
         .filter(ScanPointORM.scan_id == scan_id)
+        # Raman components stored below the display threshold make no layer.
+        .filter(shown_peak_clause(display_min_snr(getattr(request.app.state, "config", None))))
         .all()
     )
 

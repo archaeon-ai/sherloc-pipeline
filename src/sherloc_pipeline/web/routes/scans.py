@@ -26,6 +26,7 @@ from sherloc_pipeline.web.adapters import (
     scan_orm_to_list_item,
 )
 from sherloc_pipeline.web.data_access import DataAccessService
+from sherloc_pipeline.web.peak_display import display_min_snr, shown_peak_clause
 from sherloc_pipeline.web.r2_reader import (
     colorized_variant_exists,
     get_working_file,
@@ -41,8 +42,11 @@ from sherloc_pipeline.web.schemas import (
 logger = logging.getLogger(__name__)
 
 
-def _has_fitted_peaks_expr(scan_id=ScanORM.id):
-    """Correlated EXISTS: the scan has at least one fitted_peaks row.
+def _has_fitted_peaks_expr(min_snr: float, scan_id=ScanORM.id):
+    """Correlated EXISTS: the scan has at least one shown fitted_peaks row.
+
+    A Raman component stored below the display threshold ``min_snr`` does not count
+    (``peak_display.shown_peak_clause``).
 
     fitted_peaks -> spectra -> scan_points -> scans. Derived at read time
     because ``scans.processing_status`` is written only by runs since the
@@ -55,6 +59,7 @@ def _has_fitted_peaks_expr(scan_id=ScanORM.id):
         .join(SpectrumORM, FittedPeakORM.spectrum_id == SpectrumORM.id)
         .join(ScanPointORM, SpectrumORM.scan_point_id == ScanPointORM.id)
         .where(ScanPointORM.scan_id == scan_id)
+        .where(shown_peak_clause(min_snr))
         .exists()
     )
 
@@ -165,7 +170,7 @@ def list_scans(
         else:
             q = q.filter(ScanORM.processing_status == processing_status)
     if has_fitted_peaks is not None:
-        fitted = _has_fitted_peaks_expr()
+        fitted = _has_fitted_peaks_expr(display_min_snr(getattr(request.app.state, "config", None)))
         q = q.filter(fitted if has_fitted_peaks else ~fitted)
 
     total = q.count()
@@ -193,7 +198,7 @@ def list_scans(
 
     # The fit status rides along in the same SELECT (no per-scan query).
     rows = (
-        q.add_columns(_has_fitted_peaks_expr().label("has_fitted_peaks"))
+        q.add_columns(_has_fitted_peaks_expr(display_min_snr(getattr(request.app.state, "config", None))).label("has_fitted_peaks"))
         .order_by(*order_columns)
         .offset(offset)
         .limit(limit)
@@ -233,7 +238,8 @@ def get_scan(request: Request, scan_id: str) -> ScanDetailResponse:
     data_access = _get_data_access(request)
     data_access.validate_scan_access(scan)
 
-    has_fits = session.query(_has_fitted_peaks_expr(scan_id)).scalar()
+    has_fits = session.query(_has_fitted_peaks_expr(
+        display_min_snr(getattr(request.app.state, "config", None)), scan_id)).scalar()
     detail = scan_orm_to_detail(scan, has_fitted_peaks=bool(has_fits))
     if data_access.is_public:
         # Linked scans can be team-tier; raw error text can contain internal locations.

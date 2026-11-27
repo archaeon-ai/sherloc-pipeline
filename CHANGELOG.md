@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `fitting.store_min_snr` sets the SNR a Raman component (minerals, organics, hydration) needs to
+  be stored in `fitted_peaks`, apart from `fitting.min_snr`, which keeps setting the `pass_snr`
+  flag, the accepted-peaks files and what the web views count as a shown peak. Both are 3.0 in
+  the bundled configuration, so the stored rows, the accepted-peaks files and the views are
+  unchanged. The bundled configuration hash changes.
+- `sherloc persist-peaks --store-min-snr <value>` re-stores a domain's components from the existing
+  per-point peak tables at another floor, without refitting. The tables hold components down to
+  `fitting.min_display_snr` (2.0). The FWHM gate is unchanged.
+
+### Changed
+
+- The scan list's `has_fitted_peaks` and the map's layers count a stored Raman component only when
+  its SNR is at least `fitting.min_snr`. Rows of other modalities and rows without an SNR count as
+  before. With the bundled settings every stored Raman component is counted, as before.
+
 ## [7.0.0] - 2026-11-27
 
 ### Upgrade notes

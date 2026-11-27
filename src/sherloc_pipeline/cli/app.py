@@ -15,6 +15,7 @@ Provides commands:
 """
 
 import json
+import math
 import os
 import re
 import time
@@ -2445,6 +2446,12 @@ def persist_peaks_cmd(
     ),
     data_dir: Optional[Path] = typer.Option(None, "--data-dir", help="Data directory (defaults to config)"),
     results_dir: Optional[Path] = typer.Option(None, "--results-dir", help="Results directory (defaults to config)"),
+    store_min_snr: Optional[float] = typer.Option(
+        None, "--store-min-snr",
+        help="SNR a component needs to be stored, for this run (default: fitting.store_min_snr). "
+             "Re-stores from the existing per-point peak tables without refitting; components below "
+             "the fit's own floor (fitting.min_display_snr) are not in those tables.",
+    ),
 ):
     """Persist Raman peak CSVs to the database for a specific domain.
 
@@ -2487,6 +2494,9 @@ def persist_peaks_cmd(
                 "or use --all[/red]"
             )
             raise typer.Exit(code=1)
+        if store_min_snr is not None and not (math.isfinite(store_min_snr) and store_min_snr >= 0):
+            console.print(f"[red]--store-min-snr must be a finite number >= 0, got {store_min_snr}[/red]")
+            raise typer.Exit(code=1)
 
         db_path = database or Path("./phase.db")
         if not db_path.exists():
@@ -2520,6 +2530,7 @@ def persist_peaks_cmd(
                             data_dir=data_dir,
                             results_dir=results_dir,
                             scan_id=scan_row_id,
+                            store_min_snr=store_min_snr,
                         )
                         total_peaks += (result.metadata or {}).get("peaks_inserted", 0)
                     except Exception as e:
@@ -2554,6 +2565,7 @@ def persist_peaks_cmd(
             result = service.persist_raman_peaks(
                 sol=sol, target=target, scan=scan, domain=domain,
                 data_dir=data_dir, results_dir=results_dir, scan_id=scan_row_id,
+                store_min_snr=store_min_snr,
             )
             if json_mode:
                 import json as json_mod
