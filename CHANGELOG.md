@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- ACI image downloads from the PDS archive now keep a response only if it is an image file. The
+  body must start with a VICAR or PDS3 label, must not declare a text or HTML content type, and
+  must match its declared length. Before, any HTTP 200 response was saved under the `.IMG` name,
+  including an archive error page, and was never fetched again. A cached ACI file that is not an
+  image file is now deleted and fetched again.
+
 ### Changed
 
 - Batch hydration now measures noise at each point from 2000–2100 cm⁻¹ after subtracting a

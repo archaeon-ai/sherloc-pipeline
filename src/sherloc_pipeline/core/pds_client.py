@@ -65,6 +65,23 @@ def _require_httpx() -> Any:
     return httpx
 
 
+#: Bytes read from the start of a file to recognize an image label.
+_IMG_HEADER_BYTES = 100
+
+
+def _starts_like_img(head: bytes) -> bool:
+    """True if ``head`` opens a VICAR or PDS3/ODL label.
+
+    Uses the same markers as
+    :func:`sherloc_pipeline.vision.img_reader.detect_img_format`.
+    """
+    return (
+        b"LBLSIZE=" in head
+        or b"ODL_VERSION_ID" in head
+        or b"PDS_VERSION_ID" in head
+    )
+
+
 class PDSDownloadError(RuntimeError):
     """Error during PDS data download."""
 
@@ -380,20 +397,34 @@ class PDSDownloader:
     def download_aci_image(self, url: str, dest: Path) -> bool:
         """Download a single ACI image file.
 
-        Skips the download if ``dest`` already exists and has size > 0.
-        Downloads to a temporary file first, then renames atomically.
+        Keeps an existing ``dest`` only if it starts like an image file
+        (VICAR or PDS3 label); otherwise it is deleted and fetched again.
+        A response is written only if it is HTTP 200, does not declare a
+        text or HTML content type, matches its ``Content-Length`` when one
+        is given, and starts like an image file. An archive error page
+        served with HTTP 200 is therefore refused rather than stored under
+        the ``.IMG`` name. Downloads go to a temporary file first, then
+        are renamed atomically.
 
         Args:
             url: Remote URL of the ACI image (typically a VICAR .IMG).
             dest: Local file path to write to.
 
         Returns:
-            True if the file was downloaded (or already existed),
+            True if a valid image file was downloaded (or already existed),
             False on failure.
         """
         if dest.exists() and dest.stat().st_size > 0:
-            logger.debug("ACI image already cached: %s", dest.name)
-            return True
+            with dest.open("rb") as fh:
+                head = fh.read(_IMG_HEADER_BYTES)
+            if _starts_like_img(head):
+                logger.debug("ACI image already cached: %s", dest.name)
+                return True
+            logger.warning(
+                "Cached ACI file %s is not an image file; fetching it again",
+                dest.name,
+            )
+            dest.unlink()
 
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(".IMG.tmp")
@@ -408,12 +439,39 @@ class PDSDownloader:
                 )
                 return False
 
-            tmp.write_bytes(response.content)
+            content = response.content
+            content_type = response.headers.get("content-type", "").lower()
+            if content_type.startswith("text/"):
+                logger.warning(
+                    "Refused ACI download %s: content type %s",
+                    url,
+                    content_type,
+                )
+                return False
+
+            declared = response.headers.get("content-length")
+            if declared is not None and declared.isdigit() and int(declared) != len(content):
+                logger.warning(
+                    "Refused ACI download %s: %d bytes received, %s declared",
+                    url,
+                    len(content),
+                    declared,
+                )
+                return False
+
+            if not _starts_like_img(content[:_IMG_HEADER_BYTES]):
+                logger.warning(
+                    "Refused ACI download %s: body is not a VICAR or PDS3 image",
+                    url,
+                )
+                return False
+
+            tmp.write_bytes(content)
             tmp.rename(dest)
             logger.debug(
                 "Downloaded ACI image %s (%d bytes)",
                 dest.name,
-                len(response.content),
+                len(content),
             )
             return True
 
