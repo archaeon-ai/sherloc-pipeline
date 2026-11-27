@@ -3667,6 +3667,7 @@ class FittingService:
         raman_modality: str = "minerals",
         raman_assignment_pattern: str = "sulf%",
         fluor_groups: Optional[List[str]] = None,
+        min_snr: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Find scan points with co-occurring Raman and fluorescence detections.
 
@@ -3679,6 +3680,10 @@ class FittingService:
                 (default 'sulf%' for sulfates).
             fluor_groups: Fluorescence group names to match (default
                 ['group1a', 'group1b'] for Ce3+).
+            min_snr: The SNR a stored Raman row needs to count as a detection. None uses
+                ``fitting.min_snr`` (3.0 when absent), the display threshold of the web views;
+                Raman rows are stored down to ``fitting.store_min_snr``. Rows without an SNR
+                count, as in the web views.
 
         Returns:
             List of dicts with scan_point_id, sol_number, target, point_index.
@@ -3688,8 +3693,12 @@ class FittingService:
             FittedPeakORM, SpectrumORM, ScanPointORM, ScanORM,
         )
 
+        from sqlalchemy import or_
+
         if fluor_groups is None:
             fluor_groups = ["group1a", "group1b"]
+        if min_snr is None:
+            min_snr = float((self.context.config.fitting or {}).get("min_snr", 3.0))
 
         if self._database_path is None:
             raise FittingError(
@@ -3709,6 +3718,7 @@ class FittingService:
                 .filter(
                     FittedPeakORM.fit_modality == raman_modality,
                     FittedPeakORM.mineral_assignment.like(raman_assignment_pattern),
+                    or_(FittedPeakORM.snr.is_(None), FittedPeakORM.snr >= min_snr),
                 )
             )
 

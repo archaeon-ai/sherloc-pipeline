@@ -20,8 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The scan list's `has_fitted_peaks` and the map's layers count a stored Raman component only when
-  its SNR is at least `fitting.min_snr`. Rows of other modalities and rows without an SNR count as
+- The scan list's `has_fitted_peaks`, the map's layers and the Raman side of
+  `FittingService.query_co_occurrences` count a stored Raman component only when its SNR is at
+  least `fitting.min_snr`; `query_co_occurrences` takes `min_snr` to set another value. Rows of other modalities and rows without an SNR count as
   before. With the bundled settings every stored Raman component is counted, as before.
 
 ## [7.0.0] - 2026-11-27

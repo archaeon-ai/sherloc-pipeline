@@ -279,6 +279,71 @@ class TestCoOccurrenceQuery:
             assert "point_index" in r
 
 
+def _add_sulfate_ce3_point(engine, point_index, raman_snr):
+    """Add a point to the seeded scan with a sulfate Raman row at ``raman_snr`` and group1a."""
+    with get_session(engine) as session:
+        scan = session.query(ScanORM).filter_by(scan_id="co_occur_test").one()
+        pt_id = str(uuid.uuid4())
+        session.add(ScanPointORM(id=pt_id, scan_id=scan.id, point_index=point_index))
+        session.flush()
+        for region, peak in (
+            ("R1", dict(fit_modality="minerals", center_cm1=1015.0, fwhm_cm1=30.0,
+                        amplitude=400.0, snr=raman_snr, mineral_assignment="sulf1_v1")),
+            ("R2", dict(fit_modality="fluorescence", center_nm=304.1, fwhm_nm=18.0,
+                        amplitude=8000.0, snr=82.0, mineral_assignment="group1a")),
+        ):
+            spec_id = str(uuid.uuid4())
+            session.add(SpectrumORM(
+                id=spec_id, scan_point_id=pt_id, region=region,
+                spectrum_type="dark_subtracted", processing_level="raw", intensities=b"\x00",
+            ))
+            session.flush()
+            session.add(FittedPeakORM(id=str(uuid.uuid4()), spectrum_id=spec_id, **peak))
+        session.commit()
+    return pt_id
+
+
+class TestCoOccurrenceDisplayThreshold:
+    """Raman rows stored below fitting.min_snr (store_min_snr lower) are not detections."""
+
+    def test_raman_row_below_min_snr_is_not_a_detection(self, co_occur_db):
+        engine, scan_point_ids = co_occur_db
+        low = _add_sulfate_ce3_point(engine, 4, raman_snr=2.5)
+        service = _make_service(engine)
+        ids = {r["scan_point_id"] for r in service.query_co_occurrences()}
+        assert ids == {scan_point_ids[0]}
+        assert low not in ids
+
+    def test_lower_min_snr_counts_the_row(self, co_occur_db):
+        engine, scan_point_ids = co_occur_db
+        low = _add_sulfate_ce3_point(engine, 4, raman_snr=2.5)
+        service = _make_service(engine)
+        ids = {r["scan_point_id"] for r in service.query_co_occurrences(min_snr=2.0)}
+        assert ids == {scan_point_ids[0], low}
+
+    def test_row_at_min_snr_counts(self, co_occur_db):
+        engine, _ = co_occur_db
+        at = _add_sulfate_ce3_point(engine, 4, raman_snr=3.0)
+        service = _make_service(engine)
+        ids = {r["scan_point_id"] for r in service.query_co_occurrences(min_snr=3.0)}
+        assert at in ids
+
+    def test_raman_row_without_snr_counts(self, co_occur_db):
+        engine, _ = co_occur_db
+        no_snr = _add_sulfate_ce3_point(engine, 4, raman_snr=None)
+        service = _make_service(engine)
+        ids = {r["scan_point_id"] for r in service.query_co_occurrences()}
+        assert no_snr in ids
+
+    def test_default_is_fitting_min_snr(self, co_occur_db):
+        engine, _ = co_occur_db
+        low = _add_sulfate_ce3_point(engine, 4, raman_snr=2.5)
+        service = _make_service(engine)
+        service.context.config.fitting["min_snr"] = 2.0
+        ids = {r["scan_point_id"] for r in service.query_co_occurrences()}
+        assert low in ids
+
+
 # ---------------------------------------------------------------------------
 # Tests: real database validation (index usage, performance)
 # ---------------------------------------------------------------------------
