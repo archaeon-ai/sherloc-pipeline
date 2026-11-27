@@ -449,8 +449,16 @@ class PDSDownloader:
                 )
                 return False
 
+            # Content-Length counts the bytes on the wire; httpx decodes any
+            # Content-Encoding, so the check applies to unencoded bodies only.
+            encoding = response.headers.get("content-encoding", "identity").strip().lower()
             declared = response.headers.get("content-length")
-            if declared is not None and declared.isdigit() and int(declared) != len(content):
+            if (
+                encoding in ("", "identity")
+                and declared is not None
+                and declared.isdigit()
+                and int(declared) != len(content)
+            ):
                 logger.warning(
                     "Refused ACI download %s: %d bytes received, %s declared",
                     url,

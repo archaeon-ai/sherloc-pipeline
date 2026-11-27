@@ -4,6 +4,7 @@ An archive error page served with HTTP 200 was once stored under 392 ``.IMG``
 names in the PDS cache and then kept forever by the existing-file skip.
 """
 
+import gzip
 from pathlib import Path
 
 import pytest
@@ -71,6 +72,26 @@ def test_short_body_is_refused(tmp_path):
     dest = tmp_path / "a.IMG"
     assert dl.download_aci_image(URL, dest) is False
     assert not dest.exists()
+
+
+def test_gzip_encoded_image_is_written(tmp_path):
+    encoded = gzip.compress(VICAR_BODY)
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            content=encoded,
+            headers={
+                "content-type": "application/octet-stream",
+                "content-encoding": "gzip",
+                "content-length": str(len(encoded)),
+            },
+        )
+
+    dl, _ = _downloader(tmp_path, handler)
+    dest = tmp_path / "a.IMG"
+    assert dl.download_aci_image(URL, dest) is True
+    assert dest.read_bytes() == VICAR_BODY
 
 
 def test_existing_html_file_is_fetched_again(tmp_path):
