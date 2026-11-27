@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-11-27
+
+### Upgrade notes
+- **Breaking changes for command-line, web API and Python callers.** The
+  `sherloc extract-training` and `sherloc identify point` commands and the
+  `POST /api/identify` endpoint have been removed. Fit responses and hydration
+  result rows no longer carry the cosmic-ray veto fields. The removed Python
+  functions and types are listed under Removed. Code that used them must keep
+  its own copy or pin 6.0.1. Older configurations still load: the settings for
+  the removed features are ignored.
+- **Existing databases need one migration before data commands run.** This
+  release adds Alembic revision `dba3f925e841` (one nullable column,
+  `fitted_peaks.fwhm_at_cap`). Data commands on an older database stop with the
+  schema message and print the fix: back up the database, then
+  `PHASE_DATABASE_PATH=/path/to/your/phase.db alembic upgrade head`. Existing
+  peaks keep a NULL mark until their scans are refit. Container operators
+  deploy the image before upgrading the database, as for `a4d795f0a25e`.
+- **Reprocessing changes hydration rows.** Hydration fits use a new baseline,
+  component-count selection and noise estimate (see Changed). The bundled
+  configuration hash changes.
+
 ### Changed
 
 - Batch hydration now measures noise at each point from 2000–2100 cm⁻¹ after subtracting a

@@ -899,7 +899,7 @@ def compute_dataset_hash(spectra_paths: List[Path]) -> str:
 @software{Williford2024,
   author={Williford, Kenneth H.},
   title={SHERLOC Pipeline: Mars 2020 Raman/Fluorescence Data Processing},
-  version={6.0.0},
+  version={7.0.0},
   year={2026},
   url={https://github.com/archaeon-ai/sherloc-pipeline}
 }
