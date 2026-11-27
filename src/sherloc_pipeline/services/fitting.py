@@ -141,6 +141,26 @@ def _write_size_sidecar(peaks_csv: Path, selection: Optional[Dict[str, Any]]) ->
 KEPT_BY_MATCH_CM1 = 2.0
 
 
+def store_snr_floor(fit_cfg: Dict[str, Any], override: Optional[float] = None) -> float:
+    """The SNR a component needs to be stored in ``fitted_peaks``.
+
+    ``fitting.store_min_snr`` sets it; without that key it is ``fitting.min_snr``, the threshold
+    of the ``pass_snr`` flag and the accepted-peaks files, so the two are the same unless the
+    configuration separates them. ``override`` (``persist-peaks --store-min-snr``) replaces the
+    configured value for one run. Components below the fit's own floors (``min_seed_snr`` and
+    ``min_display_snr``) are not in the per-point tables, so a lower value cannot store them.
+    """
+    value = override if override is not None else fit_cfg.get('store_min_snr', fit_cfg.get('min_snr', 3.0))
+    try:
+        floor = float(value)
+    except (TypeError, ValueError):
+        floor = float('nan')
+    if not math.isfinite(floor) or floor < 0:
+        raise FittingError(f"store_min_snr must be a finite number >= 0, got {value!r}", exit_code=1,
+                           context={"store_min_snr": value})
+    return floor
+
+
 def _optional_float(value: Any) -> Optional[float]:
     """A peak-table float cell, or None when empty or NaN (older tables lack the column)."""
     if value is None:
@@ -2723,6 +2743,7 @@ class FittingService:
         data_dir: Optional[Path] = None,
         results_dir: Optional[Path] = None,
         scan_id: Optional[str] = None,
+        store_min_snr: Optional[float] = None,
     ) -> ServiceResult:
         """Persist Raman peaks from CSV artifacts into the phase.db database.
 
@@ -2747,6 +2768,8 @@ class FittingService:
             results_dir: Results directory. If None, uses config default.
             scan_id: The scan's row id. Given, the scan is read by id, which
                 reaches a scan stored without a target (empty ``target``).
+            store_min_snr: The SNR a component needs to be stored, for this run only.
+                None uses ``fitting.store_min_snr`` (see ``store_snr_floor``).
 
         Returns:
             ServiceResult with summary, metadata including peak counts
@@ -2937,8 +2960,9 @@ class FittingService:
             # Load R² values (domain-specific source)
             r2_map = self._load_r2_map(fit_dir, results_base, sol, target, scan, region, domain)
 
-            # Get config thresholds
-            min_snr = float(fit_cfg.get('min_snr', 3.0))
+            # Get config thresholds. The SNR floor for storage is its own setting; the
+            # pass_snr flag and the accepted-peaks files keep fitting.min_snr.
+            min_snr = store_snr_floor(fit_cfg, store_min_snr)
             fwhm_min = float(fit_cfg.get('reviewable_fwhm_min_cm1', 25.0))
 
             # Post-hoc quality filters from config
@@ -3643,6 +3667,7 @@ class FittingService:
         raman_modality: str = "minerals",
         raman_assignment_pattern: str = "sulf%",
         fluor_groups: Optional[List[str]] = None,
+        min_snr: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Find scan points with co-occurring Raman and fluorescence detections.
 
@@ -3655,6 +3680,10 @@ class FittingService:
                 (default 'sulf%' for sulfates).
             fluor_groups: Fluorescence group names to match (default
                 ['group1a', 'group1b'] for Ce3+).
+            min_snr: The SNR a stored Raman row needs to count as a detection. None uses
+                ``fitting.min_snr`` (3.0 when absent), the display threshold of the web views;
+                Raman rows are stored down to ``fitting.store_min_snr``. Rows without an SNR
+                count, as in the web views.
 
         Returns:
             List of dicts with scan_point_id, sol_number, target, point_index.
@@ -3664,8 +3693,12 @@ class FittingService:
             FittedPeakORM, SpectrumORM, ScanPointORM, ScanORM,
         )
 
+        from sqlalchemy import or_
+
         if fluor_groups is None:
             fluor_groups = ["group1a", "group1b"]
+        if min_snr is None:
+            min_snr = float((self.context.config.fitting or {}).get("min_snr", 3.0))
 
         if self._database_path is None:
             raise FittingError(
@@ -3685,6 +3718,7 @@ class FittingService:
                 .filter(
                     FittedPeakORM.fit_modality == raman_modality,
                     FittedPeakORM.mineral_assignment.like(raman_assignment_pattern),
+                    or_(FittedPeakORM.snr.is_(None), FittedPeakORM.snr >= min_snr),
                 )
             )
 
