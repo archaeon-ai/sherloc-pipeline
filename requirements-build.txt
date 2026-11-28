@@ -1,7 +1,7 @@
 # Exact tools for the project (setuptools) and auth (hatchling) source builds.
 # packaging reuses the reviewed runtime lock version; other pins are changed deliberately, with review.
 build==1.2.2.post1
-setuptools==75.6.0
+setuptools==84.1.0
 wheel==0.45.1
 hatchling==1.27.0
 packaging==26.2
