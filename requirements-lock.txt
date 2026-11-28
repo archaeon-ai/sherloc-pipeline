@@ -53,7 +53,7 @@ httpx==0.28.1
     # via
     #   sherloc-pipeline (pyproject.toml)
     #   phase-platform-auth
-idna==3.13
+idna==3.15
     # via
     #   anyio
     #   httpx
