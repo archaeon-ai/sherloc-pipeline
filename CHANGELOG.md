@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.1.0] - 2026-11-27
+
+### Upgrade notes
+- **Stored rows change at the next fit or re-store.** A `refit`, `persist-peaks` or any run that
+  persists now stores Raman components with SNR from 2.0 to 3.0, and the batch hydration fit now
+  fits points whose pre-fit statistic is from 2.0 to 3.0. Rows already in a database do not
+  change until then. The web views, the accepted-peaks files and `pass_snr` still use 3.0. A
+  reader of `fitted_peaks` that does not apply the display rule sees the new rows; filter on
+  `snr >= 3.0` for Raman modalities to count as before.
+- **No schema change.** The database head stays `dba3f925e841`.
+- **Settings.** To store and fit as in 7.0.0, set `fitting.store_min_snr: 3.0` and
+  `fitting.hydration_prefit_min_snr: 3.0`.
+
 ### Added
 
 - `fitting.store_min_snr` sets the SNR a Raman component (minerals, organics, hydration) needs to
