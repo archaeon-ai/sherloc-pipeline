@@ -260,7 +260,7 @@ def test_batch_hydration_noise_persisted_snr(tmp_path, populated_db):
     frame.to_csv(tmp_path / f"{stem}_normalized_despiked.csv", index=False)
     frame.loc[0, ["0", "1"]] += 500
     frame.to_csv(tmp_path / f"{stem}_normalized.csv", index=False)
-    service = _service(tmp_path, hydration_min_snr=2)
+    service = _service(tmp_path)  # shipped settings: pre-fit gate 2.0, stored floor 2.0
     ingestion = MagicMock()
     ingestion.get_results_path.return_value = tmp_path
     with patch("sherloc_pipeline.services.fitting.resolve_scan_context",
