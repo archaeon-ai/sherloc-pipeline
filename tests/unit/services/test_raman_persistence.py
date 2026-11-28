@@ -254,12 +254,13 @@ def test_batch_hydration_noise_persisted_snr(tmp_path, populated_db):
     for point, noise in enumerate([4., 10.]):
         frame[str(point)] = band
         frame.loc[:3, str(point)] = np.array([1., -1., -1., 1.]) * noise
-    # Both fitted components reach the peak table. Only the first clears persistence at SNR 3.
+    # Both fitted components reach the peak table and are stored at the shipped floor (2.0);
+    # the second (SNR 2.4) is below the display threshold of 3.
     stem = "0851_Lake_Haiyaha_detail_1_R1"
     frame.to_csv(tmp_path / f"{stem}_normalized_despiked.csv", index=False)
     frame.loc[0, ["0", "1"]] += 500
     frame.to_csv(tmp_path / f"{stem}_normalized.csv", index=False)
-    service = _service(tmp_path, hydration_min_snr=2)
+    service = _service(tmp_path)  # shipped settings: pre-fit gate 2.0, stored floor 2.0
     ingestion = MagicMock()
     ingestion.get_results_path.return_value = tmp_path
     with patch("sherloc_pipeline.services.fitting.resolve_scan_context",
@@ -270,10 +271,9 @@ def test_batch_hydration_noise_persisted_snr(tmp_path, populated_db):
     assert sorted(accepted.point) == [0, 1]
     _call_persist_raman(_make_service(engine), tmp_path, "hydration")
     with get_session(engine) as session:
-        peaks = session.query(FittedPeakORM).all()
-        assert len(peaks) == 1
-        assert peaks[0].spectrum_id == spectrum_ids[0]
-        assert peaks[0].snr == pytest.approx(6.)
+        peaks = sorted(session.query(FittedPeakORM).all(), key=lambda p: -p.snr)
+        assert [p.spectrum_id for p in peaks] == [spectrum_ids[0], spectrum_ids[1]]
+        assert [p.snr for p in peaks] == [pytest.approx(6.), pytest.approx(2.4)]
 
 
 # ---------------------------------------------------------------------------

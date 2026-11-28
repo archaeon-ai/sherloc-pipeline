@@ -712,7 +712,7 @@ def _fit_point_hydration(
     oh_mask: np.ndarray,
     plot_mask_oh: np.ndarray,
     n_edge: int,
-    min_snr: float,
+    prefit_min_snr: float,
     r2_min: float,
     center_lo: float,
     center_hi: float,
@@ -758,9 +758,9 @@ def _fit_point_hydration(
     window = fit_cfg_oh.get('hydration_noise_window', (2000.0, 2100.0))
     noise_std = hydration_noise(x, y_full, window, x_oh, y_bl)
 
-    # Pre-fit SNR gate
+    # Pre-fit SNR gate (hydration_prefit_min_snr): the point is not fitted below it.
     y_max = float(np.max(y_bl))
-    if noise_std > 0 and (y_max / noise_std) < min_snr:
+    if noise_std > 0 and (y_max / noise_std) < prefit_min_snr:
         _remove_stale_artifacts(owned_artifacts)
         return {
             'point_idx': point_idx,
@@ -1714,7 +1714,10 @@ class FittingService:
             oh_roi = tuple(fit_cfg.get('hydration_fit_range', [2800.0, 3900.0]))
             oh_plot = tuple(fit_cfg.get('hydration_plot_range', [2600.0, 4000.0]))
             max_peaks = int(fit_cfg.get('hydration_max_peaks', 2))
+            # hydration_min_snr sets the pass_snr flag of hydration components; the pre-fit gate
+            # has its own setting, which falls back to hydration_min_snr when absent.
             min_snr = float(fit_cfg.get('hydration_min_snr', 3.0))
+            prefit_min_snr = float(fit_cfg.get('hydration_prefit_min_snr', min_snr))
             fwhm_min = float(fit_cfg.get('hydration_fwhm_min_cm1', 50.0))
             fwhm_max = float(fit_cfg.get('hydration_fwhm_max_cm1', 300.0))
             r2_min = float(fit_cfg.get('hydration_r2_min', 0.25))
@@ -1762,7 +1765,7 @@ class FittingService:
                 _fit_point_hydration,
                 x=x, fit_cfg_oh=fit_cfg_oh, oh_roi=oh_roi, oh_plot=oh_plot,
                 oh_mask=oh_mask, plot_mask_oh=plot_mask_oh, n_edge=n_edge,
-                min_snr=min_snr, r2_min=r2_min, center_lo=center_lo,
+                prefit_min_snr=prefit_min_snr, r2_min=r2_min, center_lo=center_lo,
                 center_hi=center_hi, out_dir=str(multifits_dir),
                 sol=sol, target=target, scan=scan,
             )

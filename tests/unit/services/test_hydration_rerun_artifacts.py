@@ -86,7 +86,7 @@ def test_zero_peak_rerun_removes_earlier_hydration_artifacts(tmp_path, results_b
     assert first.metadata["total_accepted_peaks"] == 1
     assert peaks_csv.exists() and png.exists() and acc_csv.exists()
 
-    second = _run_fit(_service(tmp_path, hydration_min_snr=1e6), results_base)
+    second = _run_fit(_service(tmp_path, hydration_prefit_min_snr=1e6), results_base)
     assert second.metadata["total_accepted_peaks"] == 0
     assert not peaks_csv.exists(), "stale per-point CSV would be re-persisted"
     assert not png.exists(), "stale overlay would still show the previous fit"
@@ -95,7 +95,7 @@ def test_zero_peak_rerun_removes_earlier_hydration_artifacts(tmp_path, results_b
 
 def test_summary_csv_is_still_written_on_a_zero_result_run(tmp_path, results_base):
     """The scan-level summary still describes a run that accepted nothing."""
-    _run_fit(_service(tmp_path, hydration_min_snr=1e6), results_base)
+    _run_fit(_service(tmp_path, hydration_prefit_min_snr=1e6), results_base)
 
     summary = results_base / f"{SOL}_{TARGET}_{SCAN}_R1_hydration_summary.csv"
     assert summary.exists()
@@ -122,7 +122,7 @@ def test_run_marker_records_this_runs_accepted_count(tmp_path, results_base):
     _run_fit(_service(tmp_path), results_base)
     assert _read_fit_run_marker(marker)["accepted_peaks"] == 1
 
-    _run_fit(_service(tmp_path, hydration_min_snr=1e6), results_base)
+    _run_fit(_service(tmp_path, hydration_prefit_min_snr=1e6), results_base)
     assert _read_fit_run_marker(marker)["accepted_peaks"] == 0
 
 
@@ -145,7 +145,7 @@ def test_failed_stale_artifact_removal_fails_the_fit(tmp_path, results_base):
 
     with patch.object(Path, "unlink", refuse_peaks_csv):
         with pytest.raises(Exception) as exc_info:
-            _run_fit(_service(tmp_path, hydration_min_snr=1e6), results_base)
+            _run_fit(_service(tmp_path, hydration_prefit_min_snr=1e6), results_base)
 
     assert "failed to remove stale artifact" in str(exc_info.value)
     assert peaks_csv.exists(), "the undeletable CSV is exactly the risk"

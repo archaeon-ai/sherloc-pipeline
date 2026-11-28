@@ -203,7 +203,7 @@ class TestFitPointHydration:
             point_data,
             x=x, fit_cfg_oh=fit_cfg_oh, oh_roi=(2800.0, 3900.0),
             oh_plot=(2600.0, 4000.0), oh_mask=oh_mask, plot_mask_oh=plot_mask,
-            n_edge=5, min_snr=3.0, r2_min=0.25, center_lo=3000.0,
+            n_edge=5, prefit_min_snr=3.0, r2_min=0.25, center_lo=3000.0,
             center_hi=3900.0, out_dir=str(tmp_path),
             sol="0921", target="Test", scan="detail_1",
         )
@@ -234,7 +234,7 @@ class TestFitPointHydration:
             point_data,
             x=x, fit_cfg_oh=fit_cfg_oh, oh_roi=(2800.0, 3900.0),
             oh_plot=(2600.0, 4000.0), oh_mask=oh_mask, plot_mask_oh=plot_mask,
-            n_edge=5, min_snr=3.0, r2_min=0.25, center_lo=3000.0,
+            n_edge=5, prefit_min_snr=3.0, r2_min=0.25, center_lo=3000.0,
             center_hi=3900.0, out_dir=str(tmp_path),
             sol="0921", target="Test", scan="detail_1",
         )
@@ -261,7 +261,7 @@ class TestFitPointHydration:
             _fit_point_hydration,
             x=x, fit_cfg_oh=fit_cfg_oh, oh_roi=(2800.0, 3900.0),
             oh_plot=(2600.0, 4000.0), oh_mask=oh_mask, plot_mask_oh=plot_mask,
-            n_edge=5, min_snr=3.0, r2_min=0.25, center_lo=3000.0,
+            n_edge=5, prefit_min_snr=3.0, r2_min=0.25, center_lo=3000.0,
             center_hi=3900.0, out_dir=str(tmp_path),
             sol="0921", target="Test", scan="detail_1",
         )

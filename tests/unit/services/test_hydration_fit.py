@@ -161,8 +161,15 @@ def test_batch_hydration_noise_prefit_gate(tmp_path, monkeypatch):
         pytest.fail("spectrum below the pre-fit SNR threshold reached the optimizer")
 
     monkeypatch.setattr(fitting, "fit_hydration_spectrum", unexpected_fit)
-    path = _noise_scan(tmp_path, [2000, 2025, 2075, 2100], [10, -10, -10, 10])
+    # The band's peak is about 1.6 times the noise, below the shipped pre-fit gate of 2.0.
+    path = _noise_scan(tmp_path, [2000, 2025, 2075, 2100], [15, -15, -15, 15])
     assert not path.exists()
+
+
+def test_batch_hydration_noise_between_two_and_three_is_fitted(tmp_path):
+    # About 2.4 times the noise: below the earlier gate of 3.0, above the shipped 2.0.
+    path = _noise_scan(tmp_path, [2000, 2025, 2075, 2100], [10, -10, -10, 10])
+    assert path.exists()
 
 
 @pytest.mark.parametrize("threshold", ["min_seed_snr", "min_amp_sigma_multiplier", "min_display_snr"])

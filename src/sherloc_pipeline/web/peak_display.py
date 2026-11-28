@@ -3,9 +3,10 @@
 Raman components (minerals, organics, hydration) are stored down to
 ``fitting.store_min_snr``; the views count a Raman row only when its SNR is at least the
 display threshold ``fitting.min_snr``, the same value as the ``pass_snr`` flag and the
-accepted-peaks files. With the two settings equal, as in the shipped configuration, every
-stored Raman row passes and the views are unchanged. Rows of other modalities (fluorescence
-has its own threshold at fit time) and rows without an SNR are counted as before.
+accepted-peaks files. In the shipped configuration (2.0 and 3.0) a stored Raman row with SNR
+from 2.0 to 3.0 is not counted; with the two settings equal, every stored Raman row is. Rows
+of other modalities (fluorescence has its own threshold at fit time) and rows without an SNR
+are counted as before.
 """
 from __future__ import annotations
 
