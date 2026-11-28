@@ -1,9 +1,10 @@
 """The storage SNR floor (``fitting.store_min_snr``) apart from the display threshold
 (``fitting.min_snr``).
 
-At the shipped values (3.0 and 3.0) the stored rows are those of a configuration without
-``store_min_snr``, where storage used ``min_snr`` (release 7.0.0), in all three Raman domains.
-A lower floor stores components between it and 3 from the existing per-point tables, through
+The shipped floor is 2.0, the fit's own floor, with the display threshold at 3.0. With the
+floor at ``min_snr`` the stored rows are those of a configuration without ``store_min_snr``,
+where storage used ``min_snr`` (release 7.0.0), in all three Raman domains. A run floor stores
+components between it and 3 from the existing per-point tables, through
 ``persist-peaks --store-min-snr``, without refitting; the FWHM gate is unchanged.
 """
 import copy
@@ -75,9 +76,16 @@ def _add_components(results_base, domain):
     pd.concat([df, extra], ignore_index=True).to_csv(path, index=False)
 
 
-def test_shipped_settings_are_equal():
+def test_shipped_settings_store_everything_the_fit_reports():
+    """The shipped floor equals the fit's own floor; the display threshold and the hydration
+    point gates keep their values."""
+    assert CONFIG["store_min_snr"] == 2.0
+    assert CONFIG["store_min_snr"] == CONFIG["min_display_snr"]
     assert CONFIG["min_snr"] == 3.0
-    assert CONFIG["store_min_snr"] == 3.0
+    assert CONFIG["hydration_min_snr"] == 3.0
+    assert CONFIG["hydration_r2_min"] == 0.25
+    assert CONFIG["reviewable_fwhm_min_cm1"] == 25.0
+    assert store_snr_floor(CONFIG) == 2.0
 
 
 def test_floor_falls_back_to_min_snr_and_a_run_override_wins():
@@ -95,17 +103,18 @@ def test_an_invalid_floor_is_refused(bad):
 
 
 @pytest.mark.parametrize("domain", ["minerals", "organics", "hydration"])
-def test_shipped_settings_store_what_storage_at_min_snr_stored(tmp_path, domain, populated_db, results_all):
-    """3.0/3.0 against a configuration without store_min_snr (storage at min_snr, as in 7.0.0)."""
+def test_a_floor_equal_to_min_snr_stores_what_storage_at_min_snr_stored(tmp_path, domain, populated_db, results_all):
+    """store_min_snr 3.0 against a configuration without store_min_snr (storage at min_snr, as in 7.0.0)."""
     _add_components(results_all, domain)
     engine, _, _ = populated_db
     service = _make_service(engine)
     before = copy.deepcopy(service.context.config.fitting)
     legacy = {k: v for k, v in before.items() if k != "store_min_snr"}
+    at_min_snr = dict(before, store_min_snr=before["min_snr"])
 
     _persist(service, results_all, domain, fitting=legacy)
     old = _rows(engine)
-    _persist(service, results_all, domain, fitting=before)
+    _persist(service, results_all, domain, fitting=at_min_snr)
     new = _rows(engine)
 
     assert new == old
@@ -114,13 +123,30 @@ def test_shipped_settings_store_what_storage_at_min_snr_stored(tmp_path, domain,
 
 
 @pytest.mark.parametrize("domain", ["minerals", "organics", "hydration"])
-def test_a_lower_floor_re_stores_from_the_point_tables(domain, populated_db, results_all):
+def test_shipped_settings_store_the_component_below_the_display_threshold(domain, populated_db, results_all):
     _add_components(results_all, domain)
     engine, spectrum_ids, _ = populated_db
     service = _make_service(engine)
     _, _, center, _ = TABLES[domain]
 
-    shipped = _persist(service, results_all, domain)
+    shipped = {k: CONFIG[k] for k in ("min_snr", "store_min_snr", "reviewable_fwhm_min_cm1")}
+    result = _persist(service, results_all, domain,
+                      fitting=dict(service.context.config.fitting, **shipped))
+    rows = _rows(engine)
+    assert result.metadata["min_snr_threshold"] == 2.0
+    assert (spectrum_ids[0], center - 60.0, 2.5) in [(r[0], r[2], r[5]) for r in rows]
+    # The narrow component stays out: the FWHM gate is unchanged.
+    assert all(r[2] != center + 120.0 for r in rows)
+
+
+@pytest.mark.parametrize("domain", ["minerals", "organics", "hydration"])
+def test_a_run_floor_re_stores_from_the_point_tables(domain, populated_db, results_all):
+    _add_components(results_all, domain)
+    engine, spectrum_ids, _ = populated_db
+    service = _make_service(engine)
+    _, _, center, _ = TABLES[domain]
+
+    shipped = _persist(service, results_all, domain, store_min_snr=3.0)
     at_shipped = _rows(engine)
     lowered = _persist(service, results_all, domain, store_min_snr=2.0)
     at_two = _rows(engine)
@@ -132,8 +158,8 @@ def test_a_lower_floor_re_stores_from_the_point_tables(domain, populated_db, res
     assert all(r[2] != center + 120.0 for r in at_two)
     assert lowered.metadata["min_snr_threshold"] == 2.0
 
-    # Back at the shipped floor the domain's rows are replaced, not added to.
-    _persist(service, results_all, domain)
+    # Back at 3.0 the domain's rows are replaced, not added to.
+    _persist(service, results_all, domain, store_min_snr=3.0)
     assert _rows(engine) == at_shipped
 
 

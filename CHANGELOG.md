@@ -11,15 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `fitting.store_min_snr` sets the SNR a Raman component (minerals, organics, hydration) needs to
   be stored in `fitted_peaks`, apart from `fitting.min_snr`, which keeps setting the `pass_snr`
-  flag, the accepted-peaks files and what the web views count as a shown peak. Both are 3.0 in
-  the bundled configuration, so the stored rows, the accepted-peaks files and the views are
-  unchanged. The bundled configuration hash changes.
+  flag, the accepted-peaks files and what the web views count as a shown peak. The bundled
+  values are under Changed.
 - `sherloc persist-peaks --store-min-snr <value>` re-stores a domain's components from the existing
   per-point peak tables at another floor, without refitting. The tables hold components down to
   `fitting.min_display_snr` (2.0). The FWHM gate is unchanged.
 
 ### Changed
 
+- `fitting.store_min_snr` is 2.0 in the bundled configuration, equal to `fitting.min_display_snr`,
+  the fit's own floor: every Raman component the fit reports (minerals, organics, hydration) is
+  stored, including those with SNR from 2.0 to 3.0, by `refit`, `persist-peaks` and any run that
+  persists. They keep their measured SNR. `fitting.min_snr` stays 3.0, so the `pass_snr` flag,
+  the accepted-peaks files and what the web views count are unchanged. The FWHM gate, the
+  hydration R² gate (`hydration_r2_min` 0.25), the rule that a hydration point needs one accepted
+  component and the fluorescence `snr_threshold` are unchanged. The bundled configuration hash
+  changes.
+- The batch hydration pre-fit gate has its own setting, `fitting.hydration_prefit_min_snr`, 2.0 in
+  the bundled configuration: a point is fitted when the maximum of its line-subtracted O-H window
+  is at least 2.0 times its noise (before: `hydration_min_snr`, 3.0). Without the key the gate uses
+  `hydration_min_snr`, as before. `hydration_min_snr` stays 3.0 and keeps setting the `pass_snr`
+  flag of hydration components and the map's hydration fit.
 - The scan list's `has_fitted_peaks`, the map's layers and the Raman side of
   `FittingService.query_co_occurrences` count a stored Raman component only when its SNR is at
   least `fitting.min_snr`; `query_co_occurrences` takes `min_snr` to set another value. Rows of other modalities and rows without an SNR count as

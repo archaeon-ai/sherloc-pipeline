@@ -393,7 +393,7 @@ def test_persist_no_csvs_raises(populated_db, tmp_path):
 
 
 def test_persist_filters_by_min_snr_and_fwhm(populated_db, tmp_path):
-    """Verify peaks are filtered by SNR >= min_snr (3.0 default) AND FWHM >= 25.0."""
+    """Verify peaks are filtered by SNR >= store_min_snr (2.0 default) AND FWHM >= 25.0."""
     engine, spectrum_ids = populated_db
 
     results_base = tmp_path / "results_filter"
@@ -407,8 +407,10 @@ def test_persist_filters_by_min_snr_and_fwhm(populated_db, tmp_path):
         {"center_cm1": 1000.0, "fwhm_cm1": 25.0, "amplitude_a": 500.0, "area": 50.0, "snr": 3.0, "pass_snr": True, "pass_fwhm": True, "pass_r2": True},
         # Reviewable: SNR=5.0, FWHM=30.0 (above threshold)
         {"center_cm1": 1100.0, "fwhm_cm1": 30.0, "amplitude_a": 600.0, "area": 60.0, "snr": 5.0, "pass_snr": True, "pass_fwhm": True, "pass_r2": True},
-        # Non-reviewable: SNR=2.9 (just below threshold), FWHM=30.0
+        # Stored below the display threshold: SNR=2.9 (pass_snr False), FWHM=30.0
         {"center_cm1": 1200.0, "fwhm_cm1": 30.0, "amplitude_a": 400.0, "area": 40.0, "snr": 2.9, "pass_snr": False, "pass_fwhm": True, "pass_r2": True},
+        # Not stored: SNR=1.9 (just below the storage floor), FWHM=30.0
+        {"center_cm1": 1250.0, "fwhm_cm1": 30.0, "amplitude_a": 300.0, "area": 30.0, "snr": 1.9, "pass_snr": False, "pass_fwhm": True, "pass_r2": True},
         # Non-reviewable: SNR=5.0, FWHM=24.9 (just below threshold)
         {"center_cm1": 1300.0, "fwhm_cm1": 24.9, "amplitude_a": 700.0, "area": 70.0, "snr": 5.0, "pass_snr": True, "pass_fwhm": False, "pass_r2": True},
         # Non-reviewable: SNR=2.0, FWHM=20.0 (both below threshold)
@@ -423,14 +425,14 @@ def test_persist_filters_by_min_snr_and_fwhm(populated_db, tmp_path):
     service = _make_service(engine)
     result = _call_persist(service, results_base)
 
-    # Should only insert 2 reviewable peaks (1000.0 and 1100.0 cm⁻¹)
-    assert result.metadata["peaks_inserted"] == 2
+    # Inserts the 3 peaks at SNR >= 2.0 and FWHM >= 25 (1000.0, 1100.0 and 1200.0 cm⁻¹)
+    assert result.metadata["peaks_inserted"] == 3
 
     with get_session(engine) as session:
         peaks = session.query(FittedPeakORM).all()
-        assert len(peaks) == 2
+        assert len(peaks) == 3
         centers = sorted([p.center_cm1 for p in peaks])
-        assert centers == [1000.0, 1100.0]
+        assert centers == [1000.0, 1100.0, 1200.0]
 
 
 def test_persist_spectrum_type_fallback(engine, mock_csvs):

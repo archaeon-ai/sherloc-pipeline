@@ -101,7 +101,7 @@ fitting:
   low_fwhm_edge_penalty: 0.1          # penalty term weight for FWHM near lower bound
   max_peaks: 5
   min_snr: 3.0                      # pass_snr flag, accepted-peaks files and the default display threshold
-  store_min_snr: 3.0                # SNR a component needs to be stored in fitted_peaks (all Raman domains)
+  store_min_snr: 2.0                # SNR a component needs to be stored in fitted_peaks (all Raman domains); equal to min_display_snr, so every component the fit reports is stored
   min_seed_snr: 2.0                 # do not seed peaks below this SNR
   min_display_snr: 2.0              # do not plot/report components below this SNR
   r_squared_min: 0.0                # no point-R2 bar on pass_r2; posthoc_filters.r2_min (R2 > 0) still gates persistence
@@ -159,7 +159,8 @@ fitting:
   hydration_plot_range: [2600, 4000]
   hydration_max_peaks: 2              # typical decomposition into 1–2 Gaussians
   hydration_noise_window: [2000, 2100]  # Hydration noise is the standard deviation after subtracting a line fitted in this interval (cm-1).
-  hydration_min_snr: 3.0              # This pipeline's pre-fit gate.
+  hydration_min_snr: 3.0              # pass_snr flag of hydration components (batch); the map's hydration seed and pass floor
+  hydration_prefit_min_snr: 2.0       # This pipeline's pre-fit gate: a point whose y_max / noise is below it is not fitted (batch)
   hydration_fwhm_min_cm1: 50.0        # minimum FWHM of a hydration peak (cm-1)
   hydration_fwhm_max_cm1: 300.0       # maximum FWHM of a hydration peak (cm-1)
   hydration_r2_min: 0.25              # quality gate (matches mineral standard)

@@ -594,7 +594,11 @@ correction. Each fit subtracts a least-squares line from the channels between 20
 the standard deviation from 2800 through 3000 cm⁻¹ after subtracting the line through the end
 means. If that interval also has fewer than three channels, it uses the entire hydration fit
 range after the same subtraction. In batch, this noise sets the pre-fit and seed thresholds, the minimum
-amplitude and each component's SNR. Persistence requires SNR ≥ `store_min_snr` (3 by default), FWHM ≥ 25 cm⁻¹ and record R² > 0.
+amplitude and each component's SNR. In batch, a point is not fitted when the maximum of the line-subtracted
+window over this noise is below `hydration_prefit_min_snr` (2.0; without the key, `hydration_min_snr`).
+A fitted point is kept only when its R² is at least `hydration_r2_min` (0.25) and at least one component
+passes the center range and the sharpness filter. `hydration_min_snr` (3.0) sets the components' `pass_snr`
+flag. Persistence requires SNR ≥ `store_min_snr` (2 by default), FWHM ≥ 25 cm⁻¹ and record R² > 0.
 For hydration, `fwhm_at_cap` is true when the fitted FWHM is within 1 cm⁻¹ of the configured upper bound and false otherwise, with NULL for other domains and for rows written before this field.
 
 **Mineral fit input:** laser-normalized, dark-subtracted spectrum, asPLS-baselined (`normalized_baselined`); spikes are handled by negative-spike exclusion and the cosmic-ray review flag (not standard "despiked" as used for organics, hydration and fluorescence fitting).
@@ -632,7 +636,7 @@ For mineral, organics G and hydration fits, the size log is written per point, a
 
 **Quality Thresholds (defaults from `src/sherloc_pipeline/config.yaml`, minerals domain):**
 - **R²:** per-peak `pass_r2` flag at ≥ 0 (`r_squared_min`); persistence still requires R² > 0 (`posthoc_filters.r2_min`)
-- **SNR:** ≥ 3.0 (`min_snr`) for the `pass_snr` flag, the accepted-peaks files and what the web views count as a shown peak; ≥ `store_min_snr` (3.0) to be stored in `fitted_peaks`. The two settings apply to all three Raman domains and are equal by default, so every stored component is shown.
+- **SNR:** ≥ 3.0 (`min_snr`) for the `pass_snr` flag, the accepted-peaks files and what the web views count as a shown peak; ≥ `store_min_snr` (2.0) to be stored in `fitted_peaks`. Both settings apply to all three Raman domains. The default `store_min_snr` equals `min_display_snr` (2.0), the fit's own floor, so every component the fit reports is stored, and components with SNR from 2.0 to 3.0 are stored but not shown.
 - **Storing below the display threshold:** with `store_min_snr` lower than `min_snr`, components with SNR between the two are stored and keep their measured SNR; the scan list's `has_fitted_peaks`, the map's layers and the Raman side of `FittingService.query_co_occurrences` do not count them, and the accepted-peaks files do not include them. `sherloc persist-peaks --store-min-snr <value>` re-stores a domain from the existing per-point peak tables at another floor without refitting. Those tables hold components down to `min_display_snr` (2.0), the fit's own floor, so a value below it stores nothing more. The FWHM gate does not change with either setting.
 - **FWHM:** initial-search lower bound 22 cm⁻¹ (`fit_fwhm_min_initial_cm1`), upper bound 90 cm⁻¹ (`fwhm_max_cm1`); post-fit `pass_fwhm` flag ≥ 25 cm⁻¹ (`filter_fwhm_min_cm1`); reviewable/persist eligibility ≥ 25 cm⁻¹ (`reviewable_fwhm_min_cm1`)
 

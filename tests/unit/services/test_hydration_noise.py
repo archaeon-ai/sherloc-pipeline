@@ -69,7 +69,7 @@ def test_hydration_noise_on_same_input(monkeypatch, tmp_path, window, roi):
     monkeypatch.setattr(fitting, "fit_spectrum", record_noise)
     _fit_point_hydration({"point_idx": 0, "y": y}, x=x, oh_roi=roi, oh_plot=roi,
                          fit_cfg_oh=cfg, oh_mask=mask, plot_mask_oh=mask, n_edge=5,
-                         min_snr=0., r2_min=1., center_lo=3000., center_hi=3900.,
+                         prefit_min_snr=0., r2_min=1., center_lo=3000., center_hi=3900.,
                          out_dir=str(tmp_path), sol="1", target="sample", scan="scan")
     map_fitting._fit_raman_domain(x, y, {"fitting": cfg}, "hydration", preprocessed=True)
     workbench_fit(x, y, SimpleNamespace(fitting=cfg), "hydration", roi)
