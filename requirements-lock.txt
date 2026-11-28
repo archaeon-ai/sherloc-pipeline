@@ -191,7 +191,7 @@ typing-inspection==0.4.2
     # via
     #   fastapi
     #   pydantic
-urllib3==2.7.0
+urllib3==2.8.0
     # via botocore
 uvicorn==0.46.0
     # via sherloc-pipeline (pyproject.toml)
