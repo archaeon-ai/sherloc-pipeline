@@ -139,7 +139,7 @@ python-dateutil==2.9.0.post0
     #   pandas
 python-dotenv==1.2.2
     # via uvicorn
-python-multipart==0.0.27
+python-multipart==0.0.31
     # via sherloc-pipeline (pyproject.toml)
 pyyaml==6.0.3
     # via
